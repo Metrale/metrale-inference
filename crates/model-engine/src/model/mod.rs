@@ -15,6 +15,7 @@ pub(crate) mod block_tables;
 pub(crate) mod device_argmax;
 pub(crate) mod drop;
 mod engine_levers;
+pub(crate) mod ep_ctrl;
 mod gdn_carry;
 pub(crate) mod impl_a1;
 pub(crate) use impl_a1::build_lm_head_nvfp4_t;

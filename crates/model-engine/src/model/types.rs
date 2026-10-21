@@ -375,14 +375,14 @@ pub struct TransformerModel {
     /// 2026-09-25: Communication backend for multi-rank (EP/TP) collectives.
     /// `None` on a single GPU.
     pub(super) comm: Option<std::sync::Arc<dyn metrale_comm::CommBackend>>,
+    /// 2026-10-21: The control channel (`METRALE_GLM_EP_CTRL_COMM`, `ep_ctrl.rs`), once attached.
+    pub(super) ctrl: std::sync::OnceLock<super::ep_ctrl::CtrlChannel>,
     /// 2026-09-25: 4-byte device buffer for the EP token broadcast.
     pub(super) ep_cmd_buf: DevicePtr,
     /// 2026-09-25: EP wire protocol: true when `METRALE_EP_PROTOCOL=v2` (or, 2026-10-10, `v3`:
-    /// `metrale_model_layers::ep_wire`), which
-    /// precedes every command broadcast with a `seq_id` broadcast so the
-    /// worker can route slot-bound work to the right `SequenceState`. With a
-    /// comm backend, `new` checks that the ranks agree on it
-    /// (`rank_agree::assert_ranks_agree`).
+    /// `metrale_model_layers::ep_wire`), which precedes every command broadcast with a `seq_id`
+    /// broadcast so the worker can route slot-bound work to the right `SequenceState`. With a comm
+    /// backend, `new` checks that the ranks agree on it (`rank_agree::assert_ranks_agree`).
     pub(super) ep_protocol_v2: bool,
     /// 2026-10-10: The sharded device argmax that may end a one-row decode step
     /// (`device_argmax.rs`).

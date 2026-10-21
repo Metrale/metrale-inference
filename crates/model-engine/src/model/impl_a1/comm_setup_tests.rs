@@ -26,3 +26,26 @@ fn dflash_ctx_window_matches_the_old_reader() {
         assert_eq!(dflash_ctx_window(&s), old(Some(v)), "{v:?}");
     }
 }
+
+/// 2026-10-21: The control channel's lever and port join the rank agreement as set, so a rank
+/// with the lever or the port alone differing fails every rank's start; an unset port is a value
+/// no set port takes.
+#[test]
+fn the_ctrl_comm_lever_and_port_are_rank_agreed_as_set() {
+    let agree = |env: &[(&str, &str)]| super::ctrl_comm_agreement(&settings_from(env).unwrap());
+    let off = agree(&[]);
+    assert_eq!(off[0], ("METRALE_GLM_EP_CTRL_COMM", 0));
+    assert_eq!(off[1], ("METRALE_GLM_EP_CTRL_PORT", u64::MAX));
+    let on = agree(&[
+        ("METRALE_GLM_EP_CTRL_COMM", "1"),
+        ("METRALE_GLM_EP_CTRL_PORT", "29611"),
+    ]);
+    assert_eq!(on[0].1, 1);
+    assert_eq!(on[1].1, 29611);
+    let other_port = agree(&[
+        ("METRALE_GLM_EP_CTRL_COMM", "1"),
+        ("METRALE_GLM_EP_CTRL_PORT", "29612"),
+    ]);
+    assert_ne!(on[1], other_port[1], "a port skew is a disagreement");
+    assert_ne!(on[0], off[0], "a lever skew is a disagreement");
+}

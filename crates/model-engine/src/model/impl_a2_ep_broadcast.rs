@@ -148,7 +148,7 @@ impl TransformerModel {
     /// 2026-10-10: Rank 0: broadcast a v3 command block, waiting for it as `ep_broadcast_u32`
     /// does. A no-op unless `multi_rank_protocol_active()`.
     pub(super) fn ep_broadcast_block(&self, block: &[u8; ep_wire::CMD_BLOCK_BYTES]) -> Result<()> {
-        if !self.multi_rank_protocol_active() {
+        if !self.multi_rank_protocol_active() || self.ctrl_send_block(block, None)? {
             return Ok(());
         }
         let comm = self
@@ -227,7 +227,11 @@ impl TransformerModel {
             .as_ref()
             .expect("worker command receive without comm");
         // 2026-10-10: v3: the whole block in one receive; its `arg` stays on the device.
+        // 2026-10-21: On the control channel when `METRALE_GLM_EP_CTRL_COMM` routes it there.
         if v2 && EpWire::get().one_block() {
+            if let Some(block) = self.ctrl_recv_block()? {
+                return Ok(block);
+            }
             comm.recv_command_block(self.ep_cmd_buf.0, ep_wire::CMD_BLOCK_BYTES, 0)?;
             self.gpu.synchronize(self.gpu.default_stream())?;
             let mut block = [0u8; ep_wire::CMD_BLOCK_BYTES];

@@ -56,12 +56,7 @@ pub(in crate::model) fn send_fed_step(
 ) -> Result<()> {
     ensure!(comm.rank() == 0, "a fed step is announced by rank 0 only");
     if one_block {
-        let block = match argmax {
-            Some(mask) => {
-                ep_wire::decode_block(slot, EP_CMD_DECODE_FED, ep_wire::FLAG_DEVICE_ARGMAX, mask)
-            }
-            None => ep_wire::host_block(slot, EP_CMD_DECODE_FED),
-        };
+        let block = fed_block(slot, argmax);
         gpu.copy_h2d_async(&block, cmd_buf, stream)?;
         gpu.copy_d2d_async(feed_ids, cmd_buf.offset(ep_wire::CMD_BLOCK_ARG), 4, stream)?;
         return comm.broadcast_enqueue(cmd_buf.0, ep_wire::CMD_BLOCK_BYTES, 0);
@@ -72,6 +67,17 @@ pub(in crate::model) fn send_fed_step(
         comm.broadcast_enqueue(cmd_buf.0, 4, 0)?;
     }
     comm.broadcast_enqueue(feed_ids.0, 4, 0)
+}
+
+/// 2026-10-21: The v3 block of a fed step in `slot`, its `arg` (the token) still 0: with
+/// [`ep_wire::FLAG_DEVICE_ARGMAX`] and the row mask when `argmax` is set.
+fn fed_block(slot: u32, argmax: Option<RowMask>) -> [u8; ep_wire::CMD_BLOCK_BYTES] {
+    match argmax {
+        Some(mask) => {
+            ep_wire::decode_block(slot, EP_CMD_DECODE_FED, ep_wire::FLAG_DEVICE_ARGMAX, mask)
+        }
+        None => ep_wire::host_block(slot, EP_CMD_DECODE_FED),
+    }
 }
 
 /// 2026-10-10: A worker's token for the fed step into its `feed_ids`, after
@@ -111,15 +117,30 @@ impl TransformerModel {
             .context("multi-rank fed decode without a communicator")?;
         self.stamp_overlay_route(seq.adapter_slot);
         self.stamp_decode_moe_single(seq.adapter_slot);
+        // 2026-10-21: On the control channel the token is copied over `arg` once the compute
+        // stream has produced it (`feed_resolve`, queued before this), the send's only wait.
+        let stream = self.gpu.default_stream();
+        let argmax = self.device_argmax.armed_mask();
+        if EpWire::get().one_block() {
+            let arg = super::super::ep_ctrl::DeviceArg {
+                src: self.feed_ids,
+                at: ep_wire::CMD_BLOCK_ARG,
+                bytes: 4,
+                producer: stream,
+            };
+            if self.ctrl_send_block(&fed_block(seq.slot_idx as u32, argmax), Some(arg))? {
+                return Ok(());
+            }
+        }
         send_fed_step(
             comm.as_ref(),
             self.gpu.as_ref(),
             self.ep_cmd_buf,
             self.feed_ids,
-            self.gpu.default_stream(),
+            stream,
             seq.slot_idx as u32,
             EpWire::get().one_block(),
-            self.device_argmax.armed_mask(),
+            argmax,
         )
     }
 

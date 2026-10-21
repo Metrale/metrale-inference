@@ -22,10 +22,14 @@ impl ModelEp for TransformerModel {
     }
 
     fn is_healthy(&self) -> bool {
-        match self.comm.as_ref() {
-            Some(comm) => comm.is_healthy(),
-            None => true,
-        }
+        self.comms_healthy()
+    }
+
+    fn attach_ctrl_comm(
+        &self,
+        bootstrap: &mut dyn FnMut(u64) -> Result<std::sync::Arc<dyn metrale_comm::CommBackend>>,
+    ) -> Result<()> {
+        self.attach_ctrl_comm_impl(bootstrap)
     }
 
     fn ep_prefill_batch_rows(&self) -> Option<usize> {
@@ -67,6 +71,9 @@ impl ModelEp for TransformerModel {
         &self,
         verdict: metrale_model_layers::speculative::K2Verdict,
     ) -> Result<()> {
+        if self.ctrl_send_verdict(verdict)? {
+            return Ok(());
+        }
         self.ep_send_k2_verdict_staged(verdict)
     }
 

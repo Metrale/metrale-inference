@@ -26,6 +26,11 @@ pub(super) fn assert_rank_levers_agree(
         metrale_model_layers::speculative::k2_fused_requested(),
         metrale_model_layers::ep_wire::EpWire::get(),
     )?;
+    crate::model::ep_ctrl::check_config(
+        settings.runtime.glm_ep_ctrl_comm,
+        metrale_model_layers::ep_wire::EpWire::get(),
+    )?;
+    let ctrl = ctrl_comm_agreement(settings);
     let glm = metrale_model_arch::glm5next_layer::GlmLevers::from_settings(settings)?;
     let mtp = metrale_model_arch::glm5next_mtp_head::MtpLevers::from_settings(settings)?;
     crate::rank_agree::assert_ranks_agree(
@@ -47,6 +52,10 @@ pub(super) fn assert_rank_levers_agree(
                 "METRALE_EP_PROTOCOL",
                 metrale_model_layers::ep_wire::EpWire::get().agreement_value(),
             ),
+            // 2026-10-21: The control channel moves every command block and K=2 verdict to a
+            // second communicator, which every rank bootstraps on the same port.
+            ctrl[0],
+            ctrl[1],
             // 2026-10-11: The fused K=2 MTP wire changes the command sequence of every
             // K=2 step, so a rank running the other shape would read the wrong words.
             (
@@ -89,6 +98,26 @@ pub(super) fn assert_rank_levers_agree(
         ],
     )?;
     Ok(())
+}
+
+/// 2026-10-21: The rank-agreed entries of the control channel: the lever, and its port (an
+/// unset port as `u64::MAX`, so it can equal no set one).
+pub(super) fn ctrl_comm_agreement(
+    settings: &metrale_settings::InferenceServerSettings,
+) -> [(&'static str, u64); 2] {
+    [
+        (
+            crate::model::ep_ctrl::ENV,
+            u64::from(settings.runtime.glm_ep_ctrl_comm),
+        ),
+        (
+            "METRALE_GLM_EP_CTRL_PORT",
+            settings
+                .runtime
+                .glm_ep_ctrl_port
+                .map_or(u64::MAX, |p| p as u64),
+        ),
+    ]
 }
 
 /// 2026-09-26: Register the reduce targets with the comm backend and hand it the

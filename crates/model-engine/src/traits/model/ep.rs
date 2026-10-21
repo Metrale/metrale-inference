@@ -44,6 +44,17 @@ pub trait ModelEp {
         true
     }
 
+    /// 2026-10-21: `METRALE_GLM_EP_CTRL_COMM=1`: attach the control channel, whose communicator
+    /// the host bootstraps on the stream the model passes (`bootstrap(stream)`). Every rank calls
+    /// it once, after the model is built (the rank agreement) and before the first command.
+    /// Default: an error, since only a model that speaks the multi-rank protocol has one.
+    fn attach_ctrl_comm(
+        &self,
+        _bootstrap: &mut dyn FnMut(u64) -> Result<std::sync::Arc<dyn metrale_comm::CommBackend>>,
+    ) -> Result<()> {
+        anyhow::bail!("this model has no multi-rank control channel")
+    }
+
     /// 2026-10-09: `Some(rows)` when `prefill_batch_chunk` can run on this multi-rank serve,
     /// `rows` being the prompt rows one batched prefill step should carry; the scheduler batches
     /// prefills under the multi-rank protocol only then (and with its lever on). Default `None`.

@@ -9,6 +9,7 @@
 //! Owner: model-engine tests.
 //! Invariants: only broadcasts are implemented; any other collective panics.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
 use metrale_comm::CommBackend;
@@ -33,6 +34,8 @@ pub(crate) struct PairComm {
     gpu: Arc<MockGpuBackend>,
     link: Arc<Link>,
     ops: Mutex<Vec<Op>>,
+    /// 2026-10-21: Set by `poison`, read by `is_healthy`.
+    unhealthy: AtomicBool,
 }
 
 impl PairComm {
@@ -98,6 +101,12 @@ impl CommBackend for PairComm {
     fn recv_from(&self, _: u64, _: usize, _: usize, _: u64) -> anyhow::Result<()> {
         unreachable!()
     }
+    fn is_healthy(&self) -> bool {
+        !self.unhealthy.load(Ordering::Acquire)
+    }
+    fn poison(&self) {
+        self.unhealthy.store(true, Ordering::Release);
+    }
     fn rank(&self) -> usize {
         self.rank
     }
@@ -106,27 +115,92 @@ impl CommBackend for PairComm {
     }
 }
 
+impl PairComm {
+    fn new(rank: usize, gpu: &Arc<MockGpuBackend>, link: &Arc<Link>) -> Self {
+        Self {
+            rank,
+            gpu: Arc::clone(gpu),
+            link: Arc::clone(link),
+            ops: Mutex::new(Vec::new()),
+            unhealthy: AtomicBool::new(false),
+        }
+    }
+}
+
+fn new_link() -> Arc<Link> {
+    Arc::new(Link {
+        slot: Mutex::new(None),
+        cv: Condvar::new(),
+    })
+}
+
+/// 2026-10-21: How long [`run_pair_two_links`] waits for both ranks: a message sent on the wrong
+/// link, or received out of order, leaves a rank blocked forever, which must fail the test, not
+/// hang it.
+pub(crate) const PAIR_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// 2026-10-21: [`run_pair`] over two independent links, `f(rank, gpu, main, ctrl)` (the control
+/// channel beside the main communicator); returns each rank's result and the broadcasts it
+/// issued on each link. Panics naming the stuck rank when a rank has not finished within
+/// [`PAIR_DEADLINE`] (its thread is left blocked; the test binary exits past it).
+pub(crate) type TwoLinkOut<T> = (T, Vec<Op>, Vec<Op>);
+pub(crate) fn run_pair_two_links<T: Send + 'static>(
+    f: impl Fn(usize, &Arc<MockGpuBackend>, Arc<PairComm>, Arc<PairComm>) -> T + Send + Sync + 'static,
+) -> [TwoLinkOut<T>; 2] {
+    let (main_link, ctrl_link) = (new_link(), new_link());
+    let f = Arc::new(f);
+    let (tx, rx) = std::sync::mpsc::channel();
+    for rank in 0..2 {
+        let (main_link, ctrl_link, f, tx) = (
+            Arc::clone(&main_link),
+            Arc::clone(&ctrl_link),
+            Arc::clone(&f),
+            tx.clone(),
+        );
+        std::thread::spawn(move || {
+            let gpu = Arc::new(MockGpuBackend::new());
+            let main = Arc::new(PairComm::new(rank, &gpu, &main_link));
+            let ctrl = Arc::new(PairComm::new(rank, &gpu, &ctrl_link));
+            let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                f(rank, &gpu, Arc::clone(&main), Arc::clone(&ctrl))
+            }));
+            let _ = tx.send((rank, out.map(|o| (o, main.ops(), ctrl.ops()))));
+        });
+    }
+    drop(tx);
+    let deadline = std::time::Instant::now() + PAIR_DEADLINE;
+    let mut done: [Option<TwoLinkOut<T>>; 2] = [None, None];
+    while done.iter().any(Option::is_none) {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        let Ok((rank, out)) = rx.recv_timeout(left) else {
+            let stuck: Vec<usize> = (0..2).filter(|&r| done[r].is_none()).collect();
+            panic!(
+                "pair exchange deadlock: rank(s) {stuck:?} still blocked after {PAIR_DEADLINE:?} \
+                 (a message on the wrong link, or a receive with no matching send)"
+            );
+        };
+        match out {
+            Ok(o) => done[rank] = Some(o),
+            Err(p) => std::panic::resume_unwind(p),
+        }
+    }
+    let [a, b] = done;
+    [a.unwrap(), b.unwrap()]
+}
+
 /// 2026-10-10: Run `f(rank, gpu, comm)` for ranks 0 and 1 on two threads over one link; returns
 /// each rank's result and the broadcasts it issued, indexed by rank.
 pub(crate) fn run_pair<T: Send + 'static>(
     f: impl Fn(usize, &dyn GpuBackend, &PairComm) -> T + Send + Sync + 'static,
 ) -> [(T, Vec<Op>); 2] {
-    let link = Arc::new(Link {
-        slot: Mutex::new(None),
-        cv: Condvar::new(),
-    });
+    let link = new_link();
     let f = Arc::new(f);
     let handles: Vec<_> = (0..2)
         .map(|rank| {
             let (link, f) = (Arc::clone(&link), Arc::clone(&f));
             std::thread::spawn(move || {
                 let gpu = Arc::new(MockGpuBackend::new());
-                let comm = PairComm {
-                    rank,
-                    gpu: Arc::clone(&gpu),
-                    link,
-                    ops: Mutex::new(Vec::new()),
-                };
+                let comm = PairComm::new(rank, &gpu, &link);
                 let out = f(rank, gpu.as_ref(), &comm);
                 (out, comm.ops())
             })

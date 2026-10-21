@@ -250,10 +250,9 @@ impl TransformerModel {
         let ep_cmd_buf = gpu.alloc(metrale_model_layers::ep_wire::CMD_BLOCK_BYTES)?;
         let device_argmax = super::device_argmax::DeviceArgmax::new(gpu.as_ref())?;
 
-        // 2026-09-25: Fixed-address buffer (CUDA-graph safe) for the batched
-        // decode MoE per-row adapter map, 4 bytes per batch row, uploaded each
-        // decode step. Allocated unconditionally because LoRA weights arrive
-        // after construction (`set_lora_weights`).
+        // 2026-09-25: Fixed-address buffer (CUDA-graph safe) for the batched decode MoE per-row
+        // adapter map, 4 bytes per batch row, uploaded each decode step. Allocated unconditionally
+        // because LoRA weights arrive after construction (`set_lora_weights`).
         let moe_row_adapter_buf = gpu.alloc(max_batch_size.max(1) * 4)?;
 
         // 2026-09-25: Secondary stream and its event, used by the asynchronous
@@ -456,6 +455,7 @@ impl TransformerModel {
             secondary_event,
             snapshot_event,
             comm,
+            ctrl: std::sync::OnceLock::new(),
             ep_cmd_buf,
             ep_protocol_v2: metrale_model_layers::ep_wire::EpWire::get().has_seq_preamble(),
             device_argmax,

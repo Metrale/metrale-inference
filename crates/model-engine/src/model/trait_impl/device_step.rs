@@ -372,7 +372,7 @@ impl TransformerModel {
         seq: &mut SequenceState,
         argmax: [u32; 2],
     ) -> Result<()> {
-        use metrale_model_layers::speculative::{K2_VERDICT_WORDS, K2Verdict, k2_device_verdict};
+        use metrale_model_layers::speculative::{K2Verdict, k2_device_verdict};
         let draft = *seq
             .tokens
             .last()
@@ -382,7 +382,7 @@ impl TransformerModel {
         self.ep_worker_k2_commit(seq, accepted)?;
         let position = seq.seq_len;
         self.ep_worker_mtp_propose(seq, next, position, 1, usize::from(accepted));
-        let words = self.ep_broadcast_tokens(&[0u32; K2_VERDICT_WORDS])?;
+        let words = self.ep_recv_k2_verdict_words()?;
         let rank0 = K2Verdict::from_words(&words)?;
         anyhow::ensure!(
             metrale_model_layers::speculative::device_verdict_agrees(

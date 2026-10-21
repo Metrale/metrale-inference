@@ -15,7 +15,7 @@
 use anyhow::Result;
 use metrale_model_layers::ep_wire::EpWire;
 use metrale_model_layers::speculative::{
-    K2_VERDICT_WORDS, K2Verdict, k2_announce_block, k2_announced_tokens, k2_fused_requested,
+    K2Verdict, k2_announce_block, k2_announced_tokens, k2_fused_requested,
 };
 
 use super::super::types::TransformerModel;
@@ -43,6 +43,10 @@ impl TransformerModel {
         device_verdict: bool,
     ) -> Result<()> {
         let block = k2_announce_block(seq_id, tokens, device_verdict);
+        // 2026-10-21: The control channel never waits behind the propose in flight.
+        if self.ctrl_send_block(&block, None)? {
+            return Ok(());
+        }
         // 2026-10-11: A device-step verify (its draft on the device) is announced without a
         // host wait, so the host queues the verify behind the propose in flight.
         if tokens[1] == metrale_model_layers::speculative::DEVICE_DRAFT {
@@ -53,6 +57,9 @@ impl TransformerModel {
 
     /// 2026-10-11: Rank 0: the verdict, in one broadcast.
     pub(in crate::model) fn ep_send_k2_verdict_impl(&self, verdict: K2Verdict) -> Result<()> {
+        if self.ctrl_send_verdict(verdict)? {
+            return Ok(());
+        }
         self.ep_broadcast_tokens(&verdict.to_words()).map(|_| ())
     }
 
@@ -71,7 +78,7 @@ impl TransformerModel {
         if device_verdict {
             return self.ep_worker_k2_device_verdict(seq, verified?);
         }
-        let words = self.ep_broadcast_tokens(&[0u32; K2_VERDICT_WORDS])?;
+        let words = self.ep_recv_k2_verdict_words()?;
         verified?;
         let verdict = K2Verdict::from_words(&words)?;
         self.ep_worker_k2_commit(seq, verdict.accepted)?;
@@ -153,8 +160,13 @@ impl TransformerModel {
         if let Err(e) = saved {
             tracing::warn!("EP worker save_hidden_for_mtp({hidden_idx:#x}) failed: {e:#}");
         }
+        // 2026-10-21: With the control channel the lone draft may stay on the device
+        // (`ep_ctrl::worker_proposes_on_device`).
+        let device = super::super::ep_ctrl::worker_proposes_on_device(
+            self.settings.runtime.glm_ep_ctrl_comm,
+        );
         if let Err(e) =
-            self.run_mtp_propose_inner(last_token, position, num_drafts, seq, None, false)
+            self.run_mtp_propose_inner(last_token, position, num_drafts, seq, None, device)
         {
             tracing::warn!("EP worker MTP propose failed (continuing): {e:#}");
         }
@@ -204,6 +216,30 @@ mod tests {
             k2_worker_commit(SsmRollbackMode::Snapshot, false),
             K2WorkerCommit::Mirror { rows: 1 }
         );
+    }
+
+    /// 2026-10-21: A worker leaves its draft on the device only with the control channel, and
+    /// then only where rank 0 may too (`wants_device_draft`: the device-step lever, one draft, no
+    /// mask); without the channel it proposes and reads back as before. A device draft is safe on
+    /// a worker even where rank 0 reads its own back: the next verify takes row 1 from the cell
+    /// only when rank 0 announces `DEVICE_DRAFT`, and rank 0's token otherwise.
+    #[test]
+    fn a_worker_keeps_its_draft_on_the_device_only_with_the_control_channel() {
+        use super::super::device_step::wants_device_draft;
+        use crate::model::ep_ctrl::worker_proposes_on_device;
+        for ctrl in [false, true] {
+            for lever in [false, true] {
+                for drafts in [1usize, 2] {
+                    let got =
+                        wants_device_draft(worker_proposes_on_device(ctrl), lever, drafts, false);
+                    assert_eq!(
+                        got,
+                        ctrl && lever && drafts == 1,
+                        "ctrl {ctrl} lever {lever} drafts {drafts}"
+                    );
+                }
+            }
+        }
     }
 
     /// 2026-10-11: Replay mode keeps the checkpointing path, since its verify reads the
