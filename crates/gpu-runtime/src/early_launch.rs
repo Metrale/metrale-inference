@@ -18,7 +18,11 @@
 //! queued after the launch runs after the graph. NCCL keeps its host tasks and kernels in launch
 //! order across graphs (`serialEvent`: an external wait honours a not yet executed record node of
 //! a graph launched before it; verified on GB10, 0 of 200 out of order, 200 of 200 with the wait
-//! removed).
+//! removed). That order rests on each graph's first host task waiting for `serialEvent`, which
+//! `METRALE_NCCL_HOST_HOIST` removes (it roots every host chain), so the two are never combined.
+//! The host chain never depends on the graph's kernels (NCCL 2.28-2.30 root it at that wait), so
+//! the early launch needs no hoist, and programmatic (PDL) edges among the kernels do not matter
+//! (`early_launch_nccl_gate`).
 //!
 //! Owner: gpu-runtime.
 //! Invariants:

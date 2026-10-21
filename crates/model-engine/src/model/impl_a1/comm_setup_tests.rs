@@ -51,27 +51,26 @@ fn the_ctrl_comm_lever_and_port_are_rank_agreed_as_set() {
 }
 
 /// 2026-10-21: The A2 levers are rank-agreed: a rank with either one alone differing differs in
-/// the compared table, and the early launch is compared as resolved (without the NCCL host hoist
-/// it needs, `1` agrees with off).
+/// the compared table, and the early launch is compared as resolved (beside the NCCL host hoist,
+/// which refuses it, `1` agrees with off).
 #[test]
 fn the_a2_levers_are_rank_agreed() {
     let table =
         |env: &[(&str, &str)]| super::rank_lever_table(&settings_from(env).unwrap()).unwrap();
-    let off = table(&[("METRALE_NCCL_HOST_HOIST", "1")]);
+    let off = table(&[]);
     for env in [
         "METRALE_GLM_GRAPH_EARLY_LAUNCH",
         "METRALE_GLM_MTP_ROW_NOSYNC",
     ] {
-        let on = table(&[("METRALE_NCCL_HOST_HOIST", "1"), (env, "1")]);
+        let on = table(&[(env, "1")]);
         assert_ne!(on, off, "{env} skew is not compared");
         let diff: Vec<_> = on.iter().zip(&off).filter(|(a, b)| a != b).collect();
         assert_eq!(diff.len(), 1, "{env}: {diff:?}");
         assert_eq!(diff[0].0.0, env);
     }
-    let unhoisted = table(&[("METRALE_GLM_GRAPH_EARLY_LAUNCH", "1")]);
-    assert_eq!(
-        unhoisted,
-        table(&[]),
-        "a refused early launch is compared as off"
-    );
+    let hoisted = table(&[
+        ("METRALE_GLM_GRAPH_EARLY_LAUNCH", "1"),
+        ("METRALE_NCCL_HOST_HOIST", "1"),
+    ]);
+    assert_eq!(hoisted, off, "a refused early launch is compared as off");
 }

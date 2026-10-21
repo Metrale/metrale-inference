@@ -30,11 +30,11 @@ pub(super) fn assert_rank_levers_agree(
         settings.runtime.glm_ep_ctrl_comm,
         metrale_model_layers::ep_wire::EpWire::get(),
     )?;
-    if settings.speculative.glm_graph_early_launch && !settings.runtime.nccl_host_hoist {
+    if settings.speculative.glm_graph_early_launch && settings.runtime.nccl_host_hoist {
         tracing::error!(
-            "METRALE_GLM_GRAPH_EARLY_LAUNCH=1 is refused without METRALE_NCCL_HOST_HOIST=1 (a \
-             graph's first NCCL host callback would still wait for its producers): the graphs \
-             launch on the compute stream as before"
+            "METRALE_GLM_GRAPH_EARLY_LAUNCH=1 is refused with METRALE_NCCL_HOST_HOIST=1 (the \
+             hoist drops each graph's NCCL serialEvent wait, so an early graph could post proxy \
+             ops out of order): the graphs launch on the compute stream as before"
         );
     }
     crate::rank_agree::assert_ranks_agree(gpu, comm.as_ref(), &rank_lever_table(settings)?)?;
@@ -109,7 +109,7 @@ pub(super) fn rank_lever_table(
             dflash_ctx_window(settings) as u64,
         ),
         // 2026-10-21: The early launch moves the verify and drafter graphs to side streams
-        // gated on the compute stream; resolved with the NCCL host hoist it needs.
+        // gated on the compute stream; resolved (off beside the NCCL host hoist).
         (
             "METRALE_GLM_GRAPH_EARLY_LAUNCH",
             u64::from(mtp.graph_early_launch),
