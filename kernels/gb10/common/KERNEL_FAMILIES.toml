@@ -2234,6 +2234,10 @@ kernels = [
   # 2026-10-21: dsa_index_scores_warp_paged's bytes, one lane per index head, the query in registers
   # (METRALE_GLM_DSA_SCORES_HEADS, default on; the captured decode's ceiling scores).
   "dsa_scores_warp::dsa_index_scores_heads_paged",
+  # 2026-10-21: dsa_topk_pools_radix's selection over C CTAs per row (METRALE_GLM_DSA_TOPK_MC,
+  # default on; the captured decode's ceiling top-k): four histogram passes and a collect.
+  "dsa_topk_mc::dsa_topk_mc_pass",
+  "dsa_topk_mc::dsa_topk_mc_collect",
   # 2026-10-14: dsa_index_scores_mma's bytes from per-pool BF16 keys + visibility, the key tiles
   # streamed through a cp.async ring (METRALE_GLM_DSA_SCORES_PIPE).
   "dsa_index_scores_pipe::dsa_pool_prep_bf16",
@@ -2269,7 +2273,7 @@ values = {}
 how = "instantiation"
 # 2026-10-09: The bodies live in dsa_indexer_body.cuh; dsa_indexer_rows.cu runs them for one
 # sequence per grid row (the batched decode's paged rows, METRALE_GLM_DSA_INDEXER_ROWS).
-files = ["kernels/gb10/common/dsa_indexer.cu", "kernels/gb10/common/dsa_indexer_body.cuh", "kernels/gb10/common/dsa_indexer_pools.cuh", "kernels/gb10/common/dsa_indexer_rows.cu", "kernels/gb10/common/dsa_scores_warp.cu", "kernels/gb10/common/dsa_indexer_fp8.cu", "kernels/gb10/common/dsa_scores_mma.cuh", "kernels/gb10/common/dsa_index_scores_pipe.cu", "kernels/gb10/common/dsa_sel_fold.cu", "kernels/gb10/common/dsa_topk_stream.cuh"]
+files = ["kernels/gb10/common/dsa_indexer.cu", "kernels/gb10/common/dsa_indexer_body.cuh", "kernels/gb10/common/dsa_indexer_pools.cuh", "kernels/gb10/common/dsa_indexer_rows.cu", "kernels/gb10/common/dsa_scores_warp.cu", "kernels/gb10/common/dsa_indexer_fp8.cu", "kernels/gb10/common/dsa_scores_mma.cuh", "kernels/gb10/common/dsa_index_scores_pipe.cu", "kernels/gb10/common/dsa_sel_fold.cu", "kernels/gb10/common/dsa_topk_stream.cuh", "kernels/gb10/common/dsa_topk_radix.cuh", "kernels/gb10/common/dsa_topk_mc.cu"]
 
 # 2026-10-08: NoPE latent decode attention over the selected tokens of an FP8 latent cache, one
 # CTA per (head, row). Its query is already in latent space and its output stays there: the

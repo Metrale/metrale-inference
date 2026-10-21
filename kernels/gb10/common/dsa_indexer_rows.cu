@@ -27,6 +27,7 @@
 #include "dsa_indexer_pools.cuh"
 #include "dsa_scores_mma.cuh"
 #include "dsa_topk_stream.cuh"
+#include "dsa_topk_radix.cuh"
 #include <stdint.h>
 
 // 2026-10-09: grid (1, rows), block >= 1: dsa_indexer_store per row.
@@ -406,9 +407,6 @@ extern "C" __global__ void __launch_bounds__(256) dsa_index_scores_mma(
 // them, so a replayed graph selects over this step's pools; the static shared memory does not
 // depend on them. Rows read scores at stride P and write selected pools at stride select_k, the
 // arguments as passed (a ceiling's max_pools and its select_k).
-#define DSA_TR_MAX 512u
-#define DSA_TR_WARPS 8u
-
 extern "C" __global__ void __launch_bounds__(256) dsa_topk_pools_radix(
     const float* __restrict__ scores,
     int* __restrict__ selected,
@@ -428,7 +426,7 @@ extern "C" __global__ void __launch_bounds__(256) dsa_topk_pools_radix(
     __shared__ unsigned int hist[DSA_TR_WARPS][256];
     __shared__ float cv[DSA_TR_MAX];
     __shared__ int ci[DSA_TR_MAX];
-    __shared__ unsigned int s_prefix, s_need, s_gt, s_eq, s_wsum[DSA_TR_WARPS];
+    __shared__ unsigned int s_need, s_gt, s_eq, s_wsum[DSA_TR_WARPS], s_digit, s_cnt;
     const unsigned int r = blockIdx.x, tid = threadIdx.x, lane = tid & 31u, warp = tid >> 5;
     if (r >= Q || select_k == 0u || select_k > DSA_TR_MAX || blockDim.x != 256u) return;
     const float* row = scores + (size_t)r * sc_stride;
@@ -446,42 +444,15 @@ extern "C" __global__ void __launch_bounds__(256) dsa_topk_pools_radix(
                 if ((key & mask) == prefix) atomicAdd(&hist[warp][(key >> shift) & 255u], 1u);
             }
             __syncthreads();
-            if (warp == 0u) {
-                // 2026-10-12: Lane l holds digits 255 - 8 l .. 248 - 8 l (descending).
-                unsigned int c[8], sum = 0u;
-#pragma unroll
-                for (int j = 0; j < 8; ++j) {
-                    const unsigned int d = 255u - 8u * lane - (unsigned int)j;
+            if (warp == 0u)
+                dsa_tr_pick([&](unsigned int d) {
                     unsigned int v = 0u;
 #pragma unroll
                     for (unsigned int w = 0; w < DSA_TR_WARPS; ++w) v += hist[w][d];
-                    c[j] = v;
-                    sum += v;
-                }
-                unsigned int incl = sum;
-#pragma unroll
-                for (int o = 1; o < 32; o <<= 1) {
-                    const unsigned int n = __shfl_up_sync(0xFFFFFFFFu, incl, o);
-                    if (lane >= (unsigned int)o) incl += n;
-                }
-                const unsigned int excl = incl - sum;
-                const unsigned int hit = __ballot_sync(0xFFFFFFFFu, excl < k && incl >= k);
-                if (lane == (unsigned int)(__ffs(hit) - 1)) {
-                    unsigned int cum = excl;
-#pragma unroll
-                    for (int j = 0; j < 8; ++j) {
-                        if (cum + c[j] >= k) {
-                            const unsigned int d = 255u - 8u * lane - (unsigned int)j;
-                            s_prefix = prefix | (d << shift);
-                            s_need = k - cum;
-                            break;
-                        }
-                        cum += c[j];
-                    }
-                }
-            }
+                    return v;
+                }, k, lane, &s_digit, &s_need, &s_cnt);
             __syncthreads();
-            prefix = s_prefix;
+            prefix |= s_digit << shift;
             k = s_need;
             mask |= 255u << shift;
         }
@@ -528,37 +499,8 @@ extern "C" __global__ void __launch_bounds__(256) dsa_topk_pools_radix(
             ci[i] = (int)i;
         }
     }
-    // 2026-10-12: 3. Bitonic sort of the `take` winners (padded to a power of two with entries
-    // that sort last on both keys), descending in the total order.
-    unsigned int n2 = 2u;
-    while (n2 < take) n2 <<= 1;
-    for (unsigned int i = take + tid; i < n2; i += blockDim.x) {
-        cv[i] = -FLT_MAX;
-        ci[i] = INT_MAX;
-    }
+    // 2026-10-12: 3. Bitonic sort of the `take` winners, descending in the total order
+    // (dsa_tr_sort_emit since 2026-10-21).
     __syncthreads();
-#define DSA_TR_GT(a, b) ((cv[(a)] > cv[(b)]) || (cv[(a)] == cv[(b)] && ci[(a)] < ci[(b)]))
-    for (unsigned int kk = 2; kk <= n2; kk <<= 1) {
-        for (unsigned int j = kk >> 1; j > 0; j >>= 1) {
-            for (unsigned int i = tid; i < n2; i += blockDim.x) {
-                const unsigned int l = i ^ j;
-                if (l > i) {
-                    const bool gt = DSA_TR_GT(i, l);
-                    const bool want_desc = (i & kk) == 0u;
-                    if (want_desc != gt) {
-                        const float tv = cv[i];
-                        cv[i] = cv[l];
-                        cv[l] = tv;
-                        const int ti = ci[i];
-                        ci[i] = ci[l];
-                        ci[l] = ti;
-                    }
-                }
-            }
-            __syncthreads();
-        }
-    }
-#undef DSA_TR_GT
-    for (unsigned int i = tid; i < select_k; i += blockDim.x)
-        selected[(size_t)r * sel_stride + i] = (i < take && ci[i] != INT_MAX) ? ci[i] : DSA_INVALID;
+    dsa_tr_sort_emit(cv, ci, take, select_k, selected + (size_t)r * sel_stride);
 }
