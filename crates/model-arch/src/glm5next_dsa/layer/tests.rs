@@ -164,7 +164,8 @@ fn the_indexer_checks_capacity_before_it_writes() {
 /// 2026-09-25: In `decode_a`, `verify_b`, `verify_c` and `verify_c2`, the first
 /// `check_replay_room` call comes before the first `launch_graph`, and `sync_replayed_step`
 /// comes after it. A replay writes indexer rows with no host code in the loop, so the room
-/// check has to run before the launch.
+/// check has to run before the launch. 2026-10-21: A launch is either call
+/// (`EarlyLaunch::launch_with` launches the graph early or plainly).
 #[test]
 fn every_graph_replay_checks_room_before_it_launches() {
     let paths: [(&str, &str); 4] = [
@@ -189,8 +190,10 @@ fn every_graph_replay_checks_room_before_it_launches() {
         let guard = src
             .find("layer.check_replay_room(")
             .unwrap_or_else(|| panic!("{name}: the replay branch must precheck capacity"));
-        let launch = src
-            .find("self.gpu.launch_graph(")
+        let launch = ["self.gpu.launch_graph(", "EarlyLaunch::launch_with("]
+            .iter()
+            .filter_map(|p| src.find(p))
+            .min()
             .unwrap_or_else(|| panic!("{name}: expected a graph replay"));
         assert!(
             guard < launch,
@@ -204,6 +207,42 @@ fn every_graph_replay_checks_room_before_it_launches() {
             launch < sync,
             "{name}: the reconcile stays AFTER the launch — moving it would change the \
              A56 rewind semantics this fix must not touch"
+        );
+    }
+}
+
+/// 2026-10-21: A graph launched early on its side stream must have been captured behind the gate
+/// (its only ordering after the compute stream's work), so a file that launches through
+/// `EarlyLaunch::launch_with` captures only through `begin_capture_with`, with the same `early`.
+#[test]
+fn every_early_launched_graph_is_captured_behind_the_gate() {
+    let files: [(&str, &str); 2] = [
+        (
+            "verify_b",
+            include_str!("../../../../model-engine/src/model/trait_impl/verify_b.rs"),
+        ),
+        (
+            "mtp graph",
+            include_str!("../../glm5next_mtp_head/graph.rs"),
+        ),
+    ];
+    for (name, src) in files {
+        let launches = src.matches("EarlyLaunch::launch_with(early,").count();
+        let captures = src
+            .matches("EarlyLaunch::begin_capture_with(early,")
+            .count();
+        assert!(
+            launches >= 2,
+            "{name}: the replay and the first launch go early"
+        );
+        assert_eq!(captures, 1, "{name}: one capture, behind the gate");
+        assert!(
+            !src.contains(".begin_capture(stream)"),
+            "{name}: a capture without the gate"
+        );
+        assert!(
+            !src.contains(".launch_graph("),
+            "{name}: a launch beside the early one"
         );
     }
 }

@@ -35,7 +35,7 @@ fn main() -> anyhow::Result<()> {
     let gemv = g.kernel("gemv", "dense_gemv_bf16")?;
     g.memset(d, 0, N)?;
     let early = EarlyLaunch::new(g, compute)?;
-    early.begin_capture(g, compute)?;
+    EarlyLaunch::begin_capture_with(Some(&early), g, compute)?;
     g.copy_d2d_async(a, b, N, compute)?;
     let gated = g.end_capture(compute)?;
     g.begin_capture(compute)?;
@@ -58,11 +58,12 @@ fn main() -> anyhow::Result<()> {
                 .arg_u32(DELAY_K)
                 .launch(compute)?;
             g.memset_async(a, first, N, compute)?;
-            if early_launch {
-                early.launch(g, gated, compute)?;
+            let (with, graph) = if early_launch {
+                (Some(&early), gated)
             } else {
-                g.launch_graph(plain, compute)?;
-            }
+                (None, plain)
+            };
+            EarlyLaunch::launch_with(with, g, graph, compute)?;
             g.memset_async(a, second, N, compute)?;
             g.synchronize(compute)?;
             g.copy_d2h(b, &mut host)?;

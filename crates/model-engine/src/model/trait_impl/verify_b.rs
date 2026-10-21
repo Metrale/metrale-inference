@@ -20,6 +20,7 @@ use anyhow::{Result, bail};
 use metrale_cache::kv_cache::PagedKvCache;
 use metrale_config::{LayerType, ModelConfig};
 use metrale_gpu_runtime::buffers::BufferArena;
+use metrale_gpu_runtime::early_launch::EarlyLaunch;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, GraphHandle, KernelHandle};
 
 use super::super::block_mgmt::{
@@ -37,6 +38,9 @@ use metrale_model_layers::layer::{
 use metrale_model_layers::layers::ops;
 use metrale_model_layers::speculative::DraftProposer;
 use metrale_model_layers::weight_map::{DenseWeight, MtpWeights, QuantizedWeight};
+
+/// 2026-10-21: The K=2 verify graphs' early launch (`METRALE_GLM_GRAPH_EARLY_LAUNCH`).
+static EARLY: std::sync::OnceLock<Option<EarlyLaunch>> = std::sync::OnceLock::new();
 
 impl TransformerModel {
     pub(super) fn decode_verify_graphed_dispatch(
@@ -269,6 +273,16 @@ impl TransformerModel {
             moe_lora_route: self.decode_moe_route(),
         };
 
+        // 2026-10-21: A graph-less verify launches nothing early.
+        let levers =
+            || metrale_model_arch::glm5next_mtp_head::MtpLevers::from_settings(&self.settings);
+        let early = EarlyLaunch::shared(
+            &EARLY,
+            || Ok(levers()?.graph_early_launch),
+            self.gpu.as_ref(),
+            stream,
+        )?
+        .filter(|_| use_graphs);
         let mut graph_cache = if use_graphs {
             Some(self.verify2_graph.lock())
         } else {
@@ -290,7 +304,7 @@ impl TransformerModel {
             for (i, layer) in self.layers.iter().enumerate() {
                 layer.check_replay_room(&*seq.layer_states[i], seq.seq_len, k)?;
             }
-            self.gpu.launch_graph(graph, stream)?;
+            EarlyLaunch::launch_with(early, self.gpu.as_ref(), graph, stream)?;
             // 2026-09-25: A replay runs only kernels, so host-side per-sequence bookkeeping
             // (the GLM-5.3 DSA indexer length) is reconciled here to `seq_len + k`, not
             // advanced by k, because the previous verify kept only its accepted prefix
@@ -308,7 +322,7 @@ impl TransformerModel {
                 metrale_telemetry::launch_trace::begin();
             }
             if use_graphs {
-                self.gpu.begin_capture(stream)?;
+                EarlyLaunch::begin_capture_with(early, self.gpu.as_ref(), stream)?;
             }
 
             // 2026-09-29: `--forward circuit`: the compiled verify program runs the layers, the
@@ -442,7 +456,7 @@ impl TransformerModel {
                     {
                         cache.insert(graph_key, graph);
                     }
-                    self.gpu.launch_graph(graph, stream)?;
+                    EarlyLaunch::launch_with(early, self.gpu.as_ref(), graph, stream)?;
                 }
             }
             if graph_trace && let Some(report) = metrale_telemetry::launch_trace::end_and_diff(40) {

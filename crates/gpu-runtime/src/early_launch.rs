@@ -28,6 +28,8 @@
 //! - One graph runs on the side stream at a time: the compute stream waits for each before any
 //!   later work, so the next launch finds the side stream idle.
 
+use std::sync::OnceLock;
+
 use anyhow::Result;
 
 use crate::gpu::{GpuBackend, GraphHandle};
@@ -85,6 +87,55 @@ impl EarlyLaunch {
             gate: gpu.create_event()?,
             done: gpu.create_event()?,
         })
+    }
+
+    /// 2026-10-21: The instance in `cell`: resolved once, on the first call, from `on` (an
+    /// instance at `compute`'s priority when it says so, none otherwise); later calls return it.
+    ///
+    /// # Errors
+    /// `on` fails or the instance cannot be created.
+    pub fn shared<'a>(
+        cell: &'a OnceLock<Option<Self>>,
+        on: impl FnOnce() -> Result<bool>,
+        gpu: &dyn GpuBackend,
+        compute: u64,
+    ) -> Result<Option<&'a Self>> {
+        if let Some(e) = cell.get() {
+            return Ok(e.as_ref());
+        }
+        let e = on()?.then(|| Self::new(gpu, compute)).transpose()?;
+        Ok(cell.get_or_init(|| e).as_ref())
+    }
+
+    /// 2026-10-21: [`Self::begin_capture`] with `early`, a plain capture without it.
+    ///
+    /// # Errors
+    /// As [`Self::begin_capture`] or `GpuBackend::begin_capture`.
+    pub fn begin_capture_with(
+        early: Option<&Self>,
+        gpu: &dyn GpuBackend,
+        stream: u64,
+    ) -> Result<()> {
+        match early {
+            Some(e) => e.begin_capture(gpu, stream),
+            None => gpu.begin_capture(stream),
+        }
+    }
+
+    /// 2026-10-21: [`Self::launch`] with `early`, a plain launch on `compute` without it.
+    ///
+    /// # Errors
+    /// As [`Self::launch`] or `GpuBackend::launch_graph`.
+    pub fn launch_with(
+        early: Option<&Self>,
+        gpu: &dyn GpuBackend,
+        graph: GraphHandle,
+        compute: u64,
+    ) -> Result<()> {
+        match early {
+            Some(e) => e.launch(gpu, graph, compute),
+            None => gpu.launch_graph(graph, compute),
+        }
     }
 
     /// 2026-10-21: Begin capturing on `stream` a graph for [`Self::launch`]: its first node waits

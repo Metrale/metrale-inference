@@ -263,18 +263,35 @@ fn the_prefill_wait_composes_as_before() {
     }
 }
 
-/// 2026-10-21: The A2 levers (no old reader): off unset, on at `1`, a non-switch refused.
+/// 2026-10-21: The A2 levers (no old reader): off unset, on at `1`, a non-switch refused; the
+/// early launch only with the NCCL host hoist (`1` alone resolves off).
 #[test]
 fn the_a2_levers_are_opt_in_switches() {
-    let cases: [Switch; 2] = [
-        ("METRALE_GLM_GRAPH_EARLY_LAUNCH", |l| l.graph_early_launch),
-        ("METRALE_GLM_MTP_ROW_NOSYNC", |l| l.row_nosync),
+    const HOIST: (&str, &str) = ("METRALE_NCCL_HOST_HOIST", "1");
+    type Field = fn(&MtpLevers) -> bool;
+    let cases: [(&str, Option<(&str, &str)>, Field); 2] = [
+        ("METRALE_GLM_GRAPH_EARLY_LAUNCH", Some(HOIST), |l| {
+            l.graph_early_launch
+        }),
+        ("METRALE_GLM_MTP_ROW_NOSYNC", None, |l| l.row_nosync),
     ];
-    for (env, field) in cases {
+    for (env, needs, field) in cases {
+        let with = |v: &'static str| {
+            let mut p = vec![(env, v)];
+            p.extend(needs);
+            new_with(&p, field)
+        };
         assert_eq!(new_with(&[], field), Some(false), "{env} unset");
-        assert_eq!(new_at(env, Some("1"), field), Some(true), "{env}=1");
-        assert_eq!(new_at(env, Some("0"), field), Some(false), "{env}=0");
-        assert_eq!(new_at(env, Some("garbage"), field), None, "{env}=garbage");
+        assert_eq!(with("1"), Some(true), "{env}=1");
+        assert_eq!(with("0"), Some(false), "{env}=0");
+        assert_eq!(with("garbage"), None, "{env}=garbage");
+        if needs.is_some() {
+            assert_eq!(
+                new_at(env, Some("1"), field),
+                Some(false),
+                "{env}=1 without its need"
+            );
+        }
     }
 }
 
