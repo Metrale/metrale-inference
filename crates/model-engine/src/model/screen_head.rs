@@ -11,6 +11,9 @@
 //! scratch words on every rank. The logits are then not written; host reads of them recompute
 //! what they read exactly (`screen_head_lazy.rs`).
 //!
+//! The one-row decode step of the sharded device argmax (`device_argmax.rs`) takes the same
+//! screen for its masked key pair whenever the screen is usable.
+//!
 //! Which verifies take it: rank 0 asks for it per request (the scheduler's `screen_picks_ok`)
 //! in the fused announcement (`FLAG_K2_SCREEN_HEAD`), only when this model built the screen; a
 //! worker follows the flag. Every other head call is the full head.
@@ -29,7 +32,8 @@ use anyhow::{Context, Result, bail};
 use metrale_config::ModelConfig;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_model_layers::layers::ops::{
-    self, SCREEN_MAX_M, SCREEN_STAMP_BYTES, SCREEN_STATE_BYTES, ScreenKernels, ScreenShard,
+    self, SCREEN_KEY_BYTES, SCREEN_MAX_M, SCREEN_STAMP_BYTES, SCREEN_STATE_BYTES, ScreenKernels,
+    ScreenShard,
 };
 use metrale_model_layers::layers::try_target_kernel;
 use metrale_model_layers::weight_map::DenseWeight;
@@ -66,9 +70,10 @@ impl ScreenHead {
 }
 
 /// 2026-10-21: Build the screen copy when the lever is on and this serve can use it: a BF16 head
-/// (no NVFP4/FP8 head), a vocab-sharded head over two or more ranks, the fused K=2 wire asked
-/// for, a one-shot exchange of at least the key bytes, a hidden size the kernels take, and the
-/// kernels in this build. `None` (logged) otherwise. A weight the bound does not cover fails.
+/// (no NVFP4/FP8 head), a vocab-sharded head over two or more ranks, a head call that takes it
+/// (the fused K=2 wire asked for, or the sharded device argmax decode on), a one-shot exchange of
+/// at least the key bytes, a hidden size the kernels take, and the kernels in this build. `None`
+/// (logged) otherwise. A weight the bound does not cover fails.
 pub(crate) fn build_screen_head(
     gpu: &dyn GpuBackend,
     settings: &metrale_settings::InferenceServerSettings,
@@ -100,9 +105,11 @@ pub(crate) fn build_screen_head(
         Some("the head is not BF16")
     } else if shard.is_none() {
         Some("the head is not vocab-sharded")
-    } else if !metrale_model_layers::speculative::k2_fused_requested() {
-        Some("the fused K=2 wire is not asked for")
-    } else if comm.is_none_or(|c| c.oneshot_max_bytes() < SCREEN_ROWS * 8) {
+    } else if !metrale_model_layers::speculative::k2_fused_requested()
+        && !settings.runtime.ep_device_argmax
+    {
+        Some("neither the fused K=2 wire nor the device argmax decode is asked for")
+    } else if comm.is_none_or(|c| c.oneshot_max_bytes() < SCREEN_ROWS * SCREEN_KEY_BYTES) {
         Some("no one-shot exchange")
     } else if !ops::screen_shape_ok(SCREEN_ROWS as u32, k) {
         Some("the hidden size")
@@ -184,7 +191,7 @@ impl TransformerModel {
 
     /// 2026-10-21: Whether a K=2 verify here may end in the screen: built, and no head feature
     /// the screen does not reproduce (token overlays, a softcap, another head dtype).
-    fn screen_usable(&self) -> bool {
+    pub(super) fn screen_usable(&self) -> bool {
         self.screen_head().is_some()
             && self.overlays.is_none()
             && self.logit_softcap_kernel.0 == 0
@@ -266,12 +273,13 @@ impl TransformerModel {
             &sh.shard,
             normed,
             k as u32,
+            DevicePtr::NULL,
             sh.kappa,
             stream,
         )?;
         let order = (!graph).then_some(stream);
         let peers = comm
-            .exchange_partials(sh.shard.state.0, k * 8, order)?
+            .exchange_partials(sh.shard.state.0, k * SCREEN_KEY_BYTES, order)?
             .context(
                 "the screened head needs the one-shot exchange (--all-reduce-oneshot-max-kb)",
             )?;

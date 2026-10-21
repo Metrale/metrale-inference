@@ -11,6 +11,10 @@
 //! step's row mask (`metrale_sampling::feed_argmax_key`). The logits row is then not complete,
 //! so a step is armed only when its readback is the device argmax.
 //!
+//! 2026-10-21: With the screened head built (`screen_head.rs`), the slice is not projected at
+//! all: the screen keys it (the same `[p, q]` pair, under the same mask, from the INT8 copy and
+//! an exact rescore of the rows its bound keeps), and the exchange and resolve are unchanged.
+//!
 //! Rank 0's router arms the next step (`arm`), uploading the row mask; a worker arms from the
 //! command block's flag and mask (`arm_from_block`). The step takes the arming when it starts
 //! (`begin_step`); its graph key carries the choice.
@@ -36,6 +40,9 @@ use crate::traits::RowMask;
 
 /// 2026-10-10: Bytes of the key pair `[p, q]`.
 const KEY_BYTES: usize = 16;
+// 2026-10-21: A screened step exchanges the screen's state block in place of `keys`: its first
+// row's pair must be this layout.
+const _: () = assert!(KEY_BYTES == ops::SCREEN_KEY_BYTES);
 
 pub(crate) struct DeviceArgmax {
     shard_kernel: KernelHandle,
@@ -162,10 +169,9 @@ impl TransformerModel {
         Ok(())
     }
 
-    /// 2026-10-10: The head of a decode step that ends in the device argmax: this rank's slice
-    /// of the BF16 head into its range of the logits row (as `lm_head`'s sharded branch, without
-    /// the zeroing and the all-reduce), its keys, the 16-byte exchange, and the resolve into
-    /// feed cell 0, on every rank. `graph` as for the layers' exchanges: under capture the
+    /// 2026-10-10: The head of a decode step that ends in the device argmax: this rank's keys
+    /// (from the screen when it is usable, else from its projected slice), the 16-byte exchange,
+    /// and the resolve into feed cell 0, on every rank. `graph` as for the layers' exchanges: under capture the
     /// exchange runs on the communicator's own stream.
     pub(crate) fn lm_head_device_argmax(
         &self,
@@ -179,10 +185,54 @@ impl TransformerModel {
         let comm = self
             .comm_ref()
             .context("device argmax step without a communicator")?;
+        let da = &self.device_argmax;
+        self.screen_clear_lazy();
+        let screen = self.screen_head().filter(|_| self.screen_usable());
+        let keys = match screen {
+            Some(sh) => {
+                ops::screen_head_keys(
+                    self.gpu.as_ref(),
+                    &sh.kernels,
+                    &sh.shard,
+                    hidden,
+                    1,
+                    self.feed_masks,
+                    sh.kappa,
+                    stream,
+                )?;
+                sh.shard.state
+            }
+            None => self.device_argmax_shard_keys(hidden, (begin, len), stream)?,
+        };
+        let order = (!graph).then_some(stream);
+        let peers = comm.exchange_partials(keys.0, KEY_BYTES, order)?.context(
+            "the device argmax needs the one-shot exchange (--all-reduce-oneshot-max-kb)",
+        )?;
+        ops::argmax_key_resolve(
+            self.gpu.as_ref(),
+            da.resolve_kernel,
+            keys,
+            DevicePtr(peers.recv),
+            (peers.slot_elems * 2) as u64,
+            (peers.world_size - 1) as u32,
+            self.feed_masks,
+            self.feed_cells,
+            stream,
+        )
+    }
+
+    /// 2026-10-10: This rank's slice of the BF16 head into its range of the logits row (as
+    /// `lm_head`'s sharded branch, without the zeroing and the all-reduce), then its keys;
+    /// returns the keys.
+    fn device_argmax_shard_keys(
+        &self,
+        hidden: DevicePtr,
+        (begin, len): (usize, usize),
+        stream: u64,
+    ) -> Result<DevicePtr> {
         let h = self.config.hidden_size as u32;
         let logits = self.buffers.logits();
         let da = &self.device_argmax;
-        self.screen_clear_lazy();
         ops::dense_gemv(
             self.gpu.as_ref(),
             self.dense_gemv_kernel,
@@ -206,23 +256,7 @@ impl TransformerModel {
             len as u32,
             stream,
         )?;
-        let order = (!graph).then_some(stream);
-        let peers = comm
-            .exchange_partials(da.keys.0, KEY_BYTES, order)?
-            .context(
-                "the device argmax needs the one-shot exchange (--all-reduce-oneshot-max-kb)",
-            )?;
-        ops::argmax_key_resolve(
-            self.gpu.as_ref(),
-            da.resolve_kernel,
-            da.keys,
-            DevicePtr(peers.recv),
-            (peers.slot_elems * 2) as u64,
-            (peers.world_size - 1) as u32,
-            self.feed_masks,
-            self.feed_cells,
-            stream,
-        )
+        Ok(da.keys)
     }
 
     /// 2026-10-10: Copy the `rows` feed cells a device-argmax step resolved to `dst`: with an

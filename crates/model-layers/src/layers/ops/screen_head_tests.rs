@@ -198,3 +198,49 @@ fn a_bound_without_the_quantization_term_loses_the_argmax() {
         "the rounding terms alone must not cover a coherent quantization error"
     );
 }
+
+/// 2026-10-21: Whether the masked pick (the BF16 argmax over the rows other than `mask`) is a
+/// candidate when the threshold's `L` is the max `lo` over the rows other than `mask`
+/// (`masked_l`, the masked L cell) or over every row (the plain cell).
+fn masked_argmax_kept(rows: &[Vec<f32>], x: &[f32], mask: usize, masked_l: bool) -> bool {
+    let kappa = f64::from(screen_kappa(x.len() as u32));
+    let vals: Vec<f32> = rows.iter().map(|w| bf16_round(reference(w, x))).collect();
+    let best = (0..rows.len())
+        .filter(|&i| i != mask)
+        .map(|i| vals[i])
+        .fold(f32::NEG_INFINITY, f32::max);
+    let b: Vec<(f64, f64)> = rows.iter().map(|w| bounds(w, x, kappa)).collect();
+    let l = (0..rows.len())
+        .filter(|&i| !masked_l || i != mask)
+        .map(|i| b[i].0)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let pad = 2f64.powi(-7) * (1.0 + 2f64.powi(-7)) * l.abs() + 2f64.powi(-120);
+    (0..rows.len()).all(|i| i == mask || vals[i] != best || b[i].1 >= l - pad)
+}
+
+#[test]
+fn the_masked_pick_needs_the_masked_lower_bound() {
+    // 2026-10-21: x along row 0, which leads by far; with row 0 masked the pick is among the
+    // rest, all far under row 0's lower bound. The masked L cell keeps it; the plain cell's
+    // threshold drops every other row, the pick included.
+    let k = 512usize;
+    let mut g = Lcg(23);
+    let rows: Vec<Vec<f32>> = (0..24)
+        .map(|_| (0..k).map(|_| bf16_round(g.f() * 0.05)).collect())
+        .collect();
+    let x: Vec<f32> = rows[0]
+        .iter()
+        .map(|w| bf16_round(w * 400.0 + g.f() * 0.5))
+        .collect();
+    for mask in [0usize, 5] {
+        assert!(masked_argmax_kept(&rows, &x, mask, true), "mask {mask}");
+    }
+    assert!(
+        masked_argmax_kept(&rows, &x, 5, false),
+        "a mask off the leader leaves the plain threshold enough"
+    );
+    assert!(
+        !masked_argmax_kept(&rows, &x, 0, false),
+        "the plain L cell must lose the masked pick when the leader is masked"
+    );
+}

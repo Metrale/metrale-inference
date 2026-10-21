@@ -8,14 +8,20 @@
 //!   combined by `screen_head_resolve`'s peer max, as the one-shot exchange hands them) must be
 //!   `argmax_bf16` over the full head's logits (`dense_gemv_bf16_batchm` at M = 2,
 //!   `dense_gemv_bf16` at M = 1). Also: 4,096 recomputed logits must equal the full head's bytes.
-//!   Prints the candidate-set distribution. Exit status 1 on any difference.
+//!   Prints the candidate-set distribution. Every M = 1 row also takes a masked pick
+//!   (`masked.rs`). Exit status 1 on any difference.
 //! - `sabotage half|noquant [rows]`: the same with the bound halved, or with only its rounding
 //!   terms; it must go RED on the adversarial family.
 //! - `bench`: the old shard head against the screen at M = 1 and 2, one rank's shard.
+//! - `census [rows]`: host only, the candidate sets of a 4-bit screen beside the INT8 one's
+//!   (`census.rs`).
 //!
 //!   METRALE_TARGET_MODEL=glm-5.3-flash cargo run -p metrale-gpu-examples --release \
 //!       --example screen_head_gate --features cuda,gpu-examples -- gate 100000
 
+mod bench;
+mod census;
+mod masked;
 mod rows;
 
 use std::io::{Read, Seek, SeekFrom};
@@ -145,7 +151,16 @@ impl Rig<'_> {
     fn screened(&self, m: usize, kappa: f32) -> Result<(Vec<u32>, Vec<u32>)> {
         let s = self.g.default_stream();
         for sh in &self.shards {
-            ops::screen_head_keys(self.g, &self.k, sh, self.x, m as u32, kappa, s)?;
+            ops::screen_head_keys(
+                self.g,
+                &self.k,
+                sh,
+                self.x,
+                m as u32,
+                DevicePtr::NULL,
+                kappa,
+                s,
+            )?;
         }
         ops::screen_head_resolve(
             self.g,
@@ -216,9 +231,6 @@ fn pct(v: &mut [u32], p: f64) -> u32 {
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mode = args.first().map(String::as_str).unwrap_or("gate");
-    let gpu = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
-    let g: &dyn GpuBackend = &gpu;
-
     let t0 = Instant::now();
     let head_bytes = tensor("lm_head.weight")?;
     ensure!(head_bytes.len() == V * K * 2);
@@ -230,6 +242,12 @@ fn main() -> Result<()> {
         .chunks_exact(2)
         .map(|c| bf16::from_bits(u16::from_le_bytes([c[0], c[1]])))
         .collect();
+    if mode == "census" {
+        let rows = args.get(1).map_or(Ok(500), |s| s.parse())?;
+        return census::census(&head, &gamma, rows);
+    }
+    let gpu = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
+    let g: &dyn GpuBackend = &gpu;
     let w = g.alloc(V * K * 2)?;
     g.copy_h2d(&head_bytes, w)?;
     drop(head_bytes);
@@ -305,7 +323,7 @@ fn main() -> Result<()> {
             };
             gate(&rig, &head, &gamma, rows, kappa, name)
         }
-        "bench" => bench(&rig, &head, &gamma),
+        "bench" => bench::bench(&rig, &head, &gamma),
         other => bail!("mode gate|sabotage|bench, got {other}"),
     }
 }
@@ -327,6 +345,7 @@ fn gate(
     let mut stats: Vec<(Family, usize, usize, Vec<u32>)> =
         fams.iter().map(|&f| (f, 0, 0, Vec::new())).collect();
     let (mut done, mut byte_diffs, mut probes) = (0usize, 0usize, 0usize);
+    let mut masked = masked::Masked::new(rig.g)?;
     let t0 = Instant::now();
     let mut batch = 0usize;
     while done < rows {
@@ -341,7 +360,10 @@ fn gate(
         rig.g.copy_h2d(&bytes_of(&xs), rig.x)?;
         let want = rig.reference(m)?;
         let (got, cand) = rig.screened(m, kappa)?;
-        if batch % 50 == 0 && name == "exact" {
+        if m == 1 {
+            masked.check(rig, &mut g, want[0], kappa)?;
+        }
+        if batch.is_multiple_of(50) && name == "exact" {
             let ids: Vec<u32> = (0..64)
                 .map(|_| g.below(V) as u32)
                 .chain(want.iter().copied())
@@ -397,88 +419,15 @@ fn gate(
             "recomputed logits: {probes} probes, {byte_diffs} differ from the full head's bytes"
         );
     }
+    println!(
+        "masked one-row picks: {}, {} decided by the masked key, {} differ",
+        masked.picks, masked.q_decided, masked.diffs
+    );
+    diffs += masked.diffs;
     if diffs != 0 || byte_diffs != 0 {
         println!("RED: {diffs} tokens differ ({name})");
         std::process::exit(1);
     }
     println!("GREEN: every token identical ({name})");
-    Ok(())
-}
-
-fn bench(rig: &Rig, head: &[bf16], gamma: &[f32]) -> Result<()> {
-    let s = rig.g.default_stream();
-    let sh = &rig.shards[0];
-    let n = sh.rows as usize;
-    let mut g = Rng(99);
-    let wt = DenseWeight { weight: sh.w };
-    let iters = 300;
-    for m in [1usize, 2] {
-        for fam in [Family::Peaked, Family::Iso] {
-            let xs: Vec<f32> = (0..m)
-                .flat_map(|_| rows::realistic(fam, &mut g, head, K, gamma))
-                .collect();
-            rig.g.copy_h2d(&bytes_of(&xs), rig.x)?;
-            let time = |f: &dyn Fn() -> Result<()>| -> Result<f64> {
-                for _ in 0..20 {
-                    f()?;
-                }
-                rig.g.synchronize(s)?;
-                let t = Instant::now();
-                for _ in 0..iters {
-                    f()?;
-                }
-                rig.g.synchronize(s)?;
-                Ok(t.elapsed().as_secs_f64() * 1e6 / iters as f64)
-            };
-            let old = time(&|| {
-                if m == 1 {
-                    ops::dense_gemv(
-                        rig.g, rig.k_gemv, rig.x, &wt, rig.logits, n as u32, K as u32, s,
-                    )
-                } else {
-                    ops::dense_gemv_batchm(
-                        rig.g,
-                        rig.k_batchm,
-                        rig.x,
-                        &wt,
-                        rig.logits,
-                        m as u32,
-                        n as u32,
-                        K as u32,
-                        V as u32,
-                        s,
-                    )
-                }
-            })?;
-            let kappa = ops::screen_kappa(K as u32);
-            let new = time(&|| {
-                ops::screen_head_keys(rig.g, &rig.k, sh, rig.x, m as u32, kappa, s)?;
-                ops::screen_head_resolve(
-                    rig.g,
-                    rig.k.resolve,
-                    sh.state,
-                    DevicePtr::NULL,
-                    0,
-                    0,
-                    m as u32,
-                    rig.out,
-                    s,
-                )
-            })?;
-            let cand = rig.u32s(sh.state.offset(SCREEN_STATE_COUNTS), m);
-            let ob = (n * K * 2) as f64;
-            let nb = (n * K + n * K / 32) as f64
-                + cand
-                    .iter()
-                    .map(|&c| f64::from(c) * K as f64 * 2.0)
-                    .sum::<f64>();
-            println!(
-                "M={m} {fam:?}: old {old:.1} us ({:.0} GB/s), screen {new:.1} us ({:.0} GB/s), candidates {cand:?}, {:.3} ms saved",
-                ob / old / 1e3,
-                nb / new / 1e3,
-                (old - new) / 1e3
-            );
-        }
-    }
     Ok(())
 }

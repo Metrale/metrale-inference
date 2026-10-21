@@ -36,6 +36,14 @@
 //! `argmax_bf16` breaks ties (`argmax_key.cuh`), so the max key over every rank's shard names
 //! the token `argmax_bf16` returns for the whole row.
 //!
+//! **The masked pick.** With mask ids (the device feed's row mask), the same claim over the rows
+//! other than the mask ids, with `L` their max `lo` (the masked L cell, at most `L`), keeps the
+//! masked argmax too; the candidates of that lower threshold are keyed both ways, the masked way
+//! as `argmax_bf16_batch_feed` breaks ties (`masked_key`). A mask id itself keys at `-inf` and
+//! can win only when every other row is `-inf` or NaN, which a finite scan rules out (the full
+//! flag keys every row otherwise). `dense_gemv_bf16` (one row) has `dense_gemv_bf16_batchm`'s
+//! per-row arithmetic, so the one-row decode head is reproduced the same way.
+//!
 //! Owner: model-layers ops.
 //! Invariants: [`screen_shape_ok`] holds for every launch.
 
@@ -52,7 +60,10 @@ pub const SCREEN_MAX_MK: u32 = 16_384;
 /// 2026-10-21: Bytes of the state block (`ScreenState`, padded), zeroed before each call.
 pub const SCREEN_STATE_BYTES: usize = 128;
 /// 2026-10-21: Offset of the u32 candidate counts in the state block.
-pub const SCREEN_STATE_COUNTS: usize = 64;
+pub const SCREEN_STATE_COUNTS: usize = 112;
+/// 2026-10-21: Bytes of one activation row's `[p, q]` key pair at the head of the state block
+/// (`argmax_key.cu`'s layout): the bytes a screened call exchanges per row.
+pub const SCREEN_KEY_BYTES: usize = 16;
 /// 2026-10-21: Rows of the head each scan warp walks (grid sizing only).
 const SCAN_ROWS_PER_WARP: u32 = 8;
 /// 2026-10-21: Warps per block of the scan and rescore (`SCREEN_WARPS`).
@@ -172,8 +183,9 @@ pub fn rescore_grid(rows: u32) -> u32 {
     div_ceil(div_ceil(rows, 32), WARPS).max(1)
 }
 
-/// 2026-10-21: This shard's argmax keys of the `m` activation rows at `x` into the state block:
-/// zero the state, scan, rescore. `kappa` is [`screen_kappa`] in production.
+/// 2026-10-21: This shard's argmax key pairs of the `m` activation rows at `x` into the state
+/// block: zero the state, scan, rescore. `masks`: two u32 mask ids (`argmax_key_shard_bf16`'s),
+/// or NULL for none. `kappa` is [`screen_kappa`] in production.
 #[allow(clippy::too_many_arguments)]
 pub fn screen_head_keys(
     gpu: &dyn GpuBackend,
@@ -181,6 +193,7 @@ pub fn screen_head_keys(
     sh: &ScreenShard,
     x: DevicePtr,
     m: u32,
+    masks: DevicePtr,
     kappa: f32,
     stream: u64,
 ) -> Result<()> {
@@ -203,6 +216,8 @@ pub fn screen_head_keys(
         .arg_f32(kappa)
         .arg_ptr(sh.upper)
         .arg_ptr(sh.state)
+        .arg_ptr(masks)
+        .arg_u32(sh.base)
         .launch(stream)?;
     KernelLaunch::new(gpu, k.rescore)
         .grid([rescore_grid(sh.rows), 1, 1])
@@ -215,6 +230,7 @@ pub fn screen_head_keys(
         .arg_u32(sh.base)
         .arg_ptr(sh.upper)
         .arg_ptr(sh.state)
+        .arg_ptr(masks)
         .launch(stream)
 }
 

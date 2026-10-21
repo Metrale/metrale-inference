@@ -31,14 +31,24 @@
 #define SCREEN_MAX_MK 16384u
 #define SCREEN_WARPS 8u
 
-// 2026-10-21: State block offsets (bytes): keys u64[4] @0, L cells u32[4] @32, full flags u32[4]
-// @48, candidate counts u32[4] @64. Mirrored by SCREEN_STATE_* in the host wrappers.
+// 2026-10-21: State block offsets (bytes): key pairs u64[4][2] (p, q) @0, L cells u32[4] @64,
+// masked L cells u32[4] @80, full flags u32[4] @96, candidate counts u32[4] @112. Mirrored by
+// SCREEN_STATE_* in the host wrappers. A row's pair is argmax_key.cu's [p, q] layout, so a one-row
+// state feeds argmax_key_resolve directly.
 struct ScreenState {
-    unsigned long long keys[SCREEN_MAX_M];
+    unsigned long long keys[SCREEN_MAX_M][2];
     unsigned int lcell[SCREEN_MAX_M];
+    unsigned int lcell_q[SCREEN_MAX_M];
     unsigned int full[SCREEN_MAX_M];
     unsigned int count[SCREEN_MAX_M];
 };
+
+// 2026-10-21: The mask ids (argmax_key.cu's masks[2]); none for a NULL `masks`.
+__device__ __forceinline__ void screen_masks(
+    const unsigned int* __restrict__ masks, unsigned int* m0, unsigned int* m1) {
+    *m0 = masks != nullptr ? masks[0] : 0xFFFFFFFFu;
+    *m1 = masks != nullptr ? masks[1] : 0xFFFFFFFFu;
+}
 
 __device__ __forceinline__ float screen_bf16_bits(unsigned int b16) {
     return __uint_as_float(b16 << 16);
@@ -159,9 +169,10 @@ extern "C" __global__ void screen_head_quant_int8(
 
 // 2026-10-21: The screen: per row and activation row, S = sum_b s_b sum_k x_k q_k and
 // eps = kappa * sum_b s_b |x_b|_1 + 2^-100, `upper` = S + eps rounded up, and the max over the
-// rows of S - eps rounded down into the L cell (key_order_bits). A non-finite S or eps, or one
-// past 2^100, sets the row's full flag: every row is then a candidate. One warp per row;
-// blockDim (32 * SCREEN_WARPS).
+// rows of S - eps rounded down into the L cell (key_order_bits), and the same max over the rows
+// other than the mask ids (global index `base + row`) into the masked L cell. A non-finite S or
+// eps, or one past 2^100, sets the row's full flag: every row is then a candidate. One warp per
+// row; blockDim (32 * SCREEN_WARPS).
 extern "C" __global__ void __launch_bounds__(256) screen_head_scan(
     const signed char* __restrict__ Q,
     const float* __restrict__ S,
@@ -171,11 +182,17 @@ extern "C" __global__ void __launch_bounds__(256) screen_head_scan(
     unsigned int K,
     float kappa,
     float* __restrict__ upper,
-    ScreenState* __restrict__ st
+    ScreenState* __restrict__ st,
+    const unsigned int* __restrict__ masks,
+    unsigned int base
 ) {
     __shared__ uint4 xs[SCREEN_MAX_MK / 8u];
     __shared__ float xl1[SCREEN_MAX_MK / 16u];
     __shared__ float lo_max[SCREEN_WARPS][SCREEN_MAX_M];
+    __shared__ float lo_qmax[SCREEN_WARPS][SCREEN_MAX_M];
+    unsigned int m0;
+    unsigned int m1;
+    screen_masks(masks, &m0, &m1);
     const unsigned int nvec = M * K / 8u;
     for (unsigned int i = threadIdx.x; i < nvec; i += blockDim.x) {
         xs[i] = ((const uint4*)X)[i];
@@ -202,8 +219,12 @@ extern "C" __global__ void __launch_bounds__(256) screen_head_scan(
     const unsigned int nchunk = K / 16u;
     const unsigned int nb = K / SCREEN_BLK;
     float my_lo[SCREEN_MAX_M];
+    float my_lo_q[SCREEN_MAX_M];
     #pragma unroll
-    for (int m = 0; m < (int)SCREEN_MAX_M; m++) my_lo[m] = -CUDART_INF_F;
+    for (int m = 0; m < (int)SCREEN_MAX_M; m++) {
+        my_lo[m] = -CUDART_INF_F;
+        my_lo_q[m] = -CUDART_INF_F;
+    }
 
     for (unsigned int row = blockIdx.x * SCREEN_WARPS + warp; row < rows;
          row += gridDim.x * SCREEN_WARPS) {
@@ -283,24 +304,38 @@ extern "C" __global__ void __launch_bounds__(256) screen_head_scan(
                 }
             }
             my_lo[m] = fmaxf(my_lo[m], lo);
+            const unsigned int gi = base + row;
+            if (gi != m0 && gi != m1) {
+                my_lo_q[m] = fmaxf(my_lo_q[m], lo);
+            }
         }
     }
     if (lane == 0) {
         #pragma unroll
-        for (int m = 0; m < (int)SCREEN_MAX_M; m++) lo_max[warp][m] = my_lo[m];
+        for (int m = 0; m < (int)SCREEN_MAX_M; m++) {
+            lo_max[warp][m] = my_lo[m];
+            lo_qmax[warp][m] = my_lo_q[m];
+        }
     }
     __syncthreads();
     if (threadIdx.x < M) {
         float l = -CUDART_INF_F;
-        for (unsigned int w = 0; w < SCREEN_WARPS; w++) l = fmaxf(l, lo_max[w][threadIdx.x]);
+        float lq = -CUDART_INF_F;
+        for (unsigned int w = 0; w < SCREEN_WARPS; w++) {
+            l = fmaxf(l, lo_max[w][threadIdx.x]);
+            lq = fmaxf(lq, lo_qmax[w][threadIdx.x]);
+        }
         atomicMax(&st->lcell[threadIdx.x], key_order_bits(l));
+        atomicMax(&st->lcell_q[threadIdx.x], key_order_bits(lq));
     }
 }
 
 // 2026-10-21: The rescore: every row whose `upper` reaches L - pad (pad = 2^-7 (1 + 2^-7) |L| +
-// 2^-120, the BF16 tie margin), or every row under a full flag, is recomputed with
-// screen_exact_dot, rounded to BF16 and keyed at its global index `base + row`; the max key goes
-// to keys[m]. One warp per 32-row group; blockDim (32 * SCREEN_WARPS).
+// 2^-120, the BF16 tie margin) for the masked L cell (at most the plain one, and L - pad is
+// monotone in L, so the plain threshold's rows are among them), or every row under a full flag,
+// is recomputed with screen_exact_dot, rounded to BF16 and keyed at its global index `base + row`
+// with argmax_key.cuh's plain_key and masked_key; the max keys go to keys[m]. One warp per 32-row
+// group; blockDim (32 * SCREEN_WARPS).
 extern "C" __global__ void __launch_bounds__(256) screen_head_rescore(
     const __nv_bfloat16* __restrict__ W,
     const __nv_bfloat16* __restrict__ X,
@@ -309,13 +344,17 @@ extern "C" __global__ void __launch_bounds__(256) screen_head_rescore(
     unsigned int K,
     unsigned int base,
     const float* __restrict__ upper,
-    ScreenState* __restrict__ st
+    ScreenState* __restrict__ st,
+    const unsigned int* __restrict__ masks
 ) {
     const unsigned int lane = threadIdx.x & 31u;
     const unsigned int groups = (rows + 31u) / 32u;
+    unsigned int m0;
+    unsigned int m1;
+    screen_masks(masks, &m0, &m1);
     for (unsigned int m = 0; m < M; m++) {
         const bool full = st->full[m] != 0u;
-        const float L = screen_unorder(st->lcell[m]);
+        const float L = screen_unorder(st->lcell_q[m]);
         const float pad = __fmaf_ru(fabsf(L), 0x1.02p-7f, 0x1p-120f);
         const float thr = __fsub_rd(L, pad);
         const __nv_bfloat16* x = X + (unsigned long long)m * K;
@@ -332,6 +371,7 @@ extern "C" __global__ void __launch_bounds__(256) screen_head_rescore(
                 atomicAdd(&st->count[m], (unsigned int)__popc(bits));
             }
             unsigned long long best = 0ull;
+            unsigned long long best_q = 0ull;
             while (bits != 0u) {
                 const unsigned int j = __ffs(bits) - 1u;
                 bits &= bits - 1u;
@@ -339,18 +379,24 @@ extern "C" __global__ void __launch_bounds__(256) screen_head_rescore(
                 const float v = screen_exact_dot(W + (unsigned long long)r * K, x, K, lane);
                 const float b = __bfloat162float(__float2bfloat16(v));
                 const unsigned long long k = plain_key(b, base + r);
+                const unsigned long long kq = masked_key(b, base + r, m0, m1);
                 best = k > best ? k : best;
+                best_q = kq > best_q ? kq : best_q;
             }
             if (lane == 0 && best != 0ull) {
-                atomicMax(&st->keys[m], best);
+                atomicMax(&st->keys[m][0], best);
+            }
+            if (lane == 0 && best_q != 0ull) {
+                atomicMax(&st->keys[m][1], best_q);
             }
         }
     }
 }
 
-// 2026-10-21: out[m] = the token named by the max of this rank's keys[m] and the `n_peers` peer
-// key blocks a one-shot exchange left at `peers + s * slot_bytes` (their keys[m] at the same
-// offset). One thread per activation row.
+// 2026-10-21: out[m] = the token named by the max of this rank's p key keys[m][0] and the
+// `n_peers` peer key blocks a one-shot exchange left at `peers + s * slot_bytes` (their keys at
+// the same offsets). One thread per activation row. (A masked one-row pick resolves through
+// argmax_key_resolve over the same pair.)
 extern "C" __global__ void screen_head_resolve(
     const ScreenState* __restrict__ st,
     const unsigned char* __restrict__ peers,
@@ -363,11 +409,11 @@ extern "C" __global__ void screen_head_resolve(
     if (blockIdx.x != 0 || m >= M) {
         return;
     }
-    unsigned long long kp = st->keys[m];
+    unsigned long long kp = st->keys[m][0];
     for (unsigned int s = 0; s < n_peers; ++s) {
         const unsigned long long* pk =
             (const unsigned long long*)(peers + (unsigned long long)s * slot_bytes);
-        kp = pk[m] > kp ? pk[m] : kp;
+        kp = pk[2u * m] > kp ? pk[2u * m] : kp;
     }
     out[m] = plain_key_index(kp);
 }
