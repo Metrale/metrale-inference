@@ -78,6 +78,7 @@ pub(super) fn down_entry(
             kern: k.w4a4_grouped.nc[usize::from(k64)],
             raster: Some(down.raster.unwrap_or(0)),
             nc: Some(n),
+            cs: false,
         },
         _ => down,
     }

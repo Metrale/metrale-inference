@@ -32,7 +32,7 @@ use crate::glm5next_kda::tp_bind::KdaShardedSource;
 use crate::glm5next_kda::{Glm5NextKdaConfig, Glm5NextKdaKernels, Glm5NextKdaLayer};
 use crate::glm5next_layer::{Glm5NextLayer, Glm5NextMhc, Glm5NextMixer, Glm5NextMlpSite};
 use crate::glm5next_mhc::{Glm5NextMhcKernels, Glm5NextMhcSiteWeights, mix_hc};
-use crate::glm5next_mlp::weights::{Glm5NextExpertWeights, Nvfp4Proj};
+use crate::glm5next_mlp::weights::{Glm5NextExpertWeights, Nvfp4Proj, ScaleLayout};
 use crate::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels, build as mlp_build};
 use crate::glm5next_skeleton::{Glm5NextTextSkeleton, Mixer, Mlp};
 use metrale_model_layers::layer::TransformerLayer;
@@ -64,6 +64,7 @@ mod nvfp4_quant;
 mod plan_cast_tests;
 mod plan_dtype;
 mod prune;
+mod scale_pack;
 #[cfg(test)]
 mod tp_shapes_tests;
 
@@ -411,7 +412,7 @@ pub(super) fn expert_binder_at<'a>(
     layer: usize,
     cfg: &Glm5NextMlpConfig,
 ) -> impl Fn(usize) -> Result<Glm5NextExpertWeights> + 'a {
-    expert_tp::routed_expert_binder(gpu, store, layer, cfg)
+    expert_tp::routed_expert_binder(gpu, store, layer, cfg, None)
 }
 
 /// 2026-10-08: The routed-expert precision plan of the MTP layer `layer`, for the MTP loader.

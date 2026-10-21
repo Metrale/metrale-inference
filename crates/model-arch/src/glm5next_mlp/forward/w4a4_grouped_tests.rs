@@ -124,6 +124,7 @@ fn table(tag: u64) -> Glm5NextExpertPtrTable {
         packed_ptrs: DevicePtr(tag),
         scale_ptrs: DevicePtr(tag + 1),
         scale2_vals: DevicePtr(tag + 2),
+        scale_bases: DevicePtr::NULL,
     }
 }
 
@@ -475,3 +476,5 @@ mod gu;
 mod nc;
 #[path = "w4a4_grouped_raster_tests.rs"]
 mod raster;
+#[path = "w4a4_grouped_scale_dict_tests.rs"]
+mod scale_dict;

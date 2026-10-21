@@ -47,7 +47,9 @@ fn whole_layout_decoded_scales_are_one_ledgered_slab_per_layer() {
         let (bytes0, allocs0) = (sh.store.derived().bytes(), gpu.alloc_count());
         let slab = ExpertSlab::new(ID..ID + 2, slab_label(ExpertShard::Whole));
         let bound: Vec<_> = (ID..ID + 2)
-            .map(|id| bind_routed_expert(&gpu, &sh.store, LAYER, id, ExpertShard::Whole, &slab))
+            .map(|id| {
+                bind_routed_expert(&gpu, &sh.store, LAYER, id, ExpertShard::Whole, &slab, None)
+            })
             .collect::<anyhow::Result<_>>()
             .unwrap();
         let (grew, allocs) = (
@@ -77,6 +79,7 @@ fn whole_layout_decoded_scales_are_one_ledgered_slab_per_layer() {
                 id,
                 ExpertShard::Whole,
                 &slab_twin,
+                None,
             )
             .unwrap();
             for (got, want, n) in [

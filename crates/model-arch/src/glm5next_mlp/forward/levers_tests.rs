@@ -358,6 +358,7 @@ fn the_declared_defaults_are_the_old_unset_values() {
             nc: None,
             sweep_serial: true,
             zero_in_swiglu: true,
+            scale_dict: true,
         }
     );
 }

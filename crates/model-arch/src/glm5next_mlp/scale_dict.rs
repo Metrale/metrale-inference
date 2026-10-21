@@ -17,8 +17,16 @@
 //! offset 0; the kernel zeroes those scale bytes. The hi plane is zero-padded to whole 4-byte
 //! words: the grouped prefill kernels copy the aligned word that holds a (row, chunk)'s byte.
 //!
+//! The loader decides once per routed layer ([`plan`]) whether its experts' scales are packed:
+//! only under the `tp` expert layout (whose slices pass through the host; the whole layout binds
+//! the store's tensors in place), only when every row count of the layer runs W4A4 (the W4A16
+//! paths read plain scales) and only when every `_cs` twin resolved (`scale_dict_kernels`). A
+//! packed tensor replaces its plain bytes in the same slab slot ([`pack`]): one copy.
+//!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants: [`compact`] is exact: [`expand`] of its result is the input.
+
+use super::weights::ScaleLayout;
 
 /// 2026-10-21: The widest code span one tensor may have (a 5-bit offset).
 pub const SCALE_DICT_SPAN: u8 = 32;
@@ -105,6 +113,66 @@ pub fn expand(c: &CompactScales, rows: usize, groups: usize) -> Vec<u8> {
         }
     }
     out
+}
+
+/// 2026-10-21: The bytes a projection's scale buffer holds and their layout: the compact bytes
+/// zero-padded to the plain length (a slab slot keeps one size for every expert), or `scales`
+/// itself when [`compact`] refuses the tensor.
+pub fn pack(scales: Vec<u8>, rows: usize, groups: usize) -> (Vec<u8>, ScaleLayout) {
+    match compact(&scales, rows, groups) {
+        Some(c) => {
+            let mut b = c.bytes;
+            b.resize(scales.len(), 0);
+            (b, ScaleLayout::Compact { base: c.base })
+        }
+        None => (scales, ScaleLayout::Plain),
+    }
+}
+
+/// 2026-10-21: A routed layer's packing decision, made once at load.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScaleDictPlan {
+    /// 2026-10-21: Every tensor whose codes fit is packed.
+    Compact,
+    /// 2026-10-21: `METRALE_GLM_MOE_SCALE_DICT=0`.
+    Off,
+    /// 2026-10-21: The whole (ep) expert layout binds the store's scale tensors in place.
+    WholeLayout,
+    /// 2026-10-21: Some row count runs the W4A16 path, which reads plain scales.
+    NotW4a4EveryRow,
+    /// 2026-10-21: A `_cs` twin of a routed W4A4 entry is absent from the target's PTX.
+    NoTwins,
+}
+
+/// 2026-10-21: The decision from the lever, the layout (`sliced`: `tp`), whether the layer's
+/// precision plan runs W4A4 at every row count, and whether every `_cs` twin resolved.
+pub fn plan(lever: bool, sliced: bool, w4a4_every_row: bool, twins_ready: bool) -> ScaleDictPlan {
+    if !lever {
+        ScaleDictPlan::Off
+    } else if !sliced {
+        ScaleDictPlan::WholeLayout
+    } else if !w4a4_every_row {
+        ScaleDictPlan::NotW4a4EveryRow
+    } else if !twins_ready {
+        ScaleDictPlan::NoTwins
+    } else {
+        ScaleDictPlan::Compact
+    }
+}
+
+impl ScaleDictPlan {
+    /// 2026-10-21: For the load log.
+    pub fn describe(self) -> &'static str {
+        match self {
+            Self::Compact => "compact scales where a tensor's codes span at most 32",
+            Self::Off => "off (METRALE_GLM_MOE_SCALE_DICT=0): plain scales",
+            Self::WholeLayout => {
+                "plain scales: the ep expert layout binds the checkpoint's tensors"
+            }
+            Self::NotW4a4EveryRow => "plain scales: some row count runs W4A16, which reads them",
+            Self::NoTwins => "plain scales: a `_cs` entry is absent from this target's PTX",
+        }
+    }
 }
 
 #[cfg(test)]

@@ -11,7 +11,7 @@ use anyhow::{Result, ensure};
 use half::bf16;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
-use metrale_model_arch::glm5next_mlp::weights::Nvfp4Proj;
+use metrale_model_arch::glm5next_mlp::weights::{Nvfp4Proj, ScaleLayout};
 
 pub const HIDDEN: usize = 4096;
 pub const MI: usize = 2048;
@@ -171,6 +171,7 @@ pub fn table_n(
             scale: up(gpu, &scales)?,
             scale_2: 0.01,
             input_scale: Some(gs),
+            scale_layout: ScaleLayout::Plain,
         });
     }
     let ptrs = |f: &dyn Fn(&Nvfp4Proj) -> u64| -> Vec<u8> {

@@ -20,13 +20,18 @@
 //! - A sliced projection keeps the expert's own `weight_scale_2` and `input_scale`.
 //! - 2026-10-17: A csf-encoded scale plane is refused sliced (its bytes have no pre-flight
 //!   charge under this layout); the whole layout binds it.
+//! - 2026-10-21: Under a packing layer ([`ScalePack`], `METRALE_GLM_MOE_SCALE_DICT`) a sliced
+//!   projection's block scales are packed on the host before the slab takes them, into the same
+//!   bytes of its slot (`scale_dict::pack`); a whole expert is never packed.
 
 use super::expert_scales::has_csf_plane;
 use super::expert_slab::{CSF_SCALE_SLAB_LABEL, ExpertSlab, TP_SLAB_LABEL};
+use super::scale_pack::ScalePack;
 use super::*;
 use crate::glm5next_mlp::expert_tp::{
     ExpertShard, ExpertSlice, pad_expert_rows, slice_expert_cols, slice_expert_rows,
 };
+use crate::glm5next_mlp::scale_dict::ScaleDictPlan;
 use metrale_config::TpSlice;
 
 /// 2026-10-09: Whether a store tensor belongs to a routed expert of any layer (the text layers
@@ -40,17 +45,20 @@ pub(super) fn is_routed_expert_tensor(name: &str) -> bool {
 /// 2026-10-14: The `build_moe` expert binder of MoE layer `layer` under `cfg`'s shard:
 /// [`bind_routed_expert`] into one [`ExpertSlab`] over `cfg.local_expert_range()`, labelled by
 /// [`slab_label`].
+/// 2026-10-21: `pack`: the layer's scale packing; `None` keeps every scale plain (the MTP layer,
+/// whose 16-bit experts run W4A16).
 pub(super) fn routed_expert_binder<'a>(
     gpu: &'a dyn GpuBackend,
     store: &'a WeightStore,
     layer: usize,
     cfg: &Glm5NextMlpConfig,
+    pack: Option<&'a ScalePack>,
 ) -> impl Fn(usize) -> Result<Glm5NextExpertWeights> + 'a {
     let (shard, slab) = (
         cfg.expert_shard,
         ExpertSlab::new(cfg.local_expert_range(), slab_label(cfg.expert_shard)),
     );
-    move |id| bind_routed_expert(gpu, store, layer, id, shard, &slab)
+    move |id| bind_routed_expert(gpu, store, layer, id, shard, &slab, pack)
 }
 
 /// 2026-10-17: The ledger label of a layer's slab under `shard`: what that layout places in it.
@@ -63,7 +71,8 @@ pub(super) fn slab_label(shard: ExpertShard) -> &'static str {
 
 /// 2026-10-09: Routed expert `id` of `layer` as this rank holds it under `shard`. 2026-10-14: A
 /// sliced expert's six buffers go into `id`'s slot of `slab`. 2026-10-17: A whole one places only
-/// block scales decoded from csf planes there ([`bind_expert`]).
+/// block scales decoded from csf planes there ([`bind_expert`]). 2026-10-21: A sliced one's
+/// scales packed first under `pack`; a whole one is refused under a packing layer.
 pub(super) fn bind_routed_expert(
     gpu: &dyn GpuBackend,
     store: &WeightStore,
@@ -71,26 +80,42 @@ pub(super) fn bind_routed_expert(
     id: usize,
     shard: ExpertShard,
     slab: &ExpertSlab,
+    pack: Option<&ScalePack>,
 ) -> Result<Glm5NextExpertWeights> {
+    let plain = ScalePack::new(ScaleDictPlan::Off);
+    let pack = pack.unwrap_or(&plain);
     let s = match shard {
+        ExpertShard::Whole if pack.on() => bail!(
+            "glm5_next layer {layer}: the whole expert layout binds the checkpoint's scale \
+             tensors in place and cannot pack them (scale_dict::plan keeps it plain)"
+        ),
         ExpertShard::Whole => return bind_expert(gpu, store, layer, id, slab),
         ExpertShard::Sliced(s) => s,
     };
-    let g = sliced_proj(gpu, store, layer, id, "gate_proj", &s)?;
-    let u = sliced_proj(gpu, store, layer, id, "up_proj", &s)?;
-    let d = sliced_proj(gpu, store, layer, id, "down_proj", &s)?;
+    let mut g = sliced_proj(gpu, store, layer, id, "gate_proj", &s)?;
+    let mut u = sliced_proj(gpu, store, layer, id, "up_proj", &s)?;
+    let mut d = sliced_proj(gpu, store, layer, id, "down_proj", &s)?;
+    // 2026-10-21: gate/up keep `s.len` rows of hidden / 16 groups; down hidden rows of
+    // `s.len / 16` groups.
+    let gu_groups = g.1.len() / s.len.max(1);
+    let layouts = [
+        pack.apply(&mut g, gu_groups),
+        pack.apply(&mut u, gu_groups),
+        pack.apply(&mut d, s.len / 16),
+    ];
     let blobs = [&g.0[..], &g.1, &u.0, &u.1, &d.0, &d.1];
     let [gp, gs, up, us, dp, ds] = slab.place(gpu, store, id, blobs)?;
-    let proj = |h: &HostProj, packed, scale| Nvfp4Proj {
+    let proj = |h: &HostProj, packed, scale, scale_layout| Nvfp4Proj {
         packed,
         scale,
         scale_2: h.2,
         input_scale: h.3,
+        scale_layout,
     };
     Ok(Glm5NextExpertWeights {
-        gate_proj: proj(&g, gp, gs),
-        up_proj: proj(&u, up, us),
-        down_proj: proj(&d, dp, ds),
+        gate_proj: proj(&g, gp, gs, layouts[0]),
+        up_proj: proj(&u, up, us, layouts[1]),
+        down_proj: proj(&d, dp, ds, layouts[2]),
     })
 }
 
@@ -146,7 +171,7 @@ fn scale_2(gpu: &dyn GpuBackend, store: &WeightStore, layer: usize, base: &str) 
 
 /// 2026-10-14: A sliced projection on the host: codes, block scales, global scale, activation
 /// scale.
-type HostProj = (Vec<u8>, Vec<u8>, f32, Option<f32>);
+pub(super) type HostProj = (Vec<u8>, Vec<u8>, f32, Option<f32>);
 
 /// 2026-10-09: One sliced projection: gate/up (`[full, hidden]`) keep the slice's rows, down
 /// (`[hidden, full]`) its columns, both zero-padded to `s.len`. 2026-10-14: Returned on the host

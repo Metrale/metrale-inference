@@ -13,7 +13,7 @@
 use anyhow::{Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
-use metrale_model_arch::glm5next_mlp::weights::Nvfp4Proj;
+use metrale_model_arch::glm5next_mlp::weights::{Nvfp4Proj, ScaleLayout};
 
 use crate::device::*;
 
@@ -40,6 +40,7 @@ pub fn table_from(
             scale: up(gpu, s)?,
             scale_2: 0.01,
             input_scale: Some(gs),
+            scale_layout: ScaleLayout::Plain,
         });
     }
     let ptrs = |f: &dyn Fn(&Nvfp4Proj) -> u64| -> Vec<u8> {

@@ -181,3 +181,38 @@ fn describe_lists_the_ranges_and_marks_the_ones_above_declared() {
     let wide = experts("declared", Nvfp4Act::Wide);
     assert_eq!(wide.describe(8), "GLM routed experts [rows 1-8: W4a16]");
 }
+
+/// 2026-10-21: `w4a4_at_every_row` holds only where `kernel` is W4A4 at every row count: the
+/// grouped W4A4 cap (unbounded) under a W4A4 format on every rung. Each negative breaks one
+/// condition and is checked against `kernel` at a row count it reaches.
+#[test]
+fn w4a4_at_every_row_needs_an_unbounded_cap_and_w4a4_on_every_rung() {
+    let grouped = |flag: &str, stamp| {
+        GroupPrecision::resolve(
+            MlpGroup::RoutedExperts,
+            ladder(flag, ProjFamily::Moe),
+            stamp,
+            usize::MAX,
+            true,
+        )
+        .expect("resolves")
+    };
+    let all = grouped("declared", Nvfp4Act::A4);
+    assert!(all.w4a4_at_every_row());
+    assert!(
+        [1, 17, 8208, 1 << 20]
+            .iter()
+            .all(|&r| all.kernel(r) == MlpKernel::W4a4Static)
+    );
+    assert!(grouped("nvfp4", Nvfp4Act::Wide).w4a4_at_every_row());
+
+    let capped = experts("declared", Nvfp4Act::A4);
+    assert!(!capped.w4a4_at_every_row());
+    assert_eq!(capped.kernel(CAP + 1), MlpKernel::W4a16);
+    let ladder_bf16 = grouped("1-4=declared;5-=bf16", Nvfp4Act::A4);
+    assert!(!ladder_bf16.w4a4_at_every_row());
+    assert_eq!(ladder_bf16.kernel(5), MlpKernel::W4a16);
+    let wide = grouped("declared", Nvfp4Act::Wide);
+    assert!(!wide.w4a4_at_every_row());
+    assert_eq!(wide.kernel(1), MlpKernel::W4a16);
+}

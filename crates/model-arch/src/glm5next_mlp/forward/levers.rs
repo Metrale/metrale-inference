@@ -71,6 +71,8 @@ pub struct MlpLevers {
     /// 2026-10-21: `METRALE_GLM_MOE_ZERO_IN_SWIGLU` (on unless switched off,
     /// `w4a4::zeroes_in_swiglu`).
     pub zero_in_swiglu: bool,
+    /// 2026-10-21: `METRALE_GLM_MOE_SCALE_DICT` (on unless switched off, `scale_dict::plan`).
+    pub scale_dict: bool,
 }
 
 /// 2026-10-17: A row width: unset is `default`; a negative value is an error.
@@ -160,6 +162,7 @@ impl MlpLevers {
             nc: nc.map(|n| n as u32),
             sweep_serial: k.glm_moe_sweep_serial,
             zero_in_swiglu: k.glm_moe_zero_in_swiglu,
+            scale_dict: k.glm_moe_scale_dict,
         })
     }
 

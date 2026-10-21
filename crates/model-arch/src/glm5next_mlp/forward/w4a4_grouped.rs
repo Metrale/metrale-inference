@@ -97,7 +97,7 @@ fn grouped_mx(
     let (cfg, ws) = (site.cfg, site.ws);
     grouped_launch(
         site.gpu,
-        entry,
+        entry.over(&site.k.scale_dict, table.scale_bases)?,
         ti,
         smem_bytes_of(ti),
         [ws.w4a4_aq, ws.w4a4_as, ws.w4a4_ag],
@@ -128,6 +128,8 @@ pub(super) fn smem_bytes_of(ti: usize) -> u32 {
 /// `act` = the quantized rows, scales and globals; grid (ceil(n / cols), ceil(slots / mt) +
 /// num_experts). 2026-10-14: an `_r` entry takes its raster group as one more argument.
 /// 2026-10-15: an `_n` entry its raster group and `nc`, over a grid `nc` times narrower.
+/// 2026-10-21: a `_cs` entry (`GroupedEntry::over`) the table's base table last; refused when the
+/// entry and the table disagree on it.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn grouped_launch(
     gpu: &dyn GpuBackend,
@@ -146,6 +148,16 @@ pub(super) fn grouped_launch(
     k: usize,
     stream: u64,
 ) -> Result<()> {
+    ensure!(
+        entry.cs != table.scale_bases.is_null(),
+        "GLM routed W4A4 grouped: entry `_cs` = {} over a table {} a base table",
+        entry.cs,
+        if table.scale_bases.is_null() {
+            "without"
+        } else {
+            "with"
+        }
+    );
     let l = KernelLaunch::new(gpu, entry.kern)
         .grid([
             entry.grid_x(n, W4A4_GROUPED_COLS[ti]),
@@ -167,7 +179,13 @@ pub(super) fn grouped_launch(
         .arg_u32(num_experts as u32)
         .arg_u32(n as u32)
         .arg_u32(k as u32);
-    entry.tail_args(l).launch(stream)
+    let l = entry.tail_args(l);
+    if entry.cs {
+        l.arg_ptr(table.scale_bases)
+    } else {
+        l
+    }
+    .launch(stream)
 }
 
 /// 2026-10-10: The down projection's entry and stored activation width for expert width `mi`:

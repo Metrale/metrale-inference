@@ -10,6 +10,8 @@
 //! Invariants: an expert not loaded has null pointers (the kernels skip it).
 #![allow(dead_code)]
 
+use std::time::{Duration, Instant};
+
 use anyhow::Result;
 use metrale_config::TpSlice;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
@@ -36,6 +38,8 @@ pub struct Proj {
     pub bytes: usize,
     /// 2026-10-21: Loaded tensors whose codes span more than 32 (they keep plain scales).
     pub fallback: usize,
+    /// 2026-10-21: Host time `compact` took over the loaded tensors (the loader's pack cost).
+    pub compact_time: Duration,
 }
 
 /// 2026-10-21: A scalar F32 tensor.
@@ -70,7 +74,7 @@ pub fn proj(
         vec![0u64; EXPERTS],
     );
     let (mut base, mut s2) = (vec![PLAIN; EXPERTS], vec![0f32; EXPERTS]);
-    let (mut bytes, mut fallback) = (0, 0);
+    let (mut bytes, mut fallback, mut compact_time) = (0, 0, Duration::ZERO);
     for &e in experts {
         let p = format!("model.language_model.layers.{l}.mlp.experts.{e}.{name}");
         let w = ckpt::tensor_raw(dir, &format!("{p}.weight"))?;
@@ -91,7 +95,10 @@ pub fn proj(
         packed[e] = up(g, &q)?.0;
         plain[e] = up(g, &sc)?.0;
         s2[e] = f32_of(dir, &format!("{p}.weight_scale_2"))?;
-        match compact(&sc, rows, groups) {
+        let t = Instant::now();
+        let c = compact(&sc, rows, groups);
+        compact_time += t.elapsed();
+        match c {
             Some(c) if e != forced => {
                 cs[e] = up(g, &c.bytes)?.0;
                 base[e] = c.base4();
@@ -124,6 +131,7 @@ pub fn proj(
         s2: up_f32(g, &s2)?,
         bytes,
         fallback,
+        compact_time,
     })
 }
 
@@ -158,5 +166,9 @@ impl Layer {
 
     pub fn fallback(&self) -> usize {
         self.gate.fallback + self.up.fallback + self.down.fallback
+    }
+
+    pub fn compact_time(&self) -> Duration {
+        self.gate.compact_time + self.up.compact_time + self.down.compact_time
     }
 }

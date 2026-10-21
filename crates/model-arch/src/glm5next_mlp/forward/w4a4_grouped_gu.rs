@@ -86,6 +86,7 @@ impl GuPlan {
     pub(super) fn launch(&self, site: &MoeSite<'_>, down: GroupedEntry, gs: f32) -> Result<()> {
         let MoeSite {
             gpu,
+            k,
             cfg,
             w,
             rows,
@@ -112,10 +113,11 @@ impl GuPlan {
             gs,
             limit: cfg.swiglu_limit,
         };
-        launch_w4a4_gu(gpu, self.entry, &call, stream)?;
+        let entry = self.entry.over(&k.scale_dict, w.ptrs.gate.scale_bases)?;
+        launch_w4a4_gu(gpu, entry, &call, stream)?;
         grouped_launch(
             gpu,
-            down,
+            down.over(&k.scale_dict, w.ptrs.down.scale_bases)?,
             self.ti,
             smem_bytes_of(self.ti),
             call.out,
@@ -160,6 +162,8 @@ pub struct W4a4GuCall {
 /// 2026-10-14: The one launcher of `w4a4_grouped_gu_m*` (the forward and the byte-gate bench
 /// both go through it): grid (ceil(n / (cols / 2)), ceil(slots / mt) + num_experts), the
 /// one-projection entry's shared memory; 2026-10-14: an `_r` entry's raster group last.
+/// 2026-10-21: a `_cs` entry (`GroupedEntry::over`) the gate's and up's base tables after it;
+/// refused when the entry and either table disagree on them.
 pub fn launch_w4a4_gu(
     gpu: &dyn GpuBackend,
     entry: GroupedEntry,
@@ -174,6 +178,12 @@ pub fn launch_w4a4_gu(
     ensure!(
         entry.nc.is_none(),
         "w4a4_grouped_gu: the fused entry has no `_n` twin"
+    );
+    let bases = [c.gate.scale_bases, c.up.scale_bases];
+    ensure!(
+        bases.iter().all(|b| entry.cs != b.is_null()),
+        "w4a4_grouped_gu: entry `_cs` = {} over gate / up base tables {bases:?}",
+        entry.cs
     );
     let l = KernelLaunch::new(gpu, entry.kern)
         .grid([
@@ -204,9 +214,14 @@ pub fn launch_w4a4_gu(
         .arg_u32(c.k_store as u32)
         .arg_f32(c.gs)
         .arg_f32(c.limit);
-    match entry.raster {
+    let l = match entry.raster {
         Some(g) => l.arg_u32(g),
         None => l,
+    };
+    if entry.cs {
+        l.arg_ptr(bases[0]).arg_ptr(bases[1])
+    } else {
+        l
     }
     .launch(stream)
 }

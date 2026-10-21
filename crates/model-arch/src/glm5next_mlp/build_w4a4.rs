@@ -22,7 +22,9 @@ use metrale_config::TpSlice;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_weights::weights::WeightDtype;
 
-use super::weights::{Glm5NextDenseNvfp4Weights, Glm5NextExpertWeights, Nvfp4Proj, W4a4ActScales};
+use super::weights::{
+    Glm5NextDenseNvfp4Weights, Glm5NextExpertWeights, Nvfp4Proj, ScaleLayout, W4a4ActScales,
+};
 
 /// 2026-10-08: One layer-relative tensor as `(dtype, shape, bytes)`.
 pub type RawFn<'a> = &'a dyn Fn(&str) -> Result<(WeightDtype, Vec<usize>, Vec<u8>)>;
@@ -241,6 +243,7 @@ pub fn build_dense_nvfp4(
             scale: upload(gpu, &s)?,
             scale_2: s2,
             input_scale: Some(act),
+            scale_layout: ScaleLayout::Plain,
         })
     };
     Ok(Glm5NextDenseNvfp4Weights {

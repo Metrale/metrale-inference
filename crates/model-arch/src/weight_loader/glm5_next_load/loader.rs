@@ -249,7 +249,6 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                     verify_k,
                 )?)),
                 Mlp::RoutedMoe => {
-                    let expert = expert_tp::routed_expert_binder(gpu, store, idx, &mlp_cfg);
                     let precision = |has_scales: bool| {
                         mlp_precision::group_precision(
                             config,
@@ -260,6 +259,9 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                             has_scales,
                         )
                     };
+                    let pack = scale_pack::of(&levers.mlp, &mlp_kernels, &mlp_cfg, &precision)?;
+                    let expert =
+                        expert_tp::routed_expert_binder(gpu, store, idx, &mlp_cfg, Some(&pack));
                     let moe = mlp_build::build_moe(
                         gpu,
                         &mlp_cfg,
@@ -270,6 +272,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                         verify_k,
                     )?;
                     mlp_precision::announce(&moe.precision, verify_k);
+                    scale_pack::announce(idx, &pack);
                     Glm5NextMlpSite::Moe(Box::new(moe))
                 }
             };

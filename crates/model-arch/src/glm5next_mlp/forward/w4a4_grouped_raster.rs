@@ -21,10 +21,11 @@
 //!   else the load is refused ([`check_at_load`]).
 
 use anyhow::Result;
-use metrale_gpu_runtime::gpu::KernelHandle;
+use metrale_gpu_runtime::gpu::{DevicePtr, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use crate::glm5next_mlp::Glm5NextMlpKernels;
+use crate::glm5next_mlp::scale_dict_kernels::ScaleDictTwins;
 
 const LEVER: &str = "METRALE_GLM_MOE_W4A4_RASTER";
 /// 2026-10-14: The widest group the lever takes (a whole 8192-row chunk is 800 m128 tiles).
@@ -48,6 +49,9 @@ pub struct GroupedEntry {
     pub kern: KernelHandle,
     pub raster: Option<u32>,
     pub nc: Option<u32>,
+    /// 2026-10-21: A `_cs` twin (`METRALE_GLM_MOE_SCALE_DICT`): the launcher appends the
+    /// tables' base tables ([`GroupedEntry::over`]).
+    pub cs: bool,
 }
 
 impl GroupedEntry {
@@ -57,6 +61,7 @@ impl GroupedEntry {
             kern,
             raster: None,
             nc: None,
+            cs: false,
         }
     }
 
@@ -66,7 +71,19 @@ impl GroupedEntry {
             kern,
             raster: Some(g),
             nc: None,
+            cs: false,
         }
+    }
+
+    /// 2026-10-21: This entry over tables whose base table is `bases` (`scale_bases` of the
+    /// projection, or of gate for the fused entry): its `_cs` twin when `bases` is not null.
+    pub fn over(self, twins: &ScaleDictTwins, bases: DevicePtr) -> Result<Self> {
+        let (kern, b) = twins.pick(self.kern, bases)?;
+        Ok(Self {
+            kern,
+            cs: b.is_some(),
+            ..self
+        })
     }
 
     /// 2026-10-15: The grid's x extent over `n` output columns of `cols` per tile.

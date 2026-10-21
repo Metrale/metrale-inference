@@ -32,6 +32,7 @@ fn call(n: usize, k: usize, slots: usize, act_div: usize) -> W4a4SlotsCall {
         slots,
         act_div,
         num_experts: 288,
+        scale_bases: DevicePtr::NULL,
     }
 }
 

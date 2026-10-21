@@ -30,7 +30,7 @@ use metrale_model_arch::glm5next_mlp::forward::{
 use metrale_model_arch::glm5next_mlp::precision::{GroupPrecision, MlpGroup};
 use metrale_model_arch::glm5next_mlp::weights::{
     Glm5NextDenseMlpWeights, Glm5NextDenseNvfp4Weights, Glm5NextDenseSite, Glm5NextExpertWeights,
-    Glm5NextMoeWeights, Nvfp4Proj, W4a4ActScales,
+    Glm5NextMoeWeights, Nvfp4Proj, ScaleLayout, W4a4ActScales,
 };
 use metrale_model_arch::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels};
 
@@ -168,6 +168,7 @@ fn proj(gpu: &dyn GpuBackend, w: &HostNvfp4, input_scale: f32) -> Result<Nvfp4Pr
         scale: upload(gpu, &w.scales)?,
         scale_2: w.scale_2,
         input_scale: Some(input_scale),
+        scale_layout: ScaleLayout::Plain,
     })
 }
 

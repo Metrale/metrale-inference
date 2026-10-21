@@ -18,7 +18,7 @@ use super::w4a4_experts;
 use crate::glm5next_mlp::precision::{GroupPrecision, MlpGroup};
 use crate::glm5next_mlp::weights::{
     Glm5NextDenseMlpWeights, Glm5NextDenseNvfp4Weights, Glm5NextExpertPtrTable,
-    Glm5NextMoePtrTables, Glm5NextMoeWeights, Nvfp4Proj, W4a4ActScales,
+    Glm5NextMoePtrTables, Glm5NextMoeWeights, Nvfp4Proj, ScaleLayout, W4a4ActScales,
 };
 use crate::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels};
 
@@ -119,6 +119,7 @@ pub(crate) fn proj(tag: u64) -> Nvfp4Proj {
         scale: DevicePtr(tag + 1),
         scale_2: 0.5,
         input_scale: None,
+        scale_layout: ScaleLayout::Plain,
     }
 }
 
@@ -187,6 +188,7 @@ fn table(tag: u64) -> Glm5NextExpertPtrTable {
         packed_ptrs: DevicePtr(tag),
         scale_ptrs: DevicePtr(tag + 1),
         scale2_vals: DevicePtr(tag + 2),
+        scale_bases: DevicePtr::NULL,
     }
 }
 
@@ -443,7 +445,10 @@ fn a_k64_expert_slice_runs_the_k64_down_twins() {
 fn a_k64_row_without_the_k64_own_sweep_runs_the_k64_slot_gemv() {
     let (_gpu, l, _ws) = run_experts_on(cfg_tp(), 1, |k| k.w4a4_moe_k64.own = KernelHandle(0));
     let funcs: Vec<u64> = l.iter().map(|l| l.func).collect();
-    assert_eq!(funcs, vec![QUANT, OWN_SWEEP, SWIGLU_ZERO, QUANT_K64, SLOTS_K64]);
+    assert_eq!(
+        funcs,
+        vec![QUANT, OWN_SWEEP, SWIGLU_ZERO, QUANT_K64, SLOTS_K64]
+    );
     assert_eq!((u32_arg(&l[4], 8), u32_arg(&l[4], 9)), (4096, 704));
 }
 
@@ -489,3 +494,6 @@ fn only_the_one_row_own_down_sweep_skips_the_zeroing() {
     no_own.w4a4_moe_k64.own = KernelHandle(0);
     assert!(!super::writes_every_expert_row(&no_own, &cfg_tp(), 1));
 }
+
+#[path = "w4a4_scale_dict_tests.rs"]
+mod scale_dict;

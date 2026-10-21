@@ -311,6 +311,7 @@ pub fn slots_gemv_ids(
         slots,
         act_div,
         num_experts: EXPERTS,
+        scale_bases: DevicePtr::NULL,
     };
     launch_w4a4_slots(gpu, k, &call, 0)
 }

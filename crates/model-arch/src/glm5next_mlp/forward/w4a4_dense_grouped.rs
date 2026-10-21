@@ -90,6 +90,7 @@ fn one_table(gpu: &dyn GpuBackend, p: &Nvfp4Proj) -> Result<Glm5NextExpertPtrTab
         packed_ptrs: up(&p.packed.0.to_le_bytes())?,
         scale_ptrs: up(&p.scale.0.to_le_bytes())?,
         scale2_vals: up(&p.scale_2.to_le_bytes())?,
+        scale_bases: DevicePtr::NULL,
     })
 }
 

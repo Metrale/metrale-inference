@@ -35,7 +35,7 @@ use metrale_model_arch::glm5next_mlp::expert_tp::expert_slice;
 use metrale_model_arch::glm5next_mlp::forward::{Glm5NextMlpWorkspace, forward_moe};
 use metrale_model_arch::glm5next_mlp::precision::{GroupPrecision, MlpGroup};
 use metrale_model_arch::glm5next_mlp::weights::{
-    Glm5NextExpertWeights, Glm5NextMoeWeights, Nvfp4Proj,
+    Glm5NextExpertWeights, Glm5NextMoeWeights, Nvfp4Proj, ScaleLayout,
 };
 use metrale_model_arch::glm5next_mlp::{ExpertShard, Glm5NextMlpConfig, Glm5NextMlpKernels};
 
@@ -77,6 +77,7 @@ impl Pool {
             scale: self.scale.offset(i * n * k / 16),
             scale_2: 0.01,
             input_scale: Some(gs),
+            scale_layout: ScaleLayout::Plain,
         }
     }
 }
@@ -302,6 +303,7 @@ fn identity(
             scale: up(g, s)?,
             scale_2: 0.01,
             input_scale: Some(gs),
+            scale_layout: ScaleLayout::Plain,
         })
     };
     let rows_pad = |(p, s): &(Vec<u8>, Vec<u8>)| {

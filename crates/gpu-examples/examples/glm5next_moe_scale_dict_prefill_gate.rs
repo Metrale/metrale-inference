@@ -355,6 +355,18 @@ fn main() -> Result<()> {
         t0.elapsed().as_secs_f64(),
         LAYERS.len() * LOADED * 3
     );
+    // 2026-10-21: The loader's pack cost: one rank's slice of every expert, 3 tensors each.
+    let tensors = LAYERS.len() * LOADED * 3;
+    let per = layers
+        .iter()
+        .map(Layer::compact_time)
+        .sum::<std::time::Duration>()
+        / tensors as u32;
+    println!(
+        "compact: {:.1} us per tensor slice => {:.1} ms per layer per rank ({EXPERTS} experts x 3)",
+        per.as_secs_f64() * 1e6,
+        per.as_secs_f64() * 1e3 * (EXPERTS * 3) as f64
+    );
     let mut rng = Lcg(0x9e37_79b9);
     let mut timed = None;
     for &rows in &ROWS {

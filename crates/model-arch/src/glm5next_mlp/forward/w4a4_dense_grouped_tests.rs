@@ -42,6 +42,7 @@ fn table(tag: u64) -> Glm5NextExpertPtrTable {
         packed_ptrs: DevicePtr(tag),
         scale_ptrs: DevicePtr(tag + 8),
         scale2_vals: DevicePtr(tag + 16),
+        scale_bases: DevicePtr::NULL,
     }
 }
 

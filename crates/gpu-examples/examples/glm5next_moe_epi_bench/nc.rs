@@ -38,6 +38,7 @@ fn entry(w: &Width, raster: u32, nc: u32) -> GroupedEntry {
         kern: w.down_n,
         raster: Some(raster),
         nc: Some(nc),
+        cs: false,
     }
 }
 

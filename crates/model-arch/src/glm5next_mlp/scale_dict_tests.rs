@@ -78,3 +78,42 @@ fn a_span_over_32_codes_or_a_malformed_tensor_keeps_its_plain_scales() {
     assert_eq!(compact(&[1, 2, 3], 1, 4), None, "length");
     assert_eq!(compact(&[0x7F, 0x7F, 0x7F, 0x7F], 1, 4), None, "NaN code");
 }
+
+/// 2026-10-21: `pack` keeps the slot size: compact bytes zero-padded to the plain length, which
+/// `expand` reads back exactly; a wide tensor keeps its own bytes and the plain layout.
+#[test]
+fn pack_fills_the_plain_slot_or_keeps_the_plain_bytes() {
+    let (rows, groups) = (64, 44);
+    let s = codes(rows, groups, 90, 32, 7);
+    let (b, layout) = pack(s.clone(), rows, groups);
+    assert_eq!(b.len(), s.len());
+    let ScaleLayout::Compact { base } = layout else {
+        panic!("span 32 packs");
+    };
+    let c = CompactScales {
+        bytes: b.clone(),
+        base,
+    };
+    assert_eq!(expand(&c, rows, groups), s);
+    let cells = rows * groups.div_ceil(8);
+    let used = cells * 4 + cells.next_multiple_of(4);
+    assert!(b[used..].iter().all(|&x| x == 0), "the slot's tail is zero");
+
+    let wide = codes(rows, groups, 70, 40, 7);
+    assert_eq!(pack(wide.clone(), rows, groups), (wide, ScaleLayout::Plain));
+}
+
+/// 2026-10-21: The plan packs only with the lever on, the tp layout, W4A4 at every row count and
+/// every twin; each missing condition names itself, the lever first.
+#[test]
+fn the_plan_packs_only_when_every_condition_holds() {
+    assert_eq!(plan(true, true, true, true), ScaleDictPlan::Compact);
+    assert_eq!(plan(false, true, true, true), ScaleDictPlan::Off);
+    assert_eq!(plan(false, false, false, false), ScaleDictPlan::Off);
+    assert_eq!(plan(true, false, true, true), ScaleDictPlan::WholeLayout);
+    assert_eq!(
+        plan(true, true, false, true),
+        ScaleDictPlan::NotW4a4EveryRow
+    );
+    assert_eq!(plan(true, true, true, false), ScaleDictPlan::NoTwins);
+}

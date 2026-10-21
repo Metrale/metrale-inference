@@ -128,6 +128,7 @@ fn ptr_table(t: &Table) -> Glm5NextExpertPtrTable {
         packed_ptrs: t.packed,
         scale_ptrs: t.scale,
         scale2_vals: t.scale2,
+        scale_bases: DevicePtr::NULL,
     }
 }
 
