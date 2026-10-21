@@ -118,9 +118,12 @@ mod tests {
             1e-6,
             1e-6,
             1e-5,
-            false,
-            false,
-            tok,
+            crate::glm5next_mhc_fused::PreNormChoice {
+                prefetch: false,
+                splitk: false,
+                tok,
+                c1: false,
+            },
             7,
         )
         .unwrap();

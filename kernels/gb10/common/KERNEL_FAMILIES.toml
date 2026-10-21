@@ -2058,6 +2058,7 @@ kernels = [
   "glm5next_mhc_tok::glm5next_hc_pre_norm_tok4",
   "glm5next_mhc_tok::glm5next_hc_post_pre_norm_tok4",
   "glm5next_mhc_tile::glm5next_hc_pre_norm_tile4",
+  "glm5next_mhc_c1::glm5next_hc_pre_norm_c1",
   "glm5next_hc_post_sum::glm5next_hc_post_rank_sum",
   "glm5next_hc_post_sum::glm5next_hc_post_rank_sum_vec8",
 ]
@@ -2083,6 +2084,10 @@ kernel_compute."glm5next_mhc_tok::glm5next_hc_post_pre_norm_tok4" = { compute = 
 # four-stage cp.async ring, four tokens per block (opt-in METRALE_GLM_MHC_PRE_TILE); tok4's
 # chains, trees and tails, so the same bits.
 kernel_compute."glm5next_mhc_tile::glm5next_hc_pre_norm_tile4" = { compute = "cuda_core" }
+# 2026-10-21: glm5next_hc_pre_norm for 1-2 tokens at hc 4, H 4096 with the last block's tail
+# shortened (default-on METRALE_GLM_MHC_PRE_C1); pf64's chains, the block trees on one warp, the
+# same Sinkhorn and norm expressions, so the same bits.
+kernel_compute."glm5next_mhc_c1::glm5next_hc_pre_norm_c1" = { compute = "cuda_core" }
 # 2026-10-10: The one-shot all-reduce's rank-order sum (bf16_add_rank_sum's arithmetic) fused
 # ahead of hc_post (opt-in METRALE_GLM_AR_FUSED_POST); the post-mix arithmetic is hc_post's.
 kernel_compute."glm5next_hc_post_sum::glm5next_hc_post_rank_sum" = { compute = "cuda_core" }
@@ -2102,7 +2107,7 @@ op = [
 [[family.point]]
 values = {}
 how = "instantiation"
-files = ["kernels/gb10/common/glm5next_mhc.cu", "kernels/gb10/common/glm5next_mhc_fused.cu", "kernels/gb10/common/glm5next_hc_post_sum.cu", "kernels/gb10/common/glm5next_mhc_tok.cu", "kernels/gb10/common/glm5next_mhc_tile.cu"]
+files = ["kernels/gb10/common/glm5next_mhc.cu", "kernels/gb10/common/glm5next_mhc_fused.cu", "kernels/gb10/common/glm5next_hc_post_sum.cu", "kernels/gb10/common/glm5next_mhc_tok.cu", "kernels/gb10/common/glm5next_mhc_tile.cu", "kernels/gb10/common/glm5next_mhc_c1.cu"]
 
 # 2026-10-08: The KDA gates: the decay
 # `linear_lower_bound * sigmoid(exp(A_log[h]) * (g + dt_bias))` per channel from the BF16 `f_b`

@@ -221,8 +221,21 @@ fn the_declared_defaults_are_the_old_unset_values() {
             pre_tok: false,
             pre_tile: false,
             pre_prefetch: false,
+            pre_c1: true,
             pre_splitk: false,
             pre_slice: None,
         }
     );
+}
+
+/// 2026-10-21: `METRALE_GLM_MHC_PRE_C1` is on unless switched off, reads the switch spellings, and
+/// refuses a value the switch rule cannot read.
+#[test]
+fn the_decode_pre_norm_is_on_by_default_and_0_turns_it_off() {
+    let at = |probe| new_at("METRALE_GLM_MHC_PRE_C1", probe, |l| l.pre_c1);
+    assert_eq!(at(None), Some(true));
+    assert_eq!(at(Some("1")), Some(true));
+    assert_eq!(at(Some("0")), Some(false));
+    assert_eq!(at(Some("off")), Some(false));
+    assert_eq!(at(Some("garbage")), None);
 }

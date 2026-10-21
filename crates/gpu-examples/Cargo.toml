@@ -87,6 +87,7 @@ example = [
     { name = "glm5next_multi_seq_decode_gate", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_c16_kernel_bench", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_hc_fused_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_hc_pre_c1_gate", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_hc_post_sum_gate", required-features = ["cuda", "gpu-examples"] },
     { name = "bf16_world2_sum_gate", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_hc_post_vec_gate", required-features = ["cuda", "gpu-examples"] },

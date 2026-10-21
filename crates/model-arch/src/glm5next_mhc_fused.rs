@@ -120,11 +120,25 @@ pub fn glm_hc_pre_norm(
         norm_eps,
         hc_eps,
         rms_eps,
-        kernels.levers.pre_prefetch,
-        kernels.levers.pre_splitk,
-        kernels.levers.pre_tok,
+        PreNormChoice {
+            prefetch: kernels.levers.pre_prefetch,
+            splitk: kernels.levers.pre_splitk,
+            tok: kernels.levers.pre_tok,
+            c1: kernels.levers.pre_c1,
+        },
         stream,
     )
+}
+
+/// 2026-10-21: Which of the optional pre-norm kernels a launch may take (each its lever in
+/// `glm_hc_pre_norm`; explicit here so a gate can run both arms). Precedence: `tok`, then
+/// `splitk`, then `c1` (`glm5next_mhc_c1`), then `prefetch`.
+#[derive(Clone, Copy, Debug)]
+pub struct PreNormChoice {
+    pub prefetch: bool,
+    pub splitk: bool,
+    pub tok: bool,
+    pub c1: bool,
 }
 
 /// 2026-10-11: k slices per token of `glm5next_hc_pre_norm_sk64` (`GLM_HCF_SK_SLICES`) and the
@@ -217,8 +231,8 @@ pub(crate) fn pre_norm_checks(
     Ok(mix_cap)
 }
 
-/// 2026-10-11: [`glm_hc_pre_norm`] with the prefetching kernel's choice explicit (`prefetch`;
-/// the bit-identity gate runs both arms).
+/// 2026-10-11: [`glm_hc_pre_norm`] with the optional kernels' choice explicit (`choice`; the
+/// bit-identity gates run both arms).
 #[allow(clippy::too_many_arguments)]
 pub fn glm_hc_pre_norm_with(
     gpu: &dyn GpuBackend,
@@ -237,11 +251,15 @@ pub fn glm_hc_pre_norm_with(
     norm_eps: f32,
     hc_eps: f32,
     rms_eps: f32,
-    prefetch: bool,
-    splitk: bool,
-    tok: bool,
+    choice: PreNormChoice,
     stream: u64,
 ) -> Result<()> {
+    let PreNormChoice {
+        prefetch,
+        splitk,
+        tok,
+        c1,
+    } = choice;
     let mix_cap = pre_norm_checks(w, num_tokens, hidden_size, hc_mult)?;
     // 2026-10-12: The token-tiled grid takes its own launch (`glm5next_mhc_tok`).
     if let Some(kernel) = crate::glm5next_mhc_tok::tok_kernel(kernels, num_tokens, tok) {
@@ -259,9 +277,14 @@ pub fn glm_hc_pre_norm_with(
         );
     }
     let (kernel, grid_y) =
-        splitk_kernel(kernels, num_tokens, hidden_size, hc_mult, splitk, mix_cap).unwrap_or_else(
-            || pre_norm_kernel(kernels, num_tokens, hidden_size, hc_mult, prefetch),
-        );
+        splitk_kernel(kernels, num_tokens, hidden_size, hc_mult, splitk, mix_cap)
+            .or_else(|| {
+                crate::glm5next_mhc_c1::c1_kernel(kernels, num_tokens, hidden_size, hc_mult, c1)
+                    .map(|k| (k, mix_hc(hc_mult as usize) as u32))
+            })
+            .unwrap_or_else(|| {
+                pre_norm_kernel(kernels, num_tokens, hidden_size, hc_mult, prefetch)
+            });
     if kernel.0 == 0 {
         bail!("glm_hc_pre_norm: the glm5next_mhc_fused kernels are not in this build");
     }
@@ -386,6 +409,7 @@ mod tests {
             hc_pre_norm_sk: k(if fused { 14 } else { 0 }),
             hc_pre_norm_tok: k(if fused { 15 } else { 0 }),
             hc_pre_norm_tile: k(if fused { 17 } else { 0 }),
+            hc_pre_norm_c1: k(if fused { 19 } else { 0 }),
             hc_post: k(7),
             hc_post_rank_sum: k(11),
             hc_post_rank_sum_vec8: k(18),
@@ -478,10 +502,30 @@ mod tests {
 
     /// 2026-10-09: The fused launch takes the 8-row grid from `HC_PRE_NORM_ROWS_MIN_TOKENS`
     /// tokens and the per-row grid below, one launch either way.
+    /// 2026-10-21: A decode step (1 or 2 tokens) takes `glm5next_hc_pre_norm_c1` on the per-row
+    /// grid unless `METRALE_GLM_MHC_PRE_C1=0`.
     #[test]
     fn grid_follows_the_unfused_mix_choice() {
         let gpu = MockGpuBackend::new();
         let k = kernels(true);
+        let mut off = kernels(true);
+        off.levers.pre_c1 = false;
+        let first_with = |k: &Glm5NextMhcKernels, t: u32| {
+            let from = gpu.launch_count();
+            launch(&gpu, k, &site(true), t, 4096, 4).unwrap();
+            assert_eq!(gpu.launch_count(), from + 1, "one launch per site");
+            let l = gpu.launches_snapshot()[from].clone();
+            (l.func, l.grid[0], l.grid[1])
+        };
+        assert_eq!(first_with(&k, 1), (19, 1, 24));
+        assert_eq!(first_with(&k, 2), (19, 2, 24));
+        assert_eq!(first_with(&k, 3), (9, 3, 24));
+        assert_eq!(first_with(&off, 1), (9, 1, 24));
+        assert_eq!(first_with(&off, 2), (9, 2, 24));
+        let mut absent = kernels(true);
+        absent.hc_pre_norm_c1 = KernelHandle(0);
+        assert_eq!(first_with(&absent, 2), (9, 2, 24));
+        let k = off;
         let first = |t: u32| {
             let from = gpu.launch_count();
             launch(&gpu, &k, &site(true), t, 4096, 4).unwrap();

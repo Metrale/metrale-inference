@@ -64,6 +64,9 @@ pub struct Glm5NextMhcKernels {
     pub hc_pre_norm_tok: KernelHandle,
     /// 2026-10-15: `glm5next_hc_pre_norm_tile4` (`glm5next_mhc_tile`): tok4's bits; optional.
     pub hc_pre_norm_tile: KernelHandle,
+    /// 2026-10-21: `glm5next_hc_pre_norm_c1` (`glm5next_mhc_c1`): `hc_pre_norm`'s bits with the
+    /// last block's tail shortened, for decode steps; optional.
+    pub hc_pre_norm_c1: KernelHandle,
     pub hc_post: KernelHandle,
     /// 2026-10-10: `glm5next_hc_post_rank_sum` (module [`GLM5NEXT_HC_POST_SUM_MODULE`]): the
     /// one-shot all-reduce's sum fused into `hc_post`, same bits. Optional (`try_kernel`, 0 when
@@ -153,6 +156,11 @@ impl Glm5NextMhcKernels {
                 gpu,
                 GLM5NEXT_MHC_TILE_MODULE,
                 crate::glm5next_mhc_tile::HC_PRE_TILE_KERNEL,
+            ),
+            hc_pre_norm_c1: metrale_model_layers::layers::try_kernel(
+                gpu,
+                crate::glm5next_mhc_c1::HC_PRE_C1_MODULE,
+                crate::glm5next_mhc_c1::HC_PRE_C1_KERNEL,
             ),
             hc_post: gpu.kernel(GLM5NEXT_MHC_MODULE, "glm5next_hc_post")?,
             hc_post_pre_norm: metrale_model_layers::layers::try_kernel(
@@ -394,4 +402,4 @@ pub fn mix_hc(hc_mult: usize) -> usize {
 
 #[cfg(test)]
 #[path = "glm5next_mhc_tests.rs"]
-mod mhc_shape_tests;
+pub(crate) mod mhc_shape_tests;

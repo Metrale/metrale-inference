@@ -45,6 +45,9 @@ pub struct MhcLevers {
     /// them in the same order, instead of eight at a time. Same bits (`glm5next_hc_fused_gate`
     /// checks it).
     pub pre_prefetch: bool,
+    /// 2026-10-21: `METRALE_GLM_MHC_PRE_C1` (on unless `0`): a decode step's pre-norm takes
+    /// `glm5next_hc_pre_norm_c1` where `glm5next_mhc_c1::c1_kernel` allows. Same bits.
+    pub pre_c1: bool,
     /// 2026-10-11: `METRALE_GLM_MHC_PRE_SPLITK`: below `HC_PRE_NORM_ROWS_MIN_TOKENS` the pre-norm
     /// takes `glm5next_hc_pre_norm_sk64` where the shape allows and the site's `mix` scratch holds
     /// the slice partials (`glm5next_mhc_fused::splitk_kernel`): the mix runs on 64 blocks per
@@ -112,6 +115,7 @@ impl MhcLevers {
             pre_tok: k.glm_mhc_pre_tok,
             pre_tile: k.glm_mhc_pre_tile,
             pre_prefetch: k.glm_mhc_pre_prefetch,
+            pre_c1: k.glm_mhc_pre_c1,
             pre_splitk: k.glm_mhc_pre_splitk,
             pre_slice,
         })

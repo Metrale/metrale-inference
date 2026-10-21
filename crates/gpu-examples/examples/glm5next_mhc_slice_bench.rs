@@ -25,7 +25,9 @@ use half::bf16;
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_arch::glm5next_mhc::{Glm5NextMhcKernels, Glm5NextMhcSiteWeights, glm_hc_pre};
-use metrale_model_arch::glm5next_mhc_fused::{glm_hc_pre_norm, glm_hc_pre_norm_with};
+use metrale_model_arch::glm5next_mhc_fused::{
+    PreNormChoice, glm_hc_pre_norm, glm_hc_pre_norm_with,
+};
 
 const H: usize = 4096;
 const HC: usize = 4;
@@ -164,8 +166,29 @@ fn pre_tok(
 ) -> Result<()> {
     let [y, normed, post, comb] = o.0;
     glm_hc_pre_norm_with(
-        gpu, k, streams, w, norm_w, y, normed, post, comb, t as u32, H as u32, HC as u32, 20, 1e-5,
-        1e-6, 1e-5, false, false, tok, 0,
+        gpu,
+        k,
+        streams,
+        w,
+        norm_w,
+        y,
+        normed,
+        post,
+        comb,
+        t as u32,
+        H as u32,
+        HC as u32,
+        20,
+        1e-5,
+        1e-6,
+        1e-5,
+        PreNormChoice {
+            prefetch: false,
+            splitk: false,
+            tok,
+            c1: false,
+        },
+        0,
     )
 }
 
