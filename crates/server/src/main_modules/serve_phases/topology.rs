@@ -259,6 +259,82 @@ pub(crate) fn init_nccl_comm(
     ))
 }
 
+/// 2026-10-21: The control communicator's port (`METRALE_GLM_EP_CTRL_COMM`): `None` when the
+/// lever is off or the serve has one rank; required when it is on (no default), and refused
+/// where its bootstrap would collide with the main communicator's (`master_port`, and the
+/// `master_port + 1` its reconnect binds) or its own reconnect port would.
+pub(crate) fn ctrl_port(
+    lever: bool,
+    port: Option<i64>,
+    master_port: u16,
+    world_size: usize,
+) -> Result<Option<u16>> {
+    if !lever || world_size <= 1 {
+        return Ok(None);
+    }
+    let port: u16 =
+        crate::lever_value::narrow_opt("METRALE_GLM_EP_CTRL_PORT", port)?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "METRALE_GLM_EP_CTRL_COMM=1 requires METRALE_GLM_EP_CTRL_PORT (the control \
+                 communicator's bootstrap port; there is no default)"
+            )
+        })?;
+    let taken = [master_port, master_port.wrapping_add(1)];
+    anyhow::ensure!(
+        port != 0 && !taken.contains(&port) && !taken.contains(&port.wrapping_add(1)),
+        "METRALE_GLM_EP_CTRL_PORT={port} collides with the main communicator's bootstrap ports \
+         {taken:?} (--master-port and its reconnect port); pick a port at least 2 away"
+    );
+    Ok(Some(port))
+}
+
+/// 2026-10-21: Bootstrap the control communicator on `port`, its operations on `stream` (the
+/// model's greatest-priority control stream). It carries only control frames: no receive
+/// buffer to speak of, no one-shot all-reduce.
+#[cfg(feature = "nccl")]
+pub(crate) fn init_ctrl_comm(
+    args: &cli::ServeArgs,
+    settings: &metrale_settings::InferenceServerSettings,
+    world_size: usize,
+    port: u16,
+    stream: u64,
+) -> Result<std::sync::Arc<dyn metrale_comm::CommBackend>> {
+    tracing::info!(
+        "Initializing the NCCL control communicator: rank {}/{world_size}, master {}:{port}",
+        args.rank,
+        args.master_addr,
+    );
+    let backend = metrale_comm::NcclBackend::new(
+        args.rank,
+        world_size,
+        &args.master_addr,
+        port,
+        stream,
+        // 2026-10-21: World 2 requires a non-zero two-rank all-reduce buffer; this communicator
+        // never all-reduces, so one page.
+        4096,
+        metrale_comm::nccl_backend::CommLevers {
+            oneshot_max_bytes: 0,
+            diagnostics: settings.telemetry.comm_diagnostics.as_deref(),
+            poll: &settings.runtime.comm_poll,
+        },
+    )
+    .context("Failed to initialize the NCCL control communicator")?;
+    Ok(std::sync::Arc::new(backend))
+}
+
+/// 2026-10-21: A build without `nccl` has no control communicator.
+#[cfg(not(feature = "nccl"))]
+pub(crate) fn init_ctrl_comm(
+    _args: &cli::ServeArgs,
+    _settings: &metrale_settings::InferenceServerSettings,
+    _world_size: usize,
+    _port: u16,
+    _stream: u64,
+) -> Result<std::sync::Arc<dyn metrale_comm::CommBackend>> {
+    anyhow::bail!("METRALE_GLM_EP_CTRL_COMM needs a build with NCCL")
+}
+
 /// 2026-09-26: A `cuda` build without `nccl` has no collectives:
 /// `world_size > 1` is an error, and otherwise there is no communicator.
 #[cfg(all(feature = "cuda", not(feature = "nccl")))]
@@ -300,4 +376,31 @@ pub(crate) fn init_nccl_comm(
         );
     }
     Ok(None)
+}
+
+#[cfg(test)]
+mod ctrl_port_tests {
+    use super::ctrl_port;
+
+    /// 2026-10-21: The port is required with the lever on a multi-rank serve and ignored
+    /// otherwise; a port the main communicator binds (its own or its reconnect's), or one whose
+    /// reconnect port it binds, is refused, as is one out of `u16` range.
+    #[test]
+    fn the_ctrl_port_is_required_and_kept_off_the_main_communicators_ports() {
+        assert_eq!(ctrl_port(false, None, 29500, 3).unwrap(), None);
+        assert_eq!(
+            ctrl_port(true, None, 29500, 1).unwrap(),
+            None,
+            "one rank: no channel"
+        );
+        let e = ctrl_port(true, None, 29500, 3).unwrap_err().to_string();
+        assert!(e.contains("requires METRALE_GLM_EP_CTRL_PORT"), "{e}");
+        assert_eq!(ctrl_port(true, Some(29510), 29500, 3).unwrap(), Some(29510));
+        assert_eq!(ctrl_port(true, Some(29502), 29500, 3).unwrap(), Some(29502));
+        for taken in [29499, 29500, 29501] {
+            assert!(ctrl_port(true, Some(taken), 29500, 3).is_err(), "{taken}");
+        }
+        assert!(ctrl_port(true, Some(0), 29500, 3).is_err());
+        assert!(ctrl_port(true, Some(70_000), 29500, 3).is_err());
+    }
 }

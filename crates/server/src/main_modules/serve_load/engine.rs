@@ -275,6 +275,18 @@ pub(crate) fn load_engine(
         .then_some(built.max_batch_size);
     args.max_batch_size = metrale_model_engine::factory::SlotRequest::Count(built.max_batch_size);
     let model = built.model;
+    // 2026-10-21: `METRALE_GLM_EP_CTRL_COMM`: the control communicator, bootstrapped once the
+    // model is built, so every rank has agreed on the lever and its port first.
+    if let Some(port) = serve_phases::ctrl_port(
+        settings.runtime.glm_ep_ctrl_comm,
+        settings.runtime.glm_ep_ctrl_port,
+        args.master_port,
+        world_size,
+    )? {
+        model.attach_ctrl_comm(&mut |stream| {
+            serve_phases::init_ctrl_comm(&args, settings, world_size, port, stream)
+        })?;
+    }
     let drafter_weights_sha256 = built.drafter_weights_sha256;
     // 2026-10-04: Always logged, not only under --spec-cost-model measured: it is the only way
     // to learn the value `met benchmark spec-cost-table --drafter-weights-sha256` and a future

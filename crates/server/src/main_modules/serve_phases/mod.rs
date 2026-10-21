@@ -46,7 +46,7 @@ pub(super) use runtime::{
     log_response_store_audit, open_dump_writer, resolve_model_name, resolve_tool_call_parser,
 };
 pub(super) use tokenizer_runtime::{TokenizerRuntime, resolve_tokenizer_runtime};
-pub(super) use topology::{Topology, init_nccl_comm, resolve_topology};
+pub(super) use topology::{Topology, ctrl_port, init_ctrl_comm, init_nccl_comm, resolve_topology};
 pub(super) use weights::{
     LoraAdapterState, load_dflash_drafter, load_lora_adapters, load_weight_store,
 };
