@@ -32,14 +32,14 @@ pub(super) fn per_sequence_reserve(
     let per_seq =
         per_sequence_state_bytes(config, args.max_seq_len, spec_on, settings).unwrap_or_default();
     let charge = per_seq.for_batch(args.max_batch_size.ceiling());
-    // 2026-10-09: The paged indexer's bytes are in the KV price, not this charge; say so once,
-    // with the per-token figure the pool sizing uses.
+    // 2026-10-09: The paged indexer's bytes are in the KV price, not this charge; say so once.
+    // 2026-10-21: The per-token figure depends on the row format the load resolves
+    // (`GLM DSA indexer rows:`), so it is not restated here.
     if matches!(config.model_type.as_str(), "glm5_next" | "glm5_next_text") && glm_indexer_paged {
         tracing::info!(
-            "GLM-5.3 DSA indexer: paged in the V side of each DSA layer's KV pool, {} B per \
-             token per DSA layer inside the KV price; nothing reserved per sequence \
-             (METRALE_GLM_DSA_INDEXER_FLAT=1 restores the flat cache)",
-            4 * config.index_head_dim
+            "GLM-5.3 DSA indexer: paged in the V side of each DSA layer's KV pool, inside the \
+             KV price; nothing reserved per sequence (METRALE_GLM_DSA_INDEXER_FLAT=1 restores \
+             the flat cache)"
         );
     }
     if charge > 0 {
