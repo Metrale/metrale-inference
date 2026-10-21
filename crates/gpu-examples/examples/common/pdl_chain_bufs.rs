@@ -303,8 +303,10 @@ pub struct Bufs {
 }
 
 impl Bufs {
-    /// 2026-10-21: `layers` layer pairs drawn from `seed`.
-    pub fn new(g: &dyn GpuBackend, seed: u64, layers: usize) -> Result<Self> {
+    /// 2026-10-21: `layers` layer pairs drawn from `seed`. `router` scales the router weights:
+    /// the gate routes by its input (so a stale read moves the experts); the bench passes 0, so
+    /// each layer's experts are fixed by its bias and every replay streams the same bytes.
+    pub fn new(g: &dyn GpuBackend, seed: u64, layers: usize, router: f32) -> Result<Self> {
         let r = &mut Rng(seed | 1);
         let mut ep = Nvfp4Pool::new(g, r, EXPERT_POOL)?;
         let mut dp = Nvfp4Pool::new(g, r, DENSE_POOL)?;
@@ -330,8 +332,8 @@ impl Bufs {
                 rec: rnd_f32(g, r, REC_BYTES / 4, 0.1, 0.0)?,
                 conv_int: zeros(g, CONV_BYTES)?,
                 h_int: zeros(g, REC_BYTES)?,
-                router: rnd_bf16(g, r, (EXPERTS * H) as usize, 0.05)?,
-                router_bias: rnd_f32(g, r, EXPERTS as usize, 0.01, 0.0)?,
+                router: rnd_bf16(g, r, (EXPERTS * H) as usize, router)?,
+                router_bias: rnd_f32(g, r, EXPERTS as usize, 0.5, 0.0)?,
                 sh_gu: [dp.take(SHARED, H), dp.take(SHARED, H)],
                 sh_down: dp.take(H, SHARED),
             });

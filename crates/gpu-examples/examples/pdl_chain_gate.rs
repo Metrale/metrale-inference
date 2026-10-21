@@ -179,7 +179,7 @@ fn main() -> Result<()> {
     }
     let s = off.default_stream();
     println!("GATE: PDL race detector, {LAYERS} KDA + MoE layer pairs at M = {T}, {SETS} inputs");
-    let b = Bufs::new(&off, 0x5eed_0001, LAYERS)?;
+    let b = Bufs::new(&off, 0x5eed_0001, LAYERS, 0.05)?;
     let inp = inputs(&off, &b)?;
 
     let g_off = capture(&off, &ko, &b, s)?;

@@ -10,6 +10,8 @@
 //! Owner: gpu-examples.
 //! Invariants: every arm is timed in every round, in the same order, after the same warm-up.
 //!
+//! `PDL_BENCH_BASE_PTX=<dir>` adds an arm on the kernels before the change (see `with_base`).
+//!
 //!   cargo run -p metrale-gpu-examples --release --example pdl_chain_bench --features cuda,gpu-examples
 
 #[path = "common/pdl_chain_bufs.rs"]
@@ -64,6 +66,29 @@ fn median(v: &mut [f64]) -> f64 {
     v[v.len() / 2]
 }
 
+/// 2026-10-21: The GLM module set with each module whose `<name>.ptx` is in `dir` replaced by
+/// that file (leaked: a backend's modules are `'static`), for the base arm.
+fn with_base(
+    modules: &[(&'static str, &'static [u8])],
+    dir: &str,
+) -> Result<Vec<(&'static str, &'static [u8])>> {
+    let mut n = 0;
+    let out = modules
+        .iter()
+        .map(
+            |&(name, blob)| match std::fs::read(format!("{dir}/{name}.ptx")) {
+                Ok(b) => {
+                    n += 1;
+                    (name, &*Box::leak(b.into_boxed_slice()))
+                }
+                Err(_) => (name, blob),
+            },
+        )
+        .collect();
+    anyhow::ensure!(n > 0, "{dir}: no module PTX found");
+    Ok(out)
+}
+
 fn main() -> Result<()> {
     let sets = metrale_kernels::all_ptx_sets();
     let glm = sets
@@ -72,35 +97,48 @@ fn main() -> Result<()> {
         .context("glm-5.3-flash kernel target not built")?;
     let off = MetraleCudaBackend::new(0, &glm.modules)?;
     let on = MetraleCudaBackend::new(0, &glm.modules)?;
-    let (ko, kn) = (Kern::resolve(&off)?, Kern::resolve(&on)?);
     anyhow::ensure!(
         on.enable_programmatic_launches()?,
         "programmatic launches unavailable"
     );
+    // 2026-10-21: `PDL_BENCH_BASE_PTX=<dir>`: a third arm on the kernels before this change
+    // (their PTX, one `<module>.ptx` per module), launched serialised, in the same process.
+    let base = match std::env::var("PDL_BENCH_BASE_PTX") {
+        Ok(dir) => Some(MetraleCudaBackend::new(0, &with_base(&glm.modules, &dir)?)?),
+        Err(_) => None,
+    };
+    let mut backs: Vec<(&str, &MetraleCudaBackend)> = vec![("PDL off", &off), ("PDL on", &on)];
+    if let Some(b) = &base {
+        backs.push(("base (old)", b));
+    }
     let s = off.default_stream();
-    let b = Bufs::new(&off, 0x5eed_0002, LAYERS)?;
+    let b = Bufs::new(&off, 0x5eed_0002, LAYERS, 0.0)?;
     let parts = [
         ("KDA layer", Part::Kda),
         ("MoE layer", Part::Moe),
         ("KDA+MoE pair", Part::Pair),
     ];
-    // 2026-10-21: (off, on) graphs per part.
-    let mut arms: Vec<(GraphHandle, GraphHandle)> = Vec::new();
+    let mut graphs: Vec<Vec<GraphHandle>> = Vec::new();
     for &(_, p) in &parts {
-        arms.push((capture(&off, &ko, &b, p, s)?, capture(&on, &kn, &b, p, s)?));
+        let mut row = Vec::new();
+        for &(_, g) in &backs {
+            row.push(capture(g, &Kern::resolve(g)?, &b, p, s)?);
+        }
+        graphs.push(row);
     }
-    let mut per: Vec<[Vec<f64>; 2]> = (0..parts.len()).map(|_| [Vec::new(), Vec::new()]).collect();
+    let mut per: Vec<Vec<Vec<f64>>> = vec![vec![Vec::new(); backs.len()]; parts.len()];
     for _ in 0..ROUNDS {
         let t0 = Instant::now();
         while t0.elapsed() < WARM {
-            for &(a, c) in &arms {
-                off.launch_graph(a, s)?;
-                on.launch_graph(c, s)?;
+            for row in &graphs {
+                for &gr in row {
+                    off.launch_graph(gr, s)?;
+                }
             }
             off.synchronize(s)?;
         }
-        for (i, &(a, c)) in arms.iter().enumerate() {
-            for (j, gr) in [a, c].into_iter().enumerate() {
+        for (i, row) in graphs.iter().enumerate() {
+            for (j, &gr) in row.iter().enumerate() {
                 let mut v = Vec::with_capacity(TRIALS);
                 for _ in 0..TRIALS {
                     let t = Instant::now();
@@ -113,44 +151,52 @@ fn main() -> Result<()> {
         }
     }
     println!(
-        "PDL microbench: {LAYERS} distinct layers per graph, M = {T}, {ROUNDS} rounds x {TRIALS} replays"
+        "PDL microbench: {LAYERS} distinct layers per graph, M = {T}, {ROUNDS} rounds x {TRIALS} replays; us per layer, median [min..max]"
     );
+    let header: Vec<String> = backs.iter().map(|(n, _)| format!("{n:>22}")).collect();
     println!(
-        "{:<14} {:>22} {:>22} {:>9}",
-        "us per layer", "PDL off [min..max]", "PDL on [min..max]", "saved"
+        "{:<14}{} {:>12}{}",
+        "",
+        header.join(""),
+        "on vs off",
+        if base.is_some() { "  on vs base" } else { "" }
     );
-    let mut saved = [0.0f64; 3];
+    let mut saved = vec![[0.0f64; 2]; parts.len()];
     for (i, (name, _)) in parts.iter().enumerate() {
-        let st = |v: &mut Vec<f64>| {
-            v.sort_by(f64::total_cmp);
-            (v[v.len() / 2], v[0], v[v.len() - 1])
-        };
-        let (a, c) = (st(&mut per[i][0]), st(&mut per[i][1]));
-        saved[i] = a.0 - c.0;
+        let st: Vec<(f64, f64, f64)> = per[i]
+            .iter_mut()
+            .map(|v| {
+                v.sort_by(f64::total_cmp);
+                (v[v.len() / 2], v[0], v[v.len() - 1])
+            })
+            .collect();
+        let cells: Vec<String> = st
+            .iter()
+            .map(|a| format!("{:>8.1} [{:>5.1}..{:>5.1}]", a.0, a.1, a.2))
+            .collect();
+        saved[i][0] = st[0].0 - st[1].0;
+        saved[i][1] = st.get(2).map_or(f64::NAN, |b| b.0 - st[1].0);
+        print!("{name:<14}{} {:>9.2} us", cells.join(""), saved[i][0]);
+        if base.is_some() {
+            print!(" {:>9.2} us", saved[i][1]);
+        }
+        println!();
+    }
+    for (c, what) in [(0usize, "on vs off"), (1, "on vs base")] {
+        if c == 1 && base.is_none() {
+            continue;
+        }
         println!(
-            "{name:<14} {:>8.1} [{:>5.1}..{:>5.1}] {:>8.1} [{:>5.1}..{:>5.1}] {:>6.2} us ({:+.1}%)",
-            a.0,
-            a.1,
-            a.2,
-            c.0,
-            c.1,
-            c.2,
-            saved[i],
-            -100.0 * saved[i] / a.0
+            "projected step saving ({what}): {:.3} ms = {KDA_PER_STEP} KDA x {:.2} us + {MOE_PER_STEP} MoE x {:.2} us",
+            (saved[0][c] * KDA_PER_STEP + saved[1][c] * MOE_PER_STEP) / 1000.0,
+            saved[0][c],
+            saved[1][c]
         );
     }
-    let proj = (saved[0] * KDA_PER_STEP + saved[1] * MOE_PER_STEP) / 1000.0;
-    println!(
-        "projected step saving: {:.3} ms ({KDA_PER_STEP} KDA x {:.2} us + {MOE_PER_STEP} MoE x {:.2} us); \
-         pair arm alone x {KDA_PER_STEP}: {:.3} ms",
-        proj,
-        saved[0],
-        saved[1],
-        saved[2] * KDA_PER_STEP / 1000.0
-    );
-    for (a, c) in arms {
-        off.destroy_graph(a)?;
-        on.destroy_graph(c)?;
+    for row in graphs {
+        for gr in row {
+            off.destroy_graph(gr)?;
+        }
     }
     Ok(())
 }
