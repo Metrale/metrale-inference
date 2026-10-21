@@ -30,6 +30,11 @@
 //!   2048 up a lone projection keeps `w4a16_gemv`, `ops::w4a16_gemv_seg_lone`). Every output byte is
 //!   `w4a16_gemv`'s (the kernel's invariant), so the lever changes no bits; unset or `0` keeps
 //!   `w4a16_gemv`.
+//! - 2026-10-21: `METRALE_GLM_W4A16_GEMV_PIPE` (on unless `0`), under `METRALE_GLM_W4A16_GEMV_SEG`:
+//!   the launches of 1 and 2 rows [`launch_seg_gemv`] makes run on `w4a16_gemv_pipe`
+//!   ([`SegPlan::pipe_rows`]), as does a lone 2-row projection from K 2048 up (KDA o), which ran
+//!   on `w4a16_gemv_batch2`. Every output byte is `w4a16_gemv`'s per row (the kernel's
+//!   invariant), so the lever changes no bits; `0` keeps `w4a16_gemv_seg` and the batch tier.
 
 use std::sync::OnceLock;
 
@@ -37,9 +42,9 @@ use anyhow::{Context, Result};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
 use metrale_model_layers::layers::ops::{
-    W4A16_GEMV_SEG_MAX_ROWS, W4A16_GEMV_SEG_MODULE, W4A16_GEMV_SEG_TILES, W4A16_TC_ROWS_MAX_M,
+    W4A16_GEMV_PIPE_MODULE, W4A16_GEMV_SEG_MAX_ROWS, W4A16_GEMV_SEG_MODULE, W4A16_GEMV_SEG_TILES, W4A16_TC_ROWS_MAX_M,
     W4A16_TC_ROWS_SEG_MODULE, W4a16GemvSegPoint, W4a16Seg, w4a16_gemv_seg, w4a16_gemv_seg_point,
-    w4a16_gemv_seg_policy, w4a16_tc_rows_seg, w4a16_tc_rows_seg_entries, w4a16_tc_rows_seg_tiles,
+    w4a16_gemv_pipe, w4a16_gemv_pipe_entry, w4a16_gemv_seg_policy, w4a16_tc_rows_seg, w4a16_tc_rows_seg_entries, w4a16_tc_rows_seg_tiles,
     w4a16_tc_rows_split_for,
 };
 use metrale_model_layers::weight_map::QuantizedWeight;
@@ -112,18 +117,22 @@ pub(crate) fn launch_gemv_rows(
 
 /// 2026-10-11: `segs[i].output [m, n_i] = a [m, k] @ W_i^T` (contiguous rows) in one
 /// `w4a16_gemv_seg` launch: [`launch_one_row`] at one row, the M-row point at 2..=4 (each row the
-/// one-row kernel's bytes for that row alone).
+/// one-row kernel's bytes for that row alone). 2026-10-21: On `w4a16_gemv_pipe` where
+/// [`SegPlan::pipe_rows`] holds (the same bytes).
 pub(crate) fn launch_seg_gemv(
     gpu: &dyn GpuBackend,
     a: DevicePtr,
     segs: &[W4a16Seg],
     m: usize,
     k: u32,
-    sms: u32,
+    plan: SegPlan,
     stream: u64,
 ) -> Result<()> {
+    if plan.pipe_rows(m) {
+        return w4a16_gemv_pipe(gpu, a, segs, m as u32, k, plan.sms, stream);
+    }
     if m == 1 {
-        return launch_one_row(gpu, a, segs, k, sms, stream);
+        return launch_one_row(gpu, a, segs, k, plan.sms, stream);
     }
     w4a16_gemv_seg_point(
         gpu,
@@ -186,6 +195,16 @@ pub(crate) fn prepare(gpu: &dyn GpuBackend, l: &DenseLevers) -> Result<()> {
                 })?;
         }
     }
+    // 2026-10-21: The `w4a16_gemv_pipe` entries `METRALE_GLM_W4A16_GEMV_PIPE` may reach.
+    if l.gemv_seg && l.gemv_pipe {
+        for entry in (1..=l.gemv_rows.max(1)).filter_map(w4a16_gemv_pipe_entry) {
+            gpu.op_cache()
+                .kernel(gpu, W4A16_GEMV_PIPE_MODULE, entry)
+                .with_context(|| {
+                    format!("METRALE_GLM_W4A16_GEMV_PIPE: {W4A16_GEMV_PIPE_MODULE}::{entry}")
+                })?;
+        }
+    }
     if SMS.get().is_none() && (l.gemv_seg || l.seg != SegMode::Off) {
         let _ = SMS.set(gpu.sm_count()?);
     }
@@ -206,13 +225,15 @@ pub(crate) fn prepare(gpu: &dyn GpuBackend, l: &DenseLevers) -> Result<()> {
 /// widest launch on the GEMV tiers (`DenseLevers::gemv_rows`; 0 = none). 2026-10-10: `one_row`,
 /// whether one-row launches take `w4a16_gemv_seg` (`DenseLevers::gemv_seg`). 2026-10-17: the
 /// row floors of the wide dequant GEMM and the tensor-core GEMM (`None` off) and whether the
-/// batch-invariant mode is on, copied from the same levers.
+/// batch-invariant mode is on, copied from the same levers. 2026-10-21: `pipe`,
+/// `DenseLevers::gemv_pipe`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SegPlan {
     pub mode: SegMode,
     pub sms: u32,
     pub gemv_rows: u32,
     pub one_row: bool,
+    pub pipe: bool,
     pub tc_min_rows: Option<usize>,
     pub dequant_min_rows: Option<usize>,
     pub batch_invariant: bool,
@@ -224,6 +245,14 @@ impl SegPlan {
     /// ([`Self::gemv_tier`]) the M-row points have (2..=4). Their rows carry the GEMV tiers' bytes.
     pub(crate) fn seg_gemv(&self, m: usize) -> bool {
         self.one_row && (m == 1 || (self.gemv_tier(m) && m <= W4A16_GEMV_SEG_MAX_ROWS as usize))
+    }
+
+    /// 2026-10-21: Whether a launch of `m` rows that [`Self::seg_gemv`] takes runs on
+    /// `w4a16_gemv_pipe`: the lever on and an entry for `m` (1 and 2 rows).
+    pub(crate) fn pipe_rows(&self, m: usize) -> bool {
+        self.pipe
+            && self.seg_gemv(m)
+            && u32::try_from(m).is_ok_and(|m| w4a16_gemv_pipe_entry(m).is_some())
     }
 
     /// 2026-10-10: Whether a launch of `m` rows runs on the GEMV tiers.
@@ -255,6 +284,7 @@ pub(crate) fn plan(l: &DenseLevers) -> Result<SegPlan> {
         sms,
         gemv_rows: l.gemv_rows,
         one_row,
+        pipe: l.gemv_pipe,
         tc_min_rows: l.tc_min_rows,
         dequant_min_rows: l.dequant_min_rows,
         batch_invariant: l.batch_invariant,
