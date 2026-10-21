@@ -401,9 +401,11 @@ extern "C" __global__ void __launch_bounds__(256) dsa_index_scores_mma(
 // 3. A bitonic sort of those select_k (score, pool) pairs in the total order, as the reference
 //    leaves its best list; slot i of the row is the i-th, -1 past the pools of a short row.
 // Launch: grid (Q, 1, 1), block 256; select_k <= DSA_TR_MAX.
-// 2026-10-21: With `geom` (a ceiling launch: a captured decode row, Q == 1) P and select_k are
-// the live ones in the device geometry, as dsa_topk_pools_body reads them, so a replayed graph
-// selects over this step's pools; the static shared memory does not depend on them.
+// 2026-10-21: With `geom` (a ceiling launch: captured decode or verify rows) row r's P and
+// select_k are the live ones in geometry slots r * DSA_GEOM_SLOTS, as dsa_topk_pools_body reads
+// them, so a replayed graph selects over this step's pools; the static shared memory does not
+// depend on them. Rows read scores at stride P and write selected pools at stride select_k, the
+// arguments as passed (a ceiling's max_pools and its select_k).
 #define DSA_TR_MAX 512u
 #define DSA_TR_WARPS 8u
 
@@ -415,7 +417,11 @@ extern "C" __global__ void __launch_bounds__(256) dsa_topk_pools_radix(
     unsigned int select_k,
     const int* __restrict__ geom
 ) {
+    // 2026-10-21: Row strides are the P and select_k arguments (a ceiling launch's), fixed
+    // whatever the rows' live extents.
+    const unsigned int sc_stride = P, sel_stride = select_k;
     if (geom) {
+        geom += (size_t)blockIdx.x * DSA_GEOM_SLOTS;
         P = (unsigned int)geom[DSA_GEOM_NPOOLS];
         select_k = (unsigned int)geom[DSA_GEOM_SELECT_K];
     }
@@ -425,7 +431,7 @@ extern "C" __global__ void __launch_bounds__(256) dsa_topk_pools_radix(
     __shared__ unsigned int s_prefix, s_need, s_gt, s_eq, s_wsum[DSA_TR_WARPS];
     const unsigned int r = blockIdx.x, tid = threadIdx.x, lane = tid & 31u, warp = tid >> 5;
     if (r >= Q || select_k == 0u || select_k > DSA_TR_MAX || blockDim.x != 256u) return;
-    const float* row = scores + (size_t)r * P;
+    const float* row = scores + (size_t)r * sc_stride;
     const unsigned int take = select_k < P ? select_k : P;
 
     if (P > select_k) {
@@ -554,5 +560,5 @@ extern "C" __global__ void __launch_bounds__(256) dsa_topk_pools_radix(
     }
 #undef DSA_TR_GT
     for (unsigned int i = tid; i < select_k; i += blockDim.x)
-        selected[(size_t)r * select_k + i] = (i < take && ci[i] != INT_MAX) ? ci[i] : DSA_INVALID;
+        selected[(size_t)r * sel_stride + i] = (i < take && ci[i] != INT_MAX) ? ci[i] : DSA_INVALID;
 }

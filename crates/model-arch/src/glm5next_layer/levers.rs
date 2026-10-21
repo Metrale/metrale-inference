@@ -79,6 +79,10 @@ pub struct GlmLevers {
     /// all rows in one pass, as the batched decode does; each row is then placed and selected as
     /// before. Each row keeps its bits.
     pub dsa_verify_rows: bool,
+    /// 2026-10-21: `METRALE_GLM_DSA_VERIFY_SELECT_ONCE` (default on): where the verify rows
+    /// above apply over persisted pool keys, one selection pass for all the rows after their
+    /// indexer rows are stored (`Glm5NextDsaLayer::select_verify_rows`); each row keeps its bits.
+    pub dsa_verify_select_once: bool,
     /// 2026-10-10: `METRALE_GLM_AR_FUSED_POST`: where an mHC site's all-reduce takes the
     /// one-shot path in one piece, the exchange runs alone (`CommBackend::exchange_partials`) and
     /// `glm5next_hc_post_rank_sum` sums the partials and post-mixes in one launch instead of
@@ -170,6 +174,7 @@ impl GlmLevers {
             dsa_indexer_rows: k.glm_dsa_indexer_rows,
             dsa_idx_proj_whole: k.glm_dsa_idx_proj_whole,
             dsa_verify_rows: k.glm_dsa_verify_rows,
+            dsa_verify_select_once: k.glm_dsa_verify_select_once,
             ar_fused_post: k.glm_ar_fused_post,
             mhc_post_fold: k.glm_mhc_post_fold,
             mhc_fused: k.glm_mhc_fused,

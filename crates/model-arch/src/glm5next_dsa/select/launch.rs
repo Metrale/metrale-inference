@@ -221,11 +221,17 @@ pub(super) fn run(
                      needs `geom_dev`; passing NULL would run the frozen scalars."
                 );
             }
-            if geom.q_rows != 1 {
+            // 2026-10-21: Several rows only over persisted pool keys with the radix top-k
+            // (`scores::rows_ceiling_for`): those kernels read each row's geometry at its own
+            // slots and index rows at the ceiling's strides.
+            if geom.q_rows != 1
+                && !scores::rows_ceiling_for(kernels, cfg, geom, inputs, scratch, max_pools)
+            {
                 bail!(
-                    "DSA select: ceiling launch is decode-only (q_rows must be 1, got {}). \
-                     At q_rows > 1 the row strides vary with the context and a replayed \
-                     graph would index the wrong rows.",
+                    "DSA select: a ceiling launch of {} rows needs persisted pool keys, the \
+                     radix top-k and scratch for that many rows at {max_pools} pools; the \
+                     other kernels read one geometry and index rows at the live strides, so \
+                     a replayed graph would index the wrong rows.",
                     geom.q_rows
                 );
             }
@@ -456,7 +462,16 @@ pub(super) fn run(
         return folded::launch_fold(gpu, kernels, geom, inputs, scratch, stream);
     }
     if persisted {
-        return scores::launch_expand_geom(gpu, kernels, cfg, geom, inputs, scratch, stream);
+        return scores::launch_expand_geom(
+            gpu,
+            kernels,
+            cfg,
+            geom,
+            inputs,
+            scratch,
+            (npools_a, selk_a),
+            stream,
+        );
     }
 
     KernelLaunch::new(gpu, kernels.expand_selection)

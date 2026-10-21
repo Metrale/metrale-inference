@@ -8,6 +8,8 @@
 //! - [`launch_scores`] writes the bytes `dsa_index_scores` writes for the pass, whichever
 //!   kernel it launches (`dsa_index_scores_warp` byte-gated against it; the persisted keys are
 //!   the bytes `dsa_kpool_compress` writes, so `dsa_index_scores_warp_paged`'s are too).
+//! - A ceiling pass of several rows ([`rows_ceiling_for`]) reads row `r`'s geometry at slots
+//!   `r * DSA_GEOM_SLOTS` and indexes rows at the ceiling's strides in every kernel it launches.
 //! - A persisted pass ([`persisted_for`]) launches no `dsa_kpool_compress` and expands through
 //!   the geometry (`dsa_expand_selection_rows`, slots recomputed), so nothing reads the
 //!   scratch's `pool_keys`, `pool_indices` or `pool_valid`.
@@ -35,6 +37,33 @@ pub(super) fn persisted_for(
         && warp_shape(geom)
         && kernels.rows.scores_warp_paged.0 != 0
         && kernels.rows.expand_selection.0 != 0
+}
+
+/// 2026-10-21: Whether a ceiling launch of `geom.q_rows` rows (a captured verify's rows of one
+/// sequence, each with its geometry at slots `row * DSA_GEOM_SLOTS` of `inputs.geom_dev`) can
+/// run as one pass: it scores the persisted keys and selects by radix, the kernels that read
+/// each row's own geometry and index rows at the ceiling's strides, and the scratch holds that
+/// many rows at `max_pools` pools.
+pub(super) fn rows_ceiling_for(
+    kernels: &Glm5NextDsaKernels,
+    cfg: &Glm5NextDsaConfig,
+    geom: &DsaSelectGeometry,
+    inputs: &DsaSelectInputs,
+    scratch: &DsaSelectScratch,
+    max_pools: usize,
+) -> bool {
+    let select_k = cfg.select_k(max_pools);
+    persisted_for(kernels, geom, inputs, true)
+        && topk_radix_for(
+            true,
+            select_k,
+            kernels.rows.topk_radix,
+            scratch.levers.topk_radix,
+            scratch.levers.decode_topk_radix,
+        )
+        && scratch
+            .rows_regions(cfg, geom.q_rows, max_pools, select_k)
+            .is_some()
 }
 
 /// 2026-10-21: The scores of a pass that takes neither the tiled nor the tensor-core kernels:
@@ -126,9 +155,11 @@ pub(super) fn launch_scores(
         .launch(stream)
 }
 
-/// 2026-10-21: A persisted pass's expansion: `dsa_expand_selection_rows` for its one row,
-/// which recomputes the pools' token slots and S from the device geometry instead of reading
-/// `pool_indices` (the same tokens `dsa_expand_selection` writes on a paged cache).
+/// 2026-10-21: A persisted pass's expansion: `dsa_expand_selection_rows` for its rows, which
+/// recomputes the pools' token slots and S from each row's device geometry instead of reading
+/// `pool_indices` (the same tokens `dsa_expand_selection` writes on a paged cache). `strides`
+/// are the scores' and selected pools' row strides, the pass's `(npools_a, selk_a)`.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn launch_expand_geom(
     gpu: &dyn GpuBackend,
     kernels: &Glm5NextDsaKernels,
@@ -136,10 +167,11 @@ pub(super) fn launch_expand_geom(
     geom: &DsaSelectGeometry,
     inputs: &DsaSelectInputs,
     scratch: &DsaSelectScratch,
+    (sc_stride, sel_stride): (usize, usize),
     stream: u64,
 ) -> Result<()> {
     KernelLaunch::new(gpu, kernels.rows.expand_selection)
-        .grid([1, 1, 1])
+        .grid([1, geom.q_rows as u32, 1])
         .block([ROW_BLOCK, 1, 1])
         .arg_ptr(scratch.selected)
         .arg_ptr(scratch.valid_cand)
@@ -151,7 +183,7 @@ pub(super) fn launch_expand_geom(
         .arg_i32(inputs.first_key)
         .arg_i32(cfg.always_select_tail as i32)
         .arg_ptr(inputs.geom_dev)
-        .arg_u32(0)
-        .arg_u32(0)
+        .arg_u32(sc_stride as u32)
+        .arg_u32(sel_stride as u32)
         .launch(stream)
 }

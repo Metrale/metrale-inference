@@ -59,6 +59,7 @@ mod proj_gemm;
 mod row_ops;
 mod rows;
 mod select_rows;
+mod verify_select;
 mod workspace;
 
 pub use decode_rows::DsaRowSpan;
@@ -329,12 +330,7 @@ impl Glm5NextDsaLayer {
         // at the context ceiling and the live extents come from `geom_dev`, so one graph
         // serves every context length.
         let launch = if replay_safe {
-            super::select::DsaSelectLaunch::Ceiling {
-                max_pools: super::select::contiguous_pool_count(
-                    self.cfg.index_kpool,
-                    super::state::max_dsa_context(&self.cfg),
-                ),
-            }
+            self.ceiling_launch()
         } else {
             super::select::DsaSelectLaunch::Exact
         };

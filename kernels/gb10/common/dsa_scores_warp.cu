@@ -26,7 +26,8 @@
 //   in head order from 0, as thread 0 sums sh[0..H) there (explicit _rn intrinsics where the
 //   reference rounds through shared memory, so no FMA can be contracted under any --fmad).
 // With `geom` (a ceiling launch) S and the live pools come from it as dsa_index_scores reads
-// them. Launch: grid (any x, Q, 1), block 256; H <= DSA_SW_HMAX, D <= DSA_SW_DMAX and D a
+// them; 2026-10-21: row r's from slots r * DSA_GEOM_SLOTS (dsa_write_geom_rows' layout), its
+// scores and candidacy at row stride P (the ceiling's), so one launch scores a verify's rows. Launch: grid (any x, Q, 1), block 256; H <= DSA_SW_HMAX, D <= DSA_SW_DMAX and D a
 // multiple of 32 (else nothing is written; the launcher never sends another shape).
 // 2026-10-21: The body is generic over where a pool's key and candidacy come from (`Keys`):
 // dsa_kpool_compress's scratch (DsaSwScratchKeys) or the persisted pool keys of a paged cache
@@ -102,8 +103,12 @@ __device__ __forceinline__ void dsa_index_scores_warp_body(
     const unsigned int r = blockIdx.y, tid = threadIdx.x, lane = tid & 31u, warp = tid >> 5;
     if (r >= Q || H > DSA_SW_HMAX || D > DSA_SW_DMAX || (D & 31u) != 0u || blockDim.x != 256u)
         return;
+    // 2026-10-21: Row r's scores and candidacy start at r * stride: the P argument (a ceiling
+    // launch's max_pools), so rows whose live pool counts differ keep fixed strides.
+    const unsigned int stride = P;
     unsigned int n = P;
     if (geom) {
+        geom += (size_t)r * DSA_GEOM_SLOTS;
         S = (unsigned int)geom[DSA_GEOM_S];
         P = (unsigned int)geom[DSA_GEOM_NPOOLS];
         n = min(P, n);
@@ -117,8 +122,8 @@ __device__ __forceinline__ void dsa_index_scores_warp_body(
          p += gridDim.x * DSA_SW_WARPS) {
         if (!keys.cand(p, S, qp)) {
             if (lane == 0u) {
-                valid_cand[(size_t)r * P + p] = 0;
-                out[(size_t)r * P + p] = -FLT_MAX;
+                valid_cand[(size_t)r * stride + p] = 0;
+                out[(size_t)r * stride + p] = -FLT_MAX;
             }
             continue;
         }
@@ -138,8 +143,8 @@ __device__ __forceinline__ void dsa_index_scores_warp_body(
             acc = __fadd_rn(acc, __fmul_rn(sw[h], fmaxf(scale * dot, 0.0f)));
         }
         if (lane == 0u) {
-            valid_cand[(size_t)r * P + p] = 1;
-            out[(size_t)r * P + p] = acc;
+            valid_cand[(size_t)r * stride + p] = 1;
+            out[(size_t)r * stride + p] = acc;
         }
     }
 }

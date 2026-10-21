@@ -105,19 +105,20 @@ impl Glm5NextDsaLayer {
             .launch(stream)
     }
 
-    /// 2026-10-08: `dsa_write_geom` into the workspace's `geom_dev`, reading S from `d_sl`, a
-    /// row's `seq_len` entry in the metadata.
+    /// 2026-10-08: `dsa_write_geom` into `geom` (the workspace's `geom_dev`, or a row's slots of
+    /// its `geom_rows`), reading S from `d_sl`, a row's `seq_len` entry in the metadata.
     pub(super) fn write_geom(
         &self,
         gpu: &dyn GpuBackend,
         d_sl: DevicePtr,
+        geom: DevicePtr,
         stream: u64,
     ) -> Result<()> {
         KernelLaunch::new(gpu, self.select_kernels.write_geom)
             .grid([1, 1, 1])
             .block([1, 1, 1])
             .arg_ptr(d_sl)
-            .arg_ptr(self.workspace.geom_dev)
+            .arg_ptr(geom)
             .arg_u32(self.cfg.index_kpool as u32)
             .arg_u32(self.cfg.index_topk as u32)
             .arg_u32(super::super::select::topk_tile() as u32)

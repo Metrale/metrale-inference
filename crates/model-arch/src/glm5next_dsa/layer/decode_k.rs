@@ -9,7 +9,7 @@
 //! - The lockstep check (`check_lockstep`) and the `k` and metadata checks run before the
 //!   first launch.
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use metrale_cache::kv_cache::PagedKvCache;
 use metrale_gpu_runtime::gpu::DevicePtr;
 use metrale_model_layers::layer::{ForwardContext, LayerState};
@@ -174,6 +174,16 @@ impl Glm5NextDsaLayer {
             self.select_kernels.indexer_store.0 != 0 && self.select_kernels.write_geom.0 != 0,
             self.selector_query_rows_ready(k),
         );
+        // 2026-10-21: `METRALE_GLM_DSA_VERIFY_SELECT_ONCE`: the verify rows over persisted pool
+        // keys are selected in one pass after the row loop (`select_verify_rows`), each row's
+        // geometry at its slots of `geom_rows`.
+        let select_once = match meta {
+            Some(m) if verify_rows => {
+                let rows = self.indexer_rows(st, kv_cache, m.block_table)?;
+                self.verify_select_once_for(st, rows, k)?
+            }
+            _ => false,
+        };
         if verify_rows {
             self.selector_query_rows(gpu, hidden, k, false, stream)?;
             self.indexer_project_rows(gpu, hidden, k, stream)?;
@@ -284,9 +294,15 @@ impl Glm5NextDsaLayer {
                 cache_stride_bytes: (block_size * self.cfg.kv_lora_rank) as u64,
             };
             if replay_safe {
-                self.write_geom(gpu, d_sl, stream)?;
+                let geom = if select_once {
+                    w.geom_rows.offset(row * super::super::select::GEOM_SLOT_BYTES)
+                } else {
+                    w.geom_dev
+                };
+                self.write_geom(gpu, d_sl, geom, stream)?;
             }
-            if batch_select && staged {
+            if select_once {
+            } else if batch_select && staged {
                 batch_q_pos.push(pos as i32);
             } else if batch_select {
                 // 2026-09-25: `indexer_forward` left this row's head weights in the single-row
@@ -336,6 +352,12 @@ impl Glm5NextDsaLayer {
                 is_prefill,
                 stream,
             )?;
+        }
+
+        if select_once {
+            let m = meta.context("DSA verify: one selection pass needs the row metadata")?;
+            let rows = self.indexer_rows(st, kv_cache, attend_bt)?;
+            self.select_verify_rows(gpu, k, st, rows, m.positions, stream)?;
         }
 
         if let Some(paging) = attend_paging {

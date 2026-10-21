@@ -92,6 +92,10 @@ pub fn scores_mma_for(
 /// 2026-10-12: The widest selection `dsa_topk_pools_radix` takes (`DSA_TR_MAX`).
 pub const TOPK_RADIX_MAX: usize = 512;
 
+/// 2026-10-21: Bytes of one row's device geometry (`DSA_GEOM_SLOTS` i32 slots, written by
+/// `dsa_write_geom`); row `r` of a per-row geometry array starts at `r * GEOM_SLOT_BYTES`.
+pub const GEOM_SLOT_BYTES: usize = 5 * 4;
+
 /// 2026-10-12: Whether a selection pass takes the radix top-k: the kernel resolved, a
 /// selection of at most [`TOPK_RADIX_MAX`] pools (`select_k`, the launch's), and the launch
 /// kind's lever on. 2026-10-21: an exact launch is `exact_lever`
@@ -473,6 +477,19 @@ pub use fused::{SELECT_FUSED_MAXK, SELECT_FUSED_SMEM, fused_shape};
 mod pipe;
 pub use pipe::{DsaPipeRegions, SCORES_PIPE_SMEM, scores_pipe_for};
 mod scores;
+
+/// 2026-10-21: Whether a captured verify's `geom.q_rows` rows of one sequence can be selected in
+/// one ceiling pass at `max_pools` pools (`scores::rows_ceiling_for`).
+pub(crate) fn rows_ceiling_ready(
+    kernels: &Glm5NextDsaKernels,
+    cfg: &Glm5NextDsaConfig,
+    geom: &DsaSelectGeometry,
+    inputs: &DsaSelectInputs,
+    scratch: &DsaSelectScratch,
+    max_pools: usize,
+) -> bool {
+    scores::rows_ceiling_for(kernels, cfg, geom, inputs, scratch, max_pools)
+}
 
 #[cfg(test)]
 mod ceiling_tests;

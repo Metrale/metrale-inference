@@ -147,6 +147,65 @@ fn persisted_pool_keys_skip_the_compression_on_a_ceiling_launch() {
     assert!(!exact.contains(&PAGED));
 }
 
+/// 2026-10-21: A ceiling launch of a verify's two rows runs as one pass only over persisted
+/// keys with the radix top-k: one launch of each kernel over both rows (scores on grid y, the
+/// radix on grid x, the expansion on grid y), the expansion's row strides the ceiling's pools
+/// and select_k. Without persisted keys, with the decode radix off (those kernels read one
+/// geometry for every row), or with scratch for fewer than two ceiling rows, it is refused.
+#[test]
+fn a_two_row_ceiling_runs_once_over_persisted_keys_and_is_refused_otherwise() {
+    use metrale_gpu_runtime::gpu::KernelHandle;
+    use metrale_gpu_runtime::gpu::mock::MockArg;
+    const RADIX: u64 = 32;
+    const PAGED: u64 = 33;
+    const EXPAND_ROWS: u64 = 34;
+    let mut k = kernels();
+    k.rows.topk_radix = KernelHandle(RADIX);
+    k.rows.scores_warp_paged = KernelHandle(PAGED);
+    k.rows.expand_selection = KernelHandle(EXPAND_ROWS);
+    let c = Glm5NextDsaConfig {
+        max_context: 524_288,
+        ..cfg()
+    };
+    let max_pools = contiguous_pool_count(c.index_kpool, c.max_context);
+    let run = |keys: bool, radix: bool, scratch_ctx: usize| {
+        let geom = DsaSelectGeometry::plan(&c, 4_097, 2).unwrap();
+        let sized = DsaSelectGeometry::plan(&c, scratch_ctx, 2).unwrap();
+        let gpu = MockGpuBackend::new();
+        let mut inp = DsaSelectInputs {
+            geom_dev: gpu.alloc(2 * GEOM_SLOT_BYTES).unwrap(),
+            ..inputs(&gpu, &c, 4_097, 2)
+        };
+        if keys {
+            inp.rows.pool_keys = gpu.alloc(64).unwrap();
+            inp.rows.pk_blk = 160;
+        }
+        let mut levers = DsaLevers::declared().select;
+        levers.decode_topk_radix = radix;
+        let scratch = DsaSelectScratch::alloc(&gpu, &c, &sized, levers).unwrap();
+        let ceiling = DsaSelectLaunch::Ceiling { max_pools };
+        select_tokens(&gpu, &k, &c, &geom, &inp, &scratch, ceiling, 7)
+            .map(|()| gpu.launches_snapshot())
+    };
+    let l = run(true, true, c.max_context).unwrap();
+    let funcs: Vec<u64> = l.iter().map(|l| l.func).collect();
+    assert_eq!(funcs, vec![PAGED, RADIX, EXPAND_ROWS]);
+    assert_eq!(l[0].grid, [SCORES_WARP_GRID_MAX as u32, 2, 1]);
+    assert_eq!(l[1].grid, [2, 1, 1]);
+    assert_eq!(l[2].grid, [1, 2, 1]);
+    let strides = &l[2].args[l[2].args.len() - 2..];
+    assert_eq!(
+        strides,
+        [
+            MockArg::Bytes((max_pools as u32).to_le_bytes().to_vec()),
+            MockArg::Bytes((c.select_k(max_pools) as u32).to_le_bytes().to_vec()),
+        ]
+    );
+    assert!(run(false, true, c.max_context).is_err(), "no persisted keys: refused");
+    assert!(run(true, false, c.max_context).is_err(), "decode radix off: refused");
+    assert!(run(true, true, 4_097).is_err(), "scratch below two ceiling rows: refused");
+}
+
 /// 2026-10-14: Under the cap a ceiling launch keeps the one-block-per-pool grids
 /// (`max_pools + 1` compressions, `max_pools` scores), so a ceiling of up to 8k tokens launches
 /// exactly as before; an exact launch is the live geometry's grid at any length.

@@ -338,7 +338,12 @@ impl Glm5NextDsaLayer {
             }
             profile::end(profile::DSA_INDEXER, t, gpu, stream);
             if replay_safe {
-                self.write_geom(gpu, meta.seq_len.offset(mr * 4), stream)?;
+                self.write_geom(
+                    gpu,
+                    meta.seq_len.offset(mr * 4),
+                    self.workspace.geom_dev,
+                    stream,
+                )?;
             }
             let pre = batched_idx.then(|| {
                 (
