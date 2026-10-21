@@ -32,7 +32,10 @@ pub(super) fn identity_picks(
             crate::scheduler::sample_step::PositionKind::Verify,
             0.0,
             None,
-            Vec::new(),
+            // 2026-10-21: the bias the host picks take: any entry rules the
+            // device verdict out (`classify_penalties`), since it is armed
+            // before the logits exist.
+            a.logit_bias.clone(),
             ctx.watchdog.min_reasoning_floor,
         ),
     );

@@ -162,19 +162,14 @@ pub(super) fn process_decoded_token(
             // (`PinToToolCallStart` reads it); the next content token clears it.
             a.think_just_ended = true;
         } else if !reopened_think {
-            a.thinking_tokens += 1;
+            // 2026-09-25: Budget exhausted: arm the forced `</think>`, which a later
+            // step's pipeline injects.
+            let armed = crate::scheduler::think_close::count_thinking_token(a);
             // 2026-09-25: Track ``` code-fence parity inside thinking; a forced
             // `</think>` is deferred inside a fence (`should_inject_think_end`).
             // The thinking-loop watchdog below ignores fences.
             a.in_code_fence = toggle_code_fence(a.in_code_fence, tok, code_fence_token);
-            // 2026-09-25: Budget exhausted: arm the forced `</think>`, which a later
-            // step's pipeline injects.
-            if let Some(budget) = a.thinking_budget
-                && a.thinking_tokens >= budget
-                && !a.force_end_thinking
-            {
-                a.force_end_thinking = true;
-                a.sentence_defer_count = 0;
+            if let Some(budget) = armed {
                 tracing::info!(target: "met::scheduler::decode_logits_step", source = if a.enable_thinking {
                         "request (client budget/effort; scaled by --max-thinking-budget)"
                     } else {

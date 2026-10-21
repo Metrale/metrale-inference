@@ -86,7 +86,9 @@ pub(in crate::scheduler) fn effective_min_p(
 ///
 /// `FinalDecode` callers pass the step's temperature, seed and the
 /// sequence's `logit_bias`. `Verify` callers pass temperature 0.0, no seed
-/// and an empty base bias; a debug build asserts this.
+/// and the sequence's `logit_bias` (2026-10-21; it was empty before, so the
+/// speculative paths dropped the request's bias); a debug build asserts the
+/// first two.
 pub(in crate::scheduler) fn penalty_params_for(
     a: &ActiveSeq,
     kind: PositionKind,
@@ -98,9 +100,8 @@ pub(in crate::scheduler) fn penalty_params_for(
     min_reasoning_floor: u32,
 ) -> SamplingParams {
     debug_assert!(
-        kind != PositionKind::Verify
-            || (temperature == 0.0 && seed.is_none() && base_logit_bias.is_empty()),
-        "Verify positions must pass temperature=0.0, seed=None, empty base bias"
+        kind != PositionKind::Verify || (temperature == 0.0 && seed.is_none()),
+        "Verify positions must pass temperature=0.0, seed=None"
     );
     let in_tool = a.inside_tool_body && !a.inside_thinking;
     let mut logit_bias = base_logit_bias;

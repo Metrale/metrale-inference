@@ -45,6 +45,21 @@ pub(super) fn close_thinking_at_tool_call(
     true
 }
 
+/// 2026-10-21: Count one thinking token (not `</think>`, not a re-opening
+/// `<think>`) and arm the forced `</think>` when it reaches the thinking budget.
+/// Returns the budget when this token armed it. The decode path, `emit_token`
+/// and the verify window (`verify_pipeline_helper/pick_positions.rs`) share it.
+pub(super) fn count_thinking_token(a: &mut ActiveSeq) -> Option<u32> {
+    a.thinking_tokens += 1;
+    let budget = a.thinking_budget?;
+    if a.thinking_tokens >= budget && !a.force_end_thinking {
+        a.force_end_thinking = true;
+        a.sentence_defer_count = 0;
+        return Some(budget);
+    }
+    None
+}
+
 #[cfg(test)]
 #[path = "think_close_tests.rs"]
 mod tests;

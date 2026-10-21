@@ -7,12 +7,21 @@
 //! Owner: scheduler.
 //! Invariants:
 //! - On return the grammar matcher is at the history depth it had on entry,
-//!   and `inside_thinking`, `think_ended` and `think_just_ended` hold their
-//!   entry values. Within the loop, each later position is masked against
-//!   the matcher state the earlier picks leave behind, and a `</think>` pick
+//!   and the thinking state ([`ThinkState`]) holds its entry values, except
+//!   the counters only the pipeline stages write (`force_end_thinking` as
+//!   `F2ConfidenceEarlyStop` arms it, `sentence_defer_count`,
+//!   `consecutive_confident`), which hold their values after position 0: that
+//!   pick is always emitted, and `emit_token` re-derives the rest per emitted
+//!   token. Within the loop, each later position is masked against the
+//!   matcher state the earlier picks leave behind, and a `</think>` pick
 //!   switches the thinking flags for the remaining positions, so the first
 //!   position after it is picked outside thinking. 2026-10-14: A `<think>`
 //!   pick outside thinking switches them back, as `emit_token` does.
+//!   2026-10-21: A tool-call opener that closes thinking
+//!   (`LogitsContext::thinking_closed_by`) closes it in the window too, and
+//!   the matcher takes it, as on the decode path; a thinking pick counts
+//!   toward `thinking_budget`, so a budget reached inside the window forces
+//!   `</think>` at the next position, as the next serial step would.
 
 use super::verify_pick_with_pipeline;
 use crate::scheduler::logit_processors::LogitsContext;
@@ -33,12 +42,16 @@ pub(super) fn pick_positions_from_host(
     // 2026-09-25: the history depth, for the rollback at the end; see there
     // for why it is a depth and not a count of `accept_token` calls.
     let grammar_steps_before = a.grammar_state.as_ref().map(|gs| gs.num_history_steps());
-    let think_flags_before = (a.inside_thinking, a.think_ended, a.think_just_ended);
+    let think_before = ThinkState::take(a);
+    let mut stage_counters_after_first = None;
 
     for i in 0..k {
         let slice = &buf[i * vocab * elem_bytes..(i + 1) * vocab * elem_bytes];
         let pick = verify_pick_with_pipeline(slice, false, vocab, a, ctx, i);
         picks.push(pick);
+        if i == 0 {
+            stage_counters_after_first = Some(StageCounters::take(a));
+        }
 
         // 2026-09-25: `</think>` closes thinking for the later positions. It
         // is not fed to the matcher.
@@ -54,6 +67,19 @@ pub(super) fn pick_positions_from_host(
             a.inside_thinking = true;
             a.think_ended = false;
             a.think_just_ended = false;
+            continue;
+        }
+        // 2026-10-21: as `process_decoded_token`: an opener that closes
+        // thinking leaves it here and is fed to the matcher below.
+        crate::scheduler::think_close::close_thinking_at_tool_call(
+            a,
+            pick,
+            ctx.thinking_closed_by,
+        );
+        // 2026-10-21: a thinking token counts toward the budget; one that
+        // reaches it arms the forced `</think>` for the next position.
+        if a.inside_thinking {
+            crate::scheduler::think_close::count_thinking_token(a);
             continue;
         }
 
@@ -89,9 +115,70 @@ pub(super) fn pick_positions_from_host(
             gs.rollback(advanced);
         }
     }
-    // 2026-09-25: restore the thinking flags; `emit_token` makes the real
-    // `</think>` transition.
-    (a.inside_thinking, a.think_ended, a.think_just_ended) = think_flags_before;
+    // 2026-09-25: restore the thinking state; `emit_token` makes the real
+    // transitions for the tokens it emits.
+    think_before.restore(a);
+    if let Some(c) = stage_counters_after_first {
+        c.restore(a);
+    }
 
     picks
+}
+
+/// 2026-10-21: The thinking state the window advances and `emit_token`
+/// re-derives per emitted token.
+struct ThinkState {
+    inside_thinking: bool,
+    think_ended: bool,
+    think_just_ended: bool,
+    thinking_tokens: u32,
+    in_code_fence: bool,
+    stage: StageCounters,
+}
+
+impl ThinkState {
+    fn take(a: &ActiveSeq) -> Self {
+        Self {
+            inside_thinking: a.inside_thinking,
+            think_ended: a.think_ended,
+            think_just_ended: a.think_just_ended,
+            thinking_tokens: a.thinking_tokens,
+            in_code_fence: a.in_code_fence,
+            stage: StageCounters::take(a),
+        }
+    }
+
+    fn restore(self, a: &mut ActiveSeq) {
+        a.inside_thinking = self.inside_thinking;
+        a.think_ended = self.think_ended;
+        a.think_just_ended = self.think_just_ended;
+        a.thinking_tokens = self.thinking_tokens;
+        a.in_code_fence = self.in_code_fence;
+        self.stage.restore(a);
+    }
+}
+
+/// 2026-10-21: The thinking counters the pipeline stages write
+/// (`F2ConfidenceEarlyStop`, `ForcedThinkEndInjector`) and the window's
+/// budget count and thinking closes reset.
+struct StageCounters {
+    force_end_thinking: bool,
+    sentence_defer_count: u32,
+    consecutive_confident: u32,
+}
+
+impl StageCounters {
+    fn take(a: &ActiveSeq) -> Self {
+        Self {
+            force_end_thinking: a.force_end_thinking,
+            sentence_defer_count: a.sentence_defer_count,
+            consecutive_confident: a.consecutive_confident,
+        }
+    }
+
+    fn restore(self, a: &mut ActiveSeq) {
+        a.force_end_thinking = self.force_end_thinking;
+        a.sentence_defer_count = self.sentence_defer_count;
+        a.consecutive_confident = self.consecutive_confident;
+    }
 }

@@ -84,14 +84,16 @@ pub fn verify_pick_with_pipeline(
 
     // 2026-09-25: verify positions take the sequence's repetition, presence,
     // frequency, LZ and DRY penalties and the min-reasoning `</think>` floor
-    // bias, with temperature 0, no seed and no request bias
-    // (`penalty_params_for`). Built before `a` is borrowed mutably below.
+    // bias, with temperature 0 and no seed (`penalty_params_for`). Built before
+    // `a` is borrowed mutably below. 2026-10-21: and the request's
+    // `logit_bias` (with the tools-active `<tool_call>` bias), as the decode
+    // path takes it.
     let penalties = crate::scheduler::sample_step::penalty_params_for(
         a,
         crate::scheduler::sample_step::PositionKind::Verify,
         0.0,
         None,
-        Vec::new(),
+        a.logit_bias.clone(),
         ctx.watchdog.min_reasoning_floor,
     );
 

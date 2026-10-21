@@ -16,6 +16,8 @@ mod content_emit;
 mod eos_hold_tests;
 mod host_sample;
 mod per_token;
+#[cfg(test)]
+mod spec_window_tests;
 
 thread_local! {
     /// 2026-09-25: Dequant scratch for one rayon worker on the parallel host-sampling arm.

@@ -234,26 +234,20 @@ pub fn emit_token(
                 a.thinking_tokens,
                 a.thinking_budget,
             );
-        } else if !reopened_think {
-            a.thinking_tokens += 1;
-            if let Some(budget) = a.thinking_budget
-                && a.thinking_tokens >= budget
-                && !a.force_end_thinking
-            {
-                a.force_end_thinking = true;
-                a.sentence_defer_count = 0;
-                // 2026-09-25: the log names the budget's source, as in
-                // `decode_logits_step`.
-                tracing::info!(
-                    source = if a.enable_thinking {
-                        "request (client budget/effort; scaled by --max-thinking-budget)"
-                    } else {
-                        "spontaneous <think> (--max-thinking-budget / MODEL.toml)"
-                    },
-                    "Thinking budget exhausted ({budget} tokens), arming </think>; \
-                     deferring to next sentence boundary"
-                );
-            }
+        } else if !reopened_think
+            && let Some(budget) = crate::scheduler::think_close::count_thinking_token(a)
+        {
+            // 2026-09-25: the log names the budget's source, as in
+            // `decode_logits_step`.
+            tracing::info!(
+                source = if a.enable_thinking {
+                    "request (client budget/effort; scaled by --max-thinking-budget)"
+                } else {
+                    "spontaneous <think> (--max-thinking-budget / MODEL.toml)"
+                },
+                "Thinking budget exhausted ({budget} tokens), arming </think>; \
+                 deferring to next sentence boundary"
+            );
         }
     } else {
         a.consume_generation_budget();
