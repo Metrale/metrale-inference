@@ -206,6 +206,12 @@ pub trait CommBackend: Send + Sync {
         true
     }
 
+    /// 2026-10-21: Mark the communicator unhealthy without an error of its own, as a failure
+    /// would: every later operation is refused until a successful `attempt_reconnect`. For a
+    /// pair of communicators that must fail together (`METRALE_GLM_EP_CTRL_COMM`: the control
+    /// channel beside the data communicator). The default does nothing.
+    fn poison(&self) {}
+
     /// 2026-09-26: Replace a failed communicator. `NcclBackend` aborts it and
     /// repeats the TCP bootstrap, so every rank must call this at the same
     /// time. The default does nothing.

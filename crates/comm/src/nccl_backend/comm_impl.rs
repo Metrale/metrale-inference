@@ -314,6 +314,10 @@ impl CommBackend for NcclBackend {
         self.check_async_error(comm)
     }
 
+    fn poison(&self) {
+        self.unhealthy.store(true, Ordering::Release);
+    }
+
     fn attempt_reconnect(&self) -> Result<()> {
         self.reconnect_inner()
     }
