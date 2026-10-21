@@ -76,3 +76,25 @@ fn the_a2_levers_are_rank_agreed() {
         "a refused early launch is compared as off: {hoisted_diff:?}"
     );
 }
+
+/// 2026-10-21: The wake keeper's mode is rank-agreed (its core is not: it differs per host), and
+/// a malformed mode fails the table instead of comparing as off.
+#[test]
+fn the_wake_keeper_mode_is_rank_agreed_and_its_core_is_not() {
+    let table = |env: &[(&str, &str)]| super::rank_lever_table(&settings_from(env).unwrap());
+    let off = table(&[]).unwrap();
+    let modes = ["spin-idle", "timer:250", "timer:500"];
+    let mut seen = vec![off.clone()];
+    for m in modes {
+        let on = table(&[("METRALE_HOST_WAKE_KEEPER", m)]).unwrap();
+        let diff: Vec<_> = on.iter().zip(&off).filter(|(a, b)| a != b).collect();
+        assert_eq!(diff.len(), 1, "{m}: {diff:?}");
+        assert_eq!(diff[0].0.0, "METRALE_HOST_WAKE_KEEPER");
+        assert!(!seen.contains(&on), "{m} compares equal to another mode");
+        seen.push(on);
+    }
+    let core_a = table(&[("METRALE_HOST_WAKE_KEEPER", "spin-idle"), ("METRALE_HOST_WAKE_CORE", "0")]);
+    let core_b = table(&[("METRALE_HOST_WAKE_KEEPER", "spin-idle"), ("METRALE_HOST_WAKE_CORE", "10")]);
+    assert_eq!(core_a.unwrap(), core_b.unwrap(), "the per-host core must not be compared");
+    assert!(table(&[("METRALE_HOST_WAKE_KEEPER", "on")]).is_err());
+}

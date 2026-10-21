@@ -42,6 +42,8 @@ pub(crate) struct Engine {
     /// 2026-10-04: sha256 over the drafter's stored weights, `None` for a checkpoint with no
     /// `mtp.*` tensors. `--spec-cost-model measured`'s drafter key.
     pub drafter_weights_sha256: Option<String>,
+    /// 2026-10-21: `METRALE_HOST_WAKE_KEEPER`, moved to the thread that runs the model.
+    pub wake_keeper: Option<serve_phases::wake_keeper::KeeperGuard>,
 }
 
 /// 2026-09-28: Build the model `args` names. `Ok(None)` means this rank is an EP worker: it ran
@@ -53,6 +55,7 @@ pub(crate) fn load_engine(
     // 2026-10-17: Every lever the load phases read, resolved before any model work so a
     // malformed one stops the load first (ROTI, PCND).
     let levers = serve_phases::LoadLevers::from_settings(settings)?;
+    let wake_plan = serve_phases::wake_keeper::plan_from_settings(settings)?;
     metrale_telemetry::progress::phase(1, "model resolve");
     let model_dir = serve_phases::resolve_model_dir(&args)?;
 
@@ -199,6 +202,9 @@ pub(crate) fn load_engine(
         config.hidden_size,
         config.vocab_size,
     )?;
+    // 2026-10-21: After the communicator, so its proxy threads exist to be pinned; a worker
+    // holds the keeper through its command loop, rank 0 hands it to the scheduler thread.
+    let wake_keeper = serve_phases::wake_keeper::start(wake_plan, gpu.as_ref(), world_size)?;
     config.profile = args.profile;
     serve_phases::cap_vocab_size_to_tokenizer(&model_dir, &mut config);
     let serve_phases::KvCacheConfig {
@@ -326,6 +332,7 @@ pub(crate) fn load_engine(
         &mut model_opt,
         &early_high_speed_swap_cfg,
     )? {
+        drop(wake_keeper);
         return Ok(None);
     }
     let model = model_opt.expect("head retains model on rank 0");
@@ -350,6 +357,7 @@ pub(crate) fn load_engine(
         auto_max_batch_size,
         device_budget,
         drafter_weights_sha256,
+        wake_keeper,
     }))
 }
 
