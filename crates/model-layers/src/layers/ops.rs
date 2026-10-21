@@ -70,6 +70,8 @@ mod w4a16_tc_rows;
 mod w4a16_tc_rows_seg;
 // 2026-10-10: The one-row NVFP4 GEMV over up to six weight segments (`w4a16_gemv_seg.cu`).
 mod w4a16_gemv_seg;
+// 2026-10-21: Its pipelined twin over resident blocks (`w4a16_gemv_pipe.cu`).
+mod w4a16_gemv_pipe;
 // 2026-09-25: Tensor-core BF16 GEMM with a 16-row M tile (`dense_gemm_m16_bf16`).
 #[path = "ops/dense_gemm_m16_bf16.rs"]
 mod dense_gemm_m16_bf16;
@@ -319,6 +321,7 @@ pub use ssm_gdn_wyn::*;
 pub use ssm_mamba::*;
 pub use ssm_preproc::*;
 pub use ssm_ssd::*;
+pub use w4a16_gemv_pipe::*;
 pub use w4a16_gemv_seg::*;
 pub use w4a16_tc_rows::*;
 pub use w4a16_tc_rows_seg::*;
