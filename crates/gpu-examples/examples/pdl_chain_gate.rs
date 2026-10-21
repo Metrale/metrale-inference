@@ -28,7 +28,7 @@ mod chain;
 
 use anyhow::{Context, Result, bail, ensure};
 use bufs::*;
-use chain::{Kern, kda_layer, moe_layer};
+use chain::{Kern, Variant, kda_layer, moe_layer};
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, GraphHandle};
 
@@ -171,14 +171,48 @@ fn main() -> Result<()> {
         .iter()
         .find(|s| s.target.model == "glm-5.3-flash")
         .context("glm-5.3-flash kernel target not built")?;
+    // 2026-10-21: The `_sl` sweep is launched stream-ordered only because its PTX body holds no
+    // dependency wait (gpu-runtime ptx_pdl.rs); its plain twin must hold one.
+    let ptx = glm
+        .modules
+        .iter()
+        .find(|(n, _)| *n == "w4a4_gemv_mx_moe")
+        .map(|(_, b)| String::from_utf8_lossy(b).into_owned())
+        .context("w4a4_gemv_mx_moe PTX")?;
+    for (entry, waits) in [
+        ("w4a4_gemv_mx8_moe_union_sweep", true),
+        ("w4a4_gemv_mx8_moe_union_sweep_sl", false),
+    ] {
+        let body = ptx
+            .split(".entry ")
+            .find(|b| b.starts_with(&format!("{entry}(")))
+            .with_context(|| format!("{entry}: no .entry"))?;
+        let body = body.split(".func ").next().unwrap_or(body);
+        ensure!(
+            body.contains("griddepcontrol.wait") == waits
+                && body.contains("griddepcontrol.launch_dependents"),
+            "RED: {entry}: griddepcontrol.wait {} (want {waits}), launch_dependents {}",
+            body.contains("griddepcontrol.wait"),
+            body.contains("griddepcontrol.launch_dependents")
+        );
+    }
+    println!("  PTX: the plain sweep waits, the _sl sweep does not; both trigger");
     let off = MetraleCudaBackend::new(0, &glm.modules)?;
     let on = MetraleCudaBackend::new(0, &glm.modules)?;
-    let (ko, kn) = (Kern::resolve(&off)?, Kern::resolve(&on)?);
+    // 2026-10-21: The reference runs the old kernels; the new arms the levers `Variant` names.
+    let v = Variant::from_env();
+    let (ko, kv, kn) = (
+        Kern::resolve(&off, Variant::OLD)?,
+        Kern::resolve(&off, v)?,
+        Kern::resolve(&on, v)?,
+    );
     if !on.enable_programmatic_launches()? {
         bail!("programmatic launches unavailable");
     }
     let s = off.default_stream();
-    println!("GATE: PDL race detector, {LAYERS} KDA + MoE layer pairs at M = {T}, {SETS} inputs");
+    println!(
+        "GATE: PDL race detector, {LAYERS} KDA + MoE layer pairs at M = {T}, {SETS} inputs; new arms: {v:?}"
+    );
     let b = Bufs::new(&off, 0x5eed_0001, LAYERS, 0.05)?;
     let inp = inputs(&off, &b)?;
 
@@ -205,6 +239,12 @@ fn main() -> Result<()> {
     let (bad, first) = arm(&off, &ko, &b, &inp, &want, Some(g_off), REPLAYS, s)?;
     println!("  control  (serialised graph): {REPLAYS} replays, {bad} differ");
     ensure!(bad == 0, "control differs: {}", first.unwrap_or_default());
+
+    let g_new = capture(&off, &kv, &b, s)?;
+    let (bad, first) = arm(&off, &kv, &b, &inp, &want, Some(g_new), REPLAYS, s)?;
+    println!("  new kernels (serialised graph): {REPLAYS} replays, {bad} differ");
+    off.destroy_graph(g_new)?;
+    ensure!(bad == 0, "RED: the new kernels changed the bytes: {}", first.unwrap_or_default());
 
     let g_on = capture(&on, &kn, &b, s)?;
     let (bad_g, first_g) = arm(&on, &kn, &b, &inp, &want, Some(g_on), REPLAYS, s)?;

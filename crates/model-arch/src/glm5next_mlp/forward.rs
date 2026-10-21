@@ -25,6 +25,7 @@ mod pieces;
 mod route;
 mod router;
 mod shared_fork;
+mod sweep_entries;
 mod topk_combine;
 mod w4a4;
 mod w4a4_dense;
@@ -38,6 +39,7 @@ mod workspace;
 
 pub use dense::{DenseScratch, forward_dense, forward_dense_site};
 use launch::swiglu;
+pub(crate) use sweep_entries::gate_up_sweeps;
 pub use levers::MlpLevers;
 pub(crate) use levers::count;
 pub(crate) use pieces::check_pieces;

@@ -65,6 +65,9 @@ pub struct MlpLevers {
     pub gu_fused: bool,
     /// 2026-10-15: `METRALE_GLM_MOE_W4A4_NC` (`w4a4_grouped_nc`): `None` off.
     pub nc: Option<u32>,
+    /// 2026-10-21: `METRALE_GLM_MOE_SWEEP_SERIAL` (on unless switched off,
+    /// `sweep_entries`).
+    pub sweep_serial: bool,
 }
 
 /// 2026-10-17: A row width: unset is `default`; a negative value is an error.
@@ -152,6 +155,7 @@ impl MlpLevers {
             raster: parse_raster(&k.glm_moe_w4a4_raster).map_err(anyhow::Error::msg)?,
             gu_fused: k.glm_moe_w4a4_gu_fused,
             nc: nc.map(|n| n as u32),
+            sweep_serial: k.glm_moe_sweep_serial,
         })
     }
 

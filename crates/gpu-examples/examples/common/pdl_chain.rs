@@ -31,57 +31,9 @@ use metrale_model_layers::weight_map::QuantizedWeight;
 
 use super::bufs::*;
 
-/// 2026-10-21: The chain's kernel handles on one backend.
-pub struct Kern {
-    pre: KernelHandle,
-    post: KernelHandle,
-    pack: KernelHandle,
-    gates: KernelHandle,
-    adv: KernelHandle,
-    upd: KernelHandle,
-    rec: KernelHandle,
-    onorm: KernelHandle,
-    few32: KernelHandle,
-    topk: KernelHandle,
-    quant: KernelHandle,
-    quant64: KernelHandle,
-    union: KernelHandle,
-    sweep: KernelHandle,
-    sweep64: KernelHandle,
-    swiglu: KernelHandle,
-    combine: KernelHandle,
-    rank_sum: KernelHandle,
-    sms: u32,
-}
-
-impl Kern {
-    pub fn resolve(g: &dyn GpuBackend) -> Result<Self> {
-        Ok(Self {
-            pre: g.kernel("glm5next_mhc_c1", "glm5next_hc_pre_norm_c1")?,
-            post: g.kernel("glm5next_mhc", "glm5next_hc_post")?,
-            pack: g.kernel("kda_layer_ops", "kda_pack_qkv_bf16")?,
-            gates: g.kernel("kda_gates_w8a8", "kda_gates_w8a8_k128_rows")?,
-            adv: g.kernel("kda_conv_tokens", "causal_conv1d_window_advance")?,
-            upd: g.kernel("kda_conv_tokens", "causal_conv1d_update_l2norm_tokens")?,
-            rec: g.kernel("kda_recurrent", "kda_recurrent_decode_bf16_seq_reg_snap")?,
-            onorm: g.kernel("kda_layer_ops", "kda_o_norm_gated_bf16")?,
-            few32: g.kernel(
-                "dense_gemv_bf16_batchm_few",
-                "dense_gemv_bf16_batchm_few_fp32out",
-            )?,
-            topk: g.kernel("glm5next_ffn", "glm5next_router_topk_rank")?,
-            quant: g.kernel("w4a4_gemv_mx_moe", "w4a4_quant_rows_static")?,
-            quant64: g.kernel("w4a4_gemv_mx_moe", "w4a4_quant_rows_static_k64")?,
-            union: g.kernel("w4a16_gemv", "glm5next_moe_row_union")?,
-            sweep: g.kernel("w4a4_gemv_mx_moe", "w4a4_gemv_mx8_moe_union_sweep")?,
-            sweep64: g.kernel("w4a4_gemv_mx_moe", "w4a4_gemv_mx8_moe_union_sweep_k64")?,
-            swiglu: g.kernel("glm5next_ffn", "glm5next_swiglu_clamp")?,
-            combine: g.kernel("glm5next_ffn", "glm5next_moe_combine")?,
-            rank_sum: g.kernel("bf16_add", "bf16_add_rank_sum")?,
-            sms: g.sm_count()?,
-        })
-    }
-}
+#[path = "pdl_chain_kern.rs"]
+mod kern;
+pub use kern::{Kern, Variant};
 
 fn pre_norm(g: &dyn GpuBackend, k: &Kern, b: &Bufs, site: &Site, s: u64) -> Result<()> {
     KernelLaunch::new(g, k.pre)

@@ -379,11 +379,7 @@ impl Glm5NextMlpKernels {
                 W4A4_MOE_MODULE,
                 "w4a4_gemv_mx8_moe_slots",
             ),
-            w4a4_moe_sweep: [
-                "w4a4_gemv_mx8_moe_union_sweep",
-                "w4a4_gemv_mx16_moe_union_sweep",
-            ]
-            .map(|e| metrale_model_layers::layers::try_kernel(gpu, W4A4_MOE_MODULE, e)),
+            w4a4_moe_sweep: forward::gate_up_sweeps(gpu, levers.mlp.sweep_serial),
             w4a4_moe_slots_sweep: metrale_model_layers::layers::try_kernel(
                 gpu,
                 W4A4_MOE_MODULE,

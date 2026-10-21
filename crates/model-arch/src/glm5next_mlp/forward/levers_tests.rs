@@ -356,6 +356,7 @@ fn the_declared_defaults_are_the_old_unset_values() {
             raster: Some(RasterGroups { gu: 0, down: 4 }),
             gu_fused: false,
             nc: None,
+            sweep_serial: true,
         }
     );
 }

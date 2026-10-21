@@ -11,6 +11,8 @@
 //! Invariants: every arm is timed in every round, in the same order, after the same warm-up.
 //!
 //! `PDL_BENCH_BASE_PTX=<dir>` adds an arm on the kernels before the change (see `with_base`).
+//! 2026-10-21: The "PDL on new" arm runs the new side of the bit-identical launch levers
+//! (`Variant`; `PDL_CHAIN_OLD=serial_sweep` keeps the named ones old).
 //!
 //!   cargo run -p metrale-gpu-examples --release --example pdl_chain_bench --features cuda,gpu-examples
 
@@ -23,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use bufs::*;
-use chain::{Kern, kda_layer, moe_layer};
+use chain::{Kern, Variant, kda_layer, moe_layer};
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{GpuBackend, GraphHandle};
 
@@ -107,10 +109,17 @@ fn main() -> Result<()> {
         Ok(dir) => Some(MetraleCudaBackend::new(0, &with_base(&glm.modules, &dir)?)?),
         Err(_) => None,
     };
-    let mut backs: Vec<(&str, &MetraleCudaBackend)> = vec![("PDL off", &off), ("PDL on", &on)];
+    // 2026-10-21: A third arm: PDL on with the new side of the levers `Variant` names.
+    let v = Variant::from_env();
+    let mut backs: Vec<(&str, &MetraleCudaBackend, Variant)> = vec![
+        ("PDL off", &off, Variant::OLD),
+        ("PDL on", &on, Variant::OLD),
+        ("PDL on new", &on, v),
+    ];
     if let Some(b) = &base {
-        backs.push(("base (old)", b));
+        backs.push(("base (old)", b, Variant::OLD));
     }
+    println!("new arm: {v:?}");
     let s = off.default_stream();
     let b = Bufs::new(&off, 0x5eed_0002, LAYERS, 0.0)?;
     let parts = [
@@ -121,8 +130,8 @@ fn main() -> Result<()> {
     let mut graphs: Vec<Vec<GraphHandle>> = Vec::new();
     for &(_, p) in &parts {
         let mut row = Vec::new();
-        for &(_, g) in &backs {
-            row.push(capture(g, &Kern::resolve(g)?, &b, p, s)?);
+        for &(_, g, v) in &backs {
+            row.push(capture(g, &Kern::resolve(g, v)?, &b, p, s)?);
         }
         graphs.push(row);
     }
@@ -153,15 +162,16 @@ fn main() -> Result<()> {
     println!(
         "PDL microbench: {LAYERS} distinct layers per graph, M = {T}, {ROUNDS} rounds x {TRIALS} replays; us per layer, median [min..max]"
     );
-    let header: Vec<String> = backs.iter().map(|(n, _)| format!("{n:>22}")).collect();
+    let header: Vec<String> = backs.iter().map(|(n, ..)| format!("{n:>22}")).collect();
     println!(
-        "{:<14}{} {:>12}{}",
+        "{:<14}{} {:>12} {:>12}{}",
         "",
         header.join(""),
         "on vs off",
+        "new vs on",
         if base.is_some() { "  on vs base" } else { "" }
     );
-    let mut saved = vec![[0.0f64; 2]; parts.len()];
+    let mut saved = vec![[0.0f64; 3]; parts.len()];
     for (i, (name, _)) in parts.iter().enumerate() {
         let st: Vec<(f64, f64, f64)> = per[i]
             .iter_mut()
@@ -175,14 +185,20 @@ fn main() -> Result<()> {
             .map(|a| format!("{:>8.1} [{:>5.1}..{:>5.1}]", a.0, a.1, a.2))
             .collect();
         saved[i][0] = st[0].0 - st[1].0;
-        saved[i][1] = st.get(2).map_or(f64::NAN, |b| b.0 - st[1].0);
-        print!("{name:<14}{} {:>9.2} us", cells.join(""), saved[i][0]);
+        saved[i][1] = st.get(3).map_or(f64::NAN, |b| b.0 - st[1].0);
+        saved[i][2] = st[1].0 - st[2].0;
+        print!(
+            "{name:<14}{} {:>9.2} us {:>9.2} us",
+            cells.join(""),
+            saved[i][0],
+            saved[i][2]
+        );
         if base.is_some() {
             print!(" {:>9.2} us", saved[i][1]);
         }
         println!();
     }
-    for (c, what) in [(0usize, "on vs off"), (1, "on vs base")] {
+    for (c, what) in [(0usize, "on vs off"), (2, "new vs on"), (1, "on vs base")] {
         if c == 1 && base.is_none() {
             continue;
         }

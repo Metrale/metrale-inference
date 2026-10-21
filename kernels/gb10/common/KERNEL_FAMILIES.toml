@@ -1272,6 +1272,9 @@ kernels = [
   "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_k64",
   "w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_k64",
   "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots_sweep_k64",
+  # 2026-10-21: The gate/up union sweeps launched stream-ordered (the SL instantiations).
+  "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_sl",
+  "w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_sl",
   # 2026-10-10: The grouped GEMM for wide routed launches (prefill), each slot the slot GEMV's
   # bytes, and its tile pass.
   "w4a4_grouped_mx::w4a4_grouped_mx_m32", "w4a4_grouped_mx::w4a4_grouped_mx_m64",

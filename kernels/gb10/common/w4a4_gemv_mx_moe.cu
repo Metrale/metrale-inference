@@ -39,6 +39,10 @@
 //   w4a4_quant_rows writes them (fragment order), row stride K / 2 bytes, K / 16 scales.
 //   2026-10-10: The `_k64` twins: K % 64 == 0, activation rows at round_up(K, 128).
 // - 2026-10-21: PDL: the static quantizers and the sweeps call pdl_enter() before any global access.
+//   2026-10-21: The `_sl` gate/up union sweeps (serial launch) hold no pdl_wait(), so the host launches
+//   them stream-ordered (gpu-runtime ptx_pdl.rs): their persistent grid starts on an idle device
+//   instead of beside its predecessor's CTAs, and they call pdl_trigger() after their last item.
+//   Same bytes as the plain entries; measured on GB10 (pdl_chain_bench) -4.9 us per MoE layer.
 #ifndef METRALE_NO_WARP_BLOCKSCALE_MMA
 
 #include "w4a4_mx_core.cuh"
@@ -214,7 +218,9 @@ __device__ __forceinline__ void w4a4_sweep_prefetch(const unsigned char* bq,
 // weight_scale_2 are read once at setup into shared memory, so no item waits on a global table
 // load before its first weight byte (measured on the tp shapes: -4 to -7% at 2 to 16 rows, the
 // same at one row; glm5next_moe_narrow_bench GLM_BENCH_TP=1).
-template <int MB, int PF, bool KH, bool OWN>
+// 2026-10-21: SL: launched stream-ordered (no wait), the successor triggered after the last item;
+// else pdl_enter() before any global access.
+template <int MB, int PF, bool KH, bool OWN, bool SL>
 __device__ __forceinline__ void w4a4_moe_union_sweep(
     const unsigned char* __restrict__ Aq, const unsigned char* __restrict__ As,
     const float* __restrict__ Ag, const int* __restrict__ u_eid, const int* __restrict__ u_slot,
@@ -233,7 +239,7 @@ __device__ __forceinline__ void w4a4_moe_union_sweep(
         return;
     // 2026-10-21: PDL (pdl.cuh): every load below follows the routing (u_eid, the predecessor's
     // output), so the whole body waits.
-    pdl_enter();
+    if constexpr (!SL) pdl_enter();
     __shared__ int s_live[W4A4_WARPS * 32];
     // 2026-10-10: Per live entry e and projection p: packed and scale bases, weight_scale_2.
     __shared__ unsigned long long s_q[2][W4A4_WARPS * 32], s_s[2][W4A4_WARPS * 32];
@@ -348,9 +354,10 @@ __device__ __forceinline__ void w4a4_moe_union_sweep(
             Aq, As, Ag, (const unsigned char*)bq, (const unsigned char*)bs, s2, p == 0u ? C0 : C1,
             W4a4RowsTable{s_m, s_a, s_c}, N, K, x);
     }
+    if constexpr (SL) pdl_trigger();
 }
 
-#define W4A4_SWEEP_ENTRY(NAME, MB, PF, MINB, KH, OWN)                                                   \
+#define W4A4_SWEEP_ENTRY(NAME, MB, PF, MINB, KH, OWN, SL)                                                 \
     extern "C" __global__ __launch_bounds__(W4A4_WARPS * 32, MINB) void NAME( \
         const unsigned char* __restrict__ Aq, const unsigned char* __restrict__ As,             \
         const float* __restrict__ Ag, const int* __restrict__ u_eid,                            \
@@ -360,20 +367,23 @@ __device__ __forceinline__ void w4a4_moe_union_sweep(
         const unsigned long long* __restrict__ scale1, const float* __restrict__ s2_1,          \
         __nv_bfloat16* __restrict__ C1, unsigned int nproj, unsigned int N, unsigned int K,     \
         unsigned int rows, unsigned int top_k, unsigned int act_div, unsigned int num_experts) { \
-        w4a4_moe_union_sweep<MB, PF, KH, OWN>(Aq, As, Ag, u_eid, u_slot, packed0, scale0, s2_0, C0,     \
+        w4a4_moe_union_sweep<MB, PF, KH, OWN, SL>(Aq, As, Ag, u_eid, u_slot, packed0, scale0, s2_0, C0,     \
                                  packed1,                                                        \
                                  scale1, s2_1, C1, nproj, N, K, rows, top_k, act_div,            \
                                  num_experts);                                                   \
     }
 
-W4A4_SWEEP_ENTRY(w4a4_gemv_mx8_moe_union_sweep, 1, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, false, false)
-W4A4_SWEEP_ENTRY(w4a4_gemv_mx16_moe_union_sweep, 2, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, false, false)
+W4A4_SWEEP_ENTRY(w4a4_gemv_mx8_moe_union_sweep, 1, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, false, false, false)
+W4A4_SWEEP_ENTRY(w4a4_gemv_mx16_moe_union_sweep, 2, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, false, false, false)
 // 2026-10-09: One row over its own slots (OWN above): the slot GEMV's outputs on the persistent
 // grid, gate and up in one launch, with no union build. u_eid is the ids row; rows must be 1.
-W4A4_SWEEP_ENTRY(w4a4_gemv_mx8_moe_slots_sweep, 1, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, false, true)
+W4A4_SWEEP_ENTRY(w4a4_gemv_mx8_moe_slots_sweep, 1, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, false, true, false)
 // 2026-10-10: The `_k64` twins (the routed down projection of a 64-unit expert slice).
-W4A4_SWEEP_ENTRY(w4a4_gemv_mx8_moe_union_sweep_k64, 1, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, true, false)
-W4A4_SWEEP_ENTRY(w4a4_gemv_mx16_moe_union_sweep_k64, 2, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, true, false)
-W4A4_SWEEP_ENTRY(w4a4_gemv_mx8_moe_slots_sweep_k64, 1, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, true, true)
+W4A4_SWEEP_ENTRY(w4a4_gemv_mx8_moe_union_sweep_k64, 1, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, true, false, false)
+W4A4_SWEEP_ENTRY(w4a4_gemv_mx16_moe_union_sweep_k64, 2, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, true, false, false)
+W4A4_SWEEP_ENTRY(w4a4_gemv_mx8_moe_slots_sweep_k64, 1, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, true, true, false)
+// 2026-10-21: The gate/up sweeps launched stream-ordered (METRALE_GLM_MOE_SWEEP_SERIAL).
+W4A4_SWEEP_ENTRY(w4a4_gemv_mx8_moe_union_sweep_sl, 1, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, false, false, true)
+W4A4_SWEEP_ENTRY(w4a4_gemv_mx16_moe_union_sweep_sl, 2, W4A4_SWEEP_PF, W4A4_SWEEP_MIN_CTAS_PER_SM, false, false, true)
 
 #endif
