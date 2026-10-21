@@ -19,6 +19,7 @@ use cudarc::driver::{CudaContext, CudaFunction, CudaModule, CudaStream, LaunchCo
 use cudarc::nvrtc::Ptx;
 
 pub use crate::cuda_host::{CudaHost, host, release};
+use crate::registry_pdl::ensure_dynamic_smem;
 use metrale_core::error::{MetraleError, Result};
 use metrale_settings::groups::device::StreamPriority;
 
@@ -37,7 +38,7 @@ unsafe extern "C" {
         kernelParams: *mut *mut c_void,
         extra: *mut *mut c_void,
     ) -> i32;
-    fn cuFuncSetAttribute(hfunc: *mut c_void, attrib: i32, value: i32) -> i32;
+    pub(crate) fn cuFuncSetAttribute(hfunc: *mut c_void, attrib: i32, value: i32) -> i32;
     fn cuGetErrorName(error: i32, pStr: *mut *const i8) -> i32;
     fn cuGetErrorString(error: i32, pStr: *mut *const i8) -> i32;
     fn cuModuleGetGlobal_v2(
@@ -116,6 +117,9 @@ pub struct MetraleRegistry {
     /// 2026-10-14: The variables each PTX module defines (`ptx_globals`); `None` for a
     /// binary module, whose definitions are not read.
     globals: HashMap<&'static str, Option<HashSet<String>>>,
+    /// 2026-10-21: The entries of each PTX module that wait on their grid dependencies
+    /// (`ptx_pdl`); a binary module has none listed.
+    pub(crate) waiting: HashMap<&'static str, HashSet<String>>,
 }
 
 impl Drop for MetraleRegistry {
@@ -183,6 +187,7 @@ impl MetraleRegistry {
         let mut modules = HashMap::new();
         let mut raw_modules = HashMap::new();
         let mut globals = HashMap::new();
+        let mut waiting = HashMap::new();
         for &(name, blob) in kernel_blobs {
             let is_binary = blob.starts_with(b"\x7fELF")
                 || blob.starts_with(b"__CLANG_OFFLOAD_BUNDLE__")
@@ -196,6 +201,7 @@ impl MetraleRegistry {
                     MetraleError::ModuleLoad(format!("{name}: PTX not valid UTF-8: {e}"))
                 })?;
                 globals.insert(name, Some(crate::ptx_globals::defined_globals(src)));
+                waiting.insert(name, crate::ptx_pdl::waiting_entries(src));
                 Ptx::from_src(src)
             };
             let module = ctx
@@ -214,6 +220,7 @@ impl MetraleRegistry {
             modules,
             raw_modules,
             globals,
+            waiting,
         })
     }
 
@@ -289,6 +296,7 @@ impl MetraleRegistry {
         self.raw_modules.drain().for_each(drop);
         self.modules.drain().for_each(drop);
         self.globals.clear();
+        self.waiting.clear();
         Vec::new()
     }
 
@@ -434,24 +442,7 @@ impl MetraleRegistry {
         // 2026-09-25: The caller's stream is used as given; the registry's own
         // stream is never substituted.
         let stream = stream_ptr;
-        // 2026-09-25: Opt in to more than 48 KiB of dynamic shared memory when asked.
-        if cfg.shared_mem_bytes > 48 * 1024 {
-            const CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES: i32 = 8;
-            let attr_status = unsafe {
-                cuFuncSetAttribute(
-                    raw_func.0,
-                    CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
-                    cfg.shared_mem_bytes as i32,
-                )
-            };
-            if attr_status != 0 {
-                return Err(MetraleError::KernelLaunch(format!(
-                    "cuFuncSetAttribute(MAX_DYNAMIC_SHARED={}) failed: {}",
-                    cfg.shared_mem_bytes,
-                    cuda_error_text(attr_status)
-                )));
-            }
-        }
+        unsafe { ensure_dynamic_smem(raw_func, cfg.shared_mem_bytes) }?;
         let status = unsafe {
             cuLaunchKernel(
                 raw_func.0,

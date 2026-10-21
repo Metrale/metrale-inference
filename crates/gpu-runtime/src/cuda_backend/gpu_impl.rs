@@ -215,10 +215,9 @@ impl GpuBackend for MetraleCudaBackend {
             block_dim: (block[0], block[1], block[2]),
             shared_mem_bytes: shared_mem,
         };
-        let registry = self.registry();
         let span = crate::timing::kernel_begin(self, func.0, stream);
         let launched =
-            unsafe { registry.launch_on_stream(raw_func, cfg, stream, params) }.map_err(|e| {
+            unsafe { self.launch_raw(raw_func, cfg, stream, params) }.map_err(|e| {
                 // 2026-09-25: Probe the context and latch the fault if it is
                 // gone (`fault_probe`); the error is returned either way.
                 super::fault_probe::note_failure("kernel launch", &e.to_string());
@@ -226,6 +225,10 @@ impl GpuBackend for MetraleCudaBackend {
             });
         crate::timing::kernel_end(span, stream);
         launched
+    }
+
+    fn enable_programmatic_launches(&self) -> Result<bool> {
+        Ok(self.enable_programmatic())
     }
 
     fn stream_is_capturing(&self, stream: u64) -> bool {
@@ -288,6 +291,9 @@ impl GpuBackend for MetraleCudaBackend {
                 metrale_telemetry::launch_trace::name_kernel(raw.0 as u64, module, func_name);
                 let handle = KernelHandle(raw.0 as u64);
                 record_published(registry, &self.op_cache, module, func_name, handle)?;
+                if registry.entry_waits(module, func_name) {
+                    self.pdl.note_waiting(handle.0);
+                }
                 Ok(handle)
             }
             Err(e) => {

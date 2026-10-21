@@ -157,6 +157,15 @@ pub trait GpuBackend: Send + Sync {
         self.launch(func, grid, block, shared_mem, stream, &mut params)
     }
 
+    /// 2026-10-21: From now on, launch every kernel whose entry waits on its grid dependencies
+    /// (`griddepcontrol.wait`) with programmatic stream serialization, so it may start while its
+    /// predecessor on the stream finishes; under capture the edge becomes programmatic. One-way.
+    /// Returns whether this backend launches that way; the default (no such launch) returns
+    /// false and every launch stays fully serialised.
+    fn enable_programmatic_launches(&self) -> Result<bool> {
+        Ok(false)
+    }
+
     /// 2026-09-25: Whether `stream` is inside an active CUDA-graph capture. Check
     /// it before a sync or D2H on a stream that may be capturing: those invalidate
     /// the capture (`CUDA_ERROR_STREAM_CAPTURE_INVALIDATED`, 901). The CUDA
