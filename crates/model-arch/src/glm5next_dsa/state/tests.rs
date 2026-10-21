@@ -360,3 +360,39 @@ fn an_fp8_state_adopts_only_whole_pools() {
     b.adopt_kv_rows(4_097).unwrap();
     assert_eq!(b.len(), 4_097);
 }
+
+/// 2026-10-21: A pooled flat state (the MTP drafter's under `METRALE_GLM_DSA_POOL_KEYS`) takes
+/// exactly the plain state's bytes plus `flat_pool_key_bytes` (what the drafter's reserve adds),
+/// exposes the keys through `flat_rows` (a plain state exposes NULL), refuses an aux-blob
+/// restore (the blob carries no keys), refuses FP8, and `free` returns every byte.
+#[test]
+fn a_pooled_flat_state_allocates_and_exposes_its_pool_keys() {
+    use super::super::fp8_rows::IndexerRowFormat;
+    use metrale_gpu_runtime::gpu::mock::MockGpuBackend;
+    let gpu = MockGpuBackend::new();
+    let cfg = Glm5NextDsaConfig {
+        max_context: 65_536,
+        ..cfg()
+    };
+    let base = gpu.live_bytes().expect("the mock keeps a ledger");
+    let mut st = Glm5NextDsaState::alloc_as(&gpu, &cfg, IndexerRowFormat::Bf16Pooled).unwrap();
+    let cap = max_dsa_context(&cfg);
+    let keys = flat_pool_key_bytes(cap, cfg.index_head_dim, cfg.index_kpool);
+    assert_eq!(keys, (cap / cfg.index_kpool) * cfg.index_head_dim * 4);
+    assert_eq!(
+        gpu.live_bytes().unwrap() - base,
+        indexer_state_bytes(cap, cfg.index_head_dim) + keys
+    );
+    let rows = st.flat_rows().expect("flat");
+    assert_eq!(rows.pool_keys, st.pool_keys);
+    assert!(!rows.pool_keys.is_null() && rows.bt.is_null() && rows.pk_blk == 0);
+    let blob = st.snapshot_blob(&gpu, 0).unwrap();
+    assert!(st.restore_blob(&blob, &gpu, 0).is_err(), "restore into pooled keys refused");
+    st.free(&gpu).unwrap();
+    assert_eq!(gpu.live_bytes().unwrap(), base);
+    let plain = Glm5NextDsaState::alloc(&gpu, &cfg).unwrap();
+    assert!(plain.flat_rows().unwrap().pool_keys.is_null());
+    assert!(
+        Glm5NextDsaState::alloc_as(&gpu, &cfg, IndexerRowFormat::Fp8 { tail_sets: 1 }).is_err()
+    );
+}

@@ -62,6 +62,9 @@ struct DsaSwScratchKeys {
 // cache (first_key 0, no validity bytes) dsa_kpool_compress's pool p is valid iff
 // (p + 1) * KP <= S and its last slot is p * KP + KP - 1, so the candidacy above is
 // (p + 1) * KP <= S && p * KP + KP - 1 <= q_pos.
+// 2026-10-21: With bt NULL (a flat cache's persisted keys, the MTP drafter's) pool p's key is
+// row p of a [pools, D] buffer at `pk`, where dsa_pool_keys_store_rows writes it with bt NULL;
+// the candidacy is the same, every row below S of that cache being valid.
 __device__ __forceinline__ float* dsa_pk_ptr(float* pk, const int* bt, unsigned int bs,
                                              unsigned int pk_blk, unsigned int KP,
                                              unsigned int D, unsigned int p) {
@@ -79,7 +82,8 @@ struct DsaSwPersistedKeys {
         return (unsigned long long)(p + 1u) * KP <= S && (long long)p * KP + KP - 1 <= qp;
     }
     __device__ __forceinline__ const float* key(unsigned int p, unsigned int D) const {
-        return dsa_pk_ptr(const_cast<float*>(pk), bt, bs, pk_blk, KP, D, p);
+        return bt ? dsa_pk_ptr(const_cast<float*>(pk), bt, bs, pk_blk, KP, D, p)
+                  : pk + (size_t)p * D;
     }
 };
 
@@ -207,6 +211,8 @@ extern "C" __global__ void __launch_bounds__(256) dsa_index_scores_warp_paged(
 // dsa_pool_key over its KP rows (the expressions dsa_kpool_compress computes it with on a paged
 // cache: first_key 0, no validity bytes, every slot below S), goes to its persisted slot
 // (dsa_pk_ptr). A separate launch, so every row of the pool is in the cache first.
+// 2026-10-21: A flat cache (the MTP drafter's) runs the same bt-NULL addressing over its whole
+// buffers: x is the row's position, pk the [pools, D] key buffer.
 // With bt NULL (a host-placed row) k_pool, gate_pool and pk point at the row's own block and
 // x is its slot there: a pool never spans blocks (bs is a multiple of KP), so the in-block
 // rows and entry (x / KP) are the same bytes.

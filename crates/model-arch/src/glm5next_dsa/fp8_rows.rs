@@ -127,6 +127,22 @@ impl IndexerRowFormat {
         )
     }
 
+    /// 2026-10-21: The MTP drafter's format: its flat cache keeps persisted pool keys under
+    /// `pool_keys` (`METRALE_GLM_DSA_POOL_KEYS`), so its captured draft selection scores them
+    /// instead of recompressing every pool per draft; refused without the pool-key kernels.
+    pub fn drafter(pool_keys: bool, pool_keys_ready: bool) -> Result<Self> {
+        if !pool_keys {
+            return Ok(Self::Bf16);
+        }
+        ensure!(
+            pool_keys_ready,
+            "METRALE_GLM_DSA_POOL_KEYS: this build has no dsa_pool_keys_store_rows / \
+             dsa_index_scores_warp_paged kernels for the MTP drafter; set \
+             METRALE_GLM_DSA_POOL_KEYS=0"
+        );
+        Ok(Self::Bf16Pooled)
+    }
+
     pub fn is_fp8(&self) -> bool {
         matches!(self, Self::Fp8 { .. })
     }

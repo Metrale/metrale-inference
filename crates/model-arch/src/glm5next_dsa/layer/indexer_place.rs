@@ -35,7 +35,7 @@ impl Glm5NextDsaLayer {
     /// 2026-10-09: A new sequence's indexer state, flat or paged per `indexer_cache`.
     pub fn alloc_dsa_state(&self, gpu: &dyn GpuBackend) -> Result<Glm5NextDsaState> {
         match self.indexer_cache {
-            IndexerCache::Flat => Glm5NextDsaState::alloc(gpu, &self.cfg),
+            IndexerCache::Flat => Glm5NextDsaState::alloc_as(gpu, &self.cfg, self.indexer_format),
             IndexerCache::Paged => Glm5NextDsaState::paged_as(&self.cfg, self.indexer_format),
         }
     }

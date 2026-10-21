@@ -25,7 +25,7 @@ impl DraftProposer for Glm5NextMtpHead {
             return Ok(Box::new(st));
         }
         let dsa = match &self.module.layer.mixer {
-            crate::glm5next_layer::Glm5NextMixer::Dsa(l) => Glm5NextDsaState::alloc(gpu, &l.cfg)?,
+            crate::glm5next_layer::Glm5NextMixer::Dsa(l) => l.alloc_dsa_state(gpu)?,
             _ => bail!("GLM MTP block is not a DSA layer"),
         };
         let h = self.hidden;

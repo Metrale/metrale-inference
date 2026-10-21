@@ -81,6 +81,13 @@ impl Glm5NextDsaState {
     /// prefix-cache hit fails.
     pub fn restore_blob(&mut self, blob: &[u8], gpu: &dyn GpuBackend, stream: u64) -> Result<()> {
         self.ensure_flat_for_blob()?;
+        // 2026-10-21: A blob carries rows, not the pool keys persisted from them; restored rows
+        // under stale keys would select by the old rows.
+        ensure!(
+            self.pool_keys.is_null(),
+            "DSA aux blob restore into a flat cache with persisted pool keys: the blob holds no \
+             keys, so the restored rows' pools would be scored by stale ones"
+        );
         ensure!(
             blob.len() >= HEADER_BYTES,
             "DSA aux blob truncated: {} bytes, need at least {HEADER_BYTES} for the header",

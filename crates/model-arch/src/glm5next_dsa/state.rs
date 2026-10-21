@@ -58,6 +58,13 @@ pub fn indexer_state_bytes(capacity: usize, index_head_dim: usize) -> usize {
         + capacity
 }
 
+/// 2026-10-21: Bytes of a flat state's persisted pool keys at `capacity` rows: one f32 key of
+/// `index_head_dim` channels per complete pool of `index_kpool` rows. The drafter's
+/// per-sequence reserve adds it when its cache is pooled.
+pub fn flat_pool_key_bytes(capacity: usize, index_head_dim: usize, index_kpool: usize) -> usize {
+    (capacity / index_kpool.max(1)) * index_head_dim * 4
+}
+
 /// 2026-09-25: One sequence's indexer cache for one DSA layer, allocated once at
 /// [`max_dsa_context`] rows and never grown.
 pub struct Glm5NextDsaState {
@@ -68,6 +75,10 @@ pub struct Glm5NextDsaState {
     pub gate: DevicePtr,
     /// 2026-09-25: `[capacity]` u8 per-position validity.
     pub valid: DevicePtr,
+    /// 2026-10-21: A flat state in `IndexerRowFormat::Bf16Pooled` ([`Self::alloc_as`]): the
+    /// `[capacity / index_kpool, index_head_dim]` f32 persisted key of each complete pool,
+    /// written by `dsa_pool_keys_store_rows` when its last row is stored; NULL otherwise.
+    pub pool_keys: DevicePtr,
     /// 2026-09-25: Tokens written so far. The selector reads `[0, len)`.
     len: usize,
     capacity: usize,
@@ -88,13 +99,31 @@ impl Glm5NextDsaState {
     /// 2026-09-25: Reserve for the whole addressable context. `alloc_state` has no length
     /// argument, so the cap, not the prompt, sizes this.
     pub fn alloc(gpu: &dyn GpuBackend, cfg: &Glm5NextDsaConfig) -> Result<Self> {
+        Self::alloc_as(gpu, cfg, IndexerRowFormat::Bf16)
+    }
+
+    /// 2026-10-21: [`Self::alloc`] in `format`: `Bf16Pooled` also allocates the persisted pool
+    /// keys ([`flat_pool_key_bytes`]); FP8 rows live in KV blocks, so a flat state refuses it.
+    pub fn alloc_as(
+        gpu: &dyn GpuBackend,
+        cfg: &Glm5NextDsaConfig,
+        format: IndexerRowFormat,
+    ) -> Result<Self> {
         cfg.validate()?;
         let capacity = max_dsa_context(cfg);
         let d = cfg.index_head_dim;
+        let pool_keys = match format {
+            IndexerRowFormat::Bf16 => DevicePtr::NULL,
+            IndexerRowFormat::Bf16Pooled => {
+                gpu.alloc(flat_pool_key_bytes(capacity, d, cfg.index_kpool))?
+            }
+            IndexerRowFormat::Fp8 { .. } => bail!("a flat DSA indexer state cannot hold FP8 rows"),
+        };
         Ok(Self {
             k_normed: gpu.alloc(capacity * d * 2)?,
             gate: gpu.alloc(capacity * d * 2)?,
             valid: gpu.alloc(capacity)?,
+            pool_keys,
             len: 0,
             capacity,
             index_head_dim: d,
@@ -113,6 +142,7 @@ impl Glm5NextDsaState {
             k_normed: DevicePtr::NULL,
             gate: DevicePtr::NULL,
             valid: DevicePtr::NULL,
+            pool_keys: DevicePtr::NULL,
             len: 0,
             capacity: max_dsa_context(cfg),
             index_head_dim: cfg.index_head_dim,
@@ -142,8 +172,10 @@ impl Glm5NextDsaState {
     /// 2026-10-09: The flat buffers as kernel addressing; `None` for a paged state, whose
     /// addressing needs the KV pool and a block table (`Glm5NextDsaLayer::indexer_rows`).
     pub fn flat_rows(&self) -> Option<IndexerRowsDev> {
-        (self.cache == IndexerCache::Flat)
-            .then(|| IndexerRowsDev::flat(self.k_normed, self.gate, self.valid))
+        (self.cache == IndexerCache::Flat).then(|| IndexerRowsDev {
+            pool_keys: self.pool_keys,
+            ..IndexerRowsDev::flat(self.k_normed, self.gate, self.valid)
+        })
     }
 
     /// 2026-10-09: Move a paged state's counter up to `seq_len`. The rows below it are in the
@@ -180,6 +212,7 @@ impl Glm5NextDsaState {
             k_normed,
             gate,
             valid,
+            pool_keys: DevicePtr::NULL,
             len: 0,
             capacity,
             index_head_dim,
@@ -305,10 +338,11 @@ impl Glm5NextDsaState {
         }
         self.released = true;
         if self.owned {
-            for p in [self.k_normed, self.gate, self.valid] {
+            for p in [self.k_normed, self.gate, self.valid, self.pool_keys] {
                 gpu.free(p)?;
             }
         }
+        self.pool_keys = DevicePtr(0);
         self.k_normed = DevicePtr(0);
         self.gate = DevicePtr(0);
         self.valid = DevicePtr(0);

@@ -113,6 +113,18 @@ impl Glm5NextDsaLayer {
             .launch(stream)?;
         proj(normed, self.weights.compress_gate, gate_rows, d)?;
         gpu.memset_async(st.valid.offset(seq_len), 1, m, stream)?;
+        // 2026-10-21: The keys of the pools these rows complete, on a pooled cache.
+        if let Some(rows) = st.flat_rows() {
+            self.store_pool_keys(
+                gpu,
+                super::rows::PoolKeyRows::Flat {
+                    rows: &rows,
+                    pos0: seq_len,
+                    n: m,
+                },
+                stream,
+            )?;
+        }
         st.advance(m)
     }
 }

@@ -35,12 +35,20 @@ pub(crate) enum PoolKeyRows<'a> {
         block_table: &'a [u32],
         kv_cache: &'a PagedKvCache,
     },
+    /// 2026-10-21: `n` consecutive rows from absolute position `pos0` of a flat cache (`rows`
+    /// its buffers), placed by the host (the GEMMs wrote them).
+    Flat {
+        rows: &'a IndexerRowsDev,
+        pos0: usize,
+        n: usize,
+    },
 }
 
 impl Glm5NextDsaLayer {
     /// 2026-10-21: Persists the key of every pool these rows complete
     /// (`dsa_pool_keys_store_rows`), after the rows are in the cache; nothing for rows that
-    /// keep no pool keys (flat, FP8, or `METRALE_GLM_DSA_POOL_KEYS=0`).
+    /// keep no pool keys (a flat cache outside the MTP drafter, FP8, or
+    /// `METRALE_GLM_DSA_POOL_KEYS=0`).
     pub(crate) fn store_pool_keys(
         &self,
         gpu: &dyn GpuBackend,
@@ -48,8 +56,12 @@ impl Glm5NextDsaLayer {
         stream: u64,
     ) -> Result<()> {
         let layout = match &which {
-            PoolKeyRows::Device { rows, .. } if rows.pool_keys.0 == 0 => return Ok(()),
-            PoolKeyRows::Device { .. } => None,
+            PoolKeyRows::Device { rows, .. } | PoolKeyRows::Flat { rows, .. }
+                if rows.pool_keys.0 == 0 =>
+            {
+                return Ok(());
+            }
+            PoolKeyRows::Device { .. } | PoolKeyRows::Flat { .. } => None,
             PoolKeyRows::Host { pos, kv_cache, .. } => {
                 let layout = self.paged_layout(kv_cache)?;
                 let Some(kp) = layout.pool_keys_kp else {
@@ -136,6 +148,18 @@ impl Glm5NextDsaLayer {
                 )
             }
             (PoolKeyRows::Host { .. }, None) => Ok(()),
+            // 2026-10-21: bt NULL over the flat buffers: x = pos0 + row, the key at row x / kp.
+            (PoolKeyRows::Flat { rows, pos0, n }, _) => launch(
+                DevicePtr::NULL,
+                i32::try_from(pos0)?,
+                rows.k,
+                rows.gate,
+                rows.pool_keys,
+                DevicePtr::NULL,
+                0,
+                n,
+                (0, 0, 0),
+            ),
         }
     }
 
@@ -218,7 +242,20 @@ impl Glm5NextDsaLayer {
                     },
                     stream,
                 )?,
-            IndexerPlace::Host { .. } => gpu.memset_async(state.valid.offset(pos), 1, 1, stream)?,
+            IndexerPlace::Host { .. } => {
+                gpu.memset_async(state.valid.offset(pos), 1, 1, stream)?;
+                if let Some(rows) = state.flat_rows() {
+                    self.store_pool_keys(
+                        gpu,
+                        PoolKeyRows::Flat {
+                            rows: &rows,
+                            pos0: pos,
+                            n: 1,
+                        },
+                        stream,
+                    )?;
+                }
+            }
         }
         state.advance(1)
     }

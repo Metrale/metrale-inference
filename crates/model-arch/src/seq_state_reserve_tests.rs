@@ -151,9 +151,9 @@ fn a_drafter_kv_region_is_1026_blocks_of_16_kib() {
 #[test]
 fn a_paged_text_indexer_is_not_charged_per_sequence() {
     let cfg = metrale_config::parse_config(GLM_CONFIG).expect("real config parses");
-    let flat = per_sequence_state_bytes_for(&cfg, MSL, true, IndexerCache::Flat, 0, false).unwrap();
+    let flat = per_sequence_state_bytes_for(&cfg, MSL, true, IndexerCache::Flat, 0, false, false).unwrap();
     let paged =
-        per_sequence_state_bytes_for(&cfg, MSL, true, IndexerCache::Paged, 0, false).unwrap();
+        per_sequence_state_bytes_for(&cfg, MSL, true, IndexerCache::Paged, 0, false, false).unwrap();
     assert_eq!(flat.target_layers, 739_639_296);
     assert_eq!(paged.target_layers, 0);
     assert_eq!(paged.proposer, flat.proposer);
@@ -167,7 +167,7 @@ fn a_paged_text_indexer_is_not_charged_per_sequence() {
 fn proposer_at(msl: usize, cap: usize) -> usize {
     let mut cfg = metrale_config::parse_config(GLM_CONFIG).expect("real config parses");
     cfg.serve_max_seq_len = msl;
-    per_sequence_state_bytes_for(&cfg, msl, true, IndexerCache::Paged, cap, false)
+    per_sequence_state_bytes_for(&cfg, msl, true, IndexerCache::Paged, cap, false, false)
         .unwrap()
         .proposer
 }
@@ -197,4 +197,21 @@ fn below_the_cap_the_charge_is_the_uncapped_one() {
     for msl in [16_384, 40_960, 65_536] {
         assert_eq!(proposer_at(msl, 65_536), proposer_at(msl, 0), "msl {msl}");
     }
+}
+
+/// 2026-10-21: A pooled drafter cache (`METRALE_GLM_DSA_POOL_KEYS`) adds its persisted keys to
+/// the proposer's charge: one f32 key of 128 channels per 4 rows, 128 B per drafter row
+/// (8,388,608 B at the 65,536-row cap), and nothing to the text layers.
+#[test]
+fn a_pooled_drafter_is_charged_its_pool_keys() {
+    let mut cfg = metrale_config::parse_config(GLM_CONFIG).expect("real config parses");
+    cfg.serve_max_seq_len = 131_072;
+    let at = |pooled: bool| {
+        per_sequence_state_bytes_for(&cfg, 131_072, true, IndexerCache::Paged, 65_536, false, pooled)
+            .unwrap()
+    };
+    let (plain, pooled) = (at(false), at(true));
+    assert_eq!(pooled.proposer - plain.proposer, 65_536 / 4 * 128 * 4);
+    assert_eq!(pooled.proposer - plain.proposer, 8_388_608);
+    assert_eq!(pooled.target_layers, plain.target_layers);
 }

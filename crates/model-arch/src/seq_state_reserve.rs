@@ -79,6 +79,7 @@ pub fn per_sequence_state_bytes(
         crate::glm5next_dsa::paged::text_stack_indexer_cache(settings),
         mtp.context_cap,
         mtp.graph,
+        settings.kernels.glm_dsa_pool_keys,
     )
 }
 
@@ -86,7 +87,8 @@ pub fn per_sequence_state_bytes(
 /// (env-free). 2026-10-13: And the drafter's context cap (`METRALE_GLM_MTP_CONTEXT_CAP`; 0 =
 /// none): the proposer's rows are `drafter_max_context(max_seq_len, drafter_cap)`.
 /// 2026-10-17: And whether the drafter graph is on (`METRALE_GLM_MTP_GRAPH`, `drafter_graph`),
-/// which adds its per-state metadata.
+/// which adds its per-state metadata. 2026-10-21: And whether the drafter's flat indexer cache
+/// keeps persisted pool keys (`METRALE_GLM_DSA_POOL_KEYS`, `IndexerRowFormat::drafter`).
 pub fn per_sequence_state_bytes_for(
     config: &ModelConfig,
     max_seq_len: usize,
@@ -94,6 +96,7 @@ pub fn per_sequence_state_bytes_for(
     text_indexer: IndexerCache,
     drafter_cap: usize,
     drafter_graph: bool,
+    drafter_pool_keys: bool,
 ) -> Result<PerSequenceState> {
     if config.model_type != "glm5_next" {
         return Ok(PerSequenceState::default());
@@ -134,6 +137,15 @@ pub fn per_sequence_state_bytes_for(
                 dsa_capacity(drafter_ctx, config.index_kpool),
                 config.index_head_dim,
             )
+            + if drafter_pool_keys {
+                crate::glm5next_dsa::state::flat_pool_key_bytes(
+                    dsa_capacity(drafter_ctx, config.index_kpool),
+                    config.index_head_dim,
+                    config.index_kpool,
+                )
+            } else {
+                0
+            }
             + 2 * config.hidden_size * 2
             + config.hidden_size * 2
             + config.vocab_size * 2

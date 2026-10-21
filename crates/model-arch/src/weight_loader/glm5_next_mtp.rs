@@ -74,6 +74,10 @@ pub fn load_glm5next_mtp_module(
     let dsa_plan = crate::glm5next_dsa::tp::DsaTpPlan::from_config(config, &dsa_cfg)?;
     let dsa_layer_kernels = Glm5NextDsaLayerKernels::resolve(gpu)?;
     let dsa_kernels = Glm5NextDsaKernels::resolve(gpu)?;
+    let drafter_format = crate::glm5next_dsa::fp8_rows::IndexerRowFormat::drafter(
+        lc.settings.kernels.glm_dsa_pool_keys,
+        dsa_kernels.rows.pool_keys_ready(),
+    )?;
     let mlp_kernels = Glm5NextMlpKernels::resolve(gpu, levers)?;
 
     let mut mixer = Glm5NextMixer::Dsa(Box::new(Glm5NextDsaLayer {
@@ -111,9 +115,10 @@ pub fn load_glm5next_mtp_module(
         rms_eps: config.rms_norm_eps as f32,
         kv_scale: 1.0,
         // 2026-10-09: The drafter's one-layer pool is sized apart from the text stack's; its
-        // indexer stays flat.
+        // indexer stays flat. 2026-10-21: With persisted pool keys under
+        // `METRALE_GLM_DSA_POOL_KEYS` (`IndexerRowFormat::drafter`).
         indexer_cache: crate::glm5next_dsa::paged::IndexerCache::Flat,
-        indexer_format: crate::glm5next_dsa::fp8_rows::IndexerRowFormat::Bf16,
+        indexer_format: drafter_format,
     }));
 
     let expert = super::glm5_next_load::expert_binder_at(gpu, store, idx, &mlp_cfg);
