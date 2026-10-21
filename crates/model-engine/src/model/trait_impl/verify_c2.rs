@@ -229,7 +229,7 @@ impl TransformerModel {
 
         // 2026-09-25: Replay only when this sequence's SSM slot has a captured graph.
         // 2026-10-03: The graph key: the pool slot and the LoRA routes a capture bakes.
-        let graph_key = super::SlotGraphKey::new(seq.slot_idx, seq_slot, ctx.moe_lora_route);
+        let graph_key = self.slot_graph_key(seq.slot_idx, seq_slot, ctx.moe_lora_route);
         let cached_for_slot = graph_cache
             .as_ref()
             .and_then(|c| c.get(&graph_key).copied());
@@ -432,6 +432,7 @@ impl TransformerModel {
             seq.tokens.push(t);
         }
         seq.seq_len += k;
+        self.arm_commit_swap(seq.slot_idx);
 
         Ok([tok0, tok1, tok2, tok3])
     }

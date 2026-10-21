@@ -237,6 +237,11 @@ impl TransformerModel {
         num_accepted: usize,
         k: usize,
     ) -> Result<()> {
+        // 2026-10-21: `METRALE_SSM_COMMIT_SWAP`: keeping only the first row of an armed
+        // single-sequence verify swaps intermediate 0 in as the live state (`commit_swap.rs`).
+        if self.try_commit_by_swap(seq, num_accepted, k)? {
+            return Ok(());
+        }
         // 2026-10-11: `METRALE_GLM_MTP_DEVICE_STEP` part 3: a K=2 verdict the device verdict agrees
         // with commits on the device, predicated on its accept word (`commit_k2_on_device`), on
         // the default stream behind the verdict. Same copies; the host path below otherwise.

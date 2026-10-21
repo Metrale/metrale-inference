@@ -213,6 +213,7 @@ impl TransformerModel {
         // replay, at the batch's widest row count `k_max`. Table strides do
         // not depend on k (`VERIFY_WY_LAYER_STRIDE_BYTES`). NULL means no
         // tables were staged, and the layers get a NULL slice below.
+        seqs.iter_mut().try_for_each(|s| self.unswap_for_batch(s))?; // 2026-10-21: commit_swap.rs
         let wy_tables_base = self.upload_verify_wy_tables(&*seqs, k_max, &[], stream)?;
         // 2026-09-25: A write-on-accept request is honoured only with the WY
         // tables staged, since the fold reads them. `gdn_woa_bind` allocates

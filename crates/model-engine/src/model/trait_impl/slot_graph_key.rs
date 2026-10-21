@@ -20,6 +20,9 @@ use metrale_model_layers::layer::MoeLoraRoute;
 pub(crate) struct SlotGraphKey {
     /// 2026-10-03: The sequence's pool slot (`SequenceState::slot_idx`).
     pub slot: usize,
+    /// 2026-10-21: The slot's commit-swap role (`ssm_reserve::commit_swap`): which of its two
+    /// buffers the capture baked as the live SSM state.
+    pub ssm_swapped: bool,
     /// 2026-10-03: The attention LoRA sites fold the installed pair (the step uploaded no slot
     /// buffer while a pool is loaded, or no pool is loaded).
     pub lora_pair: bool,
@@ -31,11 +34,17 @@ pub(crate) struct SlotGraphKey {
 }
 
 impl SlotGraphKey {
-    /// 2026-10-03: The key of a step on `slot` whose metadata carries `seq_slot` (NULL when the
-    /// installed pair folds) under `moe_route`.
-    pub(crate) fn new(slot: usize, seq_slot: DevicePtr, moe_route: MoeLoraRoute) -> Self {
+    /// 2026-10-03: The key of a step on `slot` (2026-10-21: in commit-swap role `ssm_swapped`)
+    /// whose metadata carries `seq_slot` (NULL when the installed pair folds) under `moe_route`.
+    pub(crate) fn new(
+        slot: usize,
+        ssm_swapped: bool,
+        seq_slot: DevicePtr,
+        moe_route: MoeLoraRoute,
+    ) -> Self {
         SlotGraphKey {
             slot,
+            ssm_swapped,
             lora_pair: seq_slot.is_null(),
             moe_route: match moe_route {
                 MoeLoraRoute::Fold => 0,

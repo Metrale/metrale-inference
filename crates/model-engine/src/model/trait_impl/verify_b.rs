@@ -293,7 +293,8 @@ impl TransformerModel {
         // 2026-09-25: Replay only when this sequence's SSM slot has a captured graph.
         // 2026-10-03: The graph key: the pool slot and the LoRA routes a capture bakes.
         // 2026-10-21: A screened verify ends in the device argmax instead of the logits.
-        let graph_key = super::SlotGraphKey::new(seq.slot_idx, seq_slot, ctx.moe_lora_route)
+        let graph_key = self
+            .slot_graph_key(seq.slot_idx, seq_slot, ctx.moe_lora_route)
             .with_device_argmax(screened);
         let cached_for_slot = graph_cache
             .as_ref()
@@ -471,6 +472,7 @@ impl TransformerModel {
             seq.tokens.push(t);
         }
         seq.seq_len += k;
+        self.arm_commit_swap(seq.slot_idx);
 
         Ok([tok0, tok1])
     }

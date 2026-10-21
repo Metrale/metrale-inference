@@ -28,6 +28,7 @@ use metrale_model_layers::weight_map::{DenseWeight, MtpWeights};
 mod accepted_rows;
 mod async_chkpt;
 mod borrow_streak;
+mod commit_swap;
 mod decode_a;
 mod decode_a2;
 mod decode_a3;

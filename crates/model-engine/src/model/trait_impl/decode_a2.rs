@@ -133,9 +133,11 @@ impl TransformerModel {
             "decode_batch_compute_main",
         )?;
         // 2026-09-25: `--ssm-h-dtype f16`: narrow each sequence's SSM h-state to FP16
-        // here, before any graph region. No-op without the flag.
+        // here, before any graph region. No-op without the flag. 2026-10-21: and return a
+        // commit-swapped slot home, as the slot-vector graphs bake it (`commit_swap.rs`).
         for s in seqs.iter_mut() {
             self.ssm_h_to_f16_dispatch(s)?;
+            self.unswap_for_batch(s)?;
         }
         if self.levers.decode_batch_log {
             let slots: Vec<i64> = seqs

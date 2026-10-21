@@ -293,7 +293,8 @@ impl TransformerModel {
         };
 
         // 2026-10-03: The graph key: the pool slot and the LoRA routes a capture bakes.
-        let graph_key = super::SlotGraphKey::new(seq.slot_idx, seq_slot, ctx.moe_lora_route)
+        let graph_key = self
+            .slot_graph_key(seq.slot_idx, seq_slot, ctx.moe_lora_route)
             .with_device_argmax(head_keys);
 
         // 2026-09-25: Profile mode: per-layer synchronised decode for a timing breakdown.
