@@ -1297,8 +1297,8 @@ kernels = [
   # 2026-10-15: The m128 down entries with nc column tiles per CTA (same bytes, one load stream).
   "w4a4_grouped_mx::w4a4_grouped_mx_m128_n", "w4a4_grouped_mx::w4a4_grouped_mx_m128_k64_n",
   # 2026-10-21: The `_cs` twins (METRALE_GLM_MOE_SCALE_DICT): the CS instantiations of the same
-  # bodies, reading block scales stored as 5-bit offsets from a per-tensor base (w4a4_mx_core.cuh)
-  # and rebuilding every scale byte; one base-table argument per projection.
+  # bodies, reading block scales stored as 5-bit offsets from a per-tensor base (w4a4_mx_core.cuh,
+  # w4a4_grouped_cs.cuh) and rebuilding every scale byte; one base-table argument per projection.
   "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_cs",
   "w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_cs",
   "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_sl_cs",
@@ -1308,6 +1308,12 @@ kernels = [
   "w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_k64_cs",
   "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots_sweep_k64_cs",
   "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots_k64_cs",
+  "w4a4_grouped_mx::w4a4_grouped_mx_m32_cs", "w4a4_grouped_mx::w4a4_grouped_mx_m32_k64_cs",
+  "w4a4_grouped_mx::w4a4_grouped_mx_m128_cs", "w4a4_grouped_mx::w4a4_grouped_mx_m128_k64_cs",
+  "w4a4_grouped_mx::w4a4_grouped_mx_m128_r_cs", "w4a4_grouped_mx::w4a4_grouped_mx_m128_k64_r_cs",
+  "w4a4_grouped_mx::w4a4_grouped_mx_m128_n_cs", "w4a4_grouped_mx::w4a4_grouped_mx_m128_k64_n_cs",
+  "w4a4_grouped_mx::w4a4_grouped_gu_m32_cs", "w4a4_grouped_mx::w4a4_grouped_gu_m128_cs",
+  "w4a4_grouped_mx::w4a4_grouped_gu_m128_r_cs",
 ]
 kernel_compute."w4a4_grouped_mx::w4a4_grouped_tiles" = { compute = "memory" }
 kernel_compute."w4a4_grouped_mx::w4a4_grouped_one_group" = { compute = "memory" }
