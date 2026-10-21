@@ -32,7 +32,7 @@ pub(super) fn assert_rank_levers_agree(
     )?;
     if settings.speculative.glm_graph_early_launch && settings.runtime.nccl_host_hoist {
         tracing::error!(
-            "METRALE_GLM_GRAPH_EARLY_LAUNCH=1 is refused with METRALE_NCCL_HOST_HOIST=1 (the \
+            "METRALE_GLM_GRAPH_EARLY_LAUNCH is refused with METRALE_NCCL_HOST_HOIST=1 (the \
              hoist drops each graph's NCCL serialEvent wait, so an early graph could post proxy \
              ops out of order): the graphs launch on the compute stream as before"
         );

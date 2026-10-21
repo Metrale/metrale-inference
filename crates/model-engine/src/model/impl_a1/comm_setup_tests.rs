@@ -58,19 +58,21 @@ fn the_a2_levers_are_rank_agreed() {
     let table =
         |env: &[(&str, &str)]| super::rank_lever_table(&settings_from(env).unwrap()).unwrap();
     let off = table(&[]);
-    for env in [
-        "METRALE_GLM_GRAPH_EARLY_LAUNCH",
-        "METRALE_GLM_MTP_ROW_NOSYNC",
+    for (env, flipped) in [
+        ("METRALE_GLM_GRAPH_EARLY_LAUNCH", "0"),
+        ("METRALE_GLM_MTP_ROW_NOSYNC", "1"),
     ] {
-        let on = table(&[(env, "1")]);
+        let on = table(&[(env, flipped)]);
         assert_ne!(on, off, "{env} skew is not compared");
         let diff: Vec<_> = on.iter().zip(&off).filter(|(a, b)| a != b).collect();
         assert_eq!(diff.len(), 1, "{env}: {diff:?}");
         assert_eq!(diff[0].0.0, env);
     }
-    let hoisted = table(&[
-        ("METRALE_GLM_GRAPH_EARLY_LAUNCH", "1"),
-        ("METRALE_NCCL_HOST_HOIST", "1"),
-    ]);
-    assert_eq!(hoisted, off, "a refused early launch is compared as off");
+    let early_off = table(&[("METRALE_GLM_GRAPH_EARLY_LAUNCH", "0")]);
+    let hoisted = table(&[("METRALE_NCCL_HOST_HOIST", "1")]);
+    let hoisted_diff: Vec<_> = hoisted.iter().zip(&early_off).filter(|(a, b)| a != b).collect();
+    assert!(
+        hoisted_diff.iter().all(|(a, _)| a.0 != "METRALE_GLM_GRAPH_EARLY_LAUNCH"),
+        "a refused early launch is compared as off: {hoisted_diff:?}"
+    );
 }

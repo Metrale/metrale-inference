@@ -263,25 +263,23 @@ fn the_prefill_wait_composes_as_before() {
     }
 }
 
-/// 2026-10-21: The A2 levers (no old reader): off unset, on at `1`, a non-switch refused; the
-/// early launch is refused (off) beside the NCCL host hoist.
+/// 2026-10-21: The A2 levers (no old reader): the early launch on unset and ROW_NOSYNC off
+/// unset, each on at `1` and off at `0`, a non-switch refused; the early launch is refused (off)
+/// beside the NCCL host hoist.
 #[test]
-fn the_a2_levers_are_opt_in_switches() {
+fn the_a2_levers_resolve_as_declared() {
     type Field = fn(&MtpLevers) -> bool;
-    let cases: [(&str, Field); 2] = [
-        ("METRALE_GLM_GRAPH_EARLY_LAUNCH", |l| l.graph_early_launch),
-        ("METRALE_GLM_MTP_ROW_NOSYNC", |l| l.row_nosync),
+    let cases: [(&str, Field, bool); 2] = [
+        ("METRALE_GLM_GRAPH_EARLY_LAUNCH", |l| l.graph_early_launch, true),
+        ("METRALE_GLM_MTP_ROW_NOSYNC", |l| l.row_nosync, false),
     ];
-    for (env, field) in cases {
-        assert_eq!(new_with(&[], field), Some(false), "{env} unset");
+    for (env, field, unset) in cases {
+        assert_eq!(new_with(&[], field), Some(unset), "{env} unset");
         assert_eq!(new_at(env, Some("1"), field), Some(true), "{env}=1");
         assert_eq!(new_at(env, Some("0"), field), Some(false), "{env}=0");
         assert_eq!(new_at(env, Some("garbage"), field), None, "{env}=garbage");
     }
-    let hoisted = [
-        ("METRALE_GLM_GRAPH_EARLY_LAUNCH", "1"),
-        ("METRALE_NCCL_HOST_HOIST", "1"),
-    ];
+    let hoisted = [("METRALE_NCCL_HOST_HOIST", "1")];
     assert_eq!(
         new_with(&hoisted, |l| l.graph_early_launch),
         Some(false),
@@ -305,7 +303,7 @@ fn the_declared_defaults_are_the_old_unset_values() {
             eh_tp: false,
             xchg_device: false,
             head_fp8: true,
-            graph_early_launch: false,
+            graph_early_launch: true,
             row_nosync: false,
         }
     );
