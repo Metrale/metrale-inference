@@ -264,6 +264,42 @@ pub fn screen_head_resolve(
         .launch(stream)
 }
 
+/// 2026-10-21: The MTP drafter's shard head from the state block of a [`screen_head_keys`] call
+/// over `sh` (masks NULL): `arg[0..m]` (u32) the shard-local argmax per row and its BF16 logit at
+/// `logits + 2 * (r * row_stride + arg[r])`, what the BF16 shard sweep and `argmax_bf16_batch`
+/// leave for the drafter's exchange.
+#[allow(clippy::too_many_arguments)]
+pub fn screen_head_local(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    sh: &ScreenShard,
+    x: DevicePtr,
+    m: u32,
+    arg: DevicePtr,
+    logits: DevicePtr,
+    row_stride: u32,
+    stream: u64,
+) -> Result<()> {
+    ensure!(
+        screen_shape_ok(m, sh.k) && row_stride >= sh.rows,
+        "screen_head_local: m={m} k={} stride={row_stride}",
+        sh.k
+    );
+    KernelLaunch::new(gpu, kernel)
+        .grid([m, 1, 1])
+        .block([32, 1, 1])
+        .arg_ptr(sh.state)
+        .arg_ptr(sh.w)
+        .arg_ptr(x)
+        .arg_u32(sh.k)
+        .arg_u32(sh.base)
+        .arg_u32(m)
+        .arg_ptr(arg)
+        .arg_ptr(logits)
+        .arg_u32(row_stride)
+        .launch(stream)
+}
+
 /// 2026-10-21: Bytes of the stamp a screened verify writes (0xFF) at the head of the logits
 /// buffer, where every head call writes logits (`SCREEN_STAMP_WORDS` in the kernel).
 pub const SCREEN_STAMP_BYTES: usize = 16;

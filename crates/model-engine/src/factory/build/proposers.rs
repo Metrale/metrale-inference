@@ -64,6 +64,13 @@ pub(super) fn install_glm_mtp_proposer(
     settings: &metrale_settings::InferenceServerSettings,
 ) {
     if let Some(m) = glm_mtp_module {
+        let screen = match glm_mtp_draft_screen(model, settings) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(target: "metrale_model_engine::factory::build", "GLM-5.3 MTP: no screened draft head ({e:#}); the FP8/BF16 draft head serves");
+                None
+            }
+        };
         match metrale_model_arch::glm5next_mtp_head::Glm5NextMtpHead::new(
             m,
             glm_mtp_embed,
@@ -75,6 +82,7 @@ pub(super) fn install_glm_mtp_proposer(
             max_batch_size,
             model.levers_ref(),
             settings,
+            screen,
         ) {
             Ok(head) => {
                 model.set_dflash_proposer(std::sync::Arc::new(head));
@@ -92,6 +100,28 @@ pub(super) fn install_glm_mtp_proposer(
             }
         }
     }
+}
+
+/// 2026-10-21: The screened draft head (`METRALE_GLM_MTP_SCREEN_HEAD=1`) over the target's
+/// screen, when the lever is on and the screen is built and usable. Every rank resolves it the
+/// same way: the lever and the screen's build conditions are the same on every rank.
+fn glm_mtp_draft_screen(
+    model: &TransformerModel,
+    settings: &metrale_settings::InferenceServerSettings,
+) -> Result<Option<metrale_model_arch::glm5next_mtp_head::DraftScreen>> {
+    if !settings.speculative.glm_mtp_screen_head {
+        return Ok(None);
+    }
+    let Some(parts) = model.screen_draft_parts() else {
+        tracing::warn!(target: "metrale_model_engine::factory::build", "METRALE_GLM_MTP_SCREEN_HEAD=1 without a usable screened LM head (METRALE_SCREEN_HEAD, a vocab-sharded BF16 head); the FP8/BF16 draft head serves");
+        return Ok(None);
+    };
+    let gpu = model.gpu_backend();
+    let local =
+        metrale_model_layers::layers::try_target_kernel(gpu, "screen_head", "screen_head_local");
+    let screen = metrale_model_arch::glm5next_mtp_head::DraftScreen::new(gpu, parts, local)?;
+    tracing::info!(target: "metrale_model_engine::factory::build", "GLM-5.3 MTP: screened draft head ON (the target's INT8 screen, BF16-exact drafts for calls of up to 4 rows; METRALE_GLM_MTP_SCREEN_HEAD=0 keeps the FP8 head)");
+    Ok(Some(screen))
 }
 
 /// 2026-09-26: Installs the DFlash drafter when `dflash_args` is given and its

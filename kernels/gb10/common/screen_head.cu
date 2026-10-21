@@ -418,6 +418,43 @@ extern "C" __global__ void screen_head_resolve(
     out[m] = plain_key_index(kp);
 }
 
+// 2026-10-21: The MTP drafter's shard head from the screen: for activation row m (block m, one
+// warp), what dense_gemv_bf16 / dense_gemv_bf16_batchm over this shard's rows (`W`, the shard's
+// first row) and argmax_bf16 / argmax_bf16_batch would leave for the drafter's exchange:
+// arg[m] = the local index of the shard's argmax (keys[m][0]'s token less `base`), and that
+// row's BF16 logit at logits[m * row_stride + arg[m]] (the key's own value bits). A zero key
+// (every logit at or below -1e30, or NaN) is argmax_bf16's index 0, whose logit is recomputed.
+extern "C" __global__ void screen_head_local(
+    const ScreenState* __restrict__ st,
+    const __nv_bfloat16* __restrict__ W,
+    const __nv_bfloat16* __restrict__ X,
+    unsigned int K,
+    unsigned int base,
+    unsigned int M,
+    unsigned int* __restrict__ arg,
+    __nv_bfloat16* __restrict__ logits,
+    unsigned int row_stride
+) {
+    const unsigned int m = blockIdx.x;
+    const unsigned int lane = threadIdx.x & 31u;
+    if (m >= M || threadIdx.x >= 32u) {
+        return;
+    }
+    const unsigned long long kp = st->keys[m][0];
+    unsigned int local = 0u;
+    float v;
+    if (kp != 0ull) {
+        local = plain_key_index(kp) - base;
+        v = screen_unorder((unsigned int)(kp >> 32));
+    } else {
+        v = screen_exact_dot(W, X + (unsigned long long)m * K, K, lane);
+    }
+    if (lane == 0) {
+        arg[m] = local;
+        logits[(unsigned long long)m * row_stride + local] = __float2bfloat16(v);
+    }
+}
+
 // 2026-10-21: Bytes of the stamp a screened verify leaves at the head of the logits buffer
 // (SCREEN_STAMP_BYTES on the host): 0xFF bytes, BF16 NaNs no head writes.
 #define SCREEN_STAMP_WORDS 4u

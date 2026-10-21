@@ -44,6 +44,7 @@ mod ctx_rows;
 mod draft_io;
 mod draft_lp;
 mod graph;
+mod head_sweep;
 mod head_xchg;
 mod hidden_half;
 mod init;
@@ -59,6 +60,8 @@ pub use batch::PROPOSE_BATCH_MAX;
 pub use context_cap::{drafter_dsa_config, drafter_max_context};
 /// 2026-10-11: The drafter graph's per-state bytes, for the per-sequence reserve.
 pub use graph::state_bytes as graph_state_bytes;
+/// 2026-10-21: The screened draft head (`head_sweep`).
+pub use head_sweep::DraftScreen;
 /// 2026-10-11: Bytes of the draft head's exchange buffer, one per sequence state.
 pub use head_xchg::BUFFER_BYTES as HEAD_XCHG_BUFFER_BYTES;
 /// 2026-10-11: The host exchange, the oracle of the device kernels (`glm53_mtp_xchg_gate`).
@@ -148,6 +151,8 @@ pub struct Glm5NextMtpHead {
     /// Measured 2026-08-29 (nsys): 2.66 ms -> ~1.33 ms per draft sweep.
     head_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
     gemv_fp8w_k: KernelHandle,
+    /// 2026-10-21: The screened draft head (`head_sweep`), `METRALE_GLM_MTP_SCREEN_HEAD=1`.
+    screen: Option<head_sweep::DraftScreen>,
     /// 2026-10-11: The batched propose (`METRALE_GLM_MTP_PROPOSE_BATCH`); `None` proposes per
     /// sequence.
     batch: Option<batch::ProposeBatch>,
@@ -312,50 +317,7 @@ impl Glm5NextMtpHead {
         // 2026-09-25: `shared_head.norm`, then the target's own `lm_head`: the MTP layer carries
         // no head of its own.
         self.norm(gpu, st.x, self.module.final_norm, st.x, h, stream)?;
-        let (n, v0, sharded) = self.head_range(ctx);
-        // 2026-09-25: The FP8 copy covers only `[head_v0, head_v0 + head_n)`, so it serves the
-        // sharded sweep alone; an unsharded sweep reads the BF16 head.
-        match self.head_fp8.filter(|_| sharded && n == self.head_n) {
-            Some(q) => ops::dense_gemv_fp8w(
-                gpu,
-                self.gemv_fp8w_k,
-                st.x,
-                &q,
-                st.logits,
-                n as u32,
-                h as u32,
-                stream,
-            )?,
-            None => ops::dense_gemv(
-                gpu,
-                self.gemv_k,
-                st.x,
-                &DenseWeight {
-                    weight: self.lm_head.weight.offset(v0 * h * 2),
-                },
-                st.logits,
-                n as u32,
-                h as u32,
-                stream,
-            )?,
-        }
-        // 2026-10-11: Under the confidence stop the argmax also writes the draft's
-        // log-probability, at `arg + 4` (`draft_lp`).
-        let lp = self.single_lp_ready(ctx).then_some(st.arg.offset(4));
-        match lp {
-            Some(lp) => ops::argmax_bf16_batch_lp(
-                gpu,
-                self.lp_k.argmax_lp,
-                st.logits,
-                st.arg,
-                lp,
-                n as u32,
-                1,
-                n as u32,
-                stream,
-            )?,
-            None => ops::argmax_bf16(gpu, self.argmax_k, st.logits, st.arg, n as u32, stream)?,
-        }
+        let (v0, lp) = self.head_sweep_one(gpu, st, ctx, stream)?;
         if let (Some(k), Some(comm)) = (self.device_xchg(ctx), ctx.comm) {
             self.exchange_rows(
                 gpu,

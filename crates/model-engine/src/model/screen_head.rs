@@ -178,6 +178,13 @@ impl TransformerModel {
         self.device_argmax.screen.get()
     }
 
+    /// 2026-10-21: The screen's kernels, this rank's shard and the bound, for the MTP drafter's
+    /// screened head (model-arch `head_sweep.rs`, `METRALE_GLM_MTP_SCREEN_HEAD=1`), when usable.
+    pub(crate) fn screen_draft_parts(&self) -> Option<(ScreenKernels, ScreenShard, f32)> {
+        let s = self.screen_head().filter(|_| self.screen_usable())?;
+        Some((s.kernels, s.shard, s.kappa))
+    }
+
     /// 2026-10-21: Install the screen the factory built before the KV pool.
     pub(crate) fn install_screen_head(&self, screen: Option<ScreenHead>) -> Result<()> {
         if let Some(s) = screen {

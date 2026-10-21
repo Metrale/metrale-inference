@@ -89,6 +89,8 @@ impl Glm5NextMtpHead {
         levers: &metrale_model_layers::layers::ops::ModelLevers,
         // 2026-10-17: The startup settings, which the drafter levers resolve from.
         settings: &metrale_settings::InferenceServerSettings,
+        // 2026-10-21: The screened draft head over the target's screen copy (`head_sweep`).
+        screen: Option<super::head_sweep::DraftScreen>,
     ) -> Result<Self> {
         let mtp = super::MtpLevers::from_settings(settings)?;
         let dsa = match &module.layer.mixer {
@@ -123,7 +125,12 @@ impl Glm5NextMtpHead {
         // the gemv takes none; it assumes rows packed at K.
         let head_world = config.tp_world_size.max(1);
         let head_rank = config.tp_rank;
-        let (head_v0, head_n) = draft_head_shard(config.vocab_size, head_world, head_rank);
+        // 2026-10-21: The screened draft head sweeps the screen's shard (the target head's split),
+        // so the FP8 copy, the exchange and every fallback sweep cover the same rows.
+        let (head_v0, head_n) = match &screen {
+            Some(s) => s.range(),
+            None => draft_head_shard(config.vocab_size, head_world, head_rank),
+        };
         // 2026-09-25: Quantise only the rows this rank sweeps: `head_n * hidden` bytes, not
         // the whole vocab. A failure here is not fatal; the head falls back to the BF16 sweep.
         let gemv_fp8w_k =
@@ -206,6 +213,7 @@ impl Glm5NextMtpHead {
             head_n,
             head_fp8,
             gemv_fp8w_k,
+            screen,
             xchg_k: xchg_kernels(gpu, mtp.xchg_device),
             lp_k: super::draft_lp::LpKernels::resolve(gpu),
             ctx_rows: super::ctx_rows::CtxRowsScratch::new(gpu, config.hidden_size)?

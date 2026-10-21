@@ -9,7 +9,8 @@
 //!   `argmax_bf16` over the full head's logits (`dense_gemv_bf16_batchm` at M = 2,
 //!   `dense_gemv_bf16` at M = 1). Also: 4,096 recomputed logits must equal the full head's bytes.
 //!   Prints the candidate-set distribution. Every M = 1 row also takes a masked pick
-//!   (`masked.rs`). Exit status 1 on any difference.
+//!   (`masked.rs`), and every fifth batch the drafter's shard heads (`draft.rs`). Exit status 1
+//!   on any difference.
 //! - `sabotage half|noquant [rows]`: the same with the bound halved, or with only its rounding
 //!   terms; it must go RED on the adversarial family.
 //! - `bench`: the old shard head against the screen at M = 1 and 2, one rank's shard.
@@ -21,6 +22,7 @@
 
 mod bench;
 mod census;
+mod draft;
 mod masked;
 mod rows;
 
@@ -346,6 +348,7 @@ fn gate(
         fams.iter().map(|&f| (f, 0, 0, Vec::new())).collect();
     let (mut done, mut byte_diffs, mut probes) = (0usize, 0usize, 0usize);
     let mut masked = masked::Masked::new(rig.g)?;
+    let mut draft = draft::Draft::new(rig.g)?;
     let t0 = Instant::now();
     let mut batch = 0usize;
     while done < rows {
@@ -370,6 +373,10 @@ fn gate(
                 .collect();
             byte_diffs += rig.exact_ids(m, &ids)?;
             probes += ids.len();
+        }
+        // 2026-10-21: After the probes: it overwrites the logits.
+        if batch.is_multiple_of(5) {
+            draft.check(rig, m, kappa)?;
         }
         let st = &mut stats[fi];
         for t in 0..m {
@@ -423,7 +430,11 @@ fn gate(
         "masked one-row picks: {}, {} decided by the masked key, {} differ",
         masked.picks, masked.q_decided, masked.diffs
     );
-    diffs += masked.diffs;
+    println!(
+        "drafter shard heads: {} (shard, row) picks, {} differ from the BF16 sweep",
+        draft.rows, draft.diffs
+    );
+    diffs += masked.diffs + draft.diffs;
     if diffs != 0 || byte_diffs != 0 {
         println!("RED: {diffs} tokens differ ({name})");
         std::process::exit(1);

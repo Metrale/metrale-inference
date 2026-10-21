@@ -161,51 +161,56 @@ impl Glm5NextMtpHead {
             st.seq_len += 1;
         }
         self.norm_rows(gpu, sc.x, self.module.final_norm, sc.x, h, m, stream)?;
-        match (
-            self.head_fp8.filter(|_| sharded && n == self.head_n),
-            batch.kernels.fp8_batch16,
-        ) {
-            (Some(q), k) if k.0 != 0 => ops::fp8_gemv_rowscale_batch16_rt2_ldc(
-                gpu, k, sc.x, &q, sc.logits, m as u32, n as u32, h as u32, n as u32, stream,
-            )?,
-            _ => ops::dense_gemv_batchm(
-                gpu,
-                batch.kernels.gemv_batchm,
-                sc.x,
-                &DenseWeight {
-                    weight: self.lm_head.weight.offset(v0 * h * 2),
-                },
-                sc.logits,
-                m as u32,
-                n as u32,
-                h as u32,
-                n as u32,
-                stream,
-            )?,
-        }
-        // 2026-10-11: With `lp`, row i's log-probability at `lp + 4i` (`draft_lp`).
-        match lp {
-            Some(lp) => ops::argmax_bf16_batch_lp(
-                gpu,
-                self.lp_k.argmax_lp,
-                sc.logits,
-                sc.arg,
-                lp,
-                n as u32,
-                m as u32,
-                n as u32,
-                stream,
-            )?,
-            None => ops::argmax_bf16_batch(
-                gpu,
-                batch.kernels.argmax_batch,
-                sc.logits,
-                sc.arg,
-                n as u32,
-                m as u32,
-                n as u32,
-                stream,
-            )?,
+        // 2026-10-21: The screened draft head when it takes these rows (`head_sweep`).
+        if let Some(s) = self.draft_screen(sharded, n, m, lp.is_some()) {
+            s.sweep(gpu, sc.x, m, sc.arg, sc.logits, n, stream)?;
+        } else {
+            match (
+                self.head_fp8.filter(|_| sharded && n == self.head_n),
+                batch.kernels.fp8_batch16,
+            ) {
+                (Some(q), k) if k.0 != 0 => ops::fp8_gemv_rowscale_batch16_rt2_ldc(
+                    gpu, k, sc.x, &q, sc.logits, m as u32, n as u32, h as u32, n as u32, stream,
+                )?,
+                _ => ops::dense_gemv_batchm(
+                    gpu,
+                    batch.kernels.gemv_batchm,
+                    sc.x,
+                    &DenseWeight {
+                        weight: self.lm_head.weight.offset(v0 * h * 2),
+                    },
+                    sc.logits,
+                    m as u32,
+                    n as u32,
+                    h as u32,
+                    n as u32,
+                    stream,
+                )?,
+            }
+            // 2026-10-11: With `lp`, row i's log-probability at `lp + 4i` (`draft_lp`).
+            match lp {
+                Some(lp) => ops::argmax_bf16_batch_lp(
+                    gpu,
+                    self.lp_k.argmax_lp,
+                    sc.logits,
+                    sc.arg,
+                    lp,
+                    n as u32,
+                    m as u32,
+                    n as u32,
+                    stream,
+                )?,
+                None => ops::argmax_bf16_batch(
+                    gpu,
+                    batch.kernels.argmax_batch,
+                    sc.logits,
+                    sc.arg,
+                    n as u32,
+                    m as u32,
+                    n as u32,
+                    stream,
+                )?,
+            }
         }
         if sharded {
             let (Some(k), Some(comm)) = (self.device_xchg(bctx), bctx.comm) else {

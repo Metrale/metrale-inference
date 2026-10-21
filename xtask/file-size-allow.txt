@@ -12,7 +12,6 @@ crates/gpu-runtime/src/buffers/sizes.rs 511
 crates/gpu-runtime/src/buffers/tests.rs 501
 crates/model-arch/src/glm5next_layer/mod.rs 581
 crates/model-arch/src/glm5next_mhc_fused.rs 632
-crates/model-arch/src/glm5next_mtp_head.rs 517
 crates/model-engine/src/model/trait_impl/device_step.rs 525
 crates/model-engine/src/model/trait_impl/prefill_a.rs 501
 crates/model-engine/src/model/trait_impl/verify_e.rs 536
@@ -20,7 +19,7 @@ crates/model-layers/src/layers/mod.rs 502
 crates/model-layers/src/layers/qwen3_ssm/trait_layer.rs 501
 crates/server/src/cli/serve_args.rs 501
 crates/server/src/cli/serve_args/scheduling.rs 517
-crates/server/src/scheduler/verify_k2_step.rs 534
+crates/server/src/scheduler/verify_k2_step.rs 533
 .github/scripts/certification-selftest.sh 2778
 kernels/b300/common/dsa_indexer.cu 607
 kernels/b300/common/moe_w4a16_grouped_gemm.cu 589
