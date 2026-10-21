@@ -92,8 +92,8 @@ fn key(rng: &mut Rng, p: usize, d: usize) -> f32 {
     match (p % 97, p % 9) {
         (0, _) => 0.0,
         (1, _) => -0.0,
-        (2, _) => 3.0e19 * if d % 2 == 0 { 1.0 } else { -1.0 },
-        (4, _) => 3.0e38 * if d % 3 == 0 { 1.0 } else { -1.0 },
+        (2, _) => 3.0e19 * if d.is_multiple_of(2) { 1.0 } else { -1.0 },
+        (4, _) => 3.0e38 * if d.is_multiple_of(3) { 1.0 } else { -1.0 },
         (3, _) => 1.0e-39 * (d as f32 + 1.0),
         (_, 4) => if d < 64 { 0.5 } else { -0.5 },
         (_, 5) => rng.unit() * 1.0e-20,
