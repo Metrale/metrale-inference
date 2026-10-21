@@ -354,6 +354,8 @@ pub struct DsaSelectScratch {
     fused: bool,
     /// 2026-10-17: The selection levers this scratch was allocated under; the passes read these.
     levers: DsaSelectLevers,
+    /// 2026-10-21: The multi-CTA top-k's workspace (`topk`); empty unless its lever is on.
+    topk_mc: topk::DsaTopkMcRegion,
     capacity: [usize; 6],
     tokens_bytes: usize,
 }
@@ -404,6 +406,7 @@ impl DsaSelectScratch {
             tokens: gpu.alloc(tokens_bytes)?,
             pipe: pipe::DsaPipeRegions::alloc(gpu, geom, levers.scores_pipe && levers.scores_mma)?,
             fused: levers.select_fused && levers.scores_pipe && levers.scores_mma,
+            topk_mc: topk::DsaTopkMcRegion::alloc(gpu, geom, &levers)?,
             levers,
             capacity,
             tokens_bytes,
@@ -457,6 +460,7 @@ impl DsaSelectScratch {
         ] {
             gpu.free(p)?;
         }
+        self.topk_mc.free(gpu)?;
         self.pipe.free(gpu)
     }
 }
@@ -478,19 +482,11 @@ mod pipe;
 pub use pipe::{DsaPipeRegions, SCORES_PIPE_SMEM, scores_pipe_for};
 mod scores;
 
-/// 2026-10-21: Whether a captured verify's `geom.q_rows` rows of one sequence can be selected in
-/// one ceiling pass at `max_pools` pools (`scores::rows_ceiling_for`).
-pub(crate) fn rows_ceiling_ready(
-    kernels: &Glm5NextDsaKernels,
-    cfg: &Glm5NextDsaConfig,
-    geom: &DsaSelectGeometry,
-    inputs: &DsaSelectInputs,
-    scratch: &DsaSelectScratch,
-    max_pools: usize,
-) -> bool {
-    scores::rows_ceiling_for(kernels, cfg, geom, inputs, scratch, max_pools)
-}
+pub(crate) use scores::rows_ceiling_for as rows_ceiling_ready;
+mod topk;
 
+#[cfg(test)]
+mod ceiling_fast_tests;
 #[cfg(test)]
 mod ceiling_tests;
 #[cfg(test)]

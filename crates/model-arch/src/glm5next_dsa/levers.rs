@@ -89,6 +89,12 @@ pub struct DsaSelectLevers {
     /// 2026-10-21: `METRALE_GLM_DSA_SCORES_WARP` (default on): `dsa_index_scores`'s launches
     /// run as `dsa_index_scores_warp` (the same bytes).
     pub scores_warp: bool,
+    /// 2026-10-21: `METRALE_GLM_DSA_SCORES_HEADS` (default on): a ceiling launch's scores over
+    /// the persisted pool keys run as `dsa_index_scores_heads_paged` (the same bytes).
+    pub scores_heads: bool,
+    /// 2026-10-21: `METRALE_GLM_DSA_TOPK_MC` (default on): where the ceiling radix top-k runs,
+    /// it runs over several CTAs per row (`dsa_topk_mc_*`; the same pools in the same order).
+    pub topk_mc: bool,
 }
 
 /// 2026-10-17: The copied DSA levers.
@@ -156,6 +162,8 @@ impl DsaLevers {
                 topk_radix: k.glm_dsa_topk_radix,
                 decode_topk_radix: k.glm_dsa_decode_topk_radix,
                 scores_warp: k.glm_dsa_scores_warp,
+                scores_heads: k.glm_dsa_scores_heads,
+                topk_mc: k.glm_dsa_topk_mc,
             },
             serve_ref: s.telemetry.glm_dsa_decode_hb_serve_ref,
             sp_agreement: lever::agreement_of(table.as_ref())

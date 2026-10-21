@@ -153,6 +153,19 @@ pub struct DsaRowsKernels {
     /// scores, the radix top-k and the fold in one kernel (`select::select_fused`). Not part of
     /// [`Self::ready`].
     pub select_fused: KernelHandle,
+    /// 2026-10-21: `dsa_index_scores_heads_paged`: [`Self::scores_warp_paged`]'s bytes, one
+    /// lane per index head, one block per SM (`select::scores::heads_for`). Not part of
+    /// [`Self::ready`].
+    pub scores_heads_paged: KernelHandle,
+    /// 2026-10-21: `dsa_topk_mc.cu`'s `dsa_topk_mc_pass` and `dsa_topk_mc_collect`:
+    /// [`Self::topk_radix`]'s selection over several CTAs per row (`select::topk_mc`). Not part
+    /// of [`Self::ready`].
+    pub topk_mc_pass: KernelHandle,
+    pub topk_mc_collect: KernelHandle,
+    /// 2026-10-21: The device's SM count, resolved once with the handles: the grid of
+    /// [`Self::scores_heads_paged`] (one block per SM). 0 when the query failed, and then
+    /// `scores_heads_paged` is `KernelHandle(0)` too.
+    pub sm_count: u32,
 }
 
 /// 2026-10-21: Module of the warp-per-pool scores and the persisted pool keys:
@@ -161,6 +174,9 @@ pub const DSA_SCORES_WARP_MODULE: &str = "dsa_scores_warp";
 
 /// 2026-10-14: Module of the streamed tensor-core scores: `dsa_index_scores_pipe.cu`.
 pub const DSA_SCORES_PIPE_MODULE: &str = "dsa_index_scores_pipe";
+
+/// 2026-10-21: Module of the multi-CTA radix top-k: `dsa_topk_mc.cu`.
+pub const DSA_TOPK_MC_MODULE: &str = "dsa_topk_mc";
 
 /// 2026-10-15: Module of the SP-split selection's payload fold: `dsa_sel_fold.cu`.
 pub const DSA_SEL_FOLD_MODULE: &str = "dsa_sel_fold";
@@ -175,6 +191,14 @@ impl DsaRowsKernels {
             |name: &str| metrale_model_layers::layers::try_kernel(gpu, DSA_SEL_FOLD_MODULE, name);
         let warp = |name: &str| {
             metrale_model_layers::layers::try_kernel(gpu, DSA_SCORES_WARP_MODULE, name)
+        };
+        let mc =
+            |name: &str| metrale_model_layers::layers::try_kernel(gpu, DSA_TOPK_MC_MODULE, name);
+        let sm_count = gpu.sm_count().unwrap_or(0);
+        let heads = if sm_count == 0 {
+            KernelHandle(0)
+        } else {
+            warp("dsa_index_scores_heads_paged")
         };
         Self {
             store: k("dsa_indexer_store_rows"),
@@ -193,6 +217,10 @@ impl DsaRowsKernels {
             sel_fold: fold("dsa_sel_fold"),
             expand_folded: fold("dsa_expand_selection_folded"),
             select_fused: pipe("dsa_select_fused_pipe"),
+            scores_heads_paged: heads,
+            topk_mc_pass: mc("dsa_topk_mc_pass"),
+            topk_mc_collect: mc("dsa_topk_mc_collect"),
+            sm_count,
         }
     }
 

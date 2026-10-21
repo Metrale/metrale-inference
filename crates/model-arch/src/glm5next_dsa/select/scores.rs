@@ -22,6 +22,30 @@ fn warp_shape(geom: &DsaSelectGeometry) -> bool {
     geom.index_heads <= 32 && geom.index_head_dim <= 128 && geom.index_head_dim.is_multiple_of(32)
 }
 
+/// 2026-10-21: `DSA_SH_D` and the most rows of `dsa_index_scores_heads_paged` (`DSA_SW_WARPS`).
+pub(crate) const SCORES_HEADS_D: usize = 128;
+pub(crate) const SCORES_HEADS_MAX_ROWS: usize = 8;
+
+/// 2026-10-21: Whether a persisted pass's scores run as `dsa_index_scores_heads_paged`: the
+/// lever on, the kernel and the SM count resolved, its shape (at most 32 heads of exactly 128,
+/// at most 8 rows), and the 16-byte alignment its key copies need (the key region's base and
+/// its block stride in f32).
+pub(crate) fn heads_for(
+    kernels: &Glm5NextDsaKernels,
+    geom: &DsaSelectGeometry,
+    inputs: &DsaSelectInputs,
+    scratch: &DsaSelectScratch,
+) -> bool {
+    scratch.levers.scores_heads
+        && kernels.rows.scores_heads_paged.0 != 0
+        && kernels.rows.sm_count > 0
+        && geom.index_heads <= 32
+        && geom.index_head_dim == SCORES_HEADS_D
+        && geom.q_rows <= SCORES_HEADS_MAX_ROWS
+        && inputs.rows.pool_keys.0.is_multiple_of(16)
+        && inputs.rows.pk_blk.is_multiple_of(4)
+}
+
 /// 2026-10-21: Whether a pass scores the persisted pool keys: a ceiling launch (a captured
 /// decode row) over a paged cache that keeps them, pooled from the first key, with the warp
 /// shape and the paged scores and geometry expansion resolved.
@@ -44,7 +68,7 @@ pub(super) fn persisted_for(
 /// run as one pass: it scores the persisted keys and selects by radix, the kernels that read
 /// each row's own geometry and index rows at the ceiling's strides, and the scratch holds that
 /// many rows at `max_pools` pools.
-pub(super) fn rows_ceiling_for(
+pub(crate) fn rows_ceiling_for(
     kernels: &Glm5NextDsaKernels,
     cfg: &Glm5NextDsaConfig,
     geom: &DsaSelectGeometry,
@@ -85,8 +109,18 @@ pub(super) fn launch_scores(
     let (d, kp, gd) = (geom.index_head_dim, geom.index_kpool, inputs.geom_dev);
     let scale = (d as f32).powf(-0.5);
     if persisted {
-        return KernelLaunch::new(gpu, kernels.rows.scores_warp_paged)
-            .grid([scores_warp_grid_x(npools_a), geom.q_rows as u32, 1])
+        // 2026-10-21: `METRALE_GLM_DSA_SCORES_HEADS` (default on): the same bytes, one lane per
+        // index head, one block per SM with every row in it.
+        let (k, grid) = if heads_for(kernels, geom, inputs, scratch) {
+            (kernels.rows.scores_heads_paged, [kernels.rows.sm_count, 1, 1])
+        } else {
+            (
+                kernels.rows.scores_warp_paged,
+                [scores_warp_grid_x(npools_a), geom.q_rows as u32, 1],
+            )
+        };
+        return KernelLaunch::new(gpu, k)
+            .grid(grid)
             .block([256, 1, 1])
             .arg_ptr(inputs.q)
             .arg_ptr(inputs.rows.pool_keys)
@@ -187,3 +221,4 @@ pub(super) fn launch_expand_geom(
         .arg_u32(sel_stride as u32)
         .launch(stream)
 }
+

@@ -420,42 +420,16 @@ pub(super) fn run(
             )?;
         }
 
-        // 2026-10-12: `METRALE_GLM_DSA_TOPK_RADIX=1`: the same selection by radix select.
-        // 2026-10-21: a ceiling launch by `METRALE_GLM_DSA_DECODE_TOPK_RADIX` (default on), over
-        // the live pools in `gd`.
-        if topk_radix_for(
+        topk::launch_topk(
+            gpu,
+            kernels,
+            geom,
+            scratch,
             ceiling.is_some(),
-            selk_a,
-            kernels.rows.topk_radix,
-            scratch.levers.topk_radix,
-            scratch.levers.decode_topk_radix,
-        ) {
-            KernelLaunch::new(gpu, kernels.rows.topk_radix)
-                .grid([geom.q_rows as u32, 1, 1])
-                .block([ROW_BLOCK, 1, 1])
-                .arg_ptr(scratch.scores)
-                .arg_ptr(scratch.selected)
-                .arg_u32(geom.q_rows as u32)
-                .arg_u32(npools_a as u32)
-                .arg_u32(selk_a as u32)
-                .arg_ptr(gd)
-                .launch(stream)?;
-        } else {
-            // 2026-09-25: `np2_a` is at most `topk_tile()`, so the request is at most
-            // `topk_smem_for_tile(topk_tile())`, within `TOPK_SMEM_CEILING`.
-            KernelLaunch::new(gpu, kernels.topk_pools)
-                .grid([geom.q_rows as u32, 1, 1])
-                .block([ROW_BLOCK, 1, 1])
-                .shared_mem(topk_smem_for_tile(np2_a) as u32)
-                .arg_ptr(scratch.scores)
-                .arg_ptr(scratch.selected)
-                .arg_u32(geom.q_rows as u32)
-                .arg_u32(npools_a as u32)
-                .arg_u32(np2_a as u32)
-                .arg_u32(selk_a as u32)
-                .arg_ptr(gd)
-                .launch(stream)?;
-        }
+            (npools_a, np2_a, selk_a),
+            gd,
+            stream,
+        )?;
     }
 
     if fold {

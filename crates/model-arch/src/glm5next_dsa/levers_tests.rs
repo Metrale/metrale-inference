@@ -301,12 +301,14 @@ fn the_check_dir_text_reads_as_before() {
 }
 
 /// 2026-10-21: The default-on decode levers (the ceiling launch's radix top-k, the warp
-/// scores) are on unset and `0`/`off` turn each off without touching the other.
+/// scores, the lane-per-head ceiling scores, the multi-CTA top-k) are on unset and `0`/`off` turn each off without touching the other.
 #[test]
 fn the_default_on_decode_levers_turn_off_one_at_a_time() {
-    let cases: [Field<bool>; 2] = [
+    let cases: [Field<bool>; 4] = [
         ("METRALE_GLM_DSA_DECODE_TOPK_RADIX", |l| l.select.decode_topk_radix),
         ("METRALE_GLM_DSA_SCORES_WARP", |l| l.select.scores_warp),
+        ("METRALE_GLM_DSA_SCORES_HEADS", |l| l.select.scores_heads),
+        ("METRALE_GLM_DSA_TOPK_MC", |l| l.select.topk_mc),
     ];
     for (env, f) in cases {
         assert_eq!(new_at(env, None, f), Some(true), "{env}");
@@ -323,7 +325,8 @@ fn the_default_on_decode_levers_turn_off_one_at_a_time() {
 }
 
 /// 2026-10-17: Every lever off at the declared defaults, as each old reader read unset.
-/// 2026-10-21: except `decode_topk_radix`, a new default-on lever with no old reader.
+/// 2026-10-21: except `decode_topk_radix`, `scores_warp`, `scores_heads` and `topk_mc`, new
+/// default-on levers with no old reader.
 #[test]
 fn the_declared_defaults_are_the_old_unset_values() {
     let s = defaults();
@@ -346,6 +349,8 @@ fn the_declared_defaults_are_the_old_unset_values() {
                 topk_radix: false,
                 decode_topk_radix: true,
                 scores_warp: true,
+                scores_heads: true,
+                topk_mc: true,
             },
             serve_ref: false,
             sp_agreement: 0,

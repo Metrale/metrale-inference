@@ -74,6 +74,10 @@ pub(crate) fn kernels() -> Glm5NextDsaKernels {
             sel_fold: h(SEL_FOLD),
             expand_folded: h(EXPAND_FOLDED),
             select_fused: h(0),
+            scores_heads_paged: h(0),
+            topk_mc_pass: h(0),
+            topk_mc_collect: h(0),
+            sm_count: 0,
         },
         fp8: crate::glm5next_dsa::fp8_rows::DsaFp8Kernels::NONE,
     }
