@@ -295,6 +295,7 @@ fn run_scenario_inner(sc: &Scenario, build: DeviceBuilder) -> Vec<String> {
     levers.prefill_varlen = opts.prefill_varlen;
     levers.bisect_q12_disable = opts.bisect_q12_disable;
     levers.dflash_seam_serial = opts.dflash_seam_serial;
+    levers.dflash_spec_think = opts.dflash_spec_think;
     let levers = Arc::new(levers);
     levers.set_loop_watchdog(opts.loop_watchdog);
     let masks = VocabMasks {

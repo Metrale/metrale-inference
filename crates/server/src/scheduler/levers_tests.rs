@@ -65,29 +65,27 @@ fn the_turn_termination_levers_ship_on_in_the_live_resolver() {
 fn every_opt_in_lever_ships_off() {
     let d = SchedLevers::defaults();
     assert!(!d.force_temp_zero);
-    assert!(!d.dflash_masked_verify && !d.dflash_adaptive && !d.dflash_spec_think);
+    assert!(!d.dflash_masked_verify && !d.dflash_adaptive);
     assert!(!d.disable_watchdogs);
     assert!(!d.decode_timing && !d.mtp_timing && !d.adadec_diagnostic);
 }
 
-/// 2026-09-25: `defaults()` is a hand-written struct literal; `from_settings()`
+/// 2026-10-21: `defaults()` is a hand-written struct literal; `from_settings()`
 /// is what `met serve` calls, so this asserts the resolver itself, with no
 /// variable set. `mtp_gate::spec_dispatch_eligible` reads `dflash_spec_think`
 /// as
 ///
 ///     if inside_thinking && !spec_think { return false; }
 ///
-/// for both lanes, so defaulting it on would let plain MTP speculate inside
-/// `<think>`.
+/// for both lanes, so with it on, plain MTP speculates inside `<think>` as
+/// vLLM does; `METRALE_DFLASH_SPEC_THINK=0` keeps think spans serial.
 #[test]
-fn spec_think_is_off_in_the_resolver_the_server_actually_uses() {
+fn spec_think_is_on_in_the_resolver_the_server_actually_uses() {
     let live = live();
     assert!(
-        !live.dflash_spec_think,
-        "METRALE_DFLASH_SPEC_THINK must stay OPT-IN: from_settings() resolved it ON. \
-         It is the one lever here that is not gated behind dflash_verify_raw_argmax, \
-         so defaulting it on changes plain-MTP serving and deterministically \
-         damages agentic trajectories. See mtp_gate::spec_dispatch_eligible."
+        live.dflash_spec_think,
+        "METRALE_DFLASH_SPEC_THINK is default-ON: from_settings() resolved it OFF, \
+         so every think span decodes serially. See mtp_gate::spec_dispatch_eligible."
     );
     assert!(
         live.dflash_masked_verify,

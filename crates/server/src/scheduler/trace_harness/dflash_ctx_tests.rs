@@ -150,11 +150,12 @@ fn every_multi_rank_verify_width_commits_its_accepted_rows() {
 /// 2026-10-10: One DFlash request whose first token opens a thinking span and whose fourth
 /// closes it, so the serial decode of the span hands over to speculation at the seam; with
 /// `seam_serial` the seam token is decoded by the bootstrap before the first propose.
-fn dflash_think_trace(seam_serial: bool) -> Vec<String> {
+fn dflash_think_trace(seam_serial: bool, spec_think: bool) -> Vec<String> {
     let mut sc = scenarios::dflash("dflash_think", 1);
     sc.opts.think_start_token = Some(10);
     sc.opts.think_end_token = Some(13);
     sc.opts.dflash_seam_serial = seam_serial;
+    sc.opts.dflash_spec_think = spec_think;
     let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     run_scenario(&sc)
 }
@@ -194,7 +195,7 @@ fn check_every_propose_sees_every_row(trace: &[String]) -> usize {
 #[test]
 fn the_thinking_seam_keeps_one_ctx_row_per_position() {
     for seam_serial in [true, false] {
-        let trace = dflash_think_trace(seam_serial);
+        let trace = dflash_think_trace(seam_serial, false);
         assert!(
             trace.iter().any(|l| l.starts_with("decode_batch(")),
             "seam_serial={seam_serial}: the thinking span ran no serial decode"
@@ -202,4 +203,25 @@ fn the_thinking_seam_keeps_one_ctx_row_per_position() {
         let n = check_every_propose_sees_every_row(&trace);
         assert!(n >= 2, "seam_serial={seam_serial}: only {n} proposes ran");
     }
+}
+
+
+/// 2026-10-21: With `METRALE_DFLASH_SPEC_THINK` on (the serve default) the span itself
+/// speculates: no serial decode runs, a verify window crosses `</think>`, and every propose
+/// still finds one context row per position.
+#[test]
+fn speculation_inside_thinking_keeps_one_ctx_row_per_position() {
+    let trace = dflash_think_trace(true, true);
+    assert!(
+        !trace.iter().any(|l| l.starts_with("decode_batch(")),
+        "spec_think: the thinking span still ran a serial decode"
+    );
+    assert!(
+        trace
+            .iter()
+            .any(|l| l.starts_with("decode_verify_dflash(") && l.contains("-> [12, 13")),
+        "spec_think: no verify window crossed </think>"
+    );
+    let n = check_every_propose_sees_every_row(&trace);
+    assert!(n >= 2, "spec_think: only {n} proposes ran");
 }

@@ -350,7 +350,7 @@ impl SchedLevers {
             dflash_adaptive: false,
             dflash_serial_append: false,
             dflash_unified_ctx: true,
-            dflash_spec_think: false,
+            dflash_spec_think: true,
             dflash_gate_pin_c2: true,
             dflash_batch_verify: true,
             dflash_adaptive_min: 2.0,

@@ -17,7 +17,7 @@
 //!   sweep's essay ask (`concurrency::ESSAY_TASK`), which keeps a model writing.
 //! - Request: temperature 0, seed 0, presence and frequency penalty 0, and
 //!   `reasoning_effort: "none"` (thinking off), as in `decode_floor`: speculative dispatch is
-//!   off inside `<think>` unless `METRALE_DFLASH_SPEC_THINK=1`.
+//!   off inside `<think>` when `METRALE_DFLASH_SPEC_THINK=0`.
 //! - A speculative serve (`k` > 0) must run with `--telemetry basic` or `kernel`, which
 //!   exports the scheduler phase histogram; without it the run fails.
 //!

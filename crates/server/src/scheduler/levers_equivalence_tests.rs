@@ -46,7 +46,7 @@ fn levers() -> Vec<Row<SchedLevers>> {
         ("METRALE_DFLASH_SERIAL_APPEND", OptIn, |l| {
             Out::B(l.dflash_serial_append)
         }),
-        ("METRALE_DFLASH_SPEC_THINK", OptIn, |l| {
+        ("METRALE_DFLASH_SPEC_THINK", DefaultOn, |l| {
             Out::B(l.dflash_spec_think)
         }),
         ("METRALE_MTP_TIMING", OptIn, |l| Out::B(l.mtp_timing)),
