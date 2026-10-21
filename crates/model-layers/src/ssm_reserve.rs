@@ -29,6 +29,9 @@ pub use pool_plan::{
     pool_counts_tiered, pool_counts_with, recurrent_units, state_dims,
 };
 
+mod commit_swap;
+pub use commit_swap::{SlotSwaps, resolve_pair};
+
 mod rollback;
 pub use rollback::{
     SsmRollbackMode, set_ssm_rollback_mode, ssm_replay_ring_bytes, ssm_replay_row_bytes,

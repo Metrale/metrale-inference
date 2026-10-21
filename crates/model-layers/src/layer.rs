@@ -107,6 +107,27 @@ pub struct SsmLayerState {
     pub ple: Option<crate::layers::ple::PleSeqState>,
 }
 
+impl SsmLayerState {
+    /// 2026-10-21: Exchange the live h and conv state with intermediate 0, the sequence's side
+    /// of a commit by swap (`ssm_reserve::commit_swap`). Errors, changing nothing, without an
+    /// intermediate 0 of either kind.
+    pub fn swap_live_with_inter0(&mut self) -> anyhow::Result<()> {
+        let (Some(h0), Some(c0)) = (
+            self.h_state_intermediates.first_mut(),
+            self.conv_state_intermediates.first_mut(),
+        ) else {
+            anyhow::bail!(
+                "commit swap: the layer state has no intermediate 0 (h {}, conv {})",
+                self.h_state_intermediates.len(),
+                self.conv_state_intermediates.len()
+            );
+        };
+        std::mem::swap(&mut self.h_state, h0);
+        std::mem::swap(&mut self.conv_state, c0);
+        Ok(())
+    }
+}
+
 impl LayerState for SsmLayerState {
     fn as_any(&self) -> &dyn Any {
         self
