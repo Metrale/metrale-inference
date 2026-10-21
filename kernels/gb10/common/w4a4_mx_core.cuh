@@ -55,7 +55,21 @@ struct W4a4RowsIdentity {
     __device__ __forceinline__ unsigned int c(unsigned int tok) const { return tok; }
 };
 
-template <int MB, int KU, class Rows, bool KH = false>
+// 2026-10-21: CS (compact scales, METRALE_GLM_MOE_SCALE_DICT): the weight's E4M3 block scales
+// stored as 5-bit offsets from one per-tensor base code (every code of the tensor in
+// [base, base + 31]), so a k128 chunk's 8 scales of a row take 5 bytes, not 8. Layout: a lo plane
+// of one 32-bit word per (row, chunk), row stride num_c words, then (at Bs + N * num_c * 4) a hi
+// plane of one byte per (row, chunk). Word byte b holds the low 4 offset bits of group
+// {0, 4, 2, 6}[b] (low nibble) and of group {1, 5, 3, 7}[b] (high nibble), the order the MMA's two
+// scale words take them; hi bit b and bit 4 + b are those groups' fifth bits. cs_base4 is the
+// base code in every byte. Each byte is rebuilt as base + offset (no carry: codes <= 0x7E), i.e.
+// the stored E4M3 code itself, so the MMA sees the plain path's scale words.
+__device__ __forceinline__ uint32_t w4a4_cs_word(uint32_t lo4, uint32_t hi4, uint32_t base4) {
+    const uint32_t fifth = ((hi4 * 0x00204081u) & 0x01010101u) << 4;
+    return __vadd4(base4, (lo4 & 0x0F0F0F0Fu) | fifth);
+}
+
+template <int MB, int KU, class Rows, bool KH = false, bool CS = false>
 __device__ __forceinline__ void w4a4_gemv_mx_tok_impl(
     const unsigned char* __restrict__ Aq,
     const unsigned char* __restrict__ As,
@@ -64,7 +78,8 @@ __device__ __forceinline__ void w4a4_gemv_mx_tok_impl(
     const unsigned char* __restrict__ Bs,
     const float scale2,
     __nv_bfloat16* __restrict__ C,
-    const Rows rows, unsigned int N, unsigned int K, unsigned int n_tile)
+    const Rows rows, unsigned int N, unsigned int K, unsigned int n_tile,
+    unsigned int cs_base4 = 0u)
 {
     const unsigned int M = rows.m;
     const unsigned int warp = threadIdx.x >> 5;
@@ -85,7 +100,7 @@ __device__ __forceinline__ void w4a4_gemv_mx_tok_impl(
     const bool l0 = r0 < N, l1 = r1 < N, ls = rs < N;
     const unsigned char* w0 = Bq + (unsigned long long)r0 * half_K + t * 16u;
     const unsigned char* w1 = Bq + (unsigned long long)r1 * half_K + t * 16u;
-    const unsigned char* ws = Bs + (unsigned long long)rs * groups;
+    const unsigned char* ws = Bs + (unsigned long long)rs * (CS ? num_c * 4u : groups);
 
     bool tl[MB];
     const unsigned char* aq[MB];
@@ -119,7 +134,11 @@ __device__ __forceinline__ void w4a4_gemv_mx_tok_impl(
             const bool hv = !KH || c != tail_c || t < 2u;
             wl[u] = (live && l0 && hv) ? *(const uint4*)(w0 + c * 64u) : z4;
             wh[u] = (live && l1 && hv) ? *(const uint4*)(w1 + c * 64u) : z4;
-            if constexpr (KH) {
+            if constexpr (CS) {
+                // 2026-10-21: The hi plane follows the lo plane's N * num_c words.
+                const unsigned char* hp = Bs + (unsigned long long)N * num_c * 4u + (unsigned long long)rs * num_c;
+                sw[u] = (live && ls) ? make_uint2(*(const unsigned int*)(ws + c * 4u), hp[c]) : z2;
+            } else if constexpr (KH) {
                 const unsigned int* s32 = (const unsigned int*)(ws + c * 8u);
                 sw[u] = (live && ls) ? make_uint2(s32[0], c != tail_c ? s32[1] : 0u) : z2;
             } else {
@@ -146,8 +165,18 @@ __device__ __forceinline__ void w4a4_gemv_mx_tok_impl(
             const uint32_t a01 = odd ? x0h : wh[u].x, a03 = odd ? wh[u].y : x0h;
             const uint32_t a10 = odd ? x1l : wl[u].z, a12 = odd ? wl[u].w : x1l;
             const uint32_t a11 = odd ? x1h : wh[u].z, a13 = odd ? wh[u].w : x1h;
-            const uint32_t s0 = __byte_perm(sw[u].x, sw[u].y, 0x6240);
-            const uint32_t s1 = __byte_perm(sw[u].x, sw[u].y, 0x7351);
+            uint32_t s0, s1;
+            if constexpr (CS) {
+                // 2026-10-21: A dead row or chunk reads zero scales, as the plain path's; a KH
+                // tail chunk's groups 4..7 (bytes 1 and 3 of each word) too.
+                const unsigned int c = c0 + (unsigned int)u * W4A4_WARPS;
+                const uint32_t keep = !ls ? 0u : (KH && c == tail_c) ? 0x00FF00FFu : 0xFFFFFFFFu;
+                s0 = w4a4_cs_word(sw[u].x, sw[u].y & 0xFu, cs_base4) & keep;
+                s1 = w4a4_cs_word(sw[u].x >> 4, sw[u].y >> 4, cs_base4) & keep;
+            } else {
+                s0 = __byte_perm(sw[u].x, sw[u].y, 0x6240);
+                s1 = __byte_perm(sw[u].x, sw[u].y, 0x7351);
+            }
             #pragma unroll
             for (int j = 0; j < MB; j++) {
                 w4a4_mma(acc[j], a00, a01, a02, a03, b[u][j].x, b[u][j].y, s0, sb[u][j].x);

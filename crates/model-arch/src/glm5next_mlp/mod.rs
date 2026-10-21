@@ -49,6 +49,7 @@ pub mod expert_tp;
 pub mod forward;
 pub mod forward_prefill_gemm;
 pub mod precision;
+pub mod scale_dict;
 pub mod weights;
 
 pub use config::{Glm5NextMlpConfig, Glm5NextMlpKind};
