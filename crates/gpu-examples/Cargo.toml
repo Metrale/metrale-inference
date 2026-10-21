@@ -127,6 +127,8 @@ example = [
     { name = "kda_conv_contract_microtest", required-features = ["cuda", "gpu-examples"] },
     { name = "kda_gate_microtest", required-features = ["cuda", "gpu-examples"] },
     { name = "kda_layer_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "kda_commit_swap_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "kda_commit_swap_gate", required-features = ["cuda", "gpu-examples"] },
     { name = "kda_replay_microtest", required-features = ["cuda", "gpu-examples"] },
     { name = "kda_recurrent_microtest", required-features = ["cuda", "gpu-examples"] },
     { name = "kernel_probe", required-features = ["cuda", "gpu-examples"] },

@@ -22,60 +22,15 @@
 //!       --features cuda,gpu-examples
 
 use anyhow::Result;
-use half::bf16;
+use metrale_gpu_examples::kda_fixture::{down, kda_fixture_with_inputs};
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_arch::glm5next_kda::{
-    Glm5NextKdaConfig, Glm5NextKdaKernels, Glm5NextKdaLayer, Glm5NextKdaWeights,
-    Glm5NextKdaWorkspace, KdaSeqState, KdaVerifyRecord,
+    Glm5NextKdaConfig, Glm5NextKdaLayer, Glm5NextKdaWorkspace, KdaSeqState, KdaVerifyRecord,
 };
-use metrale_model_layers::weight_map::DenseWeight;
 
 /// 2026-10-08: Verify width: the GLM DFlash2 drafter's block of 8 plus the anchor row.
 const K: usize = 9;
-
-struct Lcg(u64);
-impl Lcg {
-    fn u(&mut self) -> f32 {
-        self.0 = self
-            .0
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        (((self.0 >> 40) as f32) / ((1u32 << 24) as f32)) * 2.0 - 1.0
-    }
-    fn scaled(&mut self, n: usize, s: f32) -> Vec<f32> {
-        (0..n).map(|_| self.u() * s).collect()
-    }
-}
-
-fn up_f32(g: &dyn GpuBackend, d: &[f32]) -> Result<DevicePtr> {
-    let b: Vec<u8> = d.iter().flat_map(|x| x.to_le_bytes()).collect();
-    let p = g.alloc(b.len())?;
-    g.copy_h2d(&b, p)?;
-    Ok(p)
-}
-
-fn up_bf16(g: &dyn GpuBackend, d: &[f32]) -> Result<DevicePtr> {
-    let b: Vec<u8> = d
-        .iter()
-        .flat_map(|x| bf16::from_f32(*x).to_bits().to_le_bytes())
-        .collect();
-    let p = g.alloc(b.len())?;
-    g.copy_h2d(&b, p)?;
-    Ok(p)
-}
-
-fn down(g: &dyn GpuBackend, p: DevicePtr, bytes: usize) -> Result<Vec<u8>> {
-    let mut b = vec![0u8; bytes];
-    g.copy_d2h(p, &mut b)?;
-    Ok(b)
-}
-
-fn dw(g: &dyn GpuBackend, rng: &mut Lcg, n: usize, s: f32) -> Result<DenseWeight> {
-    Ok(DenseWeight {
-        weight: up_bf16(g, &rng.scaled(n, s))?,
-    })
-}
 
 struct Fixture<'a> {
     gpu: &'a dyn GpuBackend,
@@ -115,62 +70,16 @@ impl Fixture<'_> {
     }
 }
 
+/// 2026-10-21: The shared fixture (`metrale_gpu_examples::kda_fixture`), same draws as before.
 fn fixture(gpu: &dyn GpuBackend, heads: usize, seed: u64) -> Result<Fixture<'_>> {
-    let cfg = Glm5NextKdaConfig {
-        hidden: 4096,
-        heads,
-        head_dim: 128,
-        conv_kernel: 4,
-        gate_lower_bound: -5.0,
-        rms_norm_eps: 1e-5,
-        l2_eps: 1e-6,
-        chunk: 32,
-    };
-    let (hid, qkv, hd) = (cfg.hidden, cfg.qkv_dim(), cfg.head_dim);
-    let mut rng = Lcg(seed);
-    let s = 1.0 / (hid as f32).sqrt();
-    let weights = Glm5NextKdaWeights {
-        q_proj: dw(gpu, &mut rng, qkv * hid, s)?,
-        k_proj: dw(gpu, &mut rng, qkv * hid, s)?,
-        v_proj: dw(gpu, &mut rng, qkv * hid, s)?,
-        conv: dw(gpu, &mut rng, cfg.conv_dim() * cfg.conv_kernel, 0.5)?,
-        f_a: dw(gpu, &mut rng, hd * hid, s)?,
-        f_b: dw(gpu, &mut rng, qkv * hd, 0.1)?,
-        dt_bias: up_f32(gpu, &rng.scaled(qkv, 0.5))?,
-        a_log: up_f32(gpu, &rng.scaled(heads, 0.5))?,
-        b_proj: dw(gpu, &mut rng, heads * hid, s)?,
-        g_a: dw(gpu, &mut rng, hd * hid, s)?,
-        g_b: dw(gpu, &mut rng, qkv * hd, 0.1)?,
-        o_norm: dw(gpu, &mut rng, hd, 1.0)?,
-        o_proj: dw(gpu, &mut rng, hid * qkv, 1.0 / (qkv as f32).sqrt())?,
-    };
-    let kernels = Glm5NextKdaKernels::resolve(gpu)?;
-    let layer = Glm5NextKdaLayer::new(
-        0,
-        cfg,
-        weights,
-        kernels,
-        metrale_gpu_examples::glm_levers()?,
-    )?;
-    let ws = Glm5NextKdaWorkspace::new(gpu, &cfg, K)?;
-    let hidden = up_bf16(gpu, &rng.scaled(K * hid, 1.0))?;
-    let h0: Vec<u8> = rng
-        .scaled(cfg.recurrent_state_elems(), 0.05)
-        .iter()
-        .flat_map(|x| x.to_le_bytes())
-        .collect();
-    let c0: Vec<u8> = rng
-        .scaled(cfg.conv_state_elems(), 0.5)
-        .iter()
-        .flat_map(|x| x.to_le_bytes())
-        .collect();
+    let (f, hidden) = kda_fixture_with_inputs(gpu, heads, K, K, seed)?;
     Ok(Fixture {
         gpu,
-        cfg,
-        layer,
-        ws,
+        cfg: f.cfg,
+        layer: f.layer,
+        ws: f.ws,
         hidden,
-        s0: (h0, c0),
+        s0: f.s0,
     })
 }
 
