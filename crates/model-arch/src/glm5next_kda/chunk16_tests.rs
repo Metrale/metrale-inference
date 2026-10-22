@@ -36,7 +36,10 @@ fn stateful(
     snapshots: bool,
 ) -> (Vec<MockLaunch>, Glm5NextKdaWorkspace, KdaSeqState) {
     let gpu = MockGpuBackend::new();
-    let l = layer(&gpu);
+    let mut l = layer(&gpu);
+    // 2026-10-22: `METRALE_GLM_KDA_CONV_PACK` is on by default; these plans pin the separate
+    // pack and conv (the fused pair has its own tests in `conv_pack_tests.rs`).
+    l.levers.kda.conv_pack = false;
     let ws = Glm5NextKdaWorkspace::new(&gpu, &cfg(), 64).unwrap();
     let st = seq_state(&gpu);
     let hidden = gpu.alloc(k * 256 * 2).unwrap();

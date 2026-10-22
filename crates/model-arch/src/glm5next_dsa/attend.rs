@@ -226,13 +226,17 @@ impl Glm5NextDsaDecodeKernel {
     /// 2026-10-14: This kernel for a prefill sub-chunk's attend under the prefill levers, in
     /// order: `one_split`, `p_hi`, `pipe`, `tc`, `tc_nanor`.
     /// Each process logs the levers once ([`DsaPrefillLevers::readback`]).
+    /// 2026-10-22: Where `tc` is set but its twin is not in the build (the entry unchanged), the
+    /// NaN-test twin, which rides on it, is not asked for either.
     pub fn for_prefill_levers(self, l: DsaPrefillLevers) -> Result<Self> {
-        let k = self
+        let p_hi = self
             .for_prefill(l.one_split)
             .for_prefill_p_hi(l.p_hi)?
-            .for_prefill_pipe(l.pipe)?
-            .for_prefill_tc(l.tc)?
-            .for_prefill_tc_nanor(l.tc_nanor)?;
+            .for_prefill_pipe(l.pipe)?;
+        let entry = |k: &Self| k.head_batched.map(|h| h.decode.0);
+        let tc = p_hi.for_prefill_tc(l.tc)?;
+        let tc_ran = entry(&tc) != entry(&p_hi);
+        let k = tc.for_prefill_tc_nanor(l.tc_nanor && (!l.tc || tc_ran))?;
         l.readback();
         Ok(k)
     }

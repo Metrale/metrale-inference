@@ -24,7 +24,7 @@ use metrale_settings::InferenceServerSettings;
 ///
 /// The routed MoE does not follow the width: `glm5next_mlp::forward::forward_moe` splits a wider
 /// row group into even sub-groups of at most `MlpLevers::row_batch_max`, whose default and ceiling is
-/// `MOE_ROW_BATCH_MAX_ROWS` (8).
+/// `MOE_ROW_BATCH_MAX_ROWS` (2026-10-22: 16 since 2026-10-09, not 8).
 pub(crate) const PREFILL_ROWS: usize = 16;
 
 /// 2026-10-09: The widest `METRALE_GLM_ROW_GROUP` accepted: the GLM mHC `mix` scratch floor
@@ -285,11 +285,21 @@ fn width(env: &str, value: i64, max: usize) -> Result<usize> {
         .ok_or_else(|| anyhow!("{env}={value}: expected a row count in 1..={max}"))
 }
 
-/// 2026-10-12: `METRALE_GLM_ARENA_LEAN`: off by default; on sizes the buffer arena for the
-/// regions the GLM stack reads (`BufferSizes::lean_hc_stack`, applied by the engine's factory,
-/// which refuses it on another model type).
-pub fn arena_lean(s: &InferenceServerSettings) -> bool {
-    s.model.glm_arena_lean
+/// 2026-10-12: `METRALE_GLM_ARENA_LEAN`: on sizes the buffer arena for the regions the GLM stack
+/// reads (`BufferSizes::lean_hc_stack`, applied by the engine's factory). 2026-10-22: On by
+/// default and gated by model type: on a `model_type` other than `glm5_next` the default is off
+/// (reported once) and a set `1` is refused.
+pub fn arena_lean(s: &InferenceServerSettings, model_type: &str) -> Result<bool> {
+    const ENV: &str = "METRALE_GLM_ARENA_LEAN";
+    if !s.model.glm_arena_lean || model_type == "glm5_next" {
+        return Ok(s.model.glm_arena_lean);
+    }
+    anyhow::ensure!(
+        !crate::glm5next_default_on::explicit(s, ENV),
+        "{ENV}=1 is for glm5_next models, not {model_type:?}"
+    );
+    crate::glm5next_default_on::report_inert(ENV, &format!("model type {model_type:?}"));
+    Ok(false)
 }
 
 /// 2026-10-08: `rows` split into consecutive `(start, width)` groups of `cap` rows, the last one

@@ -43,17 +43,22 @@ pub(crate) fn conv_pack_spans(sms: u32, grid_x: u32) -> u32 {
 impl Glm5NextKdaLayer {
     /// 2026-10-13: The [`Pack`] for a forward whose conv is `conv_tokens` when
     /// `conv_tokens_follows`, else the per-row or chunked-prefill conv (which read the pack).
-    /// Refuses the lever without the fused kernel or at a conv width it does not take.
+    /// 2026-10-22: The lever is on by default, so without the fused kernel or at a conv width it
+    /// does not take the pack stays in the front end (reported once) instead of failing.
     pub(super) fn pack_for(&self, conv_tokens_follows: bool) -> Result<Pack> {
         if !conv_tokens_follows || !self.levers.kda.conv_pack {
             return Ok(Pack::InFrontEnd);
         }
         if self.kernels.seq.conv_tokens_parts.0 == 0 || !(1..=4).contains(&self.cfg.conv_kernel) {
-            bail!(
-                "METRALE_GLM_KDA_CONV_PACK=1: needs causal_conv1d_update_l2norm_tokens_parts and \
-                 a conv width of 1..=4 (width {})",
-                self.cfg.conv_kernel
+            crate::glm5next_default_on::report_inert(
+                "METRALE_GLM_KDA_CONV_PACK",
+                &format!(
+                    "needs causal_conv1d_update_l2norm_tokens_parts and a conv width of 1..=4 \
+                     (width {})",
+                    self.cfg.conv_kernel
+                ),
             );
+            return Ok(Pack::InFrontEnd);
         }
         Ok(Pack::InConv)
     }

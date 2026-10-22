@@ -73,8 +73,9 @@ fn old_from_values(value: impl Fn(&str) -> Option<String>) -> ModelLevers {
         one_row_prefill: opt_in(value("METRALE_ONE_ROW_PREFILL").as_deref()),
         one_row_tail_decode: opt_in(value("METRALE_ONE_ROW_TAIL_DECODE").as_deref()),
         seq_alloc_async: opt_in(value("METRALE_SEQ_ALLOC_ASYNC").as_deref()),
-        glm_keep_slot_graphs: opt_in(value("METRALE_GLM_KEEP_SLOT_GRAPHS").as_deref()),
-        glm_mtp_state_pool: opt_in(value("METRALE_GLM_MTP_STATE_POOL").as_deref()),
+        // 2026-10-22: Default on since today: the settings now match the opt-out reader.
+        glm_keep_slot_graphs: opt_out(value("METRALE_GLM_KEEP_SLOT_GRAPHS").as_deref()),
+        glm_mtp_state_pool: opt_out(value("METRALE_GLM_MTP_STATE_POOL").as_deref()),
         moe_fp8_grouped_decode_target: opt_in(value("METRALE_FP8_MOE_GROUPED_DECODE").as_deref()),
         fp8_attn_m32: opt_in(value("METRALE_FP8_ATTN_M32").as_deref()),
         // 2026-09-25: The target's declaration (`kernels/<hw>/HARDWARE.toml` `[defaults]
@@ -169,8 +170,9 @@ const CASES: [(&str, Old); 74] = [
     ("METRALE_GDN_FUSED_CONV", Old::OptIn),
     ("METRALE_GDN_WY17", Old::OptOut),
     ("METRALE_GDN_WYN", Old::OptOut),
-    ("METRALE_GLM_KEEP_SLOT_GRAPHS", Old::OptIn),
-    ("METRALE_GLM_MTP_STATE_POOL", Old::OptIn),
+    // 2026-10-22: Default on since today.
+    ("METRALE_GLM_KEEP_SLOT_GRAPHS", Old::OptOut),
+    ("METRALE_GLM_MTP_STATE_POOL", Old::OptOut),
     ("METRALE_HC_PERSEQ_DECODE", Old::OptIn),
     ("METRALE_HOLO_MOE_DOWN_FP4", Old::Truthy),
     ("METRALE_HOLO_MOE_GATEUP_FP4", Old::Truthy),

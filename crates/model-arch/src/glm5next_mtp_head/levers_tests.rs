@@ -149,17 +149,16 @@ fn the_context_cap_reads_as_before_except_signed_zero_and_past_i64() {
 type Switch = (&'static str, fn(&MtpLevers) -> bool);
 
 /// 2026-10-17: The `== "1"` switches: graph, batched propose, its check, `eh_proj` TP and the
-/// device exchange.
+/// device exchange. 2026-10-22: The graph and the device exchange are on by default since today
+/// and moved to the opt-out list.
 #[test]
 fn the_opt_in_switches_read_as_before_except_the_switch_spellings() {
-    let cases: [Switch; 5] = [
-        ("METRALE_GLM_MTP_GRAPH", |l| l.graph),
+    let cases: [Switch; 3] = [
         ("METRALE_GLM_MTP_PROPOSE_BATCH", |l| l.propose_batch),
         ("METRALE_GLM_MTP_PROPOSE_BATCH_CHECK", |l| {
             l.propose_batch_check
         }),
         ("METRALE_GLM_MTP_EH_TP", |l| l.eh_tp),
-        ("METRALE_GLM_MTP_XCHG_DEVICE", |l| l.xchg_device),
     ];
     for (env, field) in cases {
         let changes = check(env, Old::OptIn, |p| p == Some("1"), |s| field(&levers(s)));
@@ -174,11 +173,15 @@ fn the_opt_in_switches_read_as_before_except_the_switch_spellings() {
 }
 
 /// 2026-10-17: The `!= "0"` switches: the eager drafter prefill and the FP8 draft head.
+/// 2026-10-22: And the drafter graph and the device exchange (default on since today: the
+/// settings now read them as `!= "0"`, so unset is on and `0` off).
 #[test]
 fn the_opt_out_switches_read_as_before_except_the_switch_spellings() {
-    let cases: [Switch; 2] = [
+    let cases: [Switch; 4] = [
         ("METRALE_GLM_MTP_EAGER_PREFILL", |l| l.eager_prefill),
         ("METRALE_GLM_MTP_HEAD_FP8", |l| l.head_fp8),
+        ("METRALE_GLM_MTP_GRAPH", |l| l.graph),
+        ("METRALE_GLM_MTP_XCHG_DEVICE", |l| l.xchg_device),
     ];
     for (env, field) in cases {
         let changes = check(env, Old::OptOut, |p| p != Some("0"), |s| field(&levers(s)));
@@ -296,12 +299,13 @@ fn the_declared_defaults_are_the_old_unset_values() {
             skip: MtpSkip::None,
             prefill_full: false,
             context_cap: 65_536,
-            graph: false,
+            // 2026-10-22: Default on (and `xchg_device` below).
+            graph: true,
             eager_prefill: true,
             propose_batch: false,
             propose_batch_check: false,
             eh_tp: false,
-            xchg_device: false,
+            xchg_device: true,
             head_fp8: true,
             graph_early_launch: true,
             row_nosync: false,

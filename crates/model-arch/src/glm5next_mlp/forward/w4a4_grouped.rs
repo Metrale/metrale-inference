@@ -218,7 +218,8 @@ pub(super) fn w4a4_grouped_experts(site: &MoeSite<'_>, scales: W4a4ActScales) ->
     w4a4_grouped_experts_with(
         site,
         scales,
-        site.k.levers.mlp.gu_fused,
+        // 2026-10-22: `runs`: the lever, inert where the fused entries are absent.
+        super::w4a4_grouped_gu::runs(site.k),
         site.k.levers.mlp.raster,
         site.k.levers.mlp.nc,
     )

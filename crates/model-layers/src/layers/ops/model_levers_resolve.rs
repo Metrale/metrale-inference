@@ -189,6 +189,9 @@ impl ModelLevers {
             ssm_persistent: true,
             moe_zero_intermediates: true,
             shared_w4a4: true,
+            // 2026-10-22: The GLM-5.3 new-sequence levers, on unless `=0`.
+            glm_keep_slot_graphs: true,
+            glm_mtp_state_pool: true,
             ..Self::default()
         }
     }

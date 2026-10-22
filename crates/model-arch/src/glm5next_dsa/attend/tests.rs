@@ -245,6 +245,7 @@ fn the_prefill_pipe_twin_is_swapped_in_only_over_p_hi_and_carries_its_smem() {
 /// 2026-10-14: The tc twin replaces the P-hi entry only when asked, only at one split and only
 /// over the P-hi entry (not over the pipe twin), and carries its block, shared memory and
 /// offset-table limits; off, nothing changes. Every refusal is an error naming what is missing.
+/// 2026-10-22: A missing twin is no longer a refusal: the entry is kept.
 #[test]
 fn the_prefill_tc_twin_is_swapped_in_only_over_p_hi_at_one_split() {
     let hb = hb8();
@@ -298,18 +299,25 @@ fn the_prefill_tc_twin_is_swapped_in_only_over_p_hi_at_one_split() {
         }),
         ..k
     };
-    let e = err(no_twin
+    // 2026-10-22: The lever is on by default, so a build without the twin keeps the P-hi entry
+    // (reported) instead of refusing the prefill.
+    let kept = no_twin
         .for_prefill(true)
         .for_prefill_p_hi(true)
-        .and_then(|k| k.for_prefill_tc(true)));
-    assert!(e.contains("not in this target"), "{e}");
+        .and_then(|k| k.for_prefill_tc(true))
+        .ok()
+        .unwrap()
+        .head_batched
+        .unwrap();
+    assert_eq!((kept.decode.0, kept.smem, kept.block), (13, 0, HB_BLOCK));
     let e = err(per_head_only().for_prefill_tc(true));
     assert!(e.contains("needs METRALE_GLM_DSA_DECODE_HB"), "{e}");
 }
 
 /// 2026-10-15: The NaN-test twin replaces only the tc entry, keeping its launch shape (block,
 /// shared memory, offset table, one split); off, nothing changes. Refused, as an error naming
-/// what is missing, over any other entry or without the twin in the build.
+/// what is missing, over any other entry (2026-10-22: without the twin in the build, the tc
+/// entry is kept instead).
 #[test]
 fn the_tc_nanor_twin_is_swapped_in_only_over_the_tc_entry() {
     let hb = hb8();
@@ -360,12 +368,20 @@ fn the_tc_nanor_twin_is_swapped_in_only_over_the_tc_entry() {
         }),
         ..k
     };
-    let e = err(no_twin
+    // 2026-10-22: On by default, so a build without the twin keeps the tc entry (reported).
+    let kept = no_twin
         .for_prefill(true)
         .for_prefill_p_hi(true)
         .and_then(|k| k.for_prefill_tc(true))
-        .and_then(|k| k.for_prefill_tc_nanor(true)));
-    assert!(e.contains("not in this target"), "{e}");
+        .and_then(|k| k.for_prefill_tc_nanor(true))
+        .ok()
+        .unwrap()
+        .head_batched
+        .unwrap();
+    assert_eq!(
+        (kept.decode.0, kept.smem, kept.block),
+        (15, TC_SMEM_BYTES, TC_BLOCK)
+    );
     let e = err(per_head_only().for_prefill_tc_nanor(true));
     assert!(e.contains("needs METRALE_GLM_DSA_DECODE_HB"), "{e}");
 }
