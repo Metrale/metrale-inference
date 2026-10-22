@@ -127,7 +127,7 @@ fn select_without_rows_takes_only_in_window_last_positions() {
 }
 
 fn entry(point: Point) -> Entry {
-    let (dtype, shape) = point.row_layout(6, 4, 16);
+    let (dtype, shape) = point.row_layout(6, 4, 16, 8);
     Entry {
         layer: 3,
         point,
@@ -168,7 +168,7 @@ fn file_name_and_manifest_line_carry_every_key() {
 
 #[test]
 fn row_layouts_match_the_buffers() {
-    let (h, hc, topk) = (6, 4, 16);
+    let (h, hc, topk, moe_topk) = (6, 4, 16, 8);
     let cases = [
         (Point::HiddenIn, Dtype::Bf16, h * 2),
         (Point::StreamsIn, Dtype::F32, hc * h * 4),
@@ -183,6 +183,7 @@ fn row_layouts_match_the_buffers() {
         (Point::FfnComb, Dtype::F32, hc * hc * 4),
         (Point::FfnNormed, Dtype::Bf16, h * 2),
         (Point::MlpOut, Dtype::Bf16, h * 2),
+        (Point::MoeIds, Dtype::I32, moe_topk * 4),
         (Point::MlpRed, Dtype::Bf16, h * 2),
         (Point::StreamsOut, Dtype::F32, hc * h * 4),
         (Point::FinalHidden, Dtype::Bf16, h * 2),
@@ -213,6 +214,7 @@ fn own_rows_only_is_the_mhc_state_and_the_reduced_sums() {
         Point::DsaTopk,
         Point::FfnNormed,
         Point::MlpOut,
+        Point::MoeIds,
         Point::FinalHidden,
     ];
     assert!(own.iter().all(|p| p.own_rows_only()));
@@ -248,6 +250,7 @@ fn launch(layer_idx: usize, own: Option<(usize, usize)>) -> Launch {
             hidden: 8,
             hc: 4,
             topk: None,
+            moe_ids: None,
         },
         call: Call {
             path: Path::Prefill,
@@ -340,4 +343,76 @@ fn tap_put_rows_limits_to_the_piece_and_open_counts_calls() {
         .map(|(e, b)| (e.call, e.row, b[0]))
         .collect();
     assert_eq!(got, vec![(1, 2, 3), (1, 3, 4)]);
+}
+
+/// 2026-10-22: A `[rows, top_k]` I32 buffer of router ids whose row `r` holds `base(r) + j` at
+/// slot `j`, with a different `base` per row, so a copy from the wrong row or width is visible.
+fn ids_buffer(gpu: &MockGpuBackend, rows: usize, top_k: usize) -> (DevicePtr, Vec<Vec<i32>>) {
+    let ids: Vec<Vec<i32>> = (0..rows)
+        .map(|r| (0..top_k as i32).map(|j| 280 - 40 * r as i32 + j).collect())
+        .collect();
+    let p = gpu.alloc(rows * top_k * 4).unwrap();
+    let bytes: Vec<u8> = ids.iter().flatten().flat_map(|v| v.to_le_bytes()).collect();
+    gpu.copy_h2d(&bytes, p).unwrap();
+    (p, ids)
+}
+
+fn i32s(b: &[u8]) -> Vec<i32> {
+    b.chunks_exact(4)
+        .map(|c| i32::from_le_bytes(c.try_into().unwrap()))
+        .collect()
+}
+
+/// 2026-10-22: The MoE ids of a 2-row verify launch: each row's `top_k` ids from its own
+/// offset (`row * top_k * 4`), as `I32 [top_k]`; a dense layer (`moe_ids: None`) and no tap
+/// emit nothing.
+#[test]
+fn moe_ids_copies_each_rows_top_k_and_a_dense_layer_emits_none() {
+    let gpu = MockGpuBackend::new();
+    let (p, ids) = ids_buffer(&gpu, 2, 8);
+    let wanted = set(&[50, 51]);
+    let windows = [Window::single(2, 50, None)];
+    let mut l = launch(903, None);
+    l.call = Call::step(Path::Verify);
+    l.layer.moe_ids = Some((p, 8));
+    let routed = MemSink::default();
+    let tap = open(&gpu, 7, &routed, Some(&wanted), l, &windows).unwrap();
+    tap::moe_ids(Some(&tap)).unwrap();
+    tap::moe_ids(None).unwrap();
+    let got = routed.0.into_inner().unwrap();
+    assert_eq!(got.len(), 2, "one entry per verify row");
+    for (r, (e, bytes)) in got.iter().enumerate() {
+        assert_eq!((e.point, e.path, e.row, e.pos), (Point::MoeIds, Path::Verify, r, 50 + r));
+        assert_eq!((e.dtype, e.shape.clone()), (Dtype::I32, vec![8]));
+        assert_eq!(i32s(bytes), ids[r], "row {r}");
+    }
+    let mut dense = launch(904, None);
+    dense.layer.topk = Some((p, 8));
+    let none = MemSink::default();
+    let tap = open(&gpu, 7, &none, Some(&wanted), dense, &windows).unwrap();
+    tap::moe_ids(Some(&tap)).unwrap();
+    assert!(none.0.into_inner().unwrap().is_empty(), "a dense layer has no MoE ids");
+}
+
+/// 2026-10-22: A MoE ids row through the file sink: the file holds the row's bytes and the
+/// manifest line names it with point `moe_ids`, dtype `i32`, shape `[top_k]` and its byte count.
+#[test]
+fn moe_ids_round_trips_through_the_file_sink_and_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    let sink = tap::FileSink::create(dir.path().join("dump")).unwrap();
+    let mut e = entry(Point::MoeIds);
+    e.path = Path::Verify;
+    let ids: Vec<i32> = vec![287, 0, 13, 144, 5, 99, 200, 7];
+    let bytes: Vec<u8> = ids.iter().flat_map(|v| v.to_le_bytes()).collect();
+    sink.write(&e, &bytes).unwrap();
+    let text = std::fs::read_to_string(dir.path().join("dump/manifest_r1.jsonl")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(text.trim_end()).unwrap();
+    assert_eq!(v["point"], "moe_ids");
+    assert_eq!(v["dtype"], "i32");
+    assert_eq!(v["shape"], serde_json::json!([8]));
+    assert_eq!(v["nbytes"], 32);
+    assert_eq!(v["path"], "verify");
+    let file = v["file"].as_str().unwrap();
+    assert_eq!(file, "L03_moe_ids_r1_verify_n00042_c2_s5_pos1234.bin");
+    assert_eq!(i32s(&std::fs::read(dir.path().join("dump").join(file)).unwrap()), ids);
 }

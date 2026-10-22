@@ -209,3 +209,59 @@ fn vec8_only_from_the_row_floor() {
     assert!(vec8_for(true, floor) && vec8_for(true, 8192));
     assert!(!vec8_for(false, floor) && !vec8_for(false, 8192));
 }
+
+/// 2026-10-22: The ids the layer dump reads (`Glm5NextMlpWorkspace::ids`, `Point::MoeIds`) are
+/// the buffer the router top-k writes (its third argument), ranked over the global expert
+/// count even on a rank that owns a share, on the site's stream.
+#[test]
+fn the_dumped_ids_are_the_buffer_the_top_k_writes() {
+    use crate::glm5next_mlp::precision::{GroupPrecision, MlpGroup};
+    use crate::glm5next_mlp::weights::{
+        Glm5NextDenseMlpWeights, Glm5NextExpertPtrTable, Glm5NextMoePtrTables, Glm5NextMoeWeights,
+    };
+    use metrale_config::{ActivationQuantization, Nvfp4Act, ProjFamily};
+    use metrale_gpu_runtime::gpu::mock::MockArg;
+    let null = DevicePtr::NULL;
+    let table = Glm5NextExpertPtrTable {
+        packed_ptrs: null,
+        scale_ptrs: null,
+        scale2_vals: null,
+        scale_bases: null,
+    };
+    let w = Glm5NextMoeWeights {
+        router: null,
+        router_bias: DevicePtr(0x77),
+        shared: Glm5NextDenseMlpWeights {
+            gate_proj: null,
+            up_proj: null,
+            down_proj: null,
+        },
+        experts: Vec::new(),
+        ptrs: Glm5NextMoePtrTables {
+            gate: table,
+            up: table,
+            down: table,
+        },
+        precision: GroupPrecision::resolve(
+            MlpGroup::RoutedExperts,
+            ActivationQuantization::default()
+                .ladder(ProjFamily::Moe)
+                .clone(),
+            Nvfp4Act::A4,
+            0,
+            true,
+        )
+        .unwrap(),
+        act_scales: None,
+    };
+    let gpu = MockGpuBackend::new();
+    // 2026-10-22: An EP=2 rank owning 144 of 288 experts still ranks all 288.
+    let mut c = cfg(288);
+    c.local_experts = 144;
+    let ws = Glm5NextMlpWorkspace::new_forked(&gpu, &c, 2, false, 0).unwrap();
+    super::router_topk(&gpu, &kernels(RANK), &c, &w, &ws, 2, 9).unwrap();
+    let l = gpu.launches_snapshot().pop().expect("the top-k launched");
+    assert_eq!((l.func, l.grid[0], l.stream), (BASE, 2, 9));
+    assert_eq!(l.args[2], MockArg::Buffer(ws.ids()), "top-k ids output");
+    assert_eq!(l.args[4], MockArg::Bytes(288u32.to_le_bytes().to_vec()));
+}

@@ -4,8 +4,8 @@
 //! find the first layer and point where two runs' bits part (a diagnostic, never a serve
 //! setting). Each mHC layer copies chosen rows of its intermediates to `<dir>` on every rank:
 //! the layer input, each site's streams, `post`, `comb` and normed rows, the mixer output before
-//! and after its all-reduce, the DSA selection, the MLP output before and after its reduce, the
-//! layer's output streams and, on the last layer, the hidden row before the final norm.
+//! and after its all-reduce, the DSA selection, the MoE router's expert ids, the MLP output
+//! before and after its reduce, the layer's output streams and, on the last layer, the hidden row before the final norm.
 //!
 //! Rows: the last row of every prefill pass (the prompt's last row is the last pass's), plus
 //! every row whose absolute position is in `METRALE_GLM_LAYER_DUMP_ROWS` (a comma list), on
@@ -152,6 +152,11 @@ pub enum Point {
     FfnNormed,
     /// 2026-10-13: The MLP's output, this rank's partial before the all-reduce.
     MlpOut,
+    /// 2026-10-22: A routed MoE layer's router top-k (i32 expert ids, `top_k` per row, in the
+    /// top-k kernel's slot order). Global ids in `0..num_experts` under every expert layout:
+    /// each rank routes over the full logits row and writes the same ids, so no rank's slice
+    /// shows. Absent on dense MLP layers.
+    MoeIds,
     /// 2026-10-13: The MLP's output after the all-reduce (when the MLP reduces).
     MlpRed,
     /// 2026-10-13: The layer's output streams.
@@ -201,6 +206,7 @@ impl Point {
             Self::FfnComb => "ffn_comb",
             Self::FfnNormed => "ffn_normed",
             Self::MlpOut => "mlp_out",
+            Self::MoeIds => "moe_ids",
             Self::MlpRed => "mlp_red",
             Self::StreamsOut => "streams_out",
             Self::FinalHidden => "final_hidden",
@@ -209,13 +215,20 @@ impl Point {
 
     /// 2026-10-13: One row's element type and shape at hidden size `h`, `hc` streams and a
     /// DSA selection `topk` wide. Rows are contiguous in their buffer, so the row stride is the
-    /// row's byte size.
-    pub fn row_layout(self, h: usize, hc: usize, topk: usize) -> (Dtype, Vec<usize>) {
+    /// row's byte size. 2026-10-22: `moe_topk` is the MoE router's experts per row.
+    pub fn row_layout(
+        self,
+        h: usize,
+        hc: usize,
+        topk: usize,
+        moe_topk: usize,
+    ) -> (Dtype, Vec<usize>) {
         match self {
             Self::StreamsIn | Self::PostAttn | Self::StreamsOut => (Dtype::F32, vec![hc, h]),
             Self::AttnPost | Self::FfnPost => (Dtype::F32, vec![hc]),
             Self::AttnComb | Self::FfnComb => (Dtype::F32, vec![hc, hc]),
             Self::DsaTopk => (Dtype::I32, vec![topk]),
+            Self::MoeIds => (Dtype::I32, vec![moe_topk]),
             Self::HiddenIn
             | Self::AttnNormed
             | Self::MixerOut
@@ -230,7 +243,7 @@ impl Point {
     /// 2026-10-13: Whether, under sequence-parallel mHC, a rank holds this point only for its
     /// own shard of rows (the mHC state and the reduced sums); the rest (normed rows after the
     /// all-gather, the mixer and MLP outputs, the final hidden) exist on every rank for every
-    /// row.
+    /// row. 2026-10-22: The MoE ids too: every rank routes every row of the launch.
     pub fn own_rows_only(self) -> bool {
         matches!(
             self,

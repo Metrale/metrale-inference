@@ -7,7 +7,7 @@
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
 //! - [`begin`] returns `None` with the lever off, on a capturing stream, and when the launch
-//!   holds no wanted row; the hooks ([`put`], [`site`], [`topk`]) are then no-ops.
+//!   holds no wanted row; the hooks ([`put`], [`site`], [`topk`], [`moe_ids`]) are then no-ops.
 //! - A row is read at `base + row * row_bytes`: every dumped buffer is row-contiguous.
 
 use std::collections::{BTreeSet, HashMap};
@@ -69,12 +69,15 @@ impl Sink for FileSink {
 
 /// 2026-10-13: The layer being dumped: its index, hidden size, stream count, and its DSA
 /// selection output (base, row width) when its mixer is DSA and the launch's rows own it.
+/// 2026-10-22: `moe_ids` is the MoE router's top-k ids (base, `top_k`) when the MLP is routed;
+/// `None` on a dense MLP layer.
 #[derive(Clone, Copy, Debug)]
 pub struct Layer {
     pub idx: usize,
     pub hidden: usize,
     pub hc: usize,
     pub topk: Option<(DevicePtr, usize)>,
+    pub moe_ids: Option<(DevicePtr, usize)>,
 }
 
 /// 2026-10-13: A layer call's dump: the rows to copy and where they go. `own` is this rank's
@@ -196,7 +199,8 @@ impl Tap<'_> {
         rows: std::ops::Range<usize>,
     ) -> Result<()> {
         let topk = self.layer.topk.map_or(0, |t| t.1);
-        let (dtype, shape) = point.row_layout(self.layer.hidden, self.layer.hc, topk);
+        let moe_topk = self.layer.moe_ids.map_or(0, |t| t.1);
+        let (dtype, shape) = point.row_layout(self.layer.hidden, self.layer.hc, topk, moe_topk);
         let mut entry = Entry {
             layer: self.layer.idx,
             point,
@@ -237,6 +241,17 @@ pub fn put(tap: Option<&Tap<'_>>, point: Point, base: DevicePtr) -> Result<()> {
 pub fn topk(tap: Option<&Tap<'_>>) -> Result<()> {
     match tap.and_then(|t| t.layer.topk.map(|(p, _)| (t, p))) {
         Some((t, p)) => t.put(Point::DsaTopk, p),
+        None => Ok(()),
+    }
+}
+
+/// 2026-10-22: The MoE router's top-k ids, when the tap's layer is routed. Called after the MLP
+/// on the stream that ran its top-k: nothing after the top-k writes the ids (the expert, union,
+/// sort and combine launches only read them), and the D2H is ordered after it on that stream;
+/// the shared-expert fork joins before the MLP returns.
+pub fn moe_ids(tap: Option<&Tap<'_>>) -> Result<()> {
+    match tap.and_then(|t| t.layer.moe_ids.map(|(p, _)| (t, p))) {
+        Some((t, p)) => t.put(Point::MoeIds, p),
         None => Ok(()),
     }
 }

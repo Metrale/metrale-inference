@@ -147,7 +147,9 @@ impl Glm5NextMlpWorkspace {
     pub(super) fn max_total_expanded(&self) -> usize {
         self.max_total_expanded
     }
-    pub(super) fn ids(&self) -> DevicePtr {
+    /// 2026-10-22: `[rows, top_k]` I32: the router top-k's global expert ids, which every later
+    /// launch of the site only reads. Crate-visible for the layer dump (`MoeIds`).
+    pub(crate) fn ids(&self) -> DevicePtr {
         self.ids
     }
     pub(super) fn a_gate(&self) -> DevicePtr {

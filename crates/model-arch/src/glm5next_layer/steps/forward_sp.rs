@@ -156,6 +156,7 @@ impl Glm5NextLayer {
         dump::site(tap, true, [streams, rows.post, rows.comb, normed])?;
         self.mlp_compute(normed, ffn_out, k, row_pieces, ctx, stream)?;
         dump::put(tap, dump::Point::MlpOut, ffn_out)?;
+        dump::moe_ids(tap)?;
         let reduce = self.mlp_cfg.needs_all_reduce();
         ov::run_section(
             gpu,

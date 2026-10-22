@@ -28,6 +28,8 @@ mod verify_multi;
 impl Glm5NextLayer {
     /// 2026-10-13: This layer as the layer dump sees it (`glm5next_layer_dump`); `topk` when the
     /// launch's rows own the DSA selection output (not a multi-piece mixer call).
+    /// 2026-10-22: `moe_ids` on a routed MLP: its top-k runs once over every row of the launch,
+    /// pieces or not (`forward_moe_pieces`), so the launch's rows always own it.
     pub(in crate::glm5next_layer) fn dump_layer(
         &self,
         mhc: &Glm5NextMhc,
@@ -44,6 +46,8 @@ impl Glm5NextLayer {
             hidden: self.hidden,
             hc: mhc.hc_mult,
             topk,
+            moe_ids: matches!(self.mlp, Glm5NextMlpSite::Moe(_))
+                .then(|| (self.mlp_ws.ids(), self.mlp_cfg.top_k)),
         }
     }
 
@@ -289,6 +293,8 @@ impl Glm5NextLayer {
     /// 2026-10-10: `fused` hands the all-reduce's sum to the caller's post-mix
     /// ([`Self::reduce_or_exchange`]); the returned partials are then `Some`.
     /// 2026-10-13: `tap` dumps `out` between the MLP and the reduce (`glm5next_layer_dump`).
+    /// 2026-10-22: And the routed MLP's top-k ids, before the next MLP (the text layers share
+    /// one workspace) overwrites them.
     #[allow(clippy::too_many_arguments)]
     fn mlp_forward(
         &self,
@@ -303,6 +309,7 @@ impl Glm5NextLayer {
     ) -> Result<Option<metrale_comm::PeerPartials>> {
         self.mlp_compute(normed, out, rows, row_pieces, ctx, stream)?;
         dump::put(tap, dump::Point::MlpOut, out)?;
+        dump::moe_ids(tap)?;
         // 2026-09-25: One all-reduce covers both partial sums, the EP-split routed experts and
         // the TP-split shared expert: `forward_moe` adds them together before returning.
         let mut partials = None;
