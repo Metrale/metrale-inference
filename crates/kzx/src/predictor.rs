@@ -71,7 +71,8 @@ pub fn memory_bytes(profile: Profile, mem_log2: u8) -> u64 {
     let matcher = MatchModel::bytes(mem_log2.saturating_add(2));
     let mixers = 4096u64 * 24 * 4 + 16 * 4 * 4;
     let apms = (256u64 + 65_536) * 24 * 2;
-    tables + matcher + mixers + apms + 4096 * 2 + 4096 + 256 * 4 * 8
+    let numbers = if profile == Profile::Ptx { crate::ptx::NumberModel::bytes() } else { 0 };
+    tables + matcher + mixers + apms + numbers + 4096 * 2 + 4096 + 256 * 4 * 8
 }
 
 /// The bit predictor for one block.
@@ -171,6 +172,12 @@ impl Predictor {
         self.rates.update(&mut self.lzp_b[ix(self.lzp_ctx_b)], bit, 1023);
         self.lzp_mixer.update(bit);
         self.lzp_hist = (self.lzp_hist << 1) | bit;
+    }
+
+    /// The current identifier-class and skeleton-line hashes (PTX number contexts).
+    #[inline(always)]
+    pub fn number_context(&self) -> (u32, u32) {
+        (self.ctx.word(), self.ctx.line())
     }
 
     /// Tell the bit models that the next byte is known not to be `byte`.

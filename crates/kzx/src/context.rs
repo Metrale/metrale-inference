@@ -23,7 +23,7 @@ fn mix(a: u32, b: u32) -> u32 {
 
 #[inline(always)]
 fn is_token_byte(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || matches!(b, b'_' | b'$' | b'%' | b'.')
+    b.is_ascii_alphanumeric() || matches!(b, b'_' | b'$' | b'%' | b'.' | crate::ptx::MARKER)
 }
 
 /// Running history state and the current context hashes.
@@ -39,6 +39,7 @@ pub struct Contexts {
     after_opcode: bool,
     prev_line: [u32; FIELDS],
     cur_line: [u32; FIELDS],
+    line: u32,
     pos: u32,
     /// The hashes for the next byte, `h[..n]` valid.
     pub h: [u32; MAX_CTX],
@@ -65,6 +66,7 @@ impl Contexts {
             after_opcode: false,
             prev_line: [0; FIELDS],
             cur_line: [0; FIELDS],
+            line: 0,
             pos: 0,
             h: [0; MAX_CTX],
             n,
@@ -79,12 +81,25 @@ impl Contexts {
         self.field.min(7)
     }
 
+    /// Hash of the current token so far (the identifier class at a PTX marker).
+    #[inline(always)]
+    pub fn word(&self) -> u32 {
+        self.word
+    }
+
+    /// Hash of the current line so far (the skeleton context of a PTX number).
+    #[inline(always)]
+    pub fn line(&self) -> u32 {
+        self.line
+    }
+
     /// Absorb `byte`; `hist` is the history including it.
     #[inline]
     pub fn update(&mut self, byte: u8, hist: &[u8]) {
         self.c8 = (self.c8 << 8) | (self.c4 >> 24);
         self.c4 = (self.c4 << 8) | u32::from(byte);
         self.pos = self.pos.wrapping_add(1);
+        self.line = if byte == b'\n' { 0 } else { mix(self.line, u32::from(byte)) };
         if is_token_byte(byte) {
             self.word = mix(self.word, u32::from(byte));
         } else {

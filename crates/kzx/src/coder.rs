@@ -8,6 +8,28 @@
 use crate::cast::ix;
 use alloc::vec::Vec;
 
+/// One binary decision, shared by both directions so every model is written once: the encoder
+/// codes `bit` and returns it, the decoder ignores `bit` and returns what it reads.
+pub trait BitCoder {
+    /// Code one bit under `p1` = P(1) in 12 bits.
+    fn code(&mut self, bit: u32, p1: i32) -> u32;
+}
+
+impl BitCoder for Encoder {
+    #[inline(always)]
+    fn code(&mut self, bit: u32, p1: i32) -> u32 {
+        self.encode(bit, p1);
+        bit
+    }
+}
+
+impl BitCoder for Decoder<'_> {
+    #[inline(always)]
+    fn code(&mut self, _bit: u32, p1: i32) -> u32 {
+        self.decode(p1)
+    }
+}
+
 /// Encodes bits into a byte vector.
 pub struct Encoder {
     x1: u32,
