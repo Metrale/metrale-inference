@@ -51,7 +51,7 @@ impl Contexts {
     /// Fresh state for `profile`.
     pub fn new(profile: Profile) -> Self {
         let n = match profile {
-            Profile::Stored | Profile::Generic => 6,
+            Profile::Stored | Profile::Generic => 8,
             Profile::Ptx | Profile::Elf => 8,
         };
         let mut c = Self {
@@ -140,7 +140,10 @@ impl Contexts {
         self.h[4] = mix(mix(5, c4), self.c8 & 0xffff);
         self.h[5] = mix(mix(6, self.word), mix(self.prev_word, c4 & 0xff));
         match self.profile {
-            Profile::Stored | Profile::Generic => {}
+            Profile::Stored | Profile::Generic => {
+                self.h[6] = mix(7, (c4 >> 8) & 0xffff);
+                self.h[7] = mix(8, (c4 & 0xf0f0_f0f0) | (self.c8 & 0xf0f0));
+            }
             Profile::Ptx => {
                 self.h[6] = mix(mix(7, self.opcode), mix(self.field, self.word));
                 let f = ix(self.field.min(7));
@@ -164,7 +167,19 @@ impl Contexts {
                         .unwrap_or(0),
                 );
                 let col = self.pos & 15;
-                self.h[6] = mix(mix(7, col), mix(b16, c4 & 0xff));
+                let w0 = u32::from(
+                    n.checked_sub(ix(col) + 1)
+                        .and_then(|i| hist.get(i))
+                        .copied()
+                        .unwrap_or(0),
+                );
+                let w1 = u32::from(
+                    n.checked_sub(ix(col))
+                        .and_then(|i| hist.get(i))
+                        .copied()
+                        .unwrap_or(0),
+                );
+                self.h[6] = mix(mix(7, col), mix(w0 | (w1 << 8), c4 & 0xff));
                 self.h[7] = mix(mix(8, col), mix(b16, b32 << 8));
             }
         }

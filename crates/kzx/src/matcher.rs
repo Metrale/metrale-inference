@@ -36,7 +36,7 @@ impl MatchModel {
         Self {
             ht: alloc::vec![0u32; ix(1u32 << bits)],
             mask: (1u32 << bits) - 1,
-            min_len: min_len.clamp(4, 8),
+            min_len: min_len.clamp(4, 12),
             ptr: 0,
             len: 0,
             expected: 0,

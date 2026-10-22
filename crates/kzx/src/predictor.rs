@@ -41,8 +41,8 @@ impl Params {
                 mixer_lr: 6,
             },
             Profile::Ptx => Params {
-                lzp_min: 24,
-                match_min: 7,
+                lzp_min: 32,
+                match_min: 10,
                 mixer_lr: 6,
             },
             Profile::Elf => Params {
@@ -126,7 +126,7 @@ impl Predictor {
             maps,
             ctx,
             bases: [0; MAX_CTX],
-            mixer: Mixer::new(2 * n + 4, 4096, params.mixer_lr, 12_000),
+            mixer: Mixer::new(2 * n + 4, 4096, params.mixer_lr, 8_000),
             apm1: Apm::new(256),
             apm2: Apm::new(65_536),
             mm: MatchModel::new(mem_log2.saturating_add(2), params.match_min),
@@ -256,8 +256,8 @@ impl Predictor {
         }
         self.mm.update_bit(bit, &self.rates);
         self.mixer.update(bit);
-        self.apm1.update(bit, 7);
-        self.apm2.update(bit, 7);
+        self.apm1.update(bit, 6);
+        self.apm2.update(bit, 6);
         self.c0 = (self.c0 << 1) | bit;
         self.nibble = (self.nibble << 1) | bit;
         self.bitpos += 1;

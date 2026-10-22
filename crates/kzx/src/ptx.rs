@@ -205,10 +205,12 @@ impl NumberModel {
         line: u32,
         value: Option<u64>,
     ) -> u64 {
-        let _ = line;
         let last = self.last.get(class).unwrap_or(0);
         let tag = (class ^ (class >> 8) ^ (class >> 16) ^ (class >> 24)) & 0xff;
         self.hist.push(u8::try_from(tag).unwrap_or(0));
+        self.pred.byte_done(&self.hist);
+        let lt = (line ^ (line >> 8) ^ (line >> 16) ^ (line >> 24)) & 0xff;
+        self.hist.push(u8::try_from(lt).unwrap_or(0));
         self.pred.byte_done(&self.hist);
         let mut z = value.map(|v| zigzag(as_i64(v.wrapping_sub(last))));
         let mut out = 0u64;
