@@ -10,7 +10,7 @@ use crate::tables::{Stretch, squash};
 use alloc::vec::Vec;
 
 /// The most inputs one mixer accepts.
-pub const MAX_INPUTS: usize = 16;
+pub const MAX_INPUTS: usize = 24;
 
 /// A gated linear mixer in the logistic domain.
 pub struct Mixer {

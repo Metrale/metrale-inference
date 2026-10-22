@@ -77,6 +77,7 @@ mod mixer;
 mod predictor;
 mod sniff;
 mod slots;
+mod states;
 mod tables;
 
 use alloc::vec::Vec;
@@ -100,12 +101,12 @@ pub struct Limits {
 }
 
 /// The `mem_log2` [`compress`] picks for an input of `len` bytes: tables about as large as
-/// the input, within `[MIN_MEM_LOG2, 20]`.
+/// the input, within `[MIN_MEM_LOG2, 22]`.
 pub fn default_mem_log2(len: usize) -> u8 {
     let bits = u64::BITS - cast::u64_of(len.max(1)).leading_zeros();
     u8::try_from(bits.saturating_sub(5))
         .unwrap_or(20)
-        .clamp(MIN_MEM_LOG2, 20)
+        .clamp(MIN_MEM_LOG2, 22)
 }
 
 fn frame_one(out: &mut Vec<u8>, raw: &[u8], profile: Profile, mem_log2: u8) {

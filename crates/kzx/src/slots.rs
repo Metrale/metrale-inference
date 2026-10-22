@@ -1,18 +1,19 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Hashed context statistics. A context hash selects a 64-byte bucket holding a 16-bit check
-//! and 15 adaptive bit counters, one per node of the binary tree over one nibble, so each byte
-//! costs two bucket lookups per context. Buckets are probed three deep and the least-used one
-//! is recycled on a miss (the lpaq layout).
+//! Hashed context statistics. A context hash selects a 16-byte bucket holding a check byte and
+//! 15 one-byte bit-history states, one per node of the binary tree over one nibble, so each byte
+//! costs two bucket lookups per context. Buckets are probed three deep within one cache line and
+//! the least-used one is recycled on a miss (the lpaq layout).
 //!
-//! A counter packs a 22-bit probability and a 10-bit hit count; the update step shrinks as the
-//! count grows (`1/(n+1.5)`), so young contexts adapt fast and old ones average.
+//! A [`StateMap`] turns a state into a probability and learns that mapping online; its counters
+//! pack a 22-bit probability and a 10-bit hit count so the step shrinks as evidence accumulates.
 
 use crate::cast::{ix, ixi};
+use crate::states::{STATES, StateTable};
 use alloc::vec::Vec;
 
-/// Words per bucket: one check word and 15 counters.
-pub const BUCKET_WORDS: u32 = 16;
+/// Bytes per bucket: one check byte and 15 states.
+pub const BUCKET_BYTES: u32 = 16;
 /// A fresh counter: probability one half, count zero.
 pub const COUNTER_INIT: u32 = 1 << 31;
 
@@ -61,66 +62,94 @@ pub fn predict(v: u32) -> i32 {
     i32::try_from(v >> 20).unwrap_or(2048)
 }
 
+/// Learned state → probability map for one context.
+pub struct StateMap {
+    t: Vec<u32>,
+}
+
+impl StateMap {
+    /// Initialise from the counts behind each state.
+    pub fn new(st: &StateTable) -> Self {
+        let mut t = alloc::vec![COUNTER_INIT; STATES];
+        for (s, slot) in t.iter_mut().enumerate() {
+            let (n0, n1) = st.counts(u8::try_from(s).unwrap_or(0));
+            let p22 = ((u64::from(n1) * 2 + 1) << 22) / (u64::from(n0 + n1) * 2 + 2);
+            *slot = u32::try_from(p22).unwrap_or(1 << 21) << 10;
+        }
+        Self { t }
+    }
+
+    /// P(1) in 12 bits for state `s`.
+    #[inline(always)]
+    pub fn predict(&self, s: u8) -> i32 {
+        predict(self.t[ix(u32::from(s))])
+    }
+
+    /// Learn `bit` under state `s`.
+    #[inline(always)]
+    pub fn update(&mut self, s: u8, bit: u32, rates: &Rates) {
+        rates.update(&mut self.t[ix(u32::from(s))], bit, 1023);
+    }
+}
+
 /// One hashed table of nibble buckets.
 pub struct Slots {
-    t: Vec<u32>,
+    t: Vec<u8>,
     mask: u32,
 }
 
 impl Slots {
-    /// A table of `2^log2_buckets` buckets (`log2_buckets` ≤ 26).
+    /// A table of `2^log2_buckets` buckets (`log2_buckets` ≤ 27).
     pub fn new(log2_buckets: u8) -> Self {
-        let bits = u32::from(log2_buckets.min(26));
+        let bits = u32::from(log2_buckets.min(27));
         let buckets = 1u32 << bits;
         Self {
-            t: alloc::vec![COUNTER_INIT; ix(buckets * BUCKET_WORDS)],
+            t: alloc::vec![0u8; ix(buckets * BUCKET_BYTES)],
             mask: buckets - 1,
         }
     }
 
     /// Bytes a table of `2^log2_buckets` buckets occupies.
     pub fn bytes(log2_buckets: u8) -> u64 {
-        (1u64 << u32::from(log2_buckets.min(26))) * u64::from(BUCKET_WORDS) * 4
+        (1u64 << u32::from(log2_buckets.min(27))) * u64::from(BUCKET_BYTES)
     }
 
-    /// The word index of the bucket for hash `h`, allocating or recycling on a miss.
+    /// The byte index of the bucket for hash `h`, allocating or recycling on a miss.
     #[inline]
-    pub fn find(&mut self, h: u32) -> u32 {
-        let check = h >> 16;
+    pub fn find(&mut self, h: u32, st: &StateTable) -> u32 {
+        let check = h.to_be_bytes()[0];
         let i0 = h & self.mask;
         let mut best = i0;
         let mut best_n = u32::MAX;
         for k in 0..3u32 {
             let i = i0 ^ k;
-            let base = i * BUCKET_WORDS;
-            let w0 = self.t[ix(base)];
-            if w0 & 0xffff == check {
+            let base = i * BUCKET_BYTES;
+            if self.t[ix(base)] == check {
                 return base;
             }
-            let n = self.t[ix(base + 1)] & 1023;
+            let n = st.total(self.t[ix(base + 1)]);
             if n < best_n {
                 best_n = n;
                 best = i;
             }
         }
-        let base = best * BUCKET_WORDS;
-        self.t[ix(base)] = check;
-        for j in 1..BUCKET_WORDS {
-            self.t[ix(base + j)] = COUNTER_INIT;
-        }
+        let base = best * BUCKET_BYTES;
+        let b = ix(base);
+        self.t[b..b + 16].fill(0);
+        self.t[b] = check;
         base
     }
 
-    /// Read the counter at word index `i`.
+    /// Read the state at byte index `i`.
     #[inline(always)]
-    pub fn get(&self, i: u32) -> u32 {
+    pub fn get(&self, i: u32) -> u8 {
         self.t[ix(i)]
     }
 
-    /// Update the counter at word index `i`.
+    /// Write the state at byte index `i`.
     #[inline(always)]
-    pub fn update(&mut self, i: u32, bit: u32, rates: &Rates, limit: u32) {
-        rates.update(&mut self.t[ix(i)], bit, limit);
+    pub fn set(&mut self, i: u32, s: u8) {
+        self.t[ix(i)] = s;
     }
 }
 
@@ -144,12 +173,25 @@ mod tests {
 
     #[test]
     fn find_returns_the_same_bucket_for_the_same_hash() {
+        let st = StateTable::new();
         let mut s = Slots::new(8);
-        let a = s.find(0xdead_beef);
-        s.update(a + 3, 1, &Rates::new(), 255);
-        assert_eq!(s.find(0xdead_beef), a);
-        assert_ne!(s.get(a + 3), COUNTER_INIT);
-        let b = s.find(0x1234_5678);
+        let a = s.find(0xdead_beef, &st);
+        s.set(a + 3, 7);
+        assert_eq!(s.find(0xdead_beef, &st), a);
+        assert_eq!(s.get(a + 3), 7);
+        let b = s.find(0x1234_5678, &st);
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn statemap_starts_from_the_counts() {
+        let st = StateTable::new();
+        let sm = StateMap::new(&st);
+        let mut s = 0u8;
+        for _ in 0..10 {
+            s = st.next(s, 1);
+        }
+        assert!(sm.predict(s) > 3500);
+        assert!((sm.predict(0) - 2048).abs() < 8);
     }
 }
