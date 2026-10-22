@@ -264,6 +264,18 @@ class and exact citation.
 | `glm_moe_w4a4_down_9_16_kda` | reference | crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:408-422 (quant_static, then the 16-row union sweep over the union built for gate/up; down keeps its PDL entry) |
 | `glm_moe_w4a4_down_9_16_dsa` | reference | crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:408-422 (quant_static, then the 16-row union sweep over the union built for gate/up; down keeps its PDL entry) |
 | `glm_swiglu_clamp_zero` | reference | crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:385-395,215-225 (zeroes_in_swiglu: rows 2..=16, not the own-slots arm); crates/model-arch/src/glm5next_mlp/forward/launch.rs:147-171 |
+| `glm_w4a16_gemv_1row` | reference | crates/model-arch/src/glm5next_w4a16_dense.rs:350-362 (one row: w4a16_gemv::w4a16_gemv; glm_w4a16_gemv_seg off, :332); crates/model-arch/src/glm5next_layer/wide_gemv.rs:178-180 (glm_mm asks the W4A16 registry first); crates/model-arch/src/glm5next_w4a16_dense.rs:110-131 (tier_of: these are W4A16) |
+| `glm_w4a16_tc_rows` | reference | crates/model-arch/src/glm5next_w4a16_dense.rs:364-404 (gemv_tier needs glm_w4a16_gemv_rows, the segmented launch glm_w4a16_seg: both unset, so w4a16_tc_rows); crates/model-layers/src/layers/ops/w4a16_tc_rows.rs:96-106 (the 16-row entry up to 16 rows) |
+| `glm_w4a16_shared_1row` | reference | crates/model-arch/src/glm5next_mlp/forward/dense.rs:62-114 (gate, up, the clamp + SiLU, down; proj_group declines with glm_w4a16_seg unset); crates/model-arch/src/glm5next_w4a16_dense.rs:350-362 |
+| `glm_w4a16_shared_tc_rows` | reference | crates/model-arch/src/glm5next_mlp/forward/dense.rs:62-114; crates/model-arch/src/glm5next_w4a16_dense.rs:364-404 |
+| `glm_w8a8_dsa_proj_in_split4` | reference | crates/model-arch/src/glm5next_dsa/layer/proj_in_merged.rs:1-15,58-72 (q_a and kv_a as one quantization and one split launch where the FP8 registry serves both, 1..=8 rows); crates/model-arch/src/glm5next_fp8_dense_split.rs:32-41 (SPLIT4_MAX_ROWS); crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:30-36 |
+| `glm_w8a8_dsa_mb1_ku8` | reference | crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:62 (q_absorb), :137-149 (o_absorb); crates/model-arch/src/glm5next_fp8_dense.rs:341-366; crates/model-layers/src/layers/ops/w8a8_decode.rs:259-267 |
+| `glm_w8a8_dsa_mb2` | reference | crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:30-79,137-149 (above 8 rows the split declines and each projection runs alone; kv_a then re-quantizes the input q_absorb's quantization replaced); crates/model-arch/src/glm5next_fp8_dense.rs:341-366; crates/model-layers/src/layers/ops/w8a8_decode.rs:259-267 |
+| `glm_w8a8_kda_mb1_ku8` | reference | crates/model-arch/src/glm5next_kda/gate_at.rs:76 (f_b), crates/model-arch/src/glm5next_kda/mod.rs:418 (g_b); crates/model-arch/src/glm5next_kda/gates_fused.rs:76-81,109-113 (kda_gates_w8a8_k128_rows needs the W4A16-seg low-rank group, glm_w4a16_seg unset); crates/model-arch/src/glm5next_fp8_dense.rs:341-366 |
+| `glm_w8a8_kda_mb2` | reference | crates/model-arch/src/glm5next_kda/gate_at.rs:76; crates/model-arch/src/glm5next_kda/mod.rs:418; crates/model-arch/src/glm5next_fp8_dense.rs:341-366; crates/model-layers/src/layers/ops/w8a8_decode.rs:259-267 |
+| `glm_w8a8_index_kgate_1row` | reference | crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:119-123 (stable_input); crates/model-arch/src/glm5next_fp8_dense.rs:341-345 (the scratch already holds this input's quantization); crates/model-arch/src/glm5next_dsa/layer.rs:207-244 |
+| `glm_w8a8_index_kgate_rows` | reference | crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:252-263; crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:328-337; crates/model-arch/src/glm5next_fp8_dense.rs:346-366 (one row at another input: quantize, then the GEMV) |
+| `glm_mla_attend` | reference | crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:366-369; crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:376-386; crates/model-arch/src/glm5next_dsa/attend.rs:113-121,419-443 |
 
 ## Bit-identical fusions
 
@@ -386,4 +398,9 @@ These are facts about the code, found while encoding it. They are not changes.
   latent attention on load-time products of `q_b_proj` / `o_proj` with `kv_b_proj`'s halves
   (`glm_mla_absorbed`): 185M weights per layer against the 109M of `q_b_proj`, `kv_b_proj` and
   `o_proj` read as stored (1.7x).
+  2026-10-22: the recipe instance (`glm-5.3-flash-nvfp4-tp3`, the precision the engine runs
+  under `--dense-quantization w4a16` with the FP8 tier) has rules for its W4A16 projections
+  (`glm_w4a16_gemv_1row`, `glm_w4a16_tc_rows`, the shared expert `glm_w4a16_shared_*`), its W8A8
+  ones (`glm_w8a8_*`) and the FP8-KV latent attention (`glm_mla_attend`), all at the default
+  levers; the declared instance's plans do not take them (formats differ).
 - **Strided RoPE equals MRoPE only for text.** The strided kernel matches the interleaved MRoPE only while the three positions are equal. An image sequence's multi-row step should be checked.

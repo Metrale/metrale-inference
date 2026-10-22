@@ -39,7 +39,7 @@ pub const CIRCUITS: [(&str, &str); 5] = [
 ];
 
 /// 2026-09-28: Every precision table an instance can name.
-pub const PRECISION: [(&str, &str); 5] = [
+pub const PRECISION: [(&str, &str); 6] = [
     (
         "qwen3.6-35b-a3b-fp8-bf16head",
         kernel_file!("circuits/precision/qwen3.6-35b-a3b-fp8-bf16head.toml"),
@@ -55,6 +55,11 @@ pub const PRECISION: [(&str, &str); 5] = [
     (
         "glm-5.3-flash-nvfp4",
         kernel_file!("circuits/precision/glm-5.3-flash-nvfp4.toml"),
+    ),
+    // 2026-10-22: The served GLM recipe's formats (W4A16 KDA and shared expert, W8A8 DSA).
+    (
+        "glm-5.3-flash-nvfp4-tp3",
+        kernel_file!("circuits/precision/glm-5.3-flash-nvfp4-tp3.toml"),
     ),
     (
         "deepseek-v4.1-flash-mxfp4",

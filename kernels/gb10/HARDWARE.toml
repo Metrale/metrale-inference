@@ -255,6 +255,7 @@ ops = ["linear", "lm_head"]
 modes = ["decode", "multi_seq", "verify", "draft"]
 rows = [1, 3]
 kernels = [
+  "w4a16_gemv::w4a16_gemv",
   "w4a16_gemv::w4a16_gemv_sw",
   "w4a16_gemv::w4a16_gemv_qg",
   "w4a16_gemv::w4a16_gemv_batch2",
@@ -397,6 +398,17 @@ kernels = [
 ]
 kind = "backlog"
 reason = "GLM-5 BF16 projections at 2-16 rows: CUDA-core batched GEMVs with the accumulators in registers (2-8 rows) or the wide entry (9-16), the M = 1 GEMV's bits per row. dense_bf16_tc (tc8/tc16) covers BF16 at these rows; measure it against them at the KDA, DSA and shared-expert widths."
+
+# 2026-10-22: GLM-5's shared expert under the recipe's `--dense-quantization w4a16` at one row:
+# the NVFP4 CUDA-core GEMV for gate, up and down, with the clamp + SiLU between them in the same
+# rule group (FUSIONS.toml `glm_w4a16_shared_1row`).
+[[tensor_core_policy.exempt]]
+ops = ["linear:shared_gate_up", "linear:shared_down"]
+modes = ["decode"]
+rows = [1, 1]
+kernels = ["w4a16_gemv::w4a16_gemv", "glm5next_ffn::glm5next_swiglu_clamp"]
+kind = "backlog"
+reason = "GLM-5 W4A16 shared expert at one row on the CUDA-core NVFP4 GEMV, as every W4A16 projection of one row (#1). The tensor-core row tile w4a16_tc_rows runs it from two rows; measure it at one row against this GEMV."
 
 # 2026-10-02: What the driver holds beyond the allocation ledger on this class, for the circuit
 # memory model (`met circuit memory`, crates/circuit/src/memory/budget.rs). Calibrated by PR #72 on

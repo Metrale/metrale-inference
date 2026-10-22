@@ -848,7 +848,6 @@ numerics = "reference"
 priority = 10
 cite = "ml/qwen3_ssm/trait_decode_batched/qkvz_proj.rs:103; ml/qwen3_ssm/trait_decode_batched/out_proj.rs:100-118; ml/qwen3_attention/trait_impl/multi_seq/qkv/batch.rs:269-316; ml/qwen3_attention/trait_impl/multi_seq/attn/o_proj.rs:330-366; ml/dense_ffn_decode_batch.rs:238-307"
 
-
 # 2026-09-30: The batched verify's projections at 4..8 rows: `nvfp4_proj_small_m` on the batchm
 # tier, the same launch the K=4 single-sequence verify makes (`trait_decode_batched/qkvz_proj.rs`,
 # `out_proj.rs`, attention `wide_verify_gemm`).
@@ -1777,7 +1776,6 @@ modes = ["verify"]
 numerics = "reference"
 priority = 10
 cite = "me/verify_b.rs:374-389; me/verify_c.rs:344-356; me/verify_c2.rs:363-375 (one argmax_bf16 per row into scratch + 4t, inside the graph)"
-
 
 # 2026-09-30: The batched verify's argmax: one launch for every row (`verify_rows_argmax`), into
 # the buffer the verify reads back (the mapped host blob, or scratch).
@@ -3160,8 +3158,8 @@ cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:252-263 (verify: in
 [[rule]]
 id = "glm_index_selector_pair"
 pattern = [
-  { op = "linear", role = "index_weights", weight = "bf16", writes = "f32", keep = true },
-  { op = "linear", role = "index_q", weight = "bf16", writes = "f32", sibling = true },
+  { op = "linear", role = "index_weights", weight = "bf16", writes = "f32", keep = true, layer_kind = "deepseek_sparse_attention" },
+  { op = "linear", role = "index_q", weight = "bf16", writes = "f32", sibling = true, layer_kind = "deepseek_sparse_attention" },
 ]
 kernels = [{ module = "dense_gemv_bf16_batchm_few", func = "dense_gemv_bf16_batchm_few_fp32out_pair" }]
 repeat = "once"
@@ -3174,7 +3172,7 @@ cite = "crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:244-254 (selecto
 
 [[rule]]
 id = "glm_index_f32_gemv_wide"
-pattern = [{ op = "linear", roles = ["index_q", "index_weights"], weight = "bf16", writes = "f32" }]
+pattern = [{ op = "linear", roles = ["index_q", "index_weights"], weight = "bf16", writes = "f32", layer_kind = "deepseek_sparse_attention" }]
 kernels = [{ module = "dense_gemv_bf16_batchm", func = "dense_gemv_bf16_batchm_wide_fp32out" }]
 repeat = "once"
 emitter = "dense_gemv"
@@ -3537,3 +3535,204 @@ modes = ["multi_seq", "verify"]
 numerics = "reference"
 priority = 120
 cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:385-395,215-225 (zeroes_in_swiglu: rows 2..=16, not the own-slots arm); crates/model-arch/src/glm5next_mlp/forward/launch.rs:147-171"
+
+# 2026-10-22: The served recipe's re-quantized projections (glm-5.3/glm-5.3-flash-nvfp4-tp3-512k:
+# `--dense-quantization w4a16`, `--dsa-quantization w8a8`; kernels/circuits/precision/
+# glm-5.3-flash-nvfp4-tp3.toml), each rule naming what `glm_mm` launches at the default levers
+# (the recipe's METRALE_GLM_W4A16_SEG, _W4A16_GEMV_SEG, _W4A16_GEMV_ROWS and _DSA_DECODE_HB are
+# env levers, off by default: crates/settings/src/groups/kernels.rs:94,165-167). Under the
+# declared formats no node matches them (their weights are NVFP4 W4A16 or FP8 W8A8 only here).
+# W4A16: `glm5next_w4a16_dense::proj` (crates/model-arch/src/glm5next_w4a16_dense.rs:315-404)
+# runs `w4a16_gemv` at one row and the tensor-core row tile `w4a16_tc_rows_16` at 2..=16 (the
+# segmented tiers and the GEMV tiers above one row need those levers); `proj_group` declines
+# with the segmented mode off (:418-440), so each projection is its own launch.
+[[rule]]
+id = "glm_w4a16_gemv_1row"
+pattern = [{ op = "linear", roles = ["q", "k", "v", "o", "kda_b", "kda_f_a", "kda_g_a"], weight = "nvfp4/g16", input = "bf16", layer_kind = "linear_attention" }]
+kernels = [{ module = "w4a16_gemv", func = "w4a16_gemv" }]
+repeat = "once"
+emitter = "glm_w4a16"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 120
+cite = "crates/model-arch/src/glm5next_w4a16_dense.rs:350-362 (one row: w4a16_gemv::w4a16_gemv; glm_w4a16_gemv_seg off, :332); crates/model-arch/src/glm5next_layer/wide_gemv.rs:178-180 (glm_mm asks the W4A16 registry first); crates/model-arch/src/glm5next_w4a16_dense.rs:110-131 (tier_of: these are W4A16)"
+
+[[rule]]
+id = "glm_w4a16_tc_rows"
+pattern = [{ op = "linear", roles = ["q", "k", "v", "o", "kda_b", "kda_f_a", "kda_g_a"], weight = "nvfp4/g16", input = "bf16", layer_kind = "linear_attention" }]
+kernels = [{ module = "w4a16_tc_rows", func = "w4a16_tc_rows_16" }]
+repeat = "once"
+emitter = "glm_w4a16"
+rows = [2, 16]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 120
+cite = "crates/model-arch/src/glm5next_w4a16_dense.rs:364-404 (gemv_tier needs glm_w4a16_gemv_rows, the segmented launch glm_w4a16_seg: both unset, so w4a16_tc_rows); crates/model-layers/src/layers/ops/w4a16_tc_rows.rs:96-106 (the 16-row entry up to 16 rows)"
+
+# 2026-10-22: The shared expert under W4A16: gate, up and down each a W4A16 projection (proj_group
+# declines with glm_w4a16_seg unset), the clamp + SiLU between them one launch. The rule spans the
+# whole expert because its `swiglu_clamp` is what tells it apart from another model's W4A16 shared
+# expert (Qwen3.6's GDN layers are `linear_attention` too).
+[[rule]]
+id = "glm_w4a16_shared_1row"
+pattern = [
+  { op = "linear", role = "shared_gate_up", weight = "nvfp4/g16", input = "bf16" },
+  { op = "swiglu_clamp", local = "shared_clamp", holds = "f32" },
+  { op = "silu_mul", local = "shared_act" },
+  { op = "linear", role = "shared_down", weight = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a16_gemv", func = "w4a16_gemv" },
+  { module = "w4a16_gemv", func = "w4a16_gemv" },
+  { module = "glm5next_ffn", func = "glm5next_swiglu_clamp" },
+  { module = "w4a16_gemv", func = "w4a16_gemv" },
+]
+repeat = "once"
+emitter = "glm_w4a16"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 120
+cite = "crates/model-arch/src/glm5next_mlp/forward/dense.rs:62-114 (gate, up, the clamp + SiLU, down; proj_group declines with glm_w4a16_seg unset); crates/model-arch/src/glm5next_w4a16_dense.rs:350-362"
+
+[[rule]]
+id = "glm_w4a16_shared_tc_rows"
+pattern = [
+  { op = "linear", role = "shared_gate_up", weight = "nvfp4/g16", input = "bf16" },
+  { op = "swiglu_clamp", local = "shared_clamp", holds = "f32" },
+  { op = "silu_mul", local = "shared_act" },
+  { op = "linear", role = "shared_down", weight = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a16_tc_rows", func = "w4a16_tc_rows_16" },
+  { module = "w4a16_tc_rows", func = "w4a16_tc_rows_16" },
+  { module = "glm5next_ffn", func = "glm5next_swiglu_clamp" },
+  { module = "w4a16_tc_rows", func = "w4a16_tc_rows_16" },
+]
+repeat = "once"
+emitter = "glm_w4a16"
+rows = [2, 16]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 120
+cite = "crates/model-arch/src/glm5next_mlp/forward/dense.rs:62-114; crates/model-arch/src/glm5next_w4a16_dense.rs:364-404"
+
+# 2026-10-22: W8A8 (FP8 per-channel weights, per-token FP8 activations): `glm5next_fp8_dense::proj`
+# (crates/model-arch/src/glm5next_fp8_dense.rs:306-366) quantizes the input
+# (`w8a8_act_quant_row`, the circuit's act_quant node, rule `w8a8_act_quant_row`) and runs the
+# row-scale GEMV entry `entry_index` picks: `mb1_ku8` at 1..=8 rows, `mb2` at 9..=16
+# (crates/model-layers/src/layers/ops/w8a8_decode.rs:259-267). The DSA q_a and kv_a of 1..=8 rows
+# share one quantization of the layer input and one `_split4` launch (glm_dsa_proj_in_merged,
+# on: crates/settings/src/groups/kernels.rs:117).
+[[rule]]
+id = "glm_w8a8_dsa_proj_in_split4"
+pattern = [
+  { op = "linear", role = "mla_q_a", weight = "fp8/channel", input = "fp8/token", keep = true, layer_kind = "deepseek_sparse_attention" },
+  { op = "linear", role = "mla_kv_a", weight = "fp8/channel", input = "fp8/token", sibling = true, layer_kind = "deepseek_sparse_attention" },
+]
+kernels = [{ module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb1_ku8_split4" }]
+repeat = "once"
+emitter = "glm_w8a8"
+rows = [1, 8]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 30
+cite = "crates/model-arch/src/glm5next_dsa/layer/proj_in_merged.rs:1-15,58-72 (q_a and kv_a as one quantization and one split launch where the FP8 registry serves both, 1..=8 rows); crates/model-arch/src/glm5next_fp8_dense_split.rs:32-41 (SPLIT4_MAX_ROWS); crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:30-36"
+
+[[rule]]
+id = "glm_w8a8_dsa_mb1_ku8"
+pattern = [{ op = "linear", roles = ["mla_q_a", "mla_kv_a", "mla_q_b", "o"], weight = "fp8/channel", input = "fp8/token", layer_kind = "deepseek_sparse_attention" }]
+kernels = [{ module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb1_ku8" }]
+repeat = "once"
+emitter = "glm_w8a8"
+rows = [1, 8]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:62 (q_absorb), :137-149 (o_absorb); crates/model-arch/src/glm5next_fp8_dense.rs:341-366; crates/model-layers/src/layers/ops/w8a8_decode.rs:259-267"
+
+[[rule]]
+id = "glm_w8a8_dsa_mb2"
+pattern = [{ op = "linear", roles = ["mla_q_a", "mla_kv_a", "mla_q_b", "o"], weight = "fp8/channel", input = "fp8/token", layer_kind = "deepseek_sparse_attention" }]
+kernels = [{ module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb2" }]
+repeat = "once"
+emitter = "glm_w8a8"
+rows = [9, 16]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:30-79,137-149 (above 8 rows the split declines and each projection runs alone; kv_a then re-quantizes the input q_absorb's quantization replaced); crates/model-arch/src/glm5next_fp8_dense.rs:341-366; crates/model-layers/src/layers/ops/w8a8_decode.rs:259-267"
+
+[[rule]]
+id = "glm_w8a8_kda_mb1_ku8"
+pattern = [{ op = "linear", roles = ["kda_f_b", "kda_g_b"], weight = "fp8/channel", input = "fp8/token", layer_kind = "linear_attention" }]
+kernels = [{ module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb1_ku8" }]
+repeat = "once"
+emitter = "glm_w8a8"
+rows = [1, 8]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_kda/gate_at.rs:76 (f_b), crates/model-arch/src/glm5next_kda/mod.rs:418 (g_b); crates/model-arch/src/glm5next_kda/gates_fused.rs:76-81,109-113 (kda_gates_w8a8_k128_rows needs the W4A16-seg low-rank group, glm_w4a16_seg unset); crates/model-arch/src/glm5next_fp8_dense.rs:341-366"
+
+[[rule]]
+id = "glm_w8a8_kda_mb2"
+pattern = [{ op = "linear", roles = ["kda_f_b", "kda_g_b"], weight = "fp8/channel", input = "fp8/token", layer_kind = "linear_attention" }]
+kernels = [{ module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb2" }]
+repeat = "once"
+emitter = "glm_w8a8"
+rows = [9, 16]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_kda/gate_at.rs:76; crates/model-arch/src/glm5next_kda/mod.rs:418; crates/model-arch/src/glm5next_fp8_dense.rs:341-366; crates/model-layers/src/layers/ops/w8a8_decode.rs:259-267"
+
+# 2026-10-22: The indexer key and compress gate at one row reuse the layer input's quantization
+# (`stable_input`, the split launch's: decode_k.rs:119-123, glm5next_fp8_dense.rs:341-345), so
+# only the GEMV runs; per row in a verify or batched decode each row's input differs from the
+# quantized one, so each row quantizes and runs the GEMV (decode_k.rs:252-263,
+# decode_rows.rs:328-337).
+[[rule]]
+id = "glm_w8a8_index_kgate_1row"
+pattern = [{ op = "linear", roles = ["index_k", "index_gate"], weight = "fp8/channel", input = "fp8/token", layer_kind = "deepseek_sparse_attention" }]
+kernels = [{ module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb1_ku8" }]
+repeat = "once"
+emitter = "glm_w8a8"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:119-123 (stable_input); crates/model-arch/src/glm5next_fp8_dense.rs:341-345 (the scratch already holds this input's quantization); crates/model-arch/src/glm5next_dsa/layer.rs:207-244"
+
+[[rule]]
+id = "glm_w8a8_index_kgate_rows"
+pattern = [{ op = "linear", roles = ["index_k", "index_gate"], weight = "fp8/channel", input = "fp8/token", layer_kind = "deepseek_sparse_attention" }]
+kernels = [
+  { module = "w8a8_act_quant", func = "w8a8_act_quant_row" },
+  { module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb1_ku8" },
+]
+repeat = "per_row"
+emitter = "glm_w8a8"
+rows = [2, 16]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 30
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:252-263; crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:328-337; crates/model-arch/src/glm5next_fp8_dense.rs:346-366 (one row at another input: quantize, then the GEMV)"
+
+# 2026-10-22: The latent decode alone, where the absorbed q and o are not BF16 (the recipe's W8A8
+# DSA): one per-head launch over every row (glm_dsa_decode_hb unset; the recipe's
+# METRALE_GLM_DSA_DECODE_HB=8 runs the head-batched kernel instead). Below glm_mla_absorbed, which
+# keeps the declared plan.
+[[rule]]
+id = "glm_mla_attend"
+pattern = [{ op = "mla_attention", layer_kind = "deepseek_sparse_attention" }]
+kernels = [{ module = "glm5next_dsa_mla_decode", func = "glm5next_dsa_mla_decode_fp8" }]
+repeat = "once"
+emitter = "dsa"
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify"]
+when = { kv_cache_dtype = "fp8" }
+numerics = "reference"
+priority = 50
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:366-369; crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:376-386; crates/model-arch/src/glm5next_dsa/attend.rs:113-121,419-443"

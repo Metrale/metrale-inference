@@ -1,0 +1,201 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-22: The formats each linear module of nvidia/GLM-5.3-Flash-NVFP4 runs at under the
+# recipe glm-5.3/glm-5.3-flash-nvfp4-tp3-512k (`weight_quantization: declared`,
+# `dense_quantization: w4a16`, `dsa_quantization: w8a8`, `kv_cache_dtype: fp8`, TP=3, one MTP
+# draft). The engine quantizes the checkpoint's BF16 projections at load; the rest keep the
+# declared formats (kernels/circuits/precision/glm-5.3-flash-nvfp4.toml). Formats only: the
+# circuit plans the whole model, not one TP rank's slice.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/precision.rs).
+# Invariants:
+# - First match wins; the last entry is the catch-all.
+# - why, per group (each cite is the code that decides it). The loader asks
+#   `dense_tiers::tier_for` (crates/model-arch/src/weight_loader/glm5_next_load/dense_tiers.rs:
+#   44-60): the DSA q_a / absorbed q / absorbed o follow `--dsa-quantization`, every other
+#   projection `--dense-quantization` through `tier_of`.
+#   - W4A16 (NVFP4 g16 weights, BF16 activations): KDA q/k/v, f_a, b, g_a, o and the shared
+#     expert's gate/up/down. `glm5next_w4a16_dense::tier_of` answers W4a16 for exactly these
+#     (crates/model-arch/src/glm5next_w4a16_dense.rs:110-131); the loader quantizes them with
+#     the engine's NVFP4 recipe (`quantize_to_nvfp4`, :1-10) and they run on 16-bit
+#     activations.
+#   - W8A8 (FP8 E4M3 weights with one F32 scale per output channel, dynamic per-token FP8
+#     activations): KDA f_b and g_b (their K, the 128-wide head dim, is half the W4A16 row
+#     tile's K unit, :17-18), the DSA q_a, kv_a, absorbed q (q_b), absorbed o, the indexer's wk
+#     and compress gate. `tier_of` answers Fp8 for them; under `--dsa-quantization w8a8` the
+#     FP8 registry serves them (crates/model-arch/src/glm5next_fp8_dense.rs:1-15,116-123).
+#   - BF16: the router (`mlp.gate`), the indexer's wq_b (index_q) and weights_proj
+#     (index_weights), the FP32-output projections neither registry takes
+#     (glm5next_fp8_dense.rs:8-10); lm_head; and the whole MTP layer 45, which the checkpoint
+#     excludes and the dense tiers do not reach.
+#   - NVFP4 W4A4: the routed experts and the dense MLP of layers 0-2, at the checkpoint's
+#     declared formats (`weight_quantization: declared`).
+# - KDA and DSA layers both name `self_attn.o_proj`: the DSA layers (3, 7, ..., 43; the
+#   instance's `layer_kinds`) are listed one by one before the KDA glob.
+# - The absorbed q and o are load-time products of q_b_proj / o_proj with kv_b_proj's halves
+#   (glm5next_dsa/layer.rs:67-78); the circuit names them by q_b_proj and o_proj, so those
+#   carry the FP8 format. kv_b_proj itself runs no projection and stays at the catch-all.
+
+schema = 1
+checkpoint = "nvidia/GLM-5.3-Flash-NVFP4"
+tier = "recipe"
+
+[[linear]]
+match = "model.language_model.layers.45.*"
+weight = "bf16"
+activation = "bf16"
+
+[[linear]]
+match = "model.language_model.layers.3.self_attn.o_proj"
+weight = "fp8/channel"
+activation = "fp8/token"
+
+[[linear]]
+match = "model.language_model.layers.7.self_attn.o_proj"
+weight = "fp8/channel"
+activation = "fp8/token"
+
+[[linear]]
+match = "model.language_model.layers.11.self_attn.o_proj"
+weight = "fp8/channel"
+activation = "fp8/token"
+
+[[linear]]
+match = "model.language_model.layers.15.self_attn.o_proj"
+weight = "fp8/channel"
+activation = "fp8/token"
+
+[[linear]]
+match = "model.language_model.layers.19.self_attn.o_proj"
+weight = "fp8/channel"
+activation = "fp8/token"
+
+[[linear]]
+match = "model.language_model.layers.23.self_attn.o_proj"
+weight = "fp8/channel"
+activation = "fp8/token"
+
+[[linear]]
+match = "model.language_model.layers.27.self_attn.o_proj"
+weight = "fp8/channel"
+activation = "fp8/token"
+
+[[linear]]
+match = "model.language_model.layers.31.self_attn.o_proj"
+weight = "fp8/channel"
+activation = "fp8/token"
+
+[[linear]]
+match = "model.language_model.layers.35.self_attn.o_proj"
+weight = "fp8/channel"
+activation = "fp8/token"
+
+[[linear]]
+match = "model.language_model.layers.39.self_attn.o_proj"
+weight = "fp8/channel"
+activation = "fp8/token"
+
+[[linear]]
+match = "model.language_model.layers.43.self_attn.o_proj"
+weight = "fp8/channel"
+activation = "fp8/token"
+
+[[linear]]
+match = "*.self_attn.q_proj"
+weight = "nvfp4/g16"
+activation = "bf16"
+
+[[linear]]
+match = "*.self_attn.k_proj"
+weight = "nvfp4/g16"
+activation = "bf16"
+
+[[linear]]
+match = "*.self_attn.v_proj"
+weight = "nvfp4/g16"
+activation = "bf16"
+
+[[linear]]
+match = "*.self_attn.f_a_proj"
+weight = "nvfp4/g16"
+activation = "bf16"
+
+[[linear]]
+match = "*.self_attn.b_proj"
+weight = "nvfp4/g16"
+activation = "bf16"
+
+[[linear]]
+match = "*.self_attn.g_a_proj"
+weight = "nvfp4/g16"
+activation = "bf16"
+
+[[linear]]
+match = "*.self_attn.o_proj"
+weight = "nvfp4/g16"
+activation = "bf16"
+
+[[linear]]
+match = "*.self_attn.f_b_proj"
+weight = "fp8/channel"
+activation = "fp8/token"
+
+[[linear]]
+match = "*.self_attn.g_b_proj"
+weight = "fp8/channel"
+activation = "fp8/token"
+
+[[linear]]
+match = "*.self_attn.q_a_proj"
+weight = "fp8/channel"
+activation = "fp8/token"
+
+[[linear]]
+match = "*.self_attn.kv_a_proj_with_mqa"
+weight = "fp8/channel"
+activation = "fp8/token"
+
+[[linear]]
+match = "*.self_attn.q_b_proj"
+weight = "fp8/channel"
+activation = "fp8/token"
+
+[[linear]]
+match = "*.self_attn.indexer.wk"
+weight = "fp8/channel"
+activation = "fp8/token"
+
+[[linear]]
+match = "*.self_attn.indexer.index_kpool_compress_gate"
+weight = "fp8/channel"
+activation = "fp8/token"
+
+[[linear]]
+match = "*.mlp.shared_experts.*"
+weight = "nvfp4/g16"
+activation = "bf16"
+
+[[linear]]
+match = "*.mlp.experts.*"
+weight = "nvfp4/g16"
+activation = "nvfp4/g16"
+
+[[linear]]
+match = "*.mlp.gate_proj"
+weight = "nvfp4/g16"
+activation = "nvfp4/g16"
+
+[[linear]]
+match = "*.mlp.up_proj"
+weight = "nvfp4/g16"
+activation = "nvfp4/g16"
+
+[[linear]]
+match = "*.mlp.down_proj"
+weight = "nvfp4/g16"
+activation = "nvfp4/g16"
+
+[[linear]]
+match = "*"
+weight = "bf16"
+activation = "bf16"

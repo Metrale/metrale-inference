@@ -230,12 +230,17 @@ pub fn display_on(
 }
 
 /// 2026-09-30: Some node of `c` has the op (and, for a linear, a role) the rule's first pattern
-/// op names: the rule could apply to this model at all.
+/// op names: the rule could apply to this model at all. 2026-10-22: and its layer kind, when the
+/// pattern names one (a GLM-only rule names a GLM layer kind, which no other model has).
 fn heads_a_node(r: &crate::rules::Rule, c: &crate::ir::Circuit) -> bool {
     r.pattern.first().is_some_and(|p| {
-        c.nodes.iter().any(|n| match n.op {
-            crate::ir::OpKind::Linear(role) if !p.roles.is_empty() => p.roles.contains(&role),
-            op => op == p.op,
+        c.nodes.iter().any(|n| {
+            let kind = n.layer.map(|l| c.layer_kinds[l]);
+            let op = match n.op {
+                crate::ir::OpKind::Linear(role) if !p.roles.is_empty() => p.roles.contains(&role),
+                op => op == p.op,
+            };
+            op && p.layer_kind.is_none_or(|k| kind == Some(k))
         })
     })
 }

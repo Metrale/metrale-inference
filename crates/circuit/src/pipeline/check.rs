@@ -15,8 +15,9 @@
 //!   inside a [`PipelineError::Mismatch`]); only a hardware planner's placeholder group (no
 //!   kernel of the class covers the op) is exempt, since nothing runs it.
 //! - The family of a node is the one, among those listing a kernel of its group and
-//!   implementing its op (with its role and weight format), that names the role explicitly,
-//!   else the first in manifest order.
+//!   implementing its op (with its role and weight format), that names the role explicitly
+//!   or (2026-10-22) whose spec of a non-linear op states a neighbour constraint that holds
+//!   there, else the first in manifest order.
 
 use std::collections::BTreeMap;
 
@@ -27,7 +28,7 @@ use crate::hardware::plan::NOVEL_EMITTER;
 use crate::ir::{Circuit, Node, NodeIdx, OpKind};
 use crate::rules::Rule;
 use crate::venn::Subject;
-use crate::venn::classify::point_of;
+use crate::venn::classify::{neighbours_hold, point_of};
 use crate::venn::families::{Families, Family};
 
 /// 2026-10-02: The required pipeline of every node a plan runs, and the steps its rules state.
@@ -54,8 +55,16 @@ impl PlanPipelines {
     }
 }
 
-/// 2026-10-02: The family that declares node `node`'s pipeline in group `g`.
-pub fn family_of<'f>(families: &'f Families, g: &Group, node: &Node) -> Option<&'f Family> {
+/// 2026-10-02: The family that declares node `node` of `c`'s pipeline in group `g`.
+/// 2026-10-22: A non-linear op's spec whose neighbour constraint holds ranks as a linear spec
+/// naming the role: the GLM clamp kernel's `silu_mul` after `swiglu_clamp` beats a GEMV family
+/// that lists the op for its own fused entry when both families' kernels share a group.
+pub fn family_of<'f>(
+    families: &'f Families,
+    g: &Group,
+    c: &Circuit,
+    node: &Node,
+) -> Option<&'f Family> {
     let listed = |f: &Family| {
         if g.kernels.is_empty() {
             f.emitters.contains(&g.emitter)
@@ -72,6 +81,11 @@ pub fn family_of<'f>(families: &'f Families, g: &Group, node: &Node) -> Option<&
                 OpKind::Linear(r) if s.roles.contains(&r) => Some(0),
                 OpKind::Linear(_) if s.roles.is_empty() => Some(1),
                 OpKind::Linear(_) => None,
+                _ if !(s.after.is_empty() && s.feeds.is_empty() && s.beside.is_empty())
+                    && neighbours_hold(s, c, node) =>
+                {
+                    Some(0)
+                }
                 _ => Some(1),
             })
             .min()
@@ -184,7 +198,7 @@ fn declared<'f>(
                 .join(" + ")
         }
     };
-    let fam = family_of(families, g, node).ok_or_else(|| PipelineError::Undeclared {
+    let fam = family_of(families, g, subject.circuit, node).ok_or_else(|| PipelineError::Undeclared {
         node: node.id.clone(),
         op: node.op.name(),
         kernels: kernels(),

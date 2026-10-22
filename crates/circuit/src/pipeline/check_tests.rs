@@ -167,3 +167,76 @@ fn a_fused_edge_that_changes_format_must_be_stated_and_declared_alike() {
             .any(|m| m.node == "l0.ffn.act" && m.diffs == ["out[0]: required f32, declared bf16"])
     );
 }
+
+/// 2026-10-22: A group of the up projection and the SiLU launching `m::gemv` (whose family, first
+/// in manifest order, also lists the SiLU for a fused entry of its own, declaring an FP32
+/// hand-off) and `m::act_after` (whose family's SiLU spec is constrained `after = [{after}]`).
+fn shared_family_case(after: &str) -> Result<super::PlanPipelines, PipelineError> {
+    let rules = test_toy::rules(
+        r#"
+[[rule]]
+id = "up_act"
+pattern = [{ op = "linear", role = "gate_up" }, { op = "silu_mul" }]
+kernels = [{ module = "m", func = "gemv" }, { module = "m", func = "act_after" }]
+repeat = "once"
+emitter = "up_act"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 50
+cite = "test"
+"#,
+    );
+    let extra = format!(
+        r#"[[family]]
+id = "gemv"
+description = "toy"
+compute = "cuda_core"
+kernels = ["m::gemv"]
+rows = [1, 128]
+{}
+pipeline.silu_mul = {{ in = ["bf16"], compute = "f32", out = ["f32"] }}
+op = [{{ op = "linear" }}, {{ op = "silu_mul" }}]
+[[family.point]]
+values = {{}}
+how = "instantiation"
+files = ["t.cu"]
+[[family]]
+id = "act_after"
+description = "toy"
+compute = "cuda_core"
+kernels = ["m::act_after"]
+rows = [1, 128]
+{}
+op = [{{ op = "silu_mul", after = ["{after}"] }}]
+[[family.point]]
+values = {{}}
+how = "instantiation"
+files = ["t.cu"]
+"#,
+        test_toy::pipelines(&["linear"]),
+        test_toy::pipelines(&["silu_mul"]),
+    );
+    check(&rules, &families(&extra, ("", "")))
+}
+
+// 2026-10-22: Two families listed by one group both name the SiLU; the one whose `after`
+// constraint holds at the node declares its pipeline, else manifest order decides. Mutation:
+// ranking every non-linear spec alike lets the GEMV family's FP32 hand-off refuse the plan.
+#[test]
+fn a_family_whose_neighbour_constraint_holds_declares_the_op_over_an_earlier_one() {
+    let p = shared_family_case("linear").unwrap();
+    let c = test_toy::circuit(2);
+    assert_eq!(
+        p.line(c.node("l0.ffn.act").unwrap()).unwrap(),
+        "bf16 -> [compute f32] -> bf16"
+    );
+    // 2026-10-22: The constraint does not hold (the SiLU follows a linear, not a norm): the
+    // earlier GEMV family declares it and its FP32 hand-off is refused.
+    let m = mismatches(shared_family_case("rms_norm").unwrap_err());
+    assert!(
+        m.iter()
+            .any(|m| m.node == "l0.ffn.act" && m.diffs == ["out[0]: required bf16, declared f32"]),
+        "{m:?}"
+    );
+}
