@@ -75,6 +75,7 @@ pub(crate) fn kernels() -> Glm5NextDsaKernels {
             expand_folded: h(EXPAND_FOLDED),
             select_fused: h(0),
             scores_heads_paged: h(0),
+            scores_heads_window: h(0),
             topk_mc_pass: h(0),
             topk_mc_collect: h(0),
             sm_count: 0,

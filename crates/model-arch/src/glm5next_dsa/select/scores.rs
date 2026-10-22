@@ -15,6 +15,7 @@
 //!   scratch's `pool_keys`, `pool_indices` or `pool_valid`.
 
 use super::*;
+use metrale_gpu_runtime::gpu::KernelHandle;
 
 /// 2026-10-21: Whether the warp-per-pool kernels take this shape (`DSA_SW_HMAX`,
 /// `DSA_SW_DMAX`, whole warps of channels).
@@ -25,6 +26,12 @@ fn warp_shape(geom: &DsaSelectGeometry) -> bool {
 /// 2026-10-21: `DSA_SH_D` and the most rows of `dsa_index_scores_heads_paged` (`DSA_SW_WARPS`).
 pub(crate) const SCORES_HEADS_D: usize = 128;
 pub(crate) const SCORES_HEADS_MAX_ROWS: usize = 8;
+
+/// 2026-10-22: The fewest rows `dsa_index_scores_heads_window` takes: a verify's. Its walk
+/// saves the head math's bookkeeping, which a 2-row pass is bound by (gate
+/// examples/glm5next_dsa_ceiling_scores_gate.rs, 32,768 pools: 92 -> 82 us); a 1-row pass is
+/// bound by the key reads (72 us either way, the window walk sometimes 80 us in a replayed graph).
+pub(crate) const SCORES_WINDOW_MIN_ROWS: usize = 2;
 
 /// 2026-10-21: Whether a persisted pass's scores run as `dsa_index_scores_heads_paged`: the
 /// lever on, the kernel and the SM count resolved, its shape (at most 32 heads of exactly 128,
@@ -44,6 +51,29 @@ pub(crate) fn heads_for(
         && geom.q_rows <= SCORES_HEADS_MAX_ROWS
         && inputs.rows.pool_keys.0.is_multiple_of(16)
         && inputs.rows.pk_blk.is_multiple_of(4)
+}
+
+/// 2026-10-22: The lane-per-head kernel a persisted pass's scores run as ([`heads_for`]), or
+/// `None` for `dsa_index_scores_warp_paged`: `dsa_index_scores_heads_window` for a pass of at
+/// least [`SCORES_WINDOW_MIN_ROWS`] rows under `METRALE_GLM_DSA_SCORES_HEADS_WINDOW` when it
+/// resolved, else `dsa_index_scores_heads_paged` (the same bytes, arguments and grid).
+pub(crate) fn heads_kernel(
+    kernels: &Glm5NextDsaKernels,
+    geom: &DsaSelectGeometry,
+    inputs: &DsaSelectInputs,
+    scratch: &DsaSelectScratch,
+) -> Option<KernelHandle> {
+    let window = kernels.rows.scores_heads_window;
+    heads_for(kernels, geom, inputs, scratch).then_some(
+        if scratch.levers.scores_heads_window
+            && window.0 != 0
+            && geom.q_rows >= SCORES_WINDOW_MIN_ROWS
+        {
+            window
+        } else {
+            kernels.rows.scores_heads_paged
+        },
+    )
 }
 
 /// 2026-10-21: Whether a pass scores the persisted pool keys: a ceiling launch (a captured
@@ -111,13 +141,12 @@ pub(super) fn launch_scores(
     if persisted {
         // 2026-10-21: `METRALE_GLM_DSA_SCORES_HEADS` (default on): the same bytes, one lane per
         // index head, one block per SM with every row in it.
-        let (k, grid) = if heads_for(kernels, geom, inputs, scratch) {
-            (kernels.rows.scores_heads_paged, [kernels.rows.sm_count, 1, 1])
-        } else {
-            (
+        let (k, grid) = match heads_kernel(kernels, geom, inputs, scratch) {
+            Some(k) => (k, [kernels.rows.sm_count, 1, 1]),
+            None => (
                 kernels.rows.scores_warp_paged,
                 [scores_warp_grid_x(npools_a), geom.q_rows as u32, 1],
-            )
+            ),
         };
         return KernelLaunch::new(gpu, k)
             .grid(grid)

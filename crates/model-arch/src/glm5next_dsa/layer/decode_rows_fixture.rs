@@ -209,6 +209,7 @@ impl Rig {
                     expand_folded: KernelHandle(0),
                     select_fused: KernelHandle(0),
                     scores_heads_paged: KernelHandle(0),
+                    scores_heads_window: KernelHandle(0),
                     topk_mc_pass: KernelHandle(0),
                     topk_mc_collect: KernelHandle(0),
                     sm_count: 0,

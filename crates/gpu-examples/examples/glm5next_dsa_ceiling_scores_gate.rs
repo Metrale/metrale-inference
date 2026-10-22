@@ -5,12 +5,15 @@
 //! decode's ceiling scores over the persisted pool keys: GLM-5.3's indexer (32 heads of 128,
 //! pools of 4 tokens), 1 or 2 query rows (a decode row, a verify's rows), a 1M-token ceiling
 //! (262,144 pools as the row stride), the live pools in each row's device geometry.
+//! 2026-10-22: And `dsa_index_scores_heads_window` (its straight-line walk,
+//! `METRALE_GLM_DSA_SCORES_HEADS_WINDOW`) against the same reference.
 //!
 //! 1. Identity: for each context and row count, scores and candidacy bytes over the whole
 //!    ceiling rows (untouched slots included, both prefilled with the same sentinel) must be
 //!    identical, on random keys and on adversarial pools (zero, signed-zero, huge, tiny, and
 //!    sign-cancelling keys; negative and zero head weights; rows whose position leaves
-//!    pools out).
+//!    pools out); 2026-10-22: the block table carries entries past the sequence's blocks
+//!    that index far outside the key pool, so a read of one faults.
 //! 2. Timing: each kernel's launch captured 20 times in a CUDA graph over rotating copies of
 //!    the keys (128 MB, so they stream from DRAM as in the serve), replayed; us per launch and
 //!    the persisted keys' GB/s.
@@ -39,6 +42,8 @@ const PK_BLK: usize = (BS / KP) * D + 64;
 const REPS: usize = 20;
 /// 2026-10-21: Bytes of key copies a timed graph cycles through (several times GB10's L2).
 const L2_DEFEAT_BYTES: usize = 128 << 20;
+/// 2026-10-22: Block-table entries past the sequence's blocks, each far past the key pool.
+const BT_TAIL: usize = 8;
 
 struct Rng(u64);
 impl Rng {
@@ -143,6 +148,8 @@ fn build(gpu: &dyn GpuBackend, rng: &mut Rng, s: usize, rows: usize, short: bool
         geom.extend_from_slice(&[sr as i32, sr.div_ceil(KP) as i32, np as i32, np.min(SEL) as i32, 2048]);
         qpos.push(sr as i32 - 1 - if short { 6 + r as i32 } else { 0 });
     }
+    let mut bt = perm.clone();
+    bt.extend((0..BT_TAIL).map(|i| i32::MAX - i as i32));
     let pk_dev = up(gpu, &pk)?;
     let copies = (L2_DEFEAT_BYTES / (pk.len() * 4)).clamp(1, 16);
     let mut pk_copies = Vec::new();
@@ -154,7 +161,7 @@ fn build(gpu: &dyn GpuBackend, rng: &mut Rng, s: usize, rows: usize, short: bool
         pk: pk_dev,
         pk_copies,
         w: up(gpu, &w)?,
-        bt: up(gpu, &perm)?,
+        bt: up(gpu, &bt)?,
         qpos: up(gpu, &qpos)?,
         geom: up(gpu, &geom)?,
         out: gpu.alloc(rows * MAX_POOLS * 4)?,
@@ -243,7 +250,9 @@ fn first_diff(a: &[u8], b: &[u8], rows: usize) -> String {
 fn main() -> Result<()> {
     let gpu = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
     let old = gpu.kernel("dsa_scores_warp", "dsa_index_scores_warp_paged")?;
-    let new = gpu.kernel("dsa_scores_warp", "dsa_index_scores_heads_paged")?;
+    let heads = gpu.kernel("dsa_scores_warp", "dsa_index_scores_heads_paged")?;
+    let window = gpu.kernel("dsa_scores_heads_window", "dsa_index_scores_heads_window")?;
+    let news = [("heads", heads), ("window", window)];
     let sms = gpu.sm_count()?;
     let grid_new = |_c: &Case| [sms, 1, 1];
     let grid_old = |c: &Case| [c.pools.div_ceil(8).clamp(1, 192) as u32, c.rows as u32, 1];
@@ -252,7 +261,7 @@ fn main() -> Result<()> {
     let ctxs: Vec<usize> = std::env::var("GLM_CTX")
         .ok()
         .map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect())
-        .unwrap_or_else(|| vec![1_024, 16_384, 65_536, 131_072, 524_288]);
+        .unwrap_or_else(|| vec![1_024, 16_384, 65_536, 131_072, 262_144, 524_288]);
     // 2026-10-21: Identity at odd lengths and short rows too, then the timed contexts.
     for (s, short) in [(9usize, false), (37, true), (1_027, true), (4_099, false)]
         .into_iter()
@@ -262,26 +271,30 @@ fn main() -> Result<()> {
         for rows in [1usize, 2, 3] {
             let c = build(&gpu, &mut rng, s, rows, short)?;
             let a = run(&gpu, old, &c, grid_old(&c))?;
-            for g in [grid_new(&c), [1, 1, 1], [3 * sms, 1, 1]] {
-                let b = run(&gpu, new, &c, g)?;
-                ensure!(
-                    a == b,
-                    "S={s} rows={rows} short={short} grid {g:?}: heads scores differ from \
-                     dsa_index_scores_warp_paged at {}",
-                    first_diff(&a, &b, rows)
-                );
+            for (name, new) in news {
+                for g in [grid_new(&c), [1, 1, 1], [3 * sms, 1, 1]] {
+                    let b = run(&gpu, new, &c, g)?;
+                    ensure!(
+                        a == b,
+                        "S={s} rows={rows} short={short} grid {g:?}: {name} scores differ from \
+                         dsa_index_scores_warp_paged at {}",
+                        first_diff(&a, &b, rows)
+                    );
+                }
             }
             println!("S={s:7} rows={rows} short={short:5}: identical (grids {sms}, 1, {})", 3 * sms);
             if ctxs.contains(&s) && rows <= 2 && !short {
                 let pk = |i: usize| c.pk_copies[i % c.pk_copies.len()];
                 let to = graph_us(&gpu, &|i, st| launch(&gpu, old, &c, pk(i), grid_old(&c), st))?;
-                let tn = graph_us(&gpu, &|i, st| launch(&gpu, new, &c, pk(i), grid_new(&c), st))?;
+                let tn = graph_us(&gpu, &|i, st| launch(&gpu, heads, &c, pk(i), grid_new(&c), st))?;
+                let tw = graph_us(&gpu, &|i, st| launch(&gpu, window, &c, pk(i), grid_new(&c), st))?;
                 let gb = (c.pools * D * 4) as f64 / 1e3;
                 println!(
-                    "  TIME S={s:7} rows={rows}: warp_paged {to:8.1} us ({:5.1} GB/s) | heads {tn:8.1} us ({:5.1} GB/s) | {:.2}x",
+                    "  TIME S={s:7} rows={rows}: warp_paged {to:8.1} us ({:5.1} GB/s) | heads {tn:8.1} us ({:5.1} GB/s) | window {tw:8.1} us ({:5.1} GB/s) | window/heads {:.3}",
                     gb / to,
                     gb / tn,
-                    to / tn
+                    gb / tw,
+                    tw / tn
                 );
             }
             for p in [c.q, c.pk, c.w, c.bt, c.qpos, c.geom, c.out, c.cand].into_iter().chain(c.pk_copies.iter().copied()) {
@@ -289,6 +302,9 @@ fn main() -> Result<()> {
             }
         }
     }
-    println!("PASS: dsa_index_scores_heads_paged is dsa_index_scores_warp_paged's bytes");
+    println!(
+        "PASS: dsa_index_scores_heads_paged and dsa_index_scores_heads_window are \
+         dsa_index_scores_warp_paged's bytes"
+    );
     Ok(())
 }

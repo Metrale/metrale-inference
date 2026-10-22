@@ -157,6 +157,10 @@ pub struct DsaRowsKernels {
     /// lane per index head, one block per SM (`select::scores::heads_for`). Not part of
     /// [`Self::ready`].
     pub scores_heads_paged: KernelHandle,
+    /// 2026-10-22: `dsa_scores_heads_window.cu`'s `dsa_index_scores_heads_window`:
+    /// [`Self::scores_heads_paged`]'s bytes and launch with a straight-line pool step
+    /// (`select::scores::heads_kernel`). `KernelHandle(0)` whenever `scores_heads_paged` is.
+    pub scores_heads_window: KernelHandle,
     /// 2026-10-21: `dsa_topk_mc.cu`'s `dsa_topk_mc_pass` and `dsa_topk_mc_collect`:
     /// [`Self::topk_radix`]'s selection over several CTAs per row (`select::topk_mc`). Not part
     /// of [`Self::ready`].
@@ -171,6 +175,10 @@ pub struct DsaRowsKernels {
 /// 2026-10-21: Module of the warp-per-pool scores and the persisted pool keys:
 /// `dsa_scores_warp.cu`.
 pub const DSA_SCORES_WARP_MODULE: &str = "dsa_scores_warp";
+
+/// 2026-10-22: Module of the lane-per-head scores' straight-line walk:
+/// `dsa_scores_heads_window.cu`.
+pub const DSA_SCORES_HEADS_WINDOW_MODULE: &str = "dsa_scores_heads_window";
 
 /// 2026-10-14: Module of the streamed tensor-core scores: `dsa_index_scores_pipe.cu`.
 pub const DSA_SCORES_PIPE_MODULE: &str = "dsa_index_scores_pipe";
@@ -200,6 +208,15 @@ impl DsaRowsKernels {
         } else {
             warp("dsa_index_scores_heads_paged")
         };
+        let heads_window = if heads.0 == 0 {
+            KernelHandle(0)
+        } else {
+            metrale_model_layers::layers::try_kernel(
+                gpu,
+                DSA_SCORES_HEADS_WINDOW_MODULE,
+                "dsa_index_scores_heads_window",
+            )
+        };
         Self {
             store: k("dsa_indexer_store_rows"),
             write_geom: k("dsa_write_geom_rows"),
@@ -218,6 +235,7 @@ impl DsaRowsKernels {
             expand_folded: fold("dsa_expand_selection_folded"),
             select_fused: pipe("dsa_select_fused_pipe"),
             scores_heads_paged: heads,
+            scores_heads_window: heads_window,
             topk_mc_pass: mc("dsa_topk_mc_pass"),
             topk_mc_collect: mc("dsa_topk_mc_collect"),
             sm_count,
