@@ -11,9 +11,11 @@
 //! identifier class, predicted from the skeleton line it sits in. Raw `0x01`/`0x02` bytes are
 //! escaped with [`ESCAPE`], so the transform is exact for arbitrary input.
 
-use crate::cast::{ix, lo32};
+use crate::cast::ix;
 use crate::coder::BitCoder;
-use crate::slots::{COUNTER_INIT, Rates, predict};
+use crate::engine::code_byte;
+use crate::format::Profile;
+use crate::predictor::Predictor;
 use alloc::vec::Vec;
 
 /// Replaces an extracted digit run in the skeleton.
@@ -130,11 +132,6 @@ fn unzigzag(z: u64) -> i64 {
     as_i64(z >> 1) ^ -as_i64(z & 1)
 }
 
-#[inline(always)]
-fn h32(a: u32, b: u32) -> u32 {
-    lo32((u64::from(a) ^ (u64::from(b) << 32)).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 29)
-}
-
 /// A keyed memory cell: a 32-bit key guards a value.
 #[derive(Clone, Copy)]
 struct Cell {
@@ -167,17 +164,18 @@ impl Memory {
     }
 }
 
-/// Codes one number per marker: two "same delta as last time" flags under skeleton contexts,
-/// then an explicit zigzag delta (bit length, then mantissa) when both miss.
+/// Memory parameter of the inner delta-stream predictor.
+const INNER_MEM_LOG2: u8 = 16;
+
+/// Codes one number per marker as a zigzag varint delta against the previous number of the
+/// same identifier class, through an inner generic context-mixing predictor whose history is
+/// the delta byte stream itself, each delta preceded (free of charge, since both sides know
+/// it) by a byte naming the class. Unrolled code yields repeating delta sequences, which the
+/// inner orders and match model capture.
 pub struct NumberModel {
     last: Memory,
-    by_line: Memory,
-    by_class: Memory,
-    p_line: Vec<u32>,
-    p_class: Vec<u32>,
-    p_len: Vec<u32>,
-    p_mant: Vec<u32>,
-    rates: Rates,
+    pred: Predictor,
+    hist: Vec<u8>,
 }
 
 impl NumberModel {
@@ -185,92 +183,43 @@ impl NumberModel {
     pub fn new() -> Self {
         Self {
             last: Memory::new(14),
-            by_line: Memory::new(18),
-            by_class: Memory::new(14),
-            p_line: alloc::vec![COUNTER_INIT; 1 << 16],
-            p_class: alloc::vec![COUNTER_INIT; 1 << 12],
-            p_len: alloc::vec![COUNTER_INIT; 256 * 128],
-            p_mant: alloc::vec![COUNTER_INIT; 65 * 64 * 8],
-            rates: Rates::new(),
+            pred: Predictor::new(Profile::Generic, INNER_MEM_LOG2),
+            hist: Vec::new(),
         }
     }
 
-    /// Bytes the model occupies.
+    /// Bytes the model occupies beside its delta history (≤ 11 bytes per number).
     pub fn bytes() -> u64 {
-        ((1u64 << 14) + (1 << 18) + (1 << 14)) * 16 + ((1u64 << 16) + (1 << 12) + 256 * 128 + 65 * 64 * 8) * 4
-    }
-
-    #[inline]
-    fn flag(&mut self, io: &mut impl BitCoder, table: usize, at: u32, bit: Option<bool>) -> bool {
-        let want = u32::from(bit.unwrap_or(false));
-        let t = if table == 0 { &mut self.p_line } else { &mut self.p_class };
-        let i = ix(at) % t.len();
-        let got = io.code(want, predict(t[i]));
-        self.rates.update(&mut t[i], got, 1023);
-        got == 1
+        (1u64 << 14) * 16 + crate::predictor::memory_bytes(Profile::Generic, INNER_MEM_LOG2)
     }
 
     /// Code (encode when `value` is `Some`, else decode) the number at a marker whose identifier
     /// class hashes to `class` on skeleton line context `line`. Returns the value.
     pub fn code(&mut self, io: &mut impl BitCoder, class: u32, line: u32, value: Option<u64>) -> u64 {
+        let _ = line;
         let last = self.last.get(class).unwrap_or(0);
-        let delta = value.map(|v| as_i64(v.wrapping_sub(last)));
-        let line_key = h32(class, line);
-        let guess_line = self.by_line.get(line_key);
-        let guess_class = self.by_class.get(class);
-        let mut result: Option<i64> = None;
-        if let Some(g) = guess_line {
-            let hit = self.flag(io, 0, line_key >> 2, delta.map(|d| as_u64(d) == g));
-            if hit {
-                result = Some(as_i64(g));
+        let tag = (class ^ (class >> 8) ^ (class >> 16) ^ (class >> 24)) & 0xff;
+        self.hist.push(u8::try_from(tag).unwrap_or(0));
+        self.pred.byte_done(&self.hist);
+        let mut z = value.map(|v| zigzag(as_i64(v.wrapping_sub(last))));
+        let mut out = 0u64;
+        let mut shift = 0u32;
+        for _ in 0..10 {
+            let want = z.map(|z| {
+                let low = u8::try_from(z & 0x7f).unwrap_or(0);
+                if z >= 0x80 { low | 0x80 } else { low }
+            });
+            let got = code_byte(&mut self.pred, io, want, &mut self.hist);
+            z = z.map(|z| z >> 7);
+            out |= u64::from(got & 0x7f) << shift;
+            shift += 7;
+            if got & 0x80 == 0 {
+                break;
             }
         }
-        if result.is_none() {
-            if let Some(g) = guess_class {
-                if guess_line != Some(g) {
-                    let hit = self.flag(io, 1, class >> 4, delta.map(|d| as_u64(d) == g));
-                    if hit {
-                        result = Some(as_i64(g));
-                    }
-                }
-            }
-        }
-        let d = match result {
-            Some(d) => d,
-            None => self.code_explicit(io, class, delta),
-        };
-        let v = last.wrapping_add(as_u64(d));
+        let v = last.wrapping_add(as_u64(unzigzag(out)));
         self.last.set(class, v);
-        self.by_line.set(line_key, as_u64(d));
-        self.by_class.set(class, as_u64(d));
         v
-    }
-
-    fn code_explicit(&mut self, io: &mut impl BitCoder, class: u32, delta: Option<i64>) -> i64 {
-        let z = delta.map(zigzag);
-        let nbits = z.map_or(0, |z| 64 - z.leading_zeros());
-        let cls = (class >> 8) & 0xff;
-        let mut node = 1u32;
-        for k in (0..7u32).rev() {
-            let want = (nbits >> k) & 1;
-            let i = ix(cls * 128 + node);
-            let got = io.code(want, predict(self.p_len[i]));
-            self.rates.update(&mut self.p_len[i], got, 255);
-            node = (node << 1) | got;
-        }
-        let n = (node & 127).min(64);
-        let mut out: u64 = if n > 0 { 1 } else { 0 };
-        if n > 1 {
-            for k in (0..n - 1).rev() {
-                let want = z.map_or(0, |z| u32::try_from((z >> k) & 1).unwrap_or(0));
-                let top = if n - 2 - k < 3 { u32::try_from(out & 7).unwrap_or(0) } else { 0 };
-                let i = ix((n * 64 + k.min(63)) * 8 + top);
-                let got = io.code(want, predict(self.p_mant[i]));
-                self.rates.update(&mut self.p_mant[i], got, 255);
-                out = (out << 1) | u64::from(got);
-            }
-        }
-        unzigzag(out)
     }
 }
 

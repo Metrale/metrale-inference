@@ -18,7 +18,7 @@ use alloc::vec::Vec;
 
 /// Code one model byte (`Some` when encoding) and append it to `hist`. Returns the byte.
 #[inline]
-fn code_byte(pred: &mut Predictor, io: &mut impl BitCoder, byte: Option<u8>, hist: &mut Vec<u8>) -> u8 {
+pub fn code_byte(pred: &mut Predictor, io: &mut impl BitCoder, byte: Option<u8>, hist: &mut Vec<u8>) -> u8 {
     if let Some(e) = pred.lzp_candidate() {
         let hit = io.code(u32::from(byte == Some(e)), pred.lzp_p()) == 1;
         pred.lzp_update(hit);
