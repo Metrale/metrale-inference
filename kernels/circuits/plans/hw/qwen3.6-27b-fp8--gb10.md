@@ -41,6 +41,7 @@ kernels/gb10/HARDWARE.toml `[tensor_core_policy]`: a plan that runs one of these
 | decode n=1 | 225 | 160 | 3 |
 | multi_seq n=16 | 450 | 320 | 4 |
 | multi_seq n=128 | 450 | 320 | 4 |
+| verify n=2 | 225 | 160 | 3 |
 
 Covered sites no kernel of this class plans (gaps; their kernel is tensor-core work):
 
@@ -52,6 +53,8 @@ Covered sites no kernel of this class plans (gaps; their kernel is tensor-core w
 | multi_seq n=16 | `dense_ffn.down` | linear:down | fp8/block128x128 |
 | multi_seq n=128 | `dense_ffn.gate_up` | linear:gate_up | fp8/block128x128 |
 | multi_seq n=128 | `dense_ffn.down` | linear:down | fp8/block128x128 |
+| verify n=2 | `dense_ffn.gate_up` | linear:gate_up | fp8/block128x128 |
+| verify n=2 | `dense_ffn.down` | linear:down | fp8/block128x128 |
 
 Covered sites off tensor cores, each under an exemption (`backlog` is a known violation awaiting a tensor-core kernel):
 
@@ -68,6 +71,9 @@ Covered sites off tensor cores, each under an exemption (`backlog` is a known vi
 | multi_seq n=128 | `attn.attend` | paged_attention | - | cuda_core | `paged_decode::paged_decode_attn` | #3 backlog |
 | multi_seq n=128 | `head.lm_head` | lm_head | bf16 | cuda_core | `gemm::dense_gemm_bf16` | #9 backlog |
 | multi_seq n=128 | `gdn.ba` | linear:ba | bf16 | cuda_core | `ssm_preprocess::dense_gemv_ba_gates` | #4 backlog |
+| verify n=2 | `gdn.ba` | linear:ba | bf16 | cuda_core | `ssm_preprocess::dense_gemm_ba_gates_prefill` | #4 backlog |
+| verify n=2 | `attn.attend` | paged_attention | - | cuda_core | `paged_decode::paged_decode_attn` | #3 backlog |
+| verify n=2 | `head.lm_head` | lm_head | bf16 | cuda_core | `dense_gemv_bf16_batchm::dense_gemv_bf16_batchm` | #2 backlog |
 
 | # | kind | ops | rows | reason |
 |---:|---|---|---|---|
@@ -93,6 +99,7 @@ Sums of per-node `max(bytes / bandwidth, FLOPs / peak)`; per-row loops are coste
 | decode C=1 (decode n=1) | 110.617 | 9.0 |
 | decode C=16 (multi_seq n=16) | 148.011 | 108.1 |
 | decode C=128 (multi_seq n=128) | 427.220 | 299.6 |
+| verify C=1, 1 draft (every draft accepted) (verify n=2) | 110.819 | 18.0 |
 | prefill 4k | 1574.4 | 2602 |
 | prefill 32k | 14078.7 | 2327 |
 
@@ -129,7 +136,10 @@ Usable 111.07 GB = 130.67 GB visible x 0.85 (gpu-memory-utilization above 0.85 f
 
 Plan groups that loop once per row, and the engine's layer loops per sequence (`legacy` rows, KERNEL_FAMILIES.toml `[[legacy_path]]`), costed as the time the loop adds over one multi-row launch; the estimates above include it.
 
-None.
+| run | layer kind | added (ms) | share | sites | rules |
+|---|---|---:|---:|---|---|
+| verify n=2 | prologue/epilogue | 0.000 | 0.0% | head.argmax | argmax_verify_rows |
+| verify n=2 | linear_attention | 0.000 | 0.0% | gdn.conv, gdn.conv_ckpt, gdn.l2 | gdn_conv_l2_bf16_verify |
 
 ## Fused plan: decode n=1
 
@@ -309,6 +319,52 @@ Estimated step 427.220 ms. Shared 0.0% (measured on this class), shared-unmeasur
 | attn.kv_write | kv_write | - | - | 16 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 compute=memory |
 | gdn.gates | gdn_gates | - | - | 48 | 0.0% | Shared, unmeasured | gdn_ba_gates_gemm | ssm_ba_gates_hopper::dense_gemm_ba_gates_prefill_hopper rule=gdn_ba_gates_gemm_batched_twin compute=cuda_core |
 | head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm compute=memory |
+| embed.embed | embed | - | - | 1 | 0.0% | Shared, unmeasured | embed_copy | (embed_copy emitter) rule=embed_row_copy |
+
+## Gap report: verify n=2
+
+Estimated step 110.819 ms. Shared 11.6% (measured on this class), shared-unmeasured 88.4%, parameterisation 0.0%, policy variant 0.0%, novel 0.0% of the step.
+
+| site | op | formats | execution | n | share | class | family | detail |
+|---|---|---|---|---:|---:|---|---|---|
+| dense_ffn.gate_up | linear:gate_up | fp8/block128x128 x fp8/g128 | native fp8 | 64 | 41.4% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
+| dense_ffn.down | linear:down | fp8/block128x128 x fp8/g128 | native fp8 | 64 | 20.7% | Shared, unmeasured | wxay | no rule of this class covers it; family `wxay` implements the op |
+| gdn.qkvz | linear:qkvz | fp8/block128x128 x fp8/g128 | native fp8 | 48 | 14.6% | Shared, unmeasured | wxay | w8a8_gemv::w8a8_gemv_blk128_mb1_ku8 rule=w8a8_gemv_blk128_mb1_ku8 compute=tensor_core:mma.sync.m16n8k32.e4m3 |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 9.2% | Shared | dense_bf16 | dense_gemv_bf16_batchm::dense_gemv_bf16_batchm rule=lm_head_bf16_batchm compute=cuda_core |
+| gdn.out | linear:gdn_out | fp8/block128x128 x fp8/g128 | native fp8 | 48 | 5.5% | Shared, unmeasured | wxay | w8a8_gemv::w8a8_gemv_blk128_mb1_ku8 rule=w8a8_gemv_blk128_mb1_ku8 compute=tensor_core:mma.sync.m16n8k32.e4m3 |
+| attn.q | linear:q | fp8/block128x128 x fp8/g128 | native fp8 | 16 | 3.7% | Shared, unmeasured | wxay | w8a8_gemv::w8a8_gemv_blk128_mb1_ku8 rule=w8a8_gemv_blk128_mb1_ku8 compute=tensor_core:mma.sync.m16n8k32.e4m3 |
+| attn.o | linear:o | fp8/block128x128 x fp8/g128 | native fp8 | 16 | 1.8% | Shared, unmeasured | wxay | w8a8_gemv::w8a8_gemv_blk128_mb1_ku8 rule=w8a8_gemv_blk128_mb1_ku8 compute=tensor_core:mma.sync.m16n8k32.e4m3 |
+| gdn.recur | gdn_recurrence | - | - | 48 | 1.1% | Shared | gdn_recurrence | gated_delta_rule_wy::gated_delta_rule_wy2 rule=gdn_recurrence_wy2_verify compute=cuda_core |
+| attn.attend | paged_attention | - | - | 16 | 1.0% | Shared | paged_decode_attn | paged_decode::paged_decode_attn rule=paged_attention_bf16 compute=cuda_core |
+| attn.k | linear:k | fp8/block128x128 x fp8/g128 | native fp8 | 16 | 0.3% | Shared, unmeasured | wxay | w8a8_gemv::w8a8_gemv_blk128_mb1_ku8 rule=w8a8_gemv_blk128_mb1_ku8 compute=tensor_core:mma.sync.m16n8k32.e4m3 |
+| attn.v | linear:v | fp8/block128x128 x fp8/g128 | native fp8 | 16 | 0.3% | Shared, unmeasured | wxay | w8a8_gemv::w8a8_gemv_blk128_mb1_ku8 rule=w8a8_gemv_blk128_mb1_ku8 compute=tensor_core:mma.sync.m16n8k32.e4m3 |
+| gdn.ba | linear:ba | bf16 x bf16 | native bf16 | 48 | 0.2% | Shared | gdn_ba_gates_gemm | ssm_preprocess::dense_gemm_ba_gates_prefill rule=gdn_ba_gates_gemm_verify compute=cuda_core |
+| dense_ffn.act | silu_mul | - | - | 64 | 0.0% | Shared, unmeasured | silu_mul | moe_silu_mul::moe_silu_mul rule=silu_mul_rows compute=memory |
+| gdn.l2 | l2_norm | - | - | 48 | 0.0% | Shared | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm rule=gdn_conv_l2_bf16_verify compute=cuda_core |
+| gdn.conv | conv1d_update | - | - | 48 | 0.0% | Shared | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm rule=gdn_conv_l2_bf16_verify compute=cuda_core |
+| dense_ffn.act_quant | act_quant:fp8/g128 | - | - | 64 | 0.0% | Shared, unmeasured | w8a8_act_quant | w8a8_act_quant::w8a8_act_quant_g128 rule=w8a8_act_quant_g128 compute=memory |
+| gdn.out_norm | gated_rms_norm | - | - | 48 | 0.0% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_prefill rule=gdn_out_norm_prefill_verify compute=memory |
+| dense_ffn.add | residual_add | - | - | 64 | 0.0% | Shared | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm compute=memory |
+| gdn.conv_ckpt | state_snapshot | - | - | 48 | 0.0% | Shared | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm rule=gdn_conv_l2_bf16_verify compute=cuda_core |
+| gdn.add | residual_add | - | - | 48 | 0.0% | Shared | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| dense_ffn.post_norm | rms_norm | - | - | 64 | 0.0% | Shared | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| dense_ffn.xn_quant | act_quant:fp8/g128 | - | - | 64 | 0.0% | Shared, unmeasured | w8a8_act_quant | w8a8_act_quant::w8a8_act_quant_g128 rule=w8a8_act_quant_g128 compute=memory |
+| gdn.input_norm | rms_norm | - | - | 48 | 0.0% | Shared | rms_norm | norm::rms_norm_residual rule=input_norm_residual compute=memory |
+| gdn.gated_quant | act_quant:fp8/g128 | - | - | 48 | 0.0% | Shared, unmeasured | w8a8_act_quant | w8a8_act_quant::w8a8_act_quant_g128 rule=w8a8_act_quant_g128 compute=memory |
+| attn.q_split | split | - | - | 16 | 0.0% | Shared | deinterleave_qg | ssm_preprocess::deinterleave_qg rule=deinterleave_qg compute=memory |
+| gdn.xn_quant | act_quant:fp8/g128 | - | - | 48 | 0.0% | Shared, unmeasured | w8a8_act_quant | w8a8_act_quant::w8a8_act_quant_g128 rule=w8a8_act_quant_g128 compute=memory |
+| attn.gate_mul | sigmoid_gate_mul | - | - | 16 | 0.0% | Shared, unmeasured | sigmoid_gate_mul | residual_add::sigmoid_gate_mul_batched rule=sigmoid_gate_mul_batched compute=memory |
+| head.argmax | argmax | - | - | 1 | 0.0% | Shared | argmax_device | argmax::argmax_bf16 rule=argmax_verify_rows compute=memory |
+| attn.add | residual_add | - | - | 16 | 0.0% | Shared | rms_norm | norm::residual_add_rms_norm rule=residual_add_post_norm compute=memory |
+| attn.rope | rope | - | - | 16 | 0.0% | Shared, unmeasured | rope | rope::rope_forward_strided rule=rope_strided compute=memory |
+| attn.q_norm | qk_norm | - | - | 16 | 0.0% | Shared | rms_norm | norm::rms_norm_strided rule=qk_norm_strided compute=memory |
+| attn.input_norm | rms_norm | - | - | 16 | 0.0% | Shared | rms_norm | residual_add_rms_norm_exact::residual_add_rms_norm_exact rule=cross_layer_add_norm compute=memory |
+| attn.ag_quant | act_quant:fp8/g128 | - | - | 16 | 0.0% | Shared, unmeasured | w8a8_act_quant | w8a8_act_quant::w8a8_act_quant_g128 rule=w8a8_act_quant_g128 compute=memory |
+| attn.xn_quant | act_quant:fp8/g128 | - | - | 16 | 0.0% | Shared, unmeasured | w8a8_act_quant | w8a8_act_quant::w8a8_act_quant_g128 rule=w8a8_act_quant_g128 compute=memory |
+| attn.k_norm | qk_norm | - | - | 16 | 0.0% | Shared | rms_norm | norm::rms_norm_strided rule=qk_norm_strided compute=memory |
+| attn.kv_write | kv_write | - | - | 16 | 0.0% | Shared, unmeasured | kv_write | reshape_and_cache::reshape_and_cache_flash rule=kv_write_bf16 compute=memory |
+| gdn.gates | gdn_gates | - | - | 48 | 0.0% | Shared | gdn_ba_gates_gemm | ssm_preprocess::dense_gemm_ba_gates_prefill rule=gdn_ba_gates_gemm_verify compute=cuda_core |
+| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared | rms_norm | norm::rms_norm rule=final_norm compute=memory |
 | embed.embed | embed | - | - | 1 | 0.0% | Shared, unmeasured | embed_copy | (embed_copy emitter) rule=embed_row_copy |
 
 ## Rule kernels this device cannot run

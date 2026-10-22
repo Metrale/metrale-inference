@@ -44,6 +44,20 @@ fn run_name(t: &GapTable) -> String {
     format!("{} n={}", t.planned.plan.mode.name(), t.planned.plan.rows)
 }
 
+/// 2026-10-22: The serving case a plan's step is: decode at C = its rows, or the verify of one
+/// sequence, whose rows are the bonus token and its drafts. A verify's tok/s counts every row,
+/// so it holds only when every draft is accepted.
+pub(super) fn case_name(p: &crate::fuser::FusionPlan) -> String {
+    match p.mode {
+        crate::rules::Mode::Verify => format!(
+            "verify C=1, {} draft{} (every draft accepted)",
+            p.rows - 1,
+            if p.rows == 2 { "" } else { "s" }
+        ),
+        _ => format!("decode C={}", p.rows),
+    }
+}
+
 /// 2026-09-30: The report text.
 pub fn render_report(r: &HwReport) -> String {
     let mut s = String::new();
@@ -223,7 +237,8 @@ fn estimates(s: &mut String, r: &HwReport) {
         let rows = t.planned.plan.rows;
         let _ = writeln!(
             s,
-            "| decode C={rows} ({}){} | {:.3} | {:.1} |",
+            "| {} ({}){} | {:.3} | {:.1} |",
+            case_name(&t.planned.plan),
             run_name(t),
             projection(r),
             t.total_us / 1e3,

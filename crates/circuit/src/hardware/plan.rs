@@ -422,6 +422,9 @@ fn fuse_arm(
 
 /// 2026-09-30: The runs every hardware report shows: decode at C=1, and multi-sequence decode at
 /// C=16 and C=128.
+/// 2026-10-22: And the verify of one draft at C=1 (two rows), the step every speculative recipe
+/// runs instead of decode n=1. It comes last, so the decode and multi-sequence tables keep the
+/// positions the matrix summary reads (C1 = 0, C16 = 1, C128 = 2).
 pub fn report_runs() -> Vec<Run> {
     vec![
         Run {
@@ -435,6 +438,10 @@ pub fn report_runs() -> Vec<Run> {
         Run {
             mode: Mode::MultiSeq,
             rows: 128,
+        },
+        Run {
+            mode: Mode::Verify,
+            rows: 2,
         },
     ]
 }

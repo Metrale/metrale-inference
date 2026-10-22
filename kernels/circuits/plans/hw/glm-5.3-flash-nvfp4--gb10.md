@@ -41,6 +41,7 @@ kernels/gb10/HARDWARE.toml `[tensor_core_policy]`: a plan that runs one of these
 | decode n=1 | 701 | 90 | 25 |
 | multi_seq n=16 | 182 | 180 | 1 |
 | multi_seq n=128 | 2 | 0 | 1 |
+| verify n=2 | 91 | 90 | 1 |
 
 Covered sites no kernel of this class plans (gaps; their kernel is tensor-core work):
 
@@ -98,6 +99,30 @@ Covered sites no kernel of this class plans (gaps; their kernel is tensor-core w
 | multi_seq n=128 | `moe.experts_down` | expert_down | nvfp4/g16 |
 | multi_seq n=128 | `moe.shared_gate_up` | linear:shared_gate_up | bf16 |
 | multi_seq n=128 | `moe.shared_down` | linear:shared_down | bf16 |
+| verify n=2 | `kda.mix` | linear:hc_mix | bf16 |
+| verify n=2 | `kda.q` | linear:q | bf16 |
+| verify n=2 | `kda.k` | linear:k | bf16 |
+| verify n=2 | `kda.v` | linear:v | bf16 |
+| verify n=2 | `kda.b` | linear:kda_b | bf16 |
+| verify n=2 | `kda.f_a` | linear:kda_f_a | bf16 |
+| verify n=2 | `kda.f_b` | linear:kda_f_b | bf16 |
+| verify n=2 | `kda.g_a` | linear:kda_g_a | bf16 |
+| verify n=2 | `kda.g_b` | linear:kda_g_b | bf16 |
+| verify n=2 | `kda.o` | linear:o | bf16 |
+| verify n=2 | `mlp.mix` | linear:hc_mix | bf16 |
+| verify n=2 | `dsa.mix` | linear:hc_mix | bf16 |
+| verify n=2 | `dsa.q_a` | linear:mla_q_a | bf16 |
+| verify n=2 | `dsa.q_b` | linear:mla_q_b | bf16 |
+| verify n=2 | `dsa.kv_a` | linear:mla_kv_a | bf16 |
+| verify n=2 | `dsa.idx_k` | linear:index_k | bf16 |
+| verify n=2 | `dsa.idx_gate` | linear:index_gate | bf16 |
+| verify n=2 | `dsa.idx_w` | linear:index_weights | bf16 |
+| verify n=2 | `dsa.idx_q` | linear:index_q | bf16 |
+| verify n=2 | `dsa.o` | linear:o | bf16 |
+| verify n=2 | `moe.mix` | linear:hc_mix | bf16 |
+| verify n=2 | `moe.gate` | router | bf16 |
+| verify n=2 | `moe.shared_gate_up` | linear:shared_gate_up | bf16 |
+| verify n=2 | `moe.shared_down` | linear:shared_down | bf16 |
 
 Covered sites off tensor cores, each under an exemption (`backlog` is a known violation awaiting a tensor-core kernel):
 
@@ -130,6 +155,7 @@ Covered sites off tensor cores, each under an exemption (`backlog` is a known vi
 | decode n=1 | `head.lm_head` | lm_head | bf16 | cuda_core | `gemv::dense_gemv_bf16` | #2 backlog |
 | multi_seq n=16 | `head.lm_head` | lm_head | bf16 | cuda_core | `gemm::dense_gemm_bf16` | #9 backlog |
 | multi_seq n=128 | `head.lm_head` | lm_head | bf16 | cuda_core | `gemm::dense_gemm_bf16` | #9 backlog |
+| verify n=2 | `head.lm_head` | lm_head | bf16 | cuda_core | `dense_gemv_bf16_batchm::dense_gemv_bf16_batchm` | #2 backlog |
 
 | # | kind | ops | rows | reason |
 |---:|---|---|---|---|
@@ -155,6 +181,7 @@ Sums of per-node `max(bytes / bandwidth, FLOPs / peak)`; per-row loops are coste
 | decode C=1 (decode n=1) | 84.522 | 11.8 |
 | decode C=16 (multi_seq n=16) | 338.960 | 47.2 |
 | decode C=128 (multi_seq n=128) | 937.833 | 136.5 |
+| verify C=1, 1 draft (every draft accepted) (verify n=2) | 105.216 | 19.0 |
 | prefill 4k | 2437.6 | 1680 |
 | prefill 32k | 14750.3 | 2222 |
 
@@ -199,6 +226,9 @@ Plan groups that loop once per row, and the engine's layer loops per sequence (`
 | multi_seq n=16 | linear_attention | 0.000 | 0.0% | kda.conv_ckpt, kda.l2, kda.short_conv | legacy crates/model-arch/src/glm5next_kda/rows.rs:134 |
 | multi_seq n=128 | deepseek_sparse_attention | 11.766 | 1.3% | dsa.idx_gate, dsa.idx_k, dsa.idx_k_norm, dsa.pool, dsa.select | legacy crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:301 |
 | multi_seq n=128 | linear_attention | 0.000 | 0.0% | kda.conv_ckpt, kda.l2, kda.short_conv | legacy crates/model-arch/src/glm5next_kda/rows.rs:134 |
+| verify n=2 | linear_attention | 1.145 | 1.1% | kda.conv_ckpt, kda.l2, kda.recur, kda.short_conv | gdn_conv_l2_bf16_verify, legacy crates/model-arch/src/glm5next_kda/decode.rs:451 |
+| verify n=2 | deepseek_sparse_attention | 0.672 | 0.6% | dsa.idx_gate, dsa.idx_k, dsa.idx_k_norm, dsa.idx_q, dsa.idx_w, dsa.kv_norm, dsa.kv_write, dsa.pool, dsa.select | legacy crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:203 |
+| verify n=2 | prologue/epilogue | 0.000 | 0.0% | head.argmax | argmax_verify_rows |
 
 ## Fused plan: decode n=1
 
@@ -508,6 +538,85 @@ Estimated step 937.833 ms. Shared 0.0% (measured on this class), shared-unmeasur
 | embed.embed | embed | - | - | 1 | 0.0% | Shared, unmeasured | embed_copy | (embed_copy emitter) rule=embed_row_copy |
 | dsa.idx_k_norm | layer_norm | - | - | 11 | 0.0% | Shared, unmeasured | layer_norm | no rule of this class covers it; family `layer_norm` implements the op |
 | dsa.pool | kpool_compress | - | - | 11 | 0.0% | Novel | - | no rule of this class covers it; dsa_indexer run it one row per launch only |
+
+## Gap report: verify n=2
+
+Estimated step 105.216 ms. Shared 41.9% (measured on this class), shared-unmeasured 55.9%, parameterisation 0.0%, policy variant 2.2%, novel 0.0% of the step.
+
+| site | op | formats | execution | n | share | class | family | detail |
+|---|---|---|---|---:|---:|---|---|---|
+| moe.experts_gate_up | expert_gate_up | nvfp4/g16 x nvfp4/g16 | native fp4_block_scale | 42 | 23.9% | Shared | w4a4_mx_static | w4a4_gemv_mx_moe::w4a4_quant_rows_static + w4a16_gemv::glm5next_moe_row_union + w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_sl rule=glm_moe_w4a4_gate_up_2_8_dsa compute=tensor_core:mma.sync.m16n8k64.mxf4nvf4.block_scale |
+| moe.experts_down | expert_down | nvfp4/g16 x nvfp4/g16 | native fp4_block_scale | 42 | 12.0% | Shared | w4a4_mx_static | w4a4_gemv_mx_moe::w4a4_quant_rows_static + w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep rule=glm_moe_w4a4_down_2_8_dsa compute=tensor_core:mma.sync.m16n8k64.mxf4nvf4.block_scale |
+| kda.k | linear:k | bf16 x bf16 | native bf16 | 34 | 8.7% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| kda.o | linear:o | bf16 x bf16 | native bf16 | 34 | 8.7% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| kda.q | linear:q | bf16 x bf16 | native bf16 | 34 | 8.7% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| kda.v | linear:v | bf16 x bf16 | native bf16 | 34 | 8.7% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| dsa.o | linear:o | bf16 x bf16 | native bf16 | 11 | 5.6% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| moe.shared_gate_up | linear:shared_gate_up | bf16 x bf16 | native bf16 | 42 | 5.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| head.lm_head | lm_head | bf16 x bf16 | native bf16 | 1 | 4.8% | Shared | dense_bf16 | dense_gemv_bf16_batchm::dense_gemv_bf16_batchm rule=lm_head_bf16_batchm compute=cuda_core |
+| moe.shared_down | linear:shared_down | bf16 x bf16 | native bf16 | 42 | 2.7% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| kda.recur | gdn_recurrence | - | - | 34 | 2.2% | Policy variant | gdn_recurrence | no rule of this class covers it; family `gdn_recurrence` implements the op; differs: decay head->channel |
+| dsa.q_b | linear:mla_q_b | bf16 x bf16 | native bf16 | 11 | 2.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| dsa.attend | mla_attention | bf16 x bf16 | native bf16 | 11 | 1.5% | Shared, unmeasured | glm_mla_decode_hb | no rule of this class covers it; family `glm_mla_decode_hb` implements the op |
+| dsa.idx_q | linear:index_q | bf16 x bf16 | native bf16 | 11 | 1.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| mlp.gate_up | linear:gate_up | nvfp4/g16 x nvfp4/g16 | native fp4_block_scale | 3 | 0.6% | Shared | w4a4_mx | w4a4_gemv_mx::w4a4_gemv_mx8 + w4a4_gemv_mx::w4a4_gemv_mx8 rule=w4a4_gate_up_1_8 compute=tensor_core:mma.sync.m16n8k64.mxf4nvf4.block_scale |
+| dsa.q_a | linear:mla_q_a | bf16 x bf16 | native bf16 | 11 | 0.5% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| moe.gate | router | bf16 x bf16 | native bf16 | 42 | 0.4% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| mlp.down | linear:down | nvfp4/g16 x nvfp4/g16 | native fp4_block_scale | 3 | 0.3% | Shared | w4a4_mx | w4a4_gemv_mx::w4a4_gemv_mx8 rule=w4a4_down_1_8 compute=tensor_core:mma.sync.m16n8k64.mxf4nvf4.block_scale |
+| kda.f_b | linear:kda_f_b | bf16 x bf16 | native bf16 | 34 | 0.3% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| kda.g_b | linear:kda_g_b | bf16 x bf16 | native bf16 | 34 | 0.3% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| dsa.kv_a | linear:mla_kv_a | bf16 x bf16 | native bf16 | 11 | 0.2% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| kda.f_a | linear:kda_f_a | bf16 x bf16 | native bf16 | 34 | 0.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| kda.g_a | linear:kda_g_a | bf16 x bf16 | native bf16 | 34 | 0.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| moe.mix | linear:hc_mix | bf16 x bf16 | native bf16 | 42 | 0.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| kda.mix | linear:hc_mix | bf16 x bf16 | native bf16 | 34 | 0.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| dsa.idx_gate | linear:index_gate | bf16 x bf16 | native bf16 | 11 | 0.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| dsa.idx_k | linear:index_k | bf16 x bf16 | native bf16 | 11 | 0.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| kda.b | linear:kda_b | bf16 x bf16 | native bf16 | 34 | 0.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| kda.l2 | l2_norm | - | - | 34 | 0.1% | Shared | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm rule=gdn_conv_l2_bf16_verify compute=cuda_core |
+| moe.experts_clamp | swiglu_clamp | - | - | 42 | 0.0% | Shared | glm_swiglu_clamp | glm5next_ffn::glm5next_swiglu_clamp_zero rule=glm_swiglu_clamp_zero compute=memory |
+| kda.short_conv | conv1d_update | - | - | 34 | 0.0% | Shared | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm rule=gdn_conv_l2_bf16_verify compute=cuda_core |
+| dsa.mix | linear:hc_mix | bf16 x bf16 | native bf16 | 11 | 0.0% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| moe.experts_act | silu_mul | - | - | 42 | 0.0% | Shared | glm_swiglu_clamp | glm5next_ffn::glm5next_swiglu_clamp_zero rule=glm_swiglu_clamp_zero compute=memory |
+| moe.blend | blend | - | - | 42 | 0.0% | Shared, unmeasured | glm_moe_combine | no rule of this class covers it; family `glm_moe_combine` implements the op |
+| kda.conv_ckpt | state_snapshot | - | - | 34 | 0.0% | Shared | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm rule=gdn_conv_l2_bf16_verify compute=cuda_core |
+| kda.qkv | concat | - | - | 34 | 0.0% | Shared, unmeasured | kda_pack | no rule of this class covers it; family `kda_pack` implements the op |
+| moe.post | hc_post | - | - | 42 | 0.0% | Shared, unmeasured | glm_mhc | no rule of this class covers it; family `glm_mhc` implements the op |
+| dsa.select | index_select | - | - | 11 | 0.0% | Shared, unmeasured | dsa_indexer | no rule of this class covers it; family `dsa_indexer` implements the op |
+| dsa.idx_w | linear:index_weights | bf16 x bf16 | native bf16 | 11 | 0.0% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| kda.post | hc_post | - | - | 34 | 0.0% | Shared, unmeasured | glm_mhc | no rule of this class covers it; family `glm_mhc` implements the op |
+| kda.out_norm | gated_rms_norm | - | - | 34 | 0.0% | Shared, unmeasured | kda_o_norm | no rule of this class covers it; family `kda_o_norm` implements the op |
+| moe.eact_quant | act_quant:nvfp4/g16 | - | - | 42 | 0.0% | Shared | w4a4_mx_static | w4a4_gemv_mx_moe::w4a4_quant_rows_static + w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep rule=glm_moe_w4a4_down_2_8_dsa compute=tensor_core:mma.sync.m16n8k64.mxf4nvf4.block_scale |
+| moe.pre | hc_pre | - | - | 42 | 0.0% | Shared, unmeasured | glm_mhc | no rule of this class covers it; family `glm_mhc` implements the op |
+| kda.gates | gdn_gates | - | - | 34 | 0.0% | Shared, unmeasured | kda_gates | no rule of this class covers it; family `kda_gates` implements the op |
+| kda.pre | hc_pre | - | - | 34 | 0.0% | Shared, unmeasured | glm_mhc | no rule of this class covers it; family `glm_mhc` implements the op |
+| mlp.mix | linear:hc_mix | bf16 x bf16 | native bf16 | 3 | 0.0% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| dsa.post | hc_post | - | - | 11 | 0.0% | Shared, unmeasured | glm_mhc | no rule of this class covers it; family `glm_mhc` implements the op |
+| moe.post_norm | rms_norm | - | - | 42 | 0.0% | Shared, unmeasured | rms_norm | no rule of this class covers it; family `rms_norm` implements the op |
+| moe.shared_clamp | swiglu_clamp | - | - | 42 | 0.0% | Shared, unmeasured | glm_swiglu_clamp | no rule of this class covers it; family `glm_swiglu_clamp` implements the op |
+| kda.input_norm | rms_norm | - | - | 34 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual compute=memory |
+| moe.shared_act | silu_mul | - | - | 42 | 0.0% | Shared, unmeasured | w4a16_gemv | no rule of this class covers it; family `w4a16_gemv` implements the op |
+| dsa.pre | hc_pre | - | - | 11 | 0.0% | Shared, unmeasured | glm_mhc | no rule of this class covers it; family `glm_mhc` implements the op |
+| moe.xn_quant | act_quant:nvfp4/g16 | - | - | 42 | 0.0% | Shared | w4a4_mx_static | w4a4_gemv_mx_moe::w4a4_quant_rows_static + w4a16_gemv::glm5next_moe_row_union + w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_sl rule=glm_moe_w4a4_gate_up_2_8_dsa compute=tensor_core:mma.sync.m16n8k64.mxf4nvf4.block_scale |
+| head.argmax | argmax | - | - | 1 | 0.0% | Shared | argmax_device | argmax::argmax_bf16 rule=argmax_verify_rows compute=memory |
+| mlp.clamp | swiglu_clamp | - | - | 3 | 0.0% | Shared, unmeasured | glm_swiglu_clamp | no rule of this class covers it; family `glm_swiglu_clamp` implements the op |
+| mlp.post | hc_post | - | - | 3 | 0.0% | Shared, unmeasured | glm_mhc | no rule of this class covers it; family `glm_mhc` implements the op |
+| mlp.act | silu_mul | - | - | 3 | 0.0% | Shared, unmeasured | silu_mul | moe_silu_mul::moe_silu_mul rule=silu_mul_rows compute=memory |
+| dsa.input_norm | rms_norm | - | - | 11 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm_residual rule=input_norm_residual compute=memory |
+| mlp.pre | hc_pre | - | - | 3 | 0.0% | Shared, unmeasured | glm_mhc | no rule of this class covers it; family `glm_mhc` implements the op |
+| mlp.a_quant | act_quant:nvfp4/g16 | - | - | 3 | 0.0% | Shared | w4a4_mx | w4a4_gemv_mx::w4a4_quant_rows rule=w4a4_act_quant compute=memory |
+| dsa.q_a_norm | rms_norm | - | - | 11 | 0.0% | Shared, unmeasured | rms_norm | no rule of this class covers it; family `rms_norm` implements the op |
+| moe.top_k | top_k | - | - | 42 | 0.0% | Shared, unmeasured | glm_router_topk | no rule of this class covers it; family `glm_router_topk` implements the op |
+| mlp.post_norm | rms_norm | - | - | 3 | 0.0% | Shared, unmeasured | rms_norm | no rule of this class covers it; family `rms_norm` implements the op |
+| embed.expand | hc_expand | - | - | 1 | 0.0% | Shared, unmeasured | glm_mhc | no rule of this class covers it; family `glm_mhc` implements the op |
+| head.contract | hc_contract | - | - | 1 | 0.0% | Shared, unmeasured | glm_mhc | no rule of this class covers it; family `glm_mhc` implements the op |
+| mlp.xn_quant | act_quant:nvfp4/g16 | - | - | 3 | 0.0% | Shared | w4a4_mx | w4a4_gemv_mx::w4a4_quant_rows rule=w4a4_act_quant compute=memory |
+| dsa.kv_norm | rms_norm | - | - | 11 | 0.0% | Shared, unmeasured | rms_norm | no rule of this class covers it; family `rms_norm` implements the op |
+| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm compute=memory |
+| dsa.kv_write | kv_write | - | - | 11 | 0.0% | Policy variant | kv_write | no rule of this class covers it; family `kv_write` implements the op; differs: layout kv->latent |
+| embed.embed | embed | - | - | 1 | 0.0% | Shared, unmeasured | embed_copy | (embed_copy emitter) rule=embed_row_copy |
+| dsa.idx_k_norm | layer_norm | - | - | 11 | 0.0% | Shared, unmeasured | layer_norm | no rule of this class covers it; family `layer_norm` implements the op |
+| dsa.pool | kpool_compress | - | - | 11 | 0.0% | Shared, unmeasured | dsa_indexer | no rule of this class covers it; family `dsa_indexer` implements the op |
 
 ## Rule kernels this device cannot run
 

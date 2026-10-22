@@ -42,6 +42,7 @@ Sums of per-node `max(bytes / bandwidth, FLOPs / peak)`; per-row loops are coste
 | decode C=1 (decode n=1) (roofline projection, unmeasured) | 0.757 | 1320.3 |
 | decode C=16 (multi_seq n=16) (roofline projection, unmeasured) | 10.640 | 1503.8 |
 | decode C=128 (multi_seq n=128) (roofline projection, unmeasured) | 84.450 | 1515.7 |
+| verify C=1, 1 draft (every draft accepted) (verify n=2) (roofline projection, unmeasured) | 1.368 | 1461.9 |
 | prefill 4k (roofline projection, unmeasured) | 32.1 | 127672 |
 | prefill 32k (roofline projection, unmeasured) | 303.1 | 108125 |
 
@@ -75,6 +76,9 @@ Plan groups that loop once per row, and the engine's layer loops per sequence (`
 | multi_seq n=128 | moe | 35.041 | 41.5% | moe.add, moe.blend, moe.experts_act, moe.experts_down, moe.experts_up, moe.norm, moe.router, moe.shared_act, moe.shared_down, moe.shared_up, moe.top_k | legacy crates/model-arch/src/nemotron_moe.rs:278 |
 | multi_seq n=128 | mamba | 33.750 | 40.0% | mamba.add, mamba.conv, mamba.conv_ckpt, mamba.in_proj, mamba.in_proj_quant, mamba.norm, mamba.out_norm, mamba.out_proj, mamba.out_proj_quant, mamba.split, mamba.ssm, mamba.ssm_ckpt | legacy crates/model-arch/src/nemotron_mamba2/trait_impl.rs:23 |
 | multi_seq n=128 | full_attention | 5.635 | 6.7% | attn.k, attn.q, attn.v | legacy crates/model-layers/src/layers/qwen3_attention/trait_impl/multi_seq/qkv.rs:119 |
+| verify n=2 | mamba | 0.295 | 21.5% | mamba.add, mamba.conv, mamba.conv_ckpt, mamba.in_proj, mamba.in_proj_quant, mamba.norm, mamba.out_norm, mamba.out_proj, mamba.out_proj_quant, mamba.split, mamba.ssm, mamba.ssm_ckpt | legacy crates/model-arch/src/nemotron_mamba2/trait_impl.rs:23 |
+| verify n=2 | moe | 0.093 | 6.8% | moe.add, moe.blend, moe.experts_act, moe.experts_down, moe.experts_up, moe.norm, moe.router, moe.shared_act, moe.shared_down, moe.shared_up, moe.top_k | legacy crates/model-arch/src/nemotron_moe.rs:278 |
+| verify n=2 | prologue/epilogue | 0.000 | 0.0% | head.argmax | argmax_verify_rows |
 
 ## Fused plan: decode n=1
 
@@ -239,6 +243,48 @@ Estimated step 84.450 ms (roofline projection, unmeasured). Shared 0.0% (measure
 | mamba.out_proj_quant | act_quant:fp8/tensor | - | - | 23 | 0.0% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->fp8/tensor |
 | mamba.conv_ckpt | state_snapshot | - | - | 23 | 0.0% | Novel | - | no family available on this device implements it |
 | head.argmax | argmax | - | - | 1 | 0.0% | Shared, unmeasured | argmax_host | (host_sampling emitter) rule=argmax_host |
+| mamba.norm | rms_norm | - | - | 23 | 0.0% | Shared, unmeasured | rms_norm | no rule of this class covers it; family `rms_norm` implements the op |
+| moe.norm | rms_norm | - | - | 23 | 0.0% | Shared, unmeasured | rms_norm | no rule of this class covers it; family `rms_norm` implements the op |
+| mamba.ssm_ckpt | state_snapshot | - | - | 23 | 0.0% | Novel | - | no family available on this device implements it |
+| mamba.in_proj_quant | act_quant:fp8/tensor | - | - | 23 | 0.0% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->fp8/tensor |
+| attn.add | residual_add | - | - | 6 | 0.0% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add compute=memory |
+| attn.norm | rms_norm | - | - | 6 | 0.0% | Shared, unmeasured | rms_norm | no rule of this class covers it; family `rms_norm` implements the op |
+| moe.top_k | top_k | - | - | 23 | 0.0% | Shared, unmeasured | moe_topk | no rule of this class covers it; family `moe_topk` implements the op |
+| head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm compute=memory |
+| attn.kv_write | kv_write | - | - | 6 | 0.0% | Shared, unmeasured | kv_write | no rule of this class covers it; family `kv_write` implements the op |
+| embed.embed | embed | - | - | 1 | 0.0% | Shared, unmeasured | embed_copy | (embed_copy emitter) rule=embed_row_copy |
+| mamba.split | split | - | - | 23 | 0.0% | Shared, unmeasured | view_split | no rule of this class covers it; family `view_split` implements the op |
+
+## Gap report: verify n=2
+
+Estimated step 1.368 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 44.1%, parameterisation 0.0%, policy variant 55.8%, novel 0.0% of the step.
+
+| site | op | formats | execution | n | share | class | family | detail |
+|---|---|---|---|---:|---:|---|---|---|
+| mamba.in_proj | linear:mamba_in | fp8/tensor x fp8/tensor | native fp8 | 23 | 27.8% | Policy variant | tc_rows | no rule of this class covers it; family `tc_rows` implements the op; differs: weight fp8/block128x128->fp8/tensor |
+| moe.experts_down | expert_down | nvfp4/g16 x bf16 | native bf16 | 23 | 17.0% | Shared, unmeasured | moe_grouped_tc | moe_nvfp4_grouped_tc::moe_expert_down_act_nvfp4_grouped_tc rule=moe_down_act_grouped_nvfp4_tc compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| moe.experts_up | expert_gate_up | nvfp4/g16 x bf16 | native bf16 | 23 | 16.9% | Policy variant | moe_grouped_tc | no rule of this class covers it; family `moe_grouped_tc` implements the op; differs: epilogue silu_mul->relu2 |
+| mamba.out_proj | linear:mamba_out | fp8/tensor x fp8/tensor | native fp8 | 23 | 11.1% | Policy variant | tc_rows | no rule of this class covers it; family `tc_rows` implements the op; differs: weight fp8/block128x128->fp8/tensor |
+| moe.shared_down | linear:shared_down | nvfp4/g16 x bf16 | native bf16 | 23 | 5.6% | Shared, unmeasured | moe_grouped_tc | moe_nvfp4_grouped_tc::moe_expert_down_act_nvfp4_grouped_tc rule=moe_down_act_grouped_nvfp4_tc compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| moe.shared_up | linear:shared_up | nvfp4/g16 x bf16 | native bf16 | 23 | 5.6% | Shared, unmeasured | w4a16_gemv | no rule of this class covers it; family `w4a16_gemv` implements the op |
+| head.lm_head | lm_head | nvfp4/g16 x bf16 | native bf16 | 1 | 4.3% | Shared, unmeasured | tc_rows | w4a16_tc_rows::w4a16_tc_rows_64 rule=lm_head_nvfp4_w4a16_rows compute=tensor_core:mma.sync.m16n8k16.bf16 |
+| mamba.ssm | ssm_update | - | - | 23 | 4.2% | Shared, unmeasured | mamba2_ssm | no rule of this class covers it; family `mamba2_ssm` implements the op |
+| attn.o | linear:o | bf16 x bf16 | native bf16 | 6 | 2.9% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| attn.q | linear:q | bf16 x bf16 | native bf16 | 6 | 2.9% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| moe.router | router | bf16 x bf16 | native bf16 | 23 | 0.7% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| attn.attend | paged_attention | - | - | 6 | 0.3% | Shared, unmeasured | paged_decode_attn | no rule of this class covers it; family `paged_decode_attn` implements the op |
+| attn.k | linear:k | bf16 x bf16 | native bf16 | 6 | 0.2% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| attn.v | linear:v | bf16 x bf16 | native bf16 | 6 | 0.2% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| moe.experts_act | relu2 | - | - | 23 | 0.0% | Shared, unmeasured | relu_squared | no rule of this class covers it; family `relu_squared` implements the op |
+| moe.blend | blend | - | - | 23 | 0.0% | Shared, unmeasured | glm_moe_combine | no rule of this class covers it; family `glm_moe_combine` implements the op |
+| mamba.conv | conv1d_update | - | - | 23 | 0.0% | Shared, unmeasured | causal_conv1d | no rule of this class covers it; family `causal_conv1d` implements the op |
+| mamba.out_norm | gated_rms_norm | - | - | 23 | 0.0% | Shared, unmeasured | gated_rms_norm | norm::gated_rms_norm_prefill rule=gdn_out_norm_prefill_verify compute=memory |
+| mamba.add | residual_add | - | - | 23 | 0.0% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add compute=memory |
+| moe.add | residual_add | - | - | 23 | 0.0% | Shared, unmeasured | residual_add | residual_add::bf16_residual_add rule=ffn_residual_add compute=memory |
+| moe.shared_act | relu2 | - | - | 23 | 0.0% | Shared, unmeasured | relu_squared | no rule of this class covers it; family `relu_squared` implements the op |
+| mamba.out_proj_quant | act_quant:fp8/tensor | - | - | 23 | 0.0% | Policy variant | w8a8_act_quant | no rule of this class covers it; family `w8a8_act_quant` implements the op; differs: format fp8/token->fp8/tensor |
+| mamba.conv_ckpt | state_snapshot | - | - | 23 | 0.0% | Novel | - | no family available on this device implements it |
+| head.argmax | argmax | - | - | 1 | 0.0% | Shared, unmeasured | argmax_device | argmax::argmax_bf16 rule=argmax_verify_rows compute=memory |
 | mamba.norm | rms_norm | - | - | 23 | 0.0% | Shared, unmeasured | rms_norm | no rule of this class covers it; family `rms_norm` implements the op |
 | moe.norm | rms_norm | - | - | 23 | 0.0% | Shared, unmeasured | rms_norm | no rule of this class covers it; family `rms_norm` implements the op |
 | mamba.ssm_ckpt | state_snapshot | - | - | 23 | 0.0% | Novel | - | no family available on this device implements it |

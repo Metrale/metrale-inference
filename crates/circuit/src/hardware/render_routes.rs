@@ -105,8 +105,8 @@ pub(super) fn routes_section(s: &mut String, r: &HwReport) {
         let (runs, instead) = primary.map(|q| swapped(q, p)).unwrap_or_default();
         let _ = writeln!(
             s,
-            "| decode C={} ({} n={}) | `{}` | {:.3} | {:.3} | {} | {} | {} | {} |",
-            p.rows,
+            "| {} ({} n={}) | `{}` | {:.3} | {:.3} | {} | {} | {} | {} |",
+            super::render::case_name(p),
             p.mode.name(),
             p.rows,
             row.route.id,

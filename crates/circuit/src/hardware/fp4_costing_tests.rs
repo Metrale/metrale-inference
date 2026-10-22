@@ -274,12 +274,15 @@ fn every_datasheet_estimate_is_labelled_a_roofline_projection() {
         .lines()
         .filter(|l| {
             l.starts_with("| decode C=")
+                || l.starts_with("| verify C=")
                 || l.starts_with("| prefill ")
                 || l.starts_with("Weight floor")
                 || l.starts_with("Estimated step")
         })
         .collect();
-    assert_eq!(shown.len(), 3 + 2 + 1 + 3, "{text}");
+    // 2026-10-22: Four report runs (decode n=1, multi_seq n=16 and n=128, verify n=2), each an
+    // estimate line and a gap-table step; two prefill lengths; one weight floor.
+    assert_eq!(shown.len(), 4 + 2 + 1 + 4, "{text}");
     for l in shown {
         assert!(l.contains(LABEL), "unlabelled: {l}");
     }
