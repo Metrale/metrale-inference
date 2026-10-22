@@ -57,18 +57,34 @@ impl TransformerModel {
         k: usize,
     ) -> Result<bool> {
         let slot = seq.slot_idx;
-        let armed = self.ssm_pool.swaps.take_arm(slot);
-        if !(armed
-            && self.settings.scheduler.ssm_commit_swap
-            && num_accepted == 1
-            && k >= 2
-            && self.dflash_hidden_save.is_none()
-            && self.ssm_pool.can_swap(slot)
-            && !self.gdn_woa_folded_slots.lock().contains(&slot)
-            && !self.gdn_carry_has_committed(slot)
-            && self.pointers_match_pool(seq)?)
-        {
+        if !self.ssm_pool.swaps.take_arm(slot) {
             return Ok(false);
+        }
+        let declined = if !self.settings.scheduler.ssm_commit_swap {
+            Some("METRALE_SSM_COMMIT_SWAP=0")
+        } else if num_accepted != 1 || k < 2 {
+            Some("") // kept more than its first row: an ordinary copy commit, not a decline
+        } else if self.dflash_hidden_save.is_some() {
+            Some("DFlash hidden save")
+        } else if !self.ssm_pool.can_swap(slot) {
+            Some("slot has no own intermediate 0")
+        } else if self.gdn_woa_folded_slots.lock().contains(&slot) {
+            Some("GDN WOA folded slot")
+        } else if self.gdn_carry_has_committed(slot) {
+            Some("GDN carry committed")
+        } else if !self.pointers_match_pool(seq)? {
+            Some("sequence pointers disagree with the pool")
+        } else {
+            None
+        };
+        if let Some(reason) = declined {
+            if !reason.is_empty() && self.ssm_pool.swaps.first_outcome(false) {
+                tracing::info!("SSM commit swap declined on slot {slot} ({reason}); commit by copy");
+            }
+            return Ok(false);
+        }
+        if self.ssm_pool.swaps.first_outcome(true) {
+            tracing::info!("SSM commit swap engaged: slot {slot} committed a rejected verify by swap");
         }
         self.ssm_pool.swap_roles(slot)?;
         self.for_each_pool_layer(seq, |_, ssm| ssm.swap_live_with_inter0())?;

@@ -61,6 +61,7 @@ fn the_a2_levers_are_rank_agreed() {
     for (env, flipped) in [
         ("METRALE_GLM_GRAPH_EARLY_LAUNCH", "0"),
         ("METRALE_GLM_MTP_ROW_NOSYNC", "1"),
+        ("METRALE_SSM_COMMIT_SWAP", "0"),
     ] {
         let on = table(&[(env, flipped)]);
         assert_ne!(on, off, "{env} skew is not compared");

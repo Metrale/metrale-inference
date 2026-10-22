@@ -36,6 +36,7 @@ use metrale_gpu_runtime::gpu::DevicePtr;
 pub struct SlotSwaps {
     swapped: Vec<AtomicBool>,
     armed: Vec<AtomicBool>,
+    reported: [AtomicBool; 2],
 }
 
 impl SlotSwaps {
@@ -44,7 +45,14 @@ impl SlotSwaps {
         Self {
             swapped: (0..slots).map(|_| AtomicBool::new(false)).collect(),
             armed: (0..slots).map(|_| AtomicBool::new(false)).collect(),
+            reported: [AtomicBool::new(false), AtomicBool::new(false)],
         }
+    }
+
+    /// 2026-10-22: Whether this is the first armed commit with outcome `swapped` (the
+    /// engagement log's latch: one line per outcome per pool).
+    pub fn first_outcome(&self, swapped: bool) -> bool {
+        !self.reported[usize::from(swapped)].swap(true, Ordering::Relaxed)
     }
 
     /// 2026-10-21: Whether `slot`'s live state sits in its intermediate-0 buffer.

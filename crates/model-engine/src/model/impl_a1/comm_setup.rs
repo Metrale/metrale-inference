@@ -117,6 +117,12 @@ pub(super) fn rank_lever_table(
         // 2026-10-21: Host timing only (the slot upload is stream-ordered either way); checked
         // because the check is free.
         ("METRALE_GLM_MTP_ROW_NOSYNC", u64::from(mtp.row_nosync)),
+        // 2026-10-22: A swap commit keys the verify graphs by the slot's role; every rank
+        // must commit alike.
+        (
+            "METRALE_SSM_COMMIT_SWAP",
+            u64::from(settings.scheduler.ssm_commit_swap),
+        ),
         // 2026-10-21: Host timing only; agreed so an A/B arm cannot run on one rank alone
         // (the cores differ per host, so only the mode is compared).
         (
