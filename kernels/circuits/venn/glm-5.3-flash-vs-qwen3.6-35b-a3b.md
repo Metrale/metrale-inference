@@ -84,11 +84,9 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 | 2 | linear_attention | verify | 4 | 3436.3 µs | +2.5% | legacy: crates/model-arch/src/glm5next_kda/decode.rs:451 | KDA verify: conv and recurrence one row per launch (stateful_row); 2026-10-09: without per-row snapshots, one conv and one recurrent launch under METRALE_GLM_KDA_SEQ_TOKENS |
 | 3 | deepseek_sparse_attention | verify | 4 | 2015.0 µs | +1.4% | legacy: crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:203 | DSA verify: latent write, indexer projections, store and selection one row per launch; 2026-10-21: the selection in one pass after the row loop under METRALE_GLM_DSA_VERIFY_SELECT_ONCE (layer/verify_select.rs) |
 | 4 | deepseek_sparse_attention | multi_seq | 16 | 1389.7 µs | +0.4% | legacy: crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:301 | DSA batched decode: indexer key, pool store and selection one row per launch unless METRALE_GLM_DSA_INDEXER_ROWS (2026-10-09: staged projections; captured paged rows store and select one launch per stage) |
-| 5 | deepseek_sparse_attention | verify | 4 | 34.7 µs | +0.0% | circuit: dsa.pool, dsa.select | every family that runs these ops covers one row per launch |
-| 6 | deepseek_sparse_attention | multi_seq | 16 | 0.0 µs | +0.0% | circuit: dsa.pool, dsa.select | every family that runs these ops covers one row per launch |
-| 7 | linear_attention | multi_seq | 16 | 0.0 µs | +0.0% | legacy: crates/model-arch/src/glm5next_kda/rows.rs:134 | KDA batched decode: conv and recurrence one row per launch unless METRALE_GLM_KDA_SEQ_ROWS (2026-10-09: the rows kernels, one launch per 16 rows) |
-| 8 | deepseek_sparse_attention | multi_seq | 128 | 0.0 µs | +0.0% | circuit: dsa.pool, dsa.select | every family that runs these ops covers one row per launch |
-| 9 | linear_attention | multi_seq | 128 | 0.0 µs | +0.0% | legacy: crates/model-arch/src/glm5next_kda/rows.rs:134 | KDA batched decode: conv and recurrence one row per launch unless METRALE_GLM_KDA_SEQ_ROWS (2026-10-09: the rows kernels, one launch per 16 rows) |
+| 5 | linear_attention | multi_seq | 16 | 0.0 µs | +0.0% | legacy: crates/model-arch/src/glm5next_kda/rows.rs:134 | KDA batched decode: conv and recurrence one row per launch unless METRALE_GLM_KDA_SEQ_ROWS (2026-10-09: the rows kernels, one launch per 16 rows) |
+| 6 | deepseek_sparse_attention | multi_seq | 128 | 0.0 µs | +0.0% | circuit: dsa.pool, dsa.select | every family that runs these ops covers one row per launch |
+| 7 | linear_attention | multi_seq | 128 | 0.0 µs | +0.0% | legacy: crates/model-arch/src/glm5next_kda/rows.rs:134 | KDA batched decode: conv and recurrence one row per launch unless METRALE_GLM_KDA_SEQ_ROWS (2026-10-09: the rows kernels, one launch per 16 rows) |
 
 ## decode, 1 row (estimated step 84522.5 µs)
 
@@ -200,7 +198,7 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 | 27 | multi_seq | `kda.conv_ckpt` ×34 (`state_snapshot`, in f32) | causal_conv1d_l2norm: `causal_conv1d::causal_conv1d_update_l2norm_f32_strided` (qwen3.6-35b-a3b-nvfp4-declared `l0.gdn.conv_ckpt`) | Shared, unmeasured | none | - | 0.1% (214.8 µs) | none | reuse, then microbench at this point |
 | 28 | multi_seq | `kda.qkv` ×34 (`concat`, in bf16) | concat: instantiation in `residual_add.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.1% (214.8 µs) | none | reuse, then microbench at this point |
 | 29 | multi_seq | `moe.post` ×42 (`hc_post`, in bf16) | glm_mhc: instantiation in `glm5next_mhc.cu` +5; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.1% (199.2 µs) | none | reuse, then microbench at this point |
-| 30 | multi_seq | `dsa.select` ×11 (`index_select`, in bf16) | no family implements it | Novel | - | - | 0.1% (192.6 µs) | none | build: reference kernel, logits parity, then microbench against its roofline |
+| 30 | multi_seq | `dsa.select` ×11 (`index_select`, in bf16) | dsa_indexer: instantiation in `dsa_indexer.cu` +13; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.1% (192.6 µs) | none | reuse, then microbench at this point |
 | 31 | multi_seq | `dsa.kv_a` ×11 (`linear:mla_kv_a`, W bf16, A bf16) | dense_bf16_tc: instantiation in `dense_gemv_bf16_tc.cu`; no compared model runs this op on it here | Shared | none | - | 0.1% (191.8 µs) | `qwen3.8-27b::dense_gemv_bf16_tc16 @ decode C=16 (R=32, MTP k=1) · drafter gate/up M=16 N=17408 K=5120` (95.2% of floor) | reuse (optimized at this point); also tc_rows: Policy variant (weight); also wxay: Policy variant (activation, weight) |
 | 32 | multi_seq | `kda.mix` ×34 (`linear:hc_mix`, W bf16, A bf16) | dense_bf16_tc: instantiation in `dense_gemv_bf16_tc.cu`; no compared model runs this op on it here | Shared | none | - | 0.1% (179.2 µs) | `qwen3.8-27b::dense_gemv_bf16_tc16 @ decode C=16 (R=32, MTP k=1) · drafter gate/up M=16 N=17408 K=5120` (95.2% of floor) | reuse (optimized at this point); also tc_rows: Policy variant (weight); also wxay: Policy variant (activation, weight) |
 | 33 | multi_seq | `kda.f_a` ×34 (`linear:kda_f_a`, W bf16, A bf16) | dense_bf16_tc: instantiation in `dense_gemv_bf16_tc.cu`; no compared model runs this op on it here | Shared | none | - | 0.0% (161.6 µs) | `qwen3.8-27b::dense_gemv_bf16_tc16 @ decode C=16 (R=32, MTP k=1) · drafter gate/up M=16 N=17408 K=5120` (95.2% of floor) | reuse (optimized at this point); also tc_rows: Policy variant (weight); also wxay: Policy variant (activation, weight) |
@@ -242,7 +240,7 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 | 69 | multi_seq | `dsa.kv_write` ×11 (`kv_write`, in bf16) | kv_write: `reshape_and_cache::reshape_and_cache_flash` (qwen3.6-35b-a3b-nvfp4-declared `l3.attn.kv_write`) | Policy variant | kv_dtype fp8 vs bf16; layout latent vs kv | policy; policy | 0.0% (0.7 µs) | none | policy template on kv_dtype, layout (or split + bit_identical fusion rule) |
 | 70 | multi_seq | `embed.embed` ×1 (`embed`) | embed_copy: `(embed_copy emitter)` (qwen3.6-35b-a3b-nvfp4-declared `embed.embed`) | Shared, unmeasured | none | - | 0.0% (0.5 µs) | none | reuse, then microbench at this point |
 | 71 | multi_seq | `dsa.idx_k_norm` ×11 (`layer_norm`, in bf16) | layer_norm: instantiation in `nllb_encoder.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (0.4 µs) | none | reuse, then microbench at this point |
-| 72 | multi_seq | `dsa.pool` ×11 (`kpool_compress`, in bf16) | no family implements it | Novel | - | - | 0.0% (0.4 µs) | none | build: reference kernel, logits parity, then microbench against its roofline |
+| 72 | multi_seq | `dsa.pool` ×11 (`kpool_compress`, in bf16) | dsa_indexer: instantiation in `dsa_indexer.cu` +13; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (0.4 µs) | none | reuse, then microbench at this point |
 
 ## multi_seq, 128 rows (estimated step 926067.5 µs)
 
@@ -368,7 +366,7 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 | 41 | verify | `moe.pre` ×42 (`hc_pre`, in bf16) | glm_mhc: instantiation in `glm5next_mhc.cu` +5; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (27.8 µs) | none | reuse, then microbench at this point |
 | 42 | verify | `kda.gates` ×34 (`gdn_gates`, in bf16) | kda_gates: instantiation in `kda_gate.cu` +1; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (27.1 µs) | none | reuse, then microbench at this point; also gdn_ba_gates_gemm: Policy variant (decay, gate) |
 | 43 | verify | `kda.pre` ×34 (`hc_pre`, in bf16) | glm_mhc: instantiation in `glm5next_mhc.cu` +5; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (22.5 µs) | none | reuse, then microbench at this point |
-| 44 | verify | `dsa.select` ×11 (`index_select`, in bf16) | no family implements it | Novel | - | - | 0.0% (13.4 µs) | none | build: reference kernel, logits parity, then microbench against its roofline |
+| 44 | verify | `dsa.select` ×11 (`index_select`, in bf16) | dsa_indexer: instantiation in `dsa_indexer.cu` +13; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (13.4 µs) | none | reuse, then microbench at this point |
 | 45 | verify | `dsa.post` ×11 (`hc_post`, in bf16) | glm_mhc: instantiation in `glm5next_mhc.cu` +5; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (13.0 µs) | none | reuse, then microbench at this point |
 | 46 | verify | `dsa.idx_w` ×11 (`linear:index_weights`, W bf16, A bf16) | dense_bf16: instantiation in `dense_gemv_bf16.cu` +3; no compared model runs this op on it here | Shared | none | - | 0.0% (13.0 µs) | `qwen3.8-27b::dense_gemv_bf16_batchm @ decode C=1 (R=4, MTP k=3)` (91.7% of floor) | reuse (optimized at this point); also tc_rows: Policy variant (weight); also wxay: Policy variant (activation, weight) |
 | 47 | verify | `mlp.mix` ×3 (`linear:hc_mix`, W bf16, A bf16) | dense_bf16: instantiation in `dense_gemv_bf16.cu` +3; no compared model runs this op on it here | Shared | none | - | 0.0% (11.1 µs) | `qwen3.8-27b::dense_gemv_bf16_batchm @ decode C=1 (R=4, MTP k=3)` (91.7% of floor) | reuse (optimized at this point); also tc_rows: Policy variant (weight); also wxay: Policy variant (activation, weight) |
@@ -396,7 +394,7 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 | 69 | verify | `dsa.kv_write` ×11 (`kv_write`, in bf16) | kv_write: `reshape_and_cache::reshape_and_cache_flash` (qwen3.6-35b-a3b-nvfp4-declared `l3.attn.kv_write`) | Policy variant | kv_dtype fp8 vs bf16; layout latent vs kv | policy; policy | 0.0% (0.2 µs) | none | policy template on kv_dtype, layout (or split + bit_identical fusion rule) |
 | 70 | verify | `embed.embed` ×1 (`embed`) | embed_copy: `(embed_copy emitter)` (qwen3.6-35b-a3b-nvfp4-declared `embed.embed`) | Shared, unmeasured | none | - | 0.0% (0.1 µs) | none | reuse, then microbench at this point |
 | 71 | verify | `dsa.idx_k_norm` ×11 (`layer_norm`, in bf16) | layer_norm: instantiation in `nllb_encoder.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (0.1 µs) | none | reuse, then microbench at this point |
-| 72 | verify | `dsa.pool` ×11 (`kpool_compress`, in bf16) | no family implements it | Novel | - | - | 0.0% (0.1 µs) | none | build: reference kernel, logits parity, then microbench against its roofline |
+| 72 | verify | `dsa.pool` ×11 (`kpool_compress`, in bf16) | dsa_indexer: instantiation in `dsa_indexer.cu` +13; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (0.1 µs) | none | reuse, then microbench at this point |
 
 ## Parameterization plan (ordered by the largest step share each change touches)
 
@@ -450,10 +448,10 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 | 12 | glm_mhc | - | `dsa.post`, `dsa.pre`, `embed.expand`, `head.contract`, `kda.post`, `kda.pre`, `mlp.post`, `mlp.pre`, `moe.post`, `moe.pre` | 0.2% (multi_seq n=128) |
 | 13 | kda_o_norm | gate_act=sigmoid | `kda.out_norm` | 0.1% (multi_seq n=128) |
 | 14 | kda_gates | decay=channel gate=sigmoid_bounded | `kda.gates` | 0.1% (multi_seq n=128) |
-| 15 | silu_mul | - | `mlp.act`, `moe.experts_act`, `moe.shared_act` | 0.0% (verify n=4) |
-| 16 | argmax_host | - | `head.argmax` | 0.0% (multi_seq n=128) |
-| 17 | moe_weighted_sum_scale | shared_gate=none | `moe.blend` | 0.0% (decode n=1) |
-| 18 | dsa_indexer | - | `dsa.pool`, `dsa.select` | 0.0% (decode n=1) |
+| 15 | dsa_indexer | - | `dsa.pool`, `dsa.select` | 0.1% (multi_seq n=16) |
+| 16 | silu_mul | - | `mlp.act`, `moe.experts_act`, `moe.shared_act` | 0.0% (verify n=4) |
+| 17 | argmax_host | - | `head.argmax` | 0.0% (multi_seq n=128) |
+| 18 | moe_weighted_sum_scale | shared_gate=none | `moe.blend` | 0.0% (decode n=1) |
 | 19 | glm_router_topk | scoring=sigmoid_bias | `moe.top_k` | 0.0% (multi_seq n=128) |
 | 20 | embed_copy | - | `embed.embed` | 0.0% (multi_seq n=128) |
 | 21 | layer_norm | - | `dsa.idx_k_norm` | 0.0% (multi_seq n=128) |

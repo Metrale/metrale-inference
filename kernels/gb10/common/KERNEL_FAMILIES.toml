@@ -2401,7 +2401,10 @@ kernel_compute."dsa_index_scores_pipe::dsa_pool_prep_bf16" = { compute = "memory
 kernel_compute."dsa_index_scores_pipe::dsa_index_scores_mma_pipe" = { compute = "tensor_core", mma = "mma.sync.m16n8k16.bf16" }
 kernel_compute."dsa_indexer_fp8::dsa_indexer_store_fp8" = { compute = "memory" }
 kernel_compute."dsa_index_scores_pipe::dsa_select_fused_pipe" = { compute = "tensor_core", mma = "mma.sync.m16n8k16.bf16" }
-rows = [1, 1]
+# 2026-10-22: Several rows in one launch: the `_rows` kernels take every row of a pass (a verify's
+# 2..8 and a multi-sequence decode's rows, each with its own geometry), the multi-CTA top-k up to
+# TOPK_MC_ROWS (16) rows (glm5next_dsa/select/topk.rs:36-38).
+rows = [1, 16]
 pipeline.kpool_compress = { in = ["bf16", "bf16"], state = "bf16", compute = "f32", out = [] }
 pipeline.index_select = { in = ["f32", "f32"], scores = "f32", score = "f32", out = ["i32"] }
 op = [{ op = "kpool_compress" }, { op = "index_select" }]

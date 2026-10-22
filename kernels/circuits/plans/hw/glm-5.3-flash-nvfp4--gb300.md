@@ -229,7 +229,7 @@ Estimated step 2.631 ms (roofline projection, unmeasured). Shared 0.0% (measured
 
 ## Gap report: multi_seq n=16
 
-Estimated step 10.550 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 19.7%, parameterisation 0.0%, policy variant 5.5%, novel 74.8% of the step.
+Estimated step 10.550 ms (roofline projection, unmeasured). Shared 0.0% (measured on this class), shared-unmeasured 19.7%, parameterisation 0.0%, policy variant 5.5%, novel 74.7% of the step.
 
 | site | op | formats | execution | n | share | class | family | detail |
 |---|---|---|---|---:|---:|---|---|---|
@@ -264,7 +264,7 @@ Estimated step 10.550 ms (roofline projection, unmeasured). Shared 0.0% (measure
 | kda.conv_ckpt | state_snapshot | - | - | 34 | 0.1% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm_f32 rule=gdn_conv_l2_f32_per_row compute=cuda_core |
 | kda.qkv | concat | - | - | 34 | 0.1% | Shared, unmeasured | concat | no rule of this class covers it; family `concat` implements the op |
 | moe.post | hc_post | - | - | 42 | 0.1% | Shared, unmeasured | glm_mhc | no rule of this class covers it; family `glm_mhc` implements the op |
-| dsa.select | index_select | - | - | 11 | 0.1% | Novel | - | no rule of this class covers it; dsa_indexer run it one row per launch only |
+| dsa.select | index_select | - | - | 11 | 0.1% | Shared, unmeasured | dsa_indexer | no rule of this class covers it; family `dsa_indexer` implements the op |
 | dsa.kv_a | linear:mla_kv_a | bf16 x bf16 | native bf16 | 11 | 0.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | kda.mix | linear:hc_mix | bf16 x bf16 | native bf16 | 34 | 0.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
 | kda.f_a | linear:kda_f_a | bf16 x bf16 | native bf16 | 34 | 0.0% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
@@ -304,7 +304,7 @@ Estimated step 10.550 ms (roofline projection, unmeasured). Shared 0.0% (measure
 | dsa.kv_write | kv_write | - | - | 11 | 0.0% | Policy variant | kv_write | no rule of this class covers it; family `kv_write` implements the op; differs: layout kv->latent |
 | embed.embed | embed | - | - | 1 | 0.0% | Shared, unmeasured | embed_copy | (embed_copy emitter) rule=embed_row_copy |
 | dsa.idx_k_norm | layer_norm | - | - | 11 | 0.0% | Shared, unmeasured | layer_norm | no rule of this class covers it; family `layer_norm` implements the op |
-| dsa.pool | kpool_compress | - | - | 11 | 0.0% | Novel | - | no rule of this class covers it; dsa_indexer run it one row per launch only |
+| dsa.pool | kpool_compress | - | - | 11 | 0.0% | Shared, unmeasured | dsa_indexer | no rule of this class covers it; family `dsa_indexer` implements the op |
 
 ## Gap report: multi_seq n=128
 
