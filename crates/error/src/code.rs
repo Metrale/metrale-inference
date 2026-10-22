@@ -209,4 +209,23 @@ error_registry! {
         /// (section, codec, reason).
         BlueprintCodec = 0x0610 => "blueprint {} does not decompress under {}: {}",
     }
+    /// 2026-10-22: `0x0700–0x07FF`: precision declarations (`metrale-precision`) and the
+    /// architecture circuits' sources (`metrale-circuit`). Sub-blocks: precision `0x0700–0x070F`,
+    /// circuit sources `0x0710–0x071F`.
+    Precision = 0x0700..=0x07FF {
+        /// 2026-10-22: A `quantization_config` that does not parse into a declared precision
+        /// plan: (the field path and why, as one sentence).
+        QuantConfigInvalid = 0x0700 => "{}",
+        /// 2026-10-22: A declared weight whose on-disk storage is not modelled or not valid:
+        /// (module, reason).
+        WeightStorageUnmodelled = 0x0701 => "{}: {}",
+        /// 2026-10-22: A `--weight-quantization` tier and W4A4 lever that do not combine:
+        /// (reason).
+        WeightQuantTierInvalid = 0x0702 => "{}",
+        /// 2026-10-22: An `--activation-quantization` value that does not parse: (where and why).
+        ActQuantInvalid = 0x0703 => "{}",
+        /// 2026-10-22: A circuit source (a repository file or listing) its host could not
+        /// supply: (repo-relative path, reason).
+        CircuitSource = 0x0710 => "{}: {}",
+    }
 }

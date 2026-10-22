@@ -15,7 +15,7 @@
 //! ([`Nvfp4Act`]). Kernel dispatch reads those stamps and the published tier, and nothing
 //! else.
 //!
-//! Owner: config (quantization).
+//! Owner: precision (quantization).
 //! Invariants:
 //! - Pure: no environment, no I/O, no process state.
 //! - Under `nvfp4` no answer depends on the plan.
@@ -23,8 +23,11 @@
 //!   `nvfp4` answers under both tiers. Load-time quantization of a 16-bit checkpoint is
 //!   governed by its own flags, not this one.
 
-use anyhow::{Result, bail};
+use alloc::string::String;
 
+use metrale_error::{ErrorCode, error};
+
+use crate::Result;
 use crate::precision_plan::{DeclaredPrecisionPlan, Granularity, LayerPrecision};
 
 /// 2026-10-18: The FP8 weight block the W8A8 block-scaled decode kernels
@@ -93,11 +96,12 @@ impl WeightQuantTier {
     /// the checkpoint already decides every layer's activations there.
     pub fn new(tier: WeightQuantization, downcast: W4a4Downcast) -> Result<Self> {
         if tier == WeightQuantization::Declared && downcast != W4a4Downcast::Off {
-            bail!(
+            return Err(error!(
+                ErrorCode::WeightQuantTierInvalid,
                 "--w4a4-downcast applies only with --weight-quantization nvfp4; under \
                  `declared` each layer's activations follow the checkpoint's \
                  quantization_config"
-            );
+            ));
         }
         Ok(Self { tier, downcast })
     }
@@ -296,14 +300,15 @@ impl<'a> WeightQuantPolicy<'a> {
     }
 
     /// 2026-09-28: The policy for a checkpoint whose parsed `quantization_config` is `qc`;
-    /// `None` (no block) declares nothing.
-    pub fn for_checkpoint(
+    /// `None` (no block) declares nothing. 2026-10-22: `qc` is anything holding the plan
+    /// (`metrale_config::QuantizationConfig`), so this crate need not know the config type.
+    pub fn for_checkpoint<Q: AsRef<DeclaredPrecisionPlan>>(
         tier: WeightQuantTier,
-        qc: Option<&'a crate::QuantizationConfig>,
+        qc: Option<&'a Q>,
         caps: KernelCaps,
     ) -> Self {
         static UNDECLARED: DeclaredPrecisionPlan = DeclaredPrecisionPlan::UNDECLARED;
-        Self::new(tier, qc.map_or(&UNDECLARED, |q| &q.precision), caps)
+        Self::new(tier, qc.map_or(&UNDECLARED, |q| q.as_ref()), caps)
     }
 
     /// 2026-09-28: The tier in force.

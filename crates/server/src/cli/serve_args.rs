@@ -450,6 +450,7 @@ impl ServeArgs {
             self.weight_quantization.0,
             metrale_config::W4a4Downcast::from_flags(self.w4a4_downcast, self.w4a4_downcast_wide),
         )
+        .map_err(anyhow::Error::from)
     }
 
     /// 2026-09-30: The γ this DFlash serve runs (`resolve_dflash_gamma` of the flag and the

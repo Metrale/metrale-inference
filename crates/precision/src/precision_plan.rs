@@ -9,13 +9,19 @@
 //! for a module and run what it says by default. A lever may only go BELOW what the plan
 //! declares; running above it is not a silent default either.
 //!
-//! Owner: config (quantization).
+//! Owner: precision (quantization).
 //! Invariants:
 //! - Pure: no environment, no I/O. A malformed block is an error, never a guess.
 //! - A module the plan does not cover (ignored, unmatched, or no quantization at all)
 //!   resolves to [`LayerPrecision::UNQUANTIZED`]: 16-bit weights and activations.
 
-use anyhow::Result;
+use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
+
+use metrale_error::{ErrorCode, error};
+
+use crate::Result;
 
 #[path = "precision_plan/parse.rs"]
 mod parse;
@@ -23,6 +29,10 @@ mod parse;
 mod target;
 
 pub use target::{IgnoreDialect, Target};
+
+/// 2026-10-17: The `weight_scale_encoding` value the CSF block-scale decoder reads
+/// (`metrale_core::csf_blocks`, which re-exports it); the only one a plan accepts.
+pub const CSF_ENCODING_NAME: &str = "csf_32x2_v1";
 
 /// 2026-09-28: Element type of a quantized operand.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -292,10 +302,13 @@ impl DeclaredPrecisionPlan {
                 scale_shape: [rows.div_ceil(u64::from(r)), cols.div_ceil(u64::from(c))],
             },
             Granularity::Group(g) if w == Operand::MXFP4 => {
-                anyhow::ensure!(
-                    cols.is_multiple_of(2),
-                    "{module}: an MXFP4 weight needs an even K, got {cols}"
-                );
+                if !cols.is_multiple_of(2) {
+                    return Err(error!(
+                        ErrorCode::WeightStorageUnmodelled,
+                        String::from(module),
+                        format!("an MXFP4 weight needs an even K, got {cols}")
+                    ));
+                }
                 WeightStorage {
                     element: StoredElement::E2m1Pair,
                     shape: [rows, cols / 2],
@@ -303,7 +316,13 @@ impl DeclaredPrecisionPlan {
                     scale_shape: [rows, cols.div_ceil(u64::from(g))],
                 }
             }
-            _ => anyhow::bail!("{module}: the storage of a declared {w:?} weight is not modelled"),
+            _ => {
+                return Err(error!(
+                    ErrorCode::WeightStorageUnmodelled,
+                    String::from(module),
+                    format!("the storage of a declared {w:?} weight is not modelled")
+                ));
+            }
         };
         Ok(Some(storage))
     }
@@ -332,6 +351,3 @@ pub fn expert_container(module: &str) -> Option<&str> {
 #[path = "precision_plan_tests.rs"]
 mod precision_plan_tests;
 
-#[cfg(test)]
-#[path = "precision_plan_storage_tests.rs"]
-mod precision_plan_storage_tests;

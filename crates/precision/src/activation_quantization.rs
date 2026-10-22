@@ -29,16 +29,40 @@
 //! The same shape, a rule per (family, row range), is what the auto-fuser's circuit rules
 //! express per row range (kernels/circuits); a later step makes the circuit read this value.
 //!
-//! Owner: config (quantization).
+//! Owner: precision (quantization).
 //! Invariants:
 //! - Pure: no environment, no I/O, no process state. The serve parses the flag here once and
 //!   publishes the result; every dispatch site asks [`ActivationQuantization::route`].
 //! - Its `Display` form is canonical and parses back to an equal value.
 
-use std::collections::BTreeMap;
-use std::fmt;
+use alloc::collections::BTreeMap;
+use alloc::format;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::fmt;
 
-use anyhow::{Result, bail, ensure};
+use metrale_error::{Error, ErrorCode, error};
+
+use crate::Result;
+
+fn bad(msg: String) -> Error {
+    error!(ErrorCode::ActQuantInvalid, msg)
+}
+
+macro_rules! bail {
+    ($($t:tt)*) => {
+        return Err(bad(format!($($t)*)))
+    };
+}
+
+macro_rules! ensure {
+    ($cond:expr, $($t:tt)*) => {
+        if !$cond {
+            bail!($($t)*);
+        }
+    };
+}
 
 /// 2026-09-30: The activation format of one rung.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -82,10 +106,10 @@ impl ActQuantFormat {
             .into_iter()
             .find(|f| f.name() == s)
             .ok_or_else(|| {
-                anyhow::anyhow!(
+                bad(format!(
                     "unknown activation format {s:?} (one of {})",
                     Self::ALL.map(Self::name).join(", ")
-                )
+                ))
             })
     }
 }
@@ -124,10 +148,10 @@ impl ProjFamily {
             .into_iter()
             .find(|f| f.name() == s)
             .ok_or_else(|| {
-                anyhow::anyhow!(
+                bad(format!(
                     "unknown projection family {s:?} (one of {})",
                     Self::ALL.map(Self::name).join(", ")
-                )
+                ))
             })
     }
 }
@@ -183,7 +207,7 @@ impl Ladder {
         for part in s.split(';') {
             let (range, format) = part
                 .split_once('=')
-                .ok_or_else(|| anyhow::anyhow!("rung {part:?} is not RANGE=FORMAT"))?;
+                .ok_or_else(|| bad(format!("rung {part:?} is not RANGE=FORMAT")))?;
             let (lo, hi) = parse_range(range.trim())?;
             rungs.push(Rung {
                 lo,
@@ -209,7 +233,7 @@ impl Ladder {
                     ensure!(hi >= r.lo, "rung {} ends at {hi}, before it starts", i + 1);
                     next = hi
                         .checked_add(1)
-                        .ok_or_else(|| anyhow::anyhow!("rung {} ends past u32", i + 1))?;
+                        .ok_or_else(|| bad(format!("rung {} ends past u32", i + 1)))?;
                 }
                 None => {
                     ensure!(
@@ -240,7 +264,7 @@ fn merge_equal(rungs: Vec<Rung>) -> Vec<Rung> {
 fn parse_row(s: &str) -> Result<u32> {
     let n: u32 = s
         .parse()
-        .map_err(|_| anyhow::anyhow!("row bound {s:?} is not a whole number"))?;
+        .map_err(|_| bad(format!("row bound {s:?} is not a whole number")))?;
     ensure!(n >= 1, "rows are counted from 1");
     Ok(n)
 }
@@ -307,18 +331,18 @@ impl ActivationQuantization {
     pub fn parse(s: &str) -> Result<Self> {
         let mut parts = s.split(',');
         let base = Ladder::parse(parts.next().unwrap_or(""))
-            .map_err(|e| anyhow::anyhow!("--activation-quantization {s:?}: {e}"))?;
+            .map_err(|e| bad(format!("--activation-quantization {s:?}: {e}")))?;
         let mut families = BTreeMap::new();
         for part in parts {
             let (fam, ladder) = part.split_once(':').ok_or_else(|| {
-                anyhow::anyhow!(
+                bad(format!(
                     "--activation-quantization {s:?}: override {part:?} is not FAMILY:LADDER"
-                )
+                ))
             })?;
             let fam = ProjFamily::parse(fam.trim())
-                .map_err(|e| anyhow::anyhow!("--activation-quantization {s:?}: {e}"))?;
+                .map_err(|e| bad(format!("--activation-quantization {s:?}: {e}")))?;
             let ladder = Ladder::parse(ladder).map_err(|e| {
-                anyhow::anyhow!("--activation-quantization {s:?}, {}: {e}", fam.name())
+                bad(format!("--activation-quantization {s:?}, {}: {e}", fam.name()))
             })?;
             ensure!(
                 families.insert(fam, ladder).is_none(),

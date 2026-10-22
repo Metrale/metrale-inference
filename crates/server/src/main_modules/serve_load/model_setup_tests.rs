@@ -16,7 +16,7 @@ use super::lm_head_flags;
 
 fn unsloth() -> QuantizationConfig {
     let block: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../../config/src/precision_plan/fixtures/unsloth_qwen3_8_27b_nvfp4.json"
+        "../../../../precision/src/precision_plan/fixtures/unsloth_qwen3_8_27b_nvfp4.json"
     ))
     .expect("fixture parses");
     metrale_config::parse_quantization_config(&serde_json::json!({ "quantization_config": block }))

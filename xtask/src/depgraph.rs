@@ -23,6 +23,9 @@ use std::collections::{BTreeMap, VecDeque};
 pub const PURE_ALLOWLIST: &[&str] = &[
     // 2026-10-22: miniz_oxide checksum; no_std.
     "adler2",
+    // 2026-10-22: regex-automata's literal prefilter (metrale-precision `re:` targets, through
+    // the workspace's unified `regex` features); no_std + alloc, no I/O.
+    "aho-corasick",
     "allocator-api2",
     "autocfg",
     // 2026-10-22: The `kbp1.` blueprint transport; no_std + alloc, no I/O.

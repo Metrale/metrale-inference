@@ -2,10 +2,16 @@
 
 //! 2026-09-28: Module targets of a declared precision plan and how they match.
 //!
-//! Owner: config (quantization).
+//! Owner: precision (quantization).
 //! Invariants: none beyond the types.
 
-use anyhow::{Context, Result};
+use alloc::format;
+use alloc::string::{String, ToString};
+
+use metrale_error::{ErrorCode, error};
+use regex_automata::meta::Regex;
+
+use crate::Result;
 
 /// 2026-09-28: One target or ignore entry.
 #[derive(Debug, Clone)]
@@ -14,7 +20,7 @@ pub enum Target {
     Exact(String),
     /// 2026-09-28: A compressed-tensors `re:` pattern, anchored at both ends as Python's
     /// `re.match` plus the checkpoint's `$` do.
-    Regex(String, regex::Regex),
+    Regex(String, Regex),
     /// 2026-09-28: A ModelOpt glob (`*`, `?`).
     Glob(String),
     /// 2026-09-30: An HF `fp8` `modules_to_not_convert` / `ignored_layers` entry: a module
@@ -27,7 +33,7 @@ pub enum Target {
     /// `prefix in ignored_layers` (`is_layer_skipped`, quantization/utils/quant_utils.py). An
     /// entry with regex syntax beyond `.` is that regex, anchored at the start (`re.match`) and
     /// ending on a segment boundary.
-    HfModule(String, Option<regex::Regex>),
+    HfModule(String, Option<Regex>),
     /// 2026-09-28: A module class (`Linear`). Every module the plan is asked about is a
     /// linear layer, so `Linear` matches all of them and any other class none.
     Class(String),
@@ -61,8 +67,12 @@ impl Target {
     /// a `re:` pattern by `re.match` (anchored at the start only), anything else by equality.
     pub fn compressed_tensors(s: &str) -> Result<Self> {
         if let Some(p) = s.strip_prefix("re:") {
-            let re = regex::Regex::new(&format!("^(?:{p})"))
-                .with_context(|| format!("quantization_config: bad target pattern {s:?}"))?;
+            let re = Regex::new(&format!("^(?:{p})")).map_err(|e| {
+                error!(
+                    ErrorCode::QuantConfigInvalid,
+                    format!("quantization_config: bad target pattern {s:?}: {e}")
+                )
+            })?;
             return Ok(Target::Regex(s.to_string(), re));
         }
         if !s.contains('.') && s.chars().next().is_some_and(char::is_uppercase) {
@@ -74,17 +84,21 @@ impl Target {
     /// 2026-09-30: An HF `fp8` `modules_to_not_convert` / `ignored_layers` entry
     /// ([`Target::HfModule`]). An empty entry, or one whose regex does not compile, is refused.
     pub fn hf_module(s: &str) -> Result<Self> {
-        anyhow::ensure!(
-            !s.trim().is_empty(),
-            "quantization_config: an empty modules_to_not_convert entry"
-        );
+        if s.trim().is_empty() {
+            return Err(error!(
+                ErrorCode::QuantConfigInvalid,
+                "quantization_config: an empty modules_to_not_convert entry"
+            ));
+        }
         let regex_syntax =
             s.contains(['*', '?', '[', ']', '(', ')', '+', '^', '$', '|', '\\', '{']);
         let re = if regex_syntax {
-            Some(
-                regex::Regex::new(&format!("^(?:{s})(?:\\.|$)"))
-                    .with_context(|| format!("quantization_config: bad module pattern {s:?}"))?,
-            )
+            Some(Regex::new(&format!("^(?:{s})(?:\\.|$)")).map_err(|e| {
+                error!(
+                    ErrorCode::QuantConfigInvalid,
+                    format!("quantization_config: bad module pattern {s:?}: {e}")
+                )
+            })?)
         } else {
             None
         };

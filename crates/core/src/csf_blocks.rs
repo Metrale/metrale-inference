@@ -56,8 +56,9 @@ pub const TILE_ROW_BLOCKS: usize = 4;
 pub const TILE_COLUMN_BLOCKS: usize = 2;
 /// 2026-10-17: Tiles per index page.
 pub const PAGE_GROUPS: usize = 32;
-/// 2026-10-17: The `weight_scale_encoding` value this module decodes.
-pub const ENCODING_NAME: &str = "csf_32x2_v1";
+/// 2026-10-17: The `weight_scale_encoding` value this module decodes. 2026-10-22: Defined
+/// beside the declared precision plan that accepts it (metrale-precision).
+pub use metrale_precision::precision_plan::CSF_ENCODING_NAME as ENCODING_NAME;
 /// 2026-10-17: Tensor-name suffixes of the five components, appended to the
 /// native scale name (e.g. `...down_proj.weight_scale`).
 pub const SUFFIX_BASES: &str = ".csf32_bases";

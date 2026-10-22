@@ -118,6 +118,13 @@ pub struct QuantizationConfig {
     pub precision: precision_plan::DeclaredPrecisionPlan,
 }
 
+/// 2026-10-22: The plan half, which `WeightQuantPolicy::for_checkpoint` reads.
+impl AsRef<precision_plan::DeclaredPrecisionPlan> for QuantizationConfig {
+    fn as_ref(&self) -> &precision_plan::DeclaredPrecisionPlan {
+        &self.precision
+    }
+}
+
 /// 2026-09-26: The policy half of [`glm_vision_enabled`], taking the value instead of reading
 /// the environment, so tests need not set a variable. Only `1`, `true`, `yes` or `on`
 /// (trimmed, any case) enable; anything else, unset included, leaves the tower off.
@@ -249,7 +256,6 @@ pub(crate) fn default_conv_kernel() -> usize {
     4
 }
 
-pub mod activation_quantization;
 mod dispatch;
 mod factory;
 mod gguf;
@@ -266,12 +272,14 @@ mod model_config;
 pub mod moe_expert_layout;
 mod parsers;
 mod position_encoding;
-pub mod precision_plan;
 pub mod recipe_yaml;
 #[cfg(test)]
 mod tests;
 mod tp_split;
-pub mod weight_quantization;
+
+// 2026-10-22: The precision modules live in metrale-precision (no_std, so the circuits ask the
+// same answers on wasm); re-exported at their old paths.
+pub use metrale_precision::{activation_quantization, precision_plan, weight_quantization};
 
 pub use activation_quantization::{ActQuantFormat, ActivationQuantization, ProjFamily};
 pub use dispatch::parse_config;
@@ -353,5 +361,13 @@ pub(crate) fn validate_config(config: &ModelConfig) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "precision_plan_storage_tests.rs"]
+mod precision_plan_storage_tests;
+
+#[cfg(test)]
+#[path = "weight_quantization_v41_tests.rs"]
+mod weight_quantization_v41_tests;
 
 pub mod capabilities;

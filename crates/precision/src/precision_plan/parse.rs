@@ -2,18 +2,62 @@
 
 //! 2026-09-28: `quantization_config` dialects into a [`DeclaredPrecisionPlan`].
 //!
-//! Owner: config (quantization).
+//! Owner: precision (quantization).
 //! Invariants:
 //! - A field the plan interprets must have the documented type; anything else is an error
 //!   naming the field. Fields the plan does not interpret are left alone.
+//! - Every error is [`ErrorCode::QuantConfigInvalid`]; a context is prefixed as `ctx: inner`.
 
-use anyhow::{Context, Result, bail, ensure};
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec;
+use alloc::vec::Vec;
+use core::fmt::Display;
+
+use metrale_error::{Error, ErrorCode, error};
 use serde_json::Value;
 
 use super::{
-    DeclaredPrecisionPlan, Granularity, LayerPrecision, NumKind, Operand, PlanSource, Rule,
-    ScaleFmt, ScaleTiming, Target,
+    CSF_ENCODING_NAME, DeclaredPrecisionPlan, Granularity, LayerPrecision, NumKind, Operand,
+    PlanSource, Rule, ScaleFmt, ScaleTiming, Target,
 };
+use crate::Result;
+
+fn bad(msg: String) -> Error {
+    error!(ErrorCode::QuantConfigInvalid, msg)
+}
+
+macro_rules! bail {
+    ($($t:tt)*) => {
+        return Err(bad(format!($($t)*)))
+    };
+}
+
+macro_rules! ensure {
+    ($cond:expr, $($t:tt)*) => {
+        if !$cond {
+            bail!($($t)*);
+        }
+    };
+}
+
+/// 2026-10-22: A context prefixed onto an error (`ctx: inner`), or the message of a missing
+/// value.
+trait Within<T> {
+    fn within<C: Display>(self, ctx: impl FnOnce() -> C) -> Result<T>;
+}
+
+impl<T> Within<T> for Result<T> {
+    fn within<C: Display>(self, ctx: impl FnOnce() -> C) -> Result<T> {
+        self.map_err(|e| bad(format!("{}: {e}", ctx())))
+    }
+}
+
+impl<T> Within<T> for Option<T> {
+    fn within<C: Display>(self, ctx: impl FnOnce() -> C) -> Result<T> {
+        self.ok_or_else(|| bad(ctx().to_string()))
+    }
+}
 
 pub(super) fn plan(qc: &Value) -> Result<DeclaredPrecisionPlan> {
     // 2026-09-28: A ModelOpt `hf_quant_config.json` nests its fields under `quantization`.
@@ -54,7 +98,7 @@ fn str_list(v: &Value, key: &str) -> Result<Vec<String>> {
         Some(Value::Array(a)) => a
             .iter()
             .map(|e| {
-                e.as_str().map(str::to_string).with_context(|| {
+                e.as_str().map(str::to_string).within(|| {
                     format!("quantization_config.{key}: entry {e} is not a string")
                 })
             })
@@ -74,8 +118,9 @@ fn operand(v: Option<&Value>, what: &str) -> Result<Option<Operand>> {
     let bits = v
         .get("num_bits")
         .and_then(Value::as_u64)
+        .and_then(|b| u8::try_from(b).ok())
         .filter(|b| (1..=16).contains(b))
-        .with_context(|| format!("{what}.num_bits must be an integer in 1..=16"))?;
+        .within(|| format!("{what}.num_bits must be an integer in 1..=16"))?;
     // 2026-09-28: compressed-tensors' `QuantizationArgs.type` defaults to "int".
     let kind = match str_field(v, "type")?.as_deref() {
         Some("float") => NumKind::Float,
@@ -86,15 +131,19 @@ fn operand(v: Option<&Value>, what: &str) -> Result<Option<Operand>> {
         None | Some(Value::Null) => None,
         Some(g) => Some(
             g.as_u64()
-                .filter(|g| *g > 0 && *g <= u32::MAX as u64)
-                .with_context(|| format!("{what}.group_size must be a positive integer"))?
-                as u32,
+                .filter(|g| *g > 0)
+                .and_then(|g| u32::try_from(g).ok())
+                .within(|| format!("{what}.group_size must be a positive integer"))?,
         ),
     };
     let block = match v.get("block_structure") {
         None | Some(Value::Null) => None,
         Some(Value::Array(a)) if a.len() == 2 => {
-            let d = |i: usize| a[i].as_u64().filter(|x| *x > 0).map(|x| x as u32);
+            let d = |i: usize| {
+                a[i].as_u64()
+                    .filter(|x| *x > 0)
+                    .and_then(|x| u32::try_from(x).ok())
+            };
             Some((d(0), d(1)))
         }
         Some(other) => bail!("{what}.block_structure must be a two-element list, got {other}"),
@@ -123,7 +172,7 @@ fn operand(v: Option<&Value>, what: &str) -> Result<Option<Operand>> {
     };
     Ok(Some(Operand {
         kind,
-        bits: bits as u8,
+        bits,
         granularity,
         timing,
     }))
@@ -141,7 +190,7 @@ fn config_groups(qc: &Value, target: fn(&str) -> Result<Target>) -> Result<Vec<R
         let what = format!("config_groups.{name}");
         ensure!(g.is_object(), "{what} must be an object");
         let targets = str_list(g, "targets")
-            .with_context(|| format!("{what}.targets"))?
+            .within(|| format!("{what}.targets"))?
             .iter()
             .map(|t| target(t))
             .collect::<Result<Vec<_>>>()?;
@@ -216,16 +265,13 @@ fn modelopt_algo(algo: &str, group: Option<u32>) -> Option<LayerPrecision> {
 }
 
 /// 2026-10-17: A `quantized_layers` entry's `weight_scale_encoding`, when present, must be one
-/// the loaders decode (`metrale_core::csf_blocks::ENCODING_NAME`); any other would be read as
+/// the loaders decode ([`CSF_ENCODING_NAME`]); any other would be read as
 /// raw scales.
 fn scale_encoding(spec: &Value) -> Result<()> {
     match str_field(spec, "weight_scale_encoding")? {
         None => Ok(()),
-        Some(e) if e == metrale_core::csf_blocks::ENCODING_NAME => Ok(()),
-        Some(e) => bail!(
-            "weight_scale_encoding {e:?} is not supported (only {:?})",
-            metrale_core::csf_blocks::ENCODING_NAME
-        ),
+        Some(e) if e == CSF_ENCODING_NAME => Ok(()),
+        Some(e) => bail!("weight_scale_encoding {e:?} is not supported (only {CSF_ENCODING_NAME:?})"),
     }
 }
 
@@ -240,13 +286,13 @@ fn modelopt(qc: &Value) -> Result<DeclaredPrecisionPlan> {
         Some(Value::Object(layers)) => {
             for (name, spec) in layers {
                 let algo = str_field(spec, "quant_algo")
-                    .with_context(|| format!("quantized_layers.{name}"))?
-                    .with_context(|| format!("quantized_layers.{name} has no quant_algo"))?;
+                    .within(|| format!("quantized_layers.{name}"))?
+                    .within(|| format!("quantized_layers.{name} has no quant_algo"))?;
                 let group = spec
                     .get("group_size")
                     .and_then(Value::as_u64)
-                    .map(|g| g as u32);
-                scale_encoding(spec).with_context(|| format!("quantized_layers.{name}"))?;
+                    .and_then(|g| u32::try_from(g).ok());
+                scale_encoding(spec).within(|| format!("quantized_layers.{name}"))?;
                 if let Some(precision) = modelopt_algo(&algo, group) {
                     rules.push(Rule {
                         targets: vec![Target::Exact(name.clone())],
@@ -263,7 +309,7 @@ fn modelopt(qc: &Value) -> Result<DeclaredPrecisionPlan> {
         let group = qc
             .get("group_size")
             .and_then(Value::as_u64)
-            .map(|g| g as u32);
+            .and_then(|g| u32::try_from(g).ok());
         match (algo.as_str(), modelopt_algo(&algo, group)) {
             ("MIXED_PRECISION", _) => {
                 bail!("quant_algo MIXED_PRECISION without quantized_layers or config_groups")
@@ -305,12 +351,14 @@ fn fp8(qc: &Value) -> Result<DeclaredPrecisionPlan> {
     let block = match qc.get("weight_block_size") {
         None | Some(Value::Null) => None,
         Some(Value::Array(a))
-            if a.len() == 2 && a.iter().all(|x| x.as_u64().is_some_and(|x| x > 0)) =>
+            if a.len() == 2
+                && a.iter().all(|x| {
+                    x.as_u64()
+                        .is_some_and(|x| x > 0 && u32::try_from(x).is_ok())
+                }) =>
         {
-            Some((
-                a[0].as_u64().unwrap_or(0) as u32,
-                a[1].as_u64().unwrap_or(0) as u32,
-            ))
+            let dim = |x: &Value| x.as_u64().and_then(|x| u32::try_from(x).ok()).unwrap_or(0);
+            Some((dim(&a[0]), dim(&a[1])))
         }
         Some(other) => bail!(
             "quantization_config.weight_block_size must be two positive integers, got {other}"

@@ -150,8 +150,9 @@ impl IgnoreList {
         entries
             .iter()
             .map(|e| Target::ignore_entry(dialect, e))
-            .collect::<anyhow::Result<_>>()
+            .collect::<Result<_, _>>()
             .map(Self)
+            .map_err(anyhow::Error::from)
     }
 
     /// 2026-09-30: Whether an entry names the module `module_path`.

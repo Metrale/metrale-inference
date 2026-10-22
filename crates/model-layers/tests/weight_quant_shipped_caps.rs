@@ -25,7 +25,7 @@ fn shipped_caps_run_the_moe_and_dense_w8a8_under_declared_and_hold_block_scaled(
     let declared =
         WeightQuantTier::new(WeightQuantization::Declared, W4a4Downcast::Off).expect("tier");
     let moe = plan(include_str!(
-        "../../config/src/precision_plan/fixtures/qwen3_6_35b_a3b_fp8.json"
+        "../../precision/src/precision_plan/fixtures/qwen3_6_35b_a3b_fp8.json"
     ));
     let pol = WeightQuantPolicy::new(declared, &moe, caps);
     let nvfp4 = WeightQuantTier::new(WeightQuantization::Nvfp4, W4a4Downcast::Off).expect("tier");
@@ -57,7 +57,7 @@ fn shipped_caps_run_the_moe_and_dense_w8a8_under_declared_and_hold_block_scaled(
         assert_eq!(nv.fp8_block_scaled_decode_act(&m), None, "{m}");
     }
     let dense = plan(include_str!(
-        "../../config/src/precision_plan/fixtures/unsloth_qwen3_8_27b_nvfp4.json"
+        "../../precision/src/precision_plan/fixtures/unsloth_qwen3_8_27b_nvfp4.json"
     ));
     let d = WeightQuantPolicy::new(declared, &dense, caps);
     for m in [

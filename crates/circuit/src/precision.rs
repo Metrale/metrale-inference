@@ -5,7 +5,7 @@
 //! `kernels/circuits/precision/<checkpoint>.toml`.
 //!
 //! The trait is shaped after `DeclaredPrecisionPlan::resolve(module) -> LayerPrecision`
-//! (branch perf/weight-quantization, `crates/config/src/precision_plan.rs`): a module path
+//! (branch perf/weight-quantization, `crates/precision/src/precision_plan.rs`): a module path
 //! in, the weight and input-activation formats out. Once that plan and `WeightQuantPolicy`
 //! are on main, an adapter implements this trait from them and the tables go.
 //!

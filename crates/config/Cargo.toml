@@ -16,6 +16,8 @@ metal = ["metrale-core/metal"]
 metrale-core = { workspace = true }
 metrale-settings = { workspace = true }
 metrale-kv-codec = { workspace = true }
+# 2026-10-22: The precision plan, weight and activation quantization (re-exported).
+metrale-precision = { workspace = true }
 anyhow = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["std", "derive"] }
 serde_json = { workspace = true, features = ["std", "preserve_order"] }

@@ -11,8 +11,8 @@
 
 use std::collections::BTreeMap;
 
-use super::*;
 use crate::parse_config;
+use crate::precision_plan::{DeclaredPrecisionPlan, StoredElement, StoredScale};
 use crate::tests::deepseek_v41::CONFIG;
 
 const HEADERS: &str = include_str!("tests/fixtures/deepseek_v41_flash/headers.json");
