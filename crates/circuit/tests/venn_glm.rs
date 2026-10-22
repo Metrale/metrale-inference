@@ -96,16 +96,24 @@ fn the_glm_only_ops_classify_against_their_own_families() {
 }
 
 /// 2026-10-09: The batched decode (`forward_multi`) took the per-sequence veto away; what still
-/// loops per row at C128 is the DSA indexer write and selection, the top flag.
+/// looped per row at C128 was the DSA indexer write and selection, the top flag.
+/// 2026-10-22: METRALE_GLM_DSA_INDEXER_ROWS is default on (`glm_dsa_indexer_rows = "on"` in
+/// glm5_next.config.toml [policy]), so the per-row indexer no longer flags at the defaults and the
+/// KDA verify's per-row conv and recurrence is the top flag.
 #[test]
-fn the_per_row_dsa_indexer_is_the_top_flag() {
+fn the_per_row_dsa_indexer_no_longer_flags_and_the_kda_verify_tops() {
     let r = report_of(&glm_args());
+    assert!(
+        r.flags.iter().all(|f| f.source
+            != "legacy: crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:301"),
+        "the per-row DSA indexer flags although its rows lever is on by default"
+    );
     let top = &r.flags[0];
     assert_eq!(
         top.source,
-        "legacy: crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:301"
+        "legacy: crates/model-arch/src/glm5next_kda/decode.rs:451"
     );
-    assert!(top.run.mode == Mode::MultiSeq && top.run.rows == 128);
+    assert!(top.run.mode == Mode::Verify && top.run.rows == 4);
 }
 
 #[test]
