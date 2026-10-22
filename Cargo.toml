@@ -42,6 +42,7 @@ members = [
     "crates/blueprint-trust",
     "crates/blueprint-sign",
     "crates/precision",
+    "crates/kernel-target",
     "crates/kzx",
 ]
 
@@ -219,6 +220,7 @@ metrale-serve-identity = { path = "crates/serve-identity", version = "1.0.0-beta
 kzx = { path = "crates/kzx", version = "0.1.0", default-features = false }
 metrale-kv-codec = { path = "crates/kv-codec", version = "1.0.0-beta-preview", default-features = false }
 metrale-precision = { path = "crates/precision", version = "1.0.0-beta-preview", default-features = false }
+metrale-kernel-target = { path = "crates/kernel-target", version = "1.0.0-beta-preview", default-features = false }
 metrale-kv-tq128 = { path = "crates/kv-tq128", version = "1.0.0-beta-preview", default-features = false }
 metrale-settings = { path = "crates/settings", version = "1.0.0-beta-preview", default-features = false }
 metrale-speculative = { path = "crates/speculative", version = "1.0.0-beta-preview", default-features = false }

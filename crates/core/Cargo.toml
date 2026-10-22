@@ -15,6 +15,8 @@ metal = []
 [dependencies]
 # 2026-10-22: `csf_blocks::ENCODING_NAME`, defined beside the plan that accepts it.
 metrale-precision = { workspace = true }
+# 2026-10-22: `target::KernelTarget` lives there (no_std); re-exported at its old path.
+metrale-kernel-target = { workspace = true }
 anyhow = { workspace = true, features = ["std"] }
 serde = { workspace = true, features = ["std", "derive"] }
 serde_json = { workspace = true, features = ["std", "preserve_order"] }

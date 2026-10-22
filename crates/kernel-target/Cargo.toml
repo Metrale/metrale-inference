@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-kernel-target"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: the (arch, model, quant) key of one compiled kernel set. no_std + alloc."
+
+# 2026-10-22: Split from metrale-core so the blueprint body (metrale-blueprint, no_std) carries
+# this same type instead of a mirror (SSOT). metrale-core re-exports it at
+# `metrale_core::target::KernelTarget`. No features (NSCC).
+[features]
+
+[dependencies]
+serde = { workspace = true, features = ["alloc", "derive"] }
+
+[dev-dependencies]
+postcard = { workspace = true, features = ["alloc"] }
+
+[lints]
+workspace = true
+
+[package.metadata.metrale]
+role = "core"

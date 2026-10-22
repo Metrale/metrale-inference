@@ -1770,6 +1770,7 @@ dependencies = [
  "metrale-blueprint-trust",
  "metrale-circuit",
  "metrale-error",
+ "metrale-kernel-target",
  "metrale-settings",
  "miniz_oxide 0.8.9",
  "postcard",
@@ -1878,6 +1879,7 @@ version = "1.0.0-beta-preview"
 dependencies = [
  "anyhow",
  "metrale-cudarc",
+ "metrale-kernel-target",
  "metrale-precision",
  "serde",
  "serde_json",
@@ -2025,6 +2027,14 @@ dependencies = [
 [[package]]
 name = "metrale-kernel-root"
 version = "1.0.0-beta-preview"
+
+[[package]]
+name = "metrale-kernel-target"
+version = "1.0.0-beta-preview"
+dependencies = [
+ "postcard",
+ "serde",
+]
 
 [[package]]
 name = "metrale-kernel-tree"

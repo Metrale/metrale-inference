@@ -8,27 +8,18 @@
 //! - A module's source (internal, inline, disk, remote) is not here: it lives in the unsigned
 //!   locator table, so a lite and a full file carry one signature.
 //! - `KernelSpec.module` indexes `KernelSet.modules`.
-//! - 2026-10-22: Kernel ids and compute units are the circuit's own types (SSOT).
+//! - 2026-10-22: Kernel ids and compute units are the circuit's own types, and the compiled
+//!   target is metrale-kernel-target's `KernelTarget<String>` (SSOT).
 
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use metrale_circuit::KernelId;
 use metrale_circuit::venn::compute::ComputeUnit;
+pub use metrale_kernel_target::KernelTarget;
 use serde::{Deserialize, Serialize};
 
 use crate::ids::ArtifactId;
-
-/// 2026-10-22: The compiled target (mirror of `metrale_core::target::KernelTarget`).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct KernelTarget {
-    /// 2026-10-22: Base SM, e.g. `sm_121`.
-    pub arch: String,
-    /// 2026-10-22: Model directory, e.g. `glm-5.3-flash`.
-    pub model: String,
-    /// 2026-10-22: Quant, e.g. `nvfp4`.
-    pub quant: String,
-}
 
 /// 2026-10-22: What kind of bytes an artifact is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -59,7 +50,7 @@ impl ArtifactKind {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KernelSet {
     /// 2026-10-22: The compiled target.
-    pub target: KernelTarget,
+    pub target: KernelTarget<String>,
     /// 2026-10-22: Every module, by name order.
     pub modules: Vec<ModuleSpec>,
     /// 2026-10-22: Every `module::func` a plan names, sorted.

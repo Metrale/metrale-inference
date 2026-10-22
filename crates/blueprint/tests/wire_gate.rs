@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-22: The `wire-types` gate, two rules:
-//! - SSOT: this crate defines no type that `metrale-circuit` defines. The circuit instance,
-//!   its plans, kernel ids and compute units travel as the circuit's own types (serde derives);
-//!   a mirror type here, and the conversion it needs, is refused by name.
+//! - SSOT: this crate defines no type that `metrale-circuit` or `metrale-kernel-target`
+//!   defines. The circuit instance, its plans, kernel ids, compute units and the compiled
+//!   kernel target travel as those crates' own types (serde derives); a mirror type here, and
+//!   the conversion it needs, is refused by name.
 //! - The body types this crate does own hold no `HashMap` (iteration order), no `usize`
 //!   (platform width) and no `f32`/`f64` (formatting), so a value re-encodes to the same bytes.
 //!
@@ -107,7 +108,7 @@ fn names_in(dir: &Path) -> Vec<(String, PathBuf)> {
         .collect()
 }
 
-/// 2026-10-22: Every name this crate declares that the circuit also declares, less the
+/// 2026-10-22: Every name this crate declares that a carried crate also declares, less the
 /// [`SHARED_NAMES`].
 fn duplicates(blueprint: &[(String, PathBuf)], circuit: &[(String, PathBuf)]) -> Vec<String> {
     let mut out: Vec<String> = blueprint
@@ -130,14 +131,21 @@ fn owned_body_types_hold_no_banned_type() {
 }
 
 #[test]
-fn the_crate_defines_no_type_the_circuit_defines() {
+fn the_crate_defines_no_type_the_carried_crates_define() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let ours = names_in(&root.join("src"));
-    let theirs = names_in(&root.join("../circuit/src"));
-    assert!(
-        theirs.iter().any(|(n, _)| n == "Circuit") && ours.iter().any(|(n, _)| n == "Blueprint"),
-        "the scan found neither crate's types"
-    );
+    let mut theirs = names_in(&root.join("../circuit/src"));
+    theirs.extend(names_in(&root.join("../kernel-target/src")));
+    for (found, name) in [
+        (&ours, "Blueprint"),
+        (&theirs, "Circuit"),
+        (&theirs, "KernelTarget"),
+    ] {
+        assert!(
+            found.iter().any(|(n, _)| n == name),
+            "the scan did not find `{name}`"
+        );
+    }
     assert_eq!(duplicates(&ours, &theirs), Vec::<String>::new());
     for (name, why) in SHARED_NAMES {
         assert!(
@@ -154,8 +162,9 @@ fn the_gate_fires_on_a_smuggled_hashmap_and_float() {
     assert!(offenders("// a comment naming usize and f32\n").is_empty());
 }
 
-/// 2026-10-22: The Phase-1 mirrors (a wire `LayerKind`, `Mode`, `KernelId`) are what the SSOT
-/// rule refuses; a name only mentioned in a comment, or a shared name with its reason, is not.
+/// 2026-10-22: The Phase-1 mirrors (a wire `LayerKind`, `Mode`, `KernelId`, `KernelTarget`) are
+/// what the SSOT rule refuses; a name only mentioned in a comment, or a shared name with its
+/// reason, is not.
 #[test]
 fn the_gate_fires_on_a_mirrored_circuit_type() {
     let circuit = vec![
@@ -163,8 +172,9 @@ fn the_gate_fires_on_a_mirrored_circuit_type() {
         ("Mode".to_string(), PathBuf::from("rules.rs")),
         ("KernelId".to_string(), PathBuf::from("rules.rs")),
         ("Header".to_string(), PathBuf::from("render.rs")),
+        ("KernelTarget".to_string(), PathBuf::from("lib.rs")),
     ];
-    let text = "/// mirror of `metrale_circuit::LayerKind`\n#[derive(Clone)]\npub enum LayerKind {\n}\npub(crate) struct KernelId<'a>(&'a str);\npub struct Header;\n// pub enum Mode {}\nimpl X { type Mode = u8; }\n    type Mode = u8;\n";
+    let text = "/// mirror of `metrale_circuit::LayerKind`\n#[derive(Clone)]\npub enum LayerKind {\n}\npub(crate) struct KernelId<'a>(&'a str);\npub struct Header;\n// pub enum Mode {}\nimpl X { type Mode = u8; }\n    type Mode = u8;\npub struct KernelTarget {\n}\npub use metrale_kernel_target::KernelTarget;\n";
     let ours: Vec<(String, PathBuf)> = declared(text)
         .into_iter()
         .map(|n| (n, PathBuf::from("types/circuit.rs")))
@@ -173,7 +183,8 @@ fn the_gate_fires_on_a_mirrored_circuit_type() {
         duplicates(&ours, &circuit),
         vec![
             "LayerKind (types/circuit.rs)".to_string(),
-            "KernelId (types/circuit.rs)".to_string()
+            "KernelId (types/circuit.rs)".to_string(),
+            "KernelTarget (types/circuit.rs)".to_string()
         ]
     );
 }

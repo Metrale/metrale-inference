@@ -88,10 +88,12 @@ pub(crate) fn recipe_of(p: RecipeParts) -> Recipe {
 }
 
 /// 2026-10-22: The embedded modules of `target`.
-pub(crate) fn embedded(target: &w::KernelTarget) -> Result<Vec<(&'static str, &'static [u8])>> {
+pub(crate) fn embedded(
+    target: &w::KernelTarget<String>,
+) -> Result<Vec<(&'static str, &'static [u8])>> {
     metrale_kernels::all_ptx_sets()
         .into_iter()
-        .find(|s| s.target.arch == target.arch && s.target.model == target.model && s.target.quant == target.quant)
+        .find(|s| s.target == target.as_strs())
         .map(|s| s.modules)
         .with_context(|| {
             format!(
@@ -295,11 +297,7 @@ fn kernels(
         });
     }
     Ok(w::KernelSet {
-        target: w::KernelTarget {
-            arch: set.target.arch.to_string(),
-            model: set.target.model.to_string(),
-            quant: set.target.quant.to_string(),
-        },
+        target: set.target.to_owned_strings(),
         modules,
         specs,
     })
