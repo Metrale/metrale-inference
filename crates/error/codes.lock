@@ -68,6 +68,13 @@
 0x060e BlueprintRecipe
 0x060f BlueprintKey
 0x0610 BlueprintCodec
+0x0611 SealedManifest
+0x0612 SealedNotRecipient
+0x0613 SealedUnwrap
+0x0614 SealedCiphertextHash
+0x0615 SealedOpen
+0x0616 SealedKeyRequired
+0x0617 SealedCekReused
 0x0700 QuantConfigInvalid
 0x0701 WeightStorageUnmodelled
 0x0702 WeightQuantTierInvalid

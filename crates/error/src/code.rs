@@ -168,7 +168,8 @@ error_registry! {
         KvLatentGeometry = 0x050B => "latent cache {}: {}",
     }
     /// 2026-10-22: `0x0600–0x06FF`: blueprints (`.kbp`): framing, trust, signatures, kernel
-    /// resolution and the recipe projection (`metrale-blueprint`, `metrale-blueprint-trust`).
+    /// resolution, the recipe projection and sealed kernels (`metrale-blueprint`,
+    /// `metrale-blueprint-trust`, `metrale-seal`).
     Blueprint = 0x0600..=0x06FF {
         /// 2026-10-22: A `.kbp` whose framing is malformed: (what).
         BlueprintFrame = 0x0600 => "blueprint frame: {}",
@@ -208,6 +209,27 @@ error_registry! {
         /// 2026-10-22: A stored section that does not decompress to its declared raw length:
         /// (section, codec, reason).
         BlueprintCodec = 0x0610 => "blueprint {} does not decompress under {}: {}",
+        /// 2026-10-22: A sealed section that is malformed, bound to another body, or names a
+        /// module whose source is `internal`: (what).
+        SealedManifest = 0x0611 => "sealed manifest: {}",
+        /// 2026-10-22: A recipient key whose fingerprint the sealed manifest does not list:
+        /// (fingerprint).
+        SealedNotRecipient = 0x0612 => "recipient key {} is not a recipient of this sealed \
+            blueprint",
+        /// 2026-10-22: The content key wrapped for a listed recipient does not unwrap (wrong key,
+        /// altered wrap or another body; one opaque failure): (fingerprint).
+        SealedUnwrap = 0x0613 => "the content key wrapped for recipient {} does not unwrap",
+        /// 2026-10-22: A sealed module's ciphertext differs from the signed length or hash,
+        /// refused before any decryption: (module, expected, found).
+        SealedCiphertextHash = 0x0614 => "sealed module {} ciphertext must be {} but is {}",
+        /// 2026-10-22: A sealed module's ciphertext does not authenticate (opaque): (module).
+        SealedOpen = 0x0615 => "sealed module {} does not open",
+        /// 2026-10-22: A sealed module resolved without a recipient key: (module).
+        SealedKeyRequired = 0x0616 => "sealed module {} needs a recipient key \
+            (--recipient-key)",
+        /// 2026-10-22: A new revision sealed under the content key already running: (revision,
+        /// running revision).
+        SealedCekReused = 0x0617 => "revision {} reuses the content key of running revision {}",
     }
     /// 2026-10-22: `0x0700–0x07FF`: precision declarations (`metrale-precision`) and the
     /// architecture circuits' sources (`metrale-circuit`). Sub-blocks: precision `0x0700–0x070F`,

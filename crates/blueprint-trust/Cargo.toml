@@ -14,6 +14,8 @@ description = "Metrale Engine: blueprint trust: the compiled anchors, key certif
 [dependencies]
 metrale-abstract-io = { workspace = true }
 metrale-error = { workspace = true }
+# 2026-10-22: `lv_cat`, defined once in metrale-seal (SSOT), which sits below this crate.
+metrale-seal = { workspace = true }
 # 2026-10-22: As metrale-auth (Cargo.toml:24, :28): ml-dsa =0.1.1 with alloc only; Ed25519 2.2
 # without default features (no_std), so both repos share one lock line.
 ml-dsa = { workspace = true, features = ["alloc"] }

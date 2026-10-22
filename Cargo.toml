@@ -44,6 +44,7 @@ members = [
     "crates/precision",
     "crates/kernel-target",
     "crates/kzx",
+    "crates/seal",
 ]
 
 # 2026-10-17: A bare `cargo build` builds `met` only; CI and scripts name `--workspace` or `-p`.
@@ -107,6 +108,9 @@ sha2 = { version = "0.11", default-features = false }
 parking_lot = { version = "0.12", default-features = false }
 
 # External crates, alphabetical.
+# 2026-10-22: AES-256-GCM for sealed kernels (metrale-seal); the aead 0.6 / cipher 0.5
+# generation that matches digest 0.11, so no second sha2 enters a core crate.
+aes-gcm = { version = "0.11", default-features = false }
 ahash = { version = "0.8", default-features = false }
 axum = { version = "0.8", default-features = false }
 base64 = { version = "0.23", default-features = false }
@@ -123,6 +127,8 @@ flate2 = { version = "1.1", default-features = false }
 futures = { version = "0.3", default-features = false }
 getrandom = { version = "0.4", default-features = false }
 half = { version = "2", default-features = false }
+# 2026-10-22: HKDF-SHA-256 (RFC 5869) for sealed kernels (metrale-seal); hmac 0.13 + digest 0.11.
+hkdf = { version = "0.13", default-features = false }
 http-body = { version = "1", default-features = false }
 hyper = { version = "1", default-features = false }
 hyper-util = { version = "0.1", default-features = false }
@@ -137,6 +143,9 @@ libloading = { version = "0.9", default-features = false }
 memmap2 = { version = "0.9", default-features = false }
 # 2026-10-22: Pure-Rust no_std deflate for `.kbp` bodies and inline kernel payloads.
 miniz_oxide = { version = "0.8", default-features = false }
+# 2026-10-22: ML-KEM-768 (FIPS 203) for sealed kernels (metrale-seal), the KKB1 envelope's pin;
+# `hazmat` exposes deterministic encapsulation so randomness enters as a value.
+ml-kem = { version = "0.3.2", default-features = false }
 # 2026-10-22: ML-DSA (FIPS 204), exactly the version and features metrale-auth signs with.
 ml-dsa = { version = "=0.1.1", default-features = false }
 # 2026-09-30: Exactly 2.21.0. 2.22 changed how `none` and booleans render through `|string`
@@ -180,6 +189,9 @@ unicode-width = { version = "0.2", default-features = false }
 # 2026-10-22: Wipes key seeds held in memory by the blueprint signer.
 zeroize = { version = "1.8", default-features = false }
 ureq = { version = "3", default-features = false }
+# 2026-10-22: The X25519 half of the sealed-kernel hybrid KEM (metrale-seal). 2.0.1, on the
+# curve25519-dalek 4 that ed25519-dalek 2.2 already uses (one lock line; 3.0 needs dalek 5).
+x25519-dalek = { version = "2.0.1", default-features = false }
 
 # Workspace crates, alphabetical. `default-features = false` so each consumer forwards the
 # backend feature (cuda or metal) explicitly; otherwise every member would silently pull in
@@ -216,6 +228,7 @@ metrale-model-layers = { path = "crates/model-layers", version = "1.0.0-beta-pre
 metrale-model-weights = { path = "crates/model-weights", version = "1.0.0-beta-preview", default-features = false }
 metrale-sampling = { path = "crates/sampling", version = "1.0.0-beta-preview", default-features = false }
 metrale-scheduler = { path = "crates/scheduler", version = "1.0.0-beta-preview", default-features = false }
+metrale-seal = { path = "crates/seal", version = "1.0.0-beta-preview", default-features = false }
 metrale-serve-identity = { path = "crates/serve-identity", version = "1.0.0-beta-preview", default-features = false }
 kzx = { path = "crates/kzx", version = "0.1.0", default-features = false }
 metrale-kv-codec = { path = "crates/kv-codec", version = "1.0.0-beta-preview", default-features = false }

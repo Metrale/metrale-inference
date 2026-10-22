@@ -23,6 +23,14 @@ use std::collections::{BTreeMap, VecDeque};
 pub const PURE_ALLOWLIST: &[&str] = &[
     // 2026-10-22: miniz_oxide checksum; no_std.
     "adler2",
+    // 2026-10-22: AEAD traits under aes-gcm (metrale-seal sealed kernels); no_std.
+    "aead",
+    // 2026-10-22: AES block cipher (fixsliced constant-time software backend on wasm) under
+    // aes-gcm; no_std.
+    "aes",
+    // 2026-10-22: AES-256-GCM for sealed kernels (metrale-seal, DESIGN-encrypted-kernels.md §1.2);
+    // no_std + alloc.
+    "aes-gcm",
     // 2026-10-22: regex-automata's literal prefilter (metrale-precision `re:` targets, through
     // the workspace's unified `regex` features); no_std + alloc, no I/O.
     "aho-corasick",
@@ -37,14 +45,21 @@ pub const PURE_ALLOWLIST: &[&str] = &[
     "block-buffer",
     "byteorder",
     "cfg-if",
+    // 2026-10-22: block/stream cipher traits under aes and ctr (metrale-seal); no_std.
+    "cipher",
     // 2026-10-22: ctutils constant-time move; no_std, no I/O.
     "cmov",
     // 2026-10-22: postcard's COBS framing; no_std, no I/O.
     "cobs",
     // 2026-10-18: no_std OID constants that digest 0.11 names; no I/O, builds for wasm32v1-none.
     "const-oid",
+    // 2026-10-22: compile-time word-size selection under aes 0.9 / polyval (metrale-seal); no_std,
+    // no I/O.
+    "cpubits",
     "cpufeatures",
     "crypto-common",
+    // 2026-10-22: CTR mode under aes-gcm (metrale-seal); no_std.
+    "ctr",
     // 2026-10-22: RustCrypto constant-time helpers under hybrid-array (sha2, ml-dsa); no_std.
     "ctutils",
     // 2026-10-22: Ed25519 group arithmetic (serial backend on wasm); no_std.
@@ -62,16 +77,26 @@ pub const PURE_ALLOWLIST: &[&str] = &[
     "fancy-regex",
     "foldhash",
     "generic-array",
+    // 2026-10-22: GHASH under aes-gcm (metrale-seal); no_std, constant-time software.
+    "ghash",
     "hash32",
     "hashbrown",
     "heapless",
+    // 2026-10-22: HKDF-SHA-256 (RFC 5869) for sealed-kernel keys (metrale-seal); no_std.
+    "hkdf",
+    // 2026-10-22: HMAC under hkdf (metrale-seal); no_std.
+    "hmac",
     // 2026-10-18: The sha2 0.11 output array type (block-buffer); no_std, no I/O.
     "hybrid-array",
     // 2026-10-18: serde_json's ordered map; no_std + alloc over hashbrown and equivalent.
     "indexmap",
+    // 2026-10-22: in/out buffer types under cipher (metrale-seal); no_std.
+    "inout",
     "itoa",
     // 2026-10-22: Keccak permutation under SHAKE (ML-DSA); no_std.
     "keccak",
+    // 2026-10-22: KEM traits under ml-kem (metrale-seal); no_std, its getrandom feature off.
+    "kem",
     // 2026-10-22: num-traits float fallback under module-lattice; pure math, no_std.
     "libm",
     "memchr",
@@ -80,12 +105,17 @@ pub const PURE_ALLOWLIST: &[&str] = &[
     "miniz_oxide",
     // 2026-10-22: ML-DSA (FIPS 204), =0.1.1 as metrale-auth; no_std + alloc, deterministic.
     "ml-dsa",
+    // 2026-10-22: ML-KEM-768 (FIPS 203) for the sealed-kernel hybrid wrap, 0.3.2 as metprof-
+    // envelope (metrale-seal); no_std, deterministic encapsulation.
+    "ml-kem",
     // 2026-10-22: ML-DSA polynomial arithmetic; no_std.
     "module-lattice",
     "num-traits",
     "paste",
     // 2026-10-22: ML-DSA key encoding types, never used for I/O; no_std.
     "pkcs8",
+    // 2026-10-22: POLYVAL under ghash (metrale-seal); no_std, constant-time software.
+    "polyval",
     "postcard",
     "ppv-lite86",
     "proc-macro2",
@@ -102,6 +132,8 @@ pub const PURE_ALLOWLIST: &[&str] = &[
     // 2026-10-22: toml's span wrapper; no_std + alloc without `std`.
     "serde_spanned",
     "sha2",
+    // 2026-10-22: SHA-3/SHAKE under ml-kem (metrale-seal); no_std.
+    "sha3",
     // 2026-10-22: ML-DSA SHAKE XOF; no_std.
     "shake",
     // 2026-10-22: RustCrypto signature traits; no_std.
@@ -129,12 +161,20 @@ pub const PURE_ALLOWLIST: &[&str] = &[
     "toml_writer",
     "typenum",
     "unicode-ident",
+    // 2026-10-22: universal-hash traits under ghash/polyval (metrale-seal); no_std.
+    "universal-hash",
     // 2026-10-22: the parser combinators under toml_parser; no_std + alloc.
     "winnow",
+    // 2026-10-22: the X25519 half of the sealed-kernel hybrid wrap (metrale-seal), on
+    // curve25519-dalek 4; no_std, its getrandom feature off.
+    "x25519-dalek",
     "zerocopy",
     "zerocopy-derive",
     // 2026-10-22: secure memory wiping (der, ed25519-dalek, the blueprint signer); no_std.
     "zeroize",
+    // 2026-10-22: proc-macro for zeroize derives, enabled by x25519-dalek `zeroize` (metrale-seal);
+    // build-time only, no I/O.
+    "zeroize_derive",
     // 2026-10-18: serde_json's float formatter (the ryu successor); no_std, no I/O.
     "zmij",
 ];

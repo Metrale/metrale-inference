@@ -24,18 +24,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::names::{Kid, Purpose, Suite};
 
-/// 2026-10-22: Length-value concatenation: each part as a big-endian `u32` length then its
-/// bytes (metrale-auth `encoding::lv_cat`), so no two part lists share an encoding.
-pub fn lv_cat(parts: &[&[u8]]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(parts.iter().map(|p| p.len() + 4).sum());
-    for p in parts {
-        // 2026-10-22: Every caller's parts are far below 4 GiB (bodies are capped at 4 MiB).
-        let len = u32::try_from(p.len()).unwrap_or(u32::MAX);
-        out.extend_from_slice(&len.to_be_bytes());
-        out.extend_from_slice(p);
-    }
-    out
-}
+/// 2026-10-22: Length-value concatenation; defined once in metrale-seal (SSOT).
+pub use metrale_seal::lv_cat;
 
 /// 2026-10-22: The public half of a hybrid key.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
