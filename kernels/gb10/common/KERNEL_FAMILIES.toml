@@ -2198,7 +2198,10 @@ pipeline."linear:hc_mix" = { in = ["f32"], act = "f32", weight = "bf16->f32", mm
 pipeline.hc_pre = { in = ["f32", "f32"], compute = "f32", out = ["bf16", "f32", "f32"] }
 pipeline.hc_post = { in = ["bf16", "f32", "f32", "f32"], compute = "f32", out = ["f32"] }
 pipeline.hc_contract = { in = ["f32"], compute = "f32", out = ["bf16"] }
-pipeline.hc_expand = { in = ["bf16"], move = "f32", out = ["f32"] }
+# 2026-10-22: `move` is the format the copy reads: the required move step is the first input's
+# format (crates/circuit/src/pipeline/require.rs:218), the BF16 embedding `h`; the kernel widens
+# it to the FP32 highway on the store (glm5next_mhc.cu:706-709).
+pipeline.hc_expand = { in = ["bf16"], move = "bf16", out = ["f32"] }
 op = [
   { op = "linear", roles = ["hc_mix"] }, { op = "hc_pre" }, { op = "hc_post" },
   { op = "hc_contract" }, { op = "hc_expand" },

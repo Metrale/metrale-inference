@@ -38,7 +38,7 @@ kernels/gb10/HARDWARE.toml `[tensor_core_policy]`: a plan that runs one of these
 
 | run | covered nodes | on tensor cores | exempted sites |
 |---|---:|---:|---:|
-| decode n=1 | 527 | 6 | 21 |
+| decode n=1 | 617 | 6 | 25 |
 | multi_seq n=16 | 14 | 12 | 1 |
 | multi_seq n=128 | 2 | 0 | 1 |
 
@@ -46,10 +46,6 @@ Covered sites no kernel of this class plans (gaps; their kernel is tensor-core w
 
 | run | site | op | weight |
 |---|---|---|---|
-| decode n=1 | `kda.mix` | linear:hc_mix | bf16 |
-| decode n=1 | `mlp.mix` | linear:hc_mix | bf16 |
-| decode n=1 | `dsa.mix` | linear:hc_mix | bf16 |
-| decode n=1 | `moe.mix` | linear:hc_mix | bf16 |
 | decode n=1 | `moe.experts_gate_up` | expert_gate_up | nvfp4/g16 |
 | decode n=1 | `moe.experts_down` | expert_down | nvfp4/g16 |
 | multi_seq n=16 | `kda.mix` | linear:hc_mix | bf16 |
@@ -111,6 +107,7 @@ Covered sites off tensor cores, each under an exemption (`backlog` is a known vi
 
 | run | site | op | weight | unit | kernels | exemption |
 |---|---|---|---|---|---|---|
+| decode n=1 | `kda.mix` | linear:hc_mix | bf16 | cuda_core | `glm5next_mhc::glm5next_hc_mix_bf16` + `glm5next_mhc::glm5next_hc_finish` | #10 backlog |
 | decode n=1 | `kda.q` | linear:q | bf16 | cuda_core | `gemv::dense_gemv_bf16` | #2 backlog |
 | decode n=1 | `kda.k` | linear:k | bf16 | cuda_core | `gemv::dense_gemv_bf16` | #2 backlog |
 | decode n=1 | `kda.v` | linear:v | bf16 | cuda_core | `gemv::dense_gemv_bf16` | #2 backlog |
@@ -120,6 +117,8 @@ Covered sites off tensor cores, each under an exemption (`backlog` is a known vi
 | decode n=1 | `kda.g_a` | linear:kda_g_a | bf16 | cuda_core | `gemv::dense_gemv_bf16` | #2 backlog |
 | decode n=1 | `kda.g_b` | linear:kda_g_b | bf16 | cuda_core | `gemv::dense_gemv_bf16` | #2 backlog |
 | decode n=1 | `kda.o` | linear:o | bf16 | cuda_core | `gemv::dense_gemv_bf16` | #2 backlog |
+| decode n=1 | `mlp.mix` | linear:hc_mix | bf16 | cuda_core | `glm5next_mhc::glm5next_hc_mix_bf16` + `glm5next_mhc::glm5next_hc_finish` | #10 backlog |
+| decode n=1 | `dsa.mix` | linear:hc_mix | bf16 | cuda_core | `glm5next_mhc::glm5next_hc_mix_bf16` + `glm5next_mhc::glm5next_hc_finish` | #10 backlog |
 | decode n=1 | `dsa.q_a` | linear:mla_q_a | bf16 | cuda_core | `gemv::dense_gemv_bf16` | #2 backlog |
 | decode n=1 | `dsa.kv_a` | linear:mla_kv_a | bf16 | cuda_core | `gemv::dense_gemv_bf16` | #2 backlog |
 | decode n=1 | `dsa.idx_k` | linear:index_k | bf16 | cuda_core | `gemv::dense_gemv_bf16` | #2 backlog |
@@ -128,6 +127,7 @@ Covered sites off tensor cores, each under an exemption (`backlog` is a known vi
 | decode n=1 | `dsa.idx_q` | linear:index_q | bf16 | cuda_core | `gemv::dense_gemv_bf16_fp32out` | #11 backlog |
 | decode n=1 | `dsa.q_b` | linear:mla_q_b | bf16 | cuda_core | `gemv::dense_gemv_bf16` + `glm5next_dsa_mla_decode::glm5next_dsa_mla_decode_fp8` + `gemv::dense_gemv_bf16` | #12 backlog |
 | decode n=1 | `dsa.o` | linear:o | bf16 | cuda_core | `gemv::dense_gemv_bf16` + `glm5next_dsa_mla_decode::glm5next_dsa_mla_decode_fp8` + `gemv::dense_gemv_bf16` | #12 backlog |
+| decode n=1 | `moe.mix` | linear:hc_mix | bf16 | cuda_core | `glm5next_mhc::glm5next_hc_mix_bf16` + `glm5next_mhc::glm5next_hc_finish` | #10 backlog |
 | decode n=1 | `moe.gate` | router | bf16 | cuda_core | `gemv::dense_gemv_bf16_fp32out` | #11 backlog |
 | decode n=1 | `moe.shared_gate_up` | linear:shared_gate_up | bf16 | cuda_core | `gemv::dense_gemv_bf16` + `gemv::dense_gemv_bf16` | #2 backlog |
 | decode n=1 | `moe.shared_down` | linear:shared_down | bf16 | cuda_core | `gemv::dense_gemv_bf16` | #2 backlog |
@@ -206,15 +206,7 @@ Plan groups that loop once per row, and the engine's layer loops per sequence (`
 
 ## Fused plan: decode n=1
 
-digest ecb3cb68396eaec0d6039f1a808d4c522c15751a04e2a62388d6c70d17f22b2f; 1451 groups, 1227 launches, 154 fused edges, 356 placeholder (novel) groups. The full plan: `met circuit plan --checkpoint nvidia/GLM-5.3-Flash-NVFP4 --hardware gb10 --precision declared --format plan`.
-
-Rule `glm_hc_expand` left out of this plan: embed.expand (rule `glm_hc_expand`, family `glm_mhc`): move: required bf16, declared f32.
-
-Rule `glm_hc_pre` left out of this plan: edge `embed.streams` is stored as bf16 but rule `glm_hc_pre` reads it as f32.
-
-Rule `glm_hc_post` left out of this plan: l0.kda.post (rule `glm_hc_post`, family `glm_mhc`): in[1]: required bf16, declared f32.
-
-Rule `glm_hc_contract` left out of this plan: head.contract (rule `glm_hc_contract`, family `glm_mhc`): in[0]: required bf16, declared f32.
+digest 40918b553cd0503ce4ffb4fdaac833007afc6bb34ee71194e71d608cc024be6b; 1361 groups, 1499 launches, 244 fused edges, 84 placeholder (novel) groups. The full plan: `met circuit plan --checkpoint nvidia/GLM-5.3-Flash-NVFP4 --hardware gb10 --precision declared --format plan`.
 
 | site | kernels | rule | groups |
 |---|---|---|---:|
@@ -226,18 +218,17 @@ Rule `glm_hc_contract` left out of this plan: head.contract (rule `glm_hc_contra
 | dsa [input_norm] | rms_norm_vanilla::rms_norm_vanilla | glm_rms_norm_plain_dsa | 11 |
 | dsa [kv_a] | gemv::dense_gemv_bf16 | glm_bf16_gemv_dsa | 11 |
 | dsa [kv_norm,kv_write] | glm5next_mla_latent_write::glm5next_mla_latent_write_fp8 | glm_mla_latent_write | 11 |
-| dsa [mix] | (novel) | novel.linear:hc_mix | 11 |
+| dsa [mix,pre] | glm5next_mhc::glm5next_hc_mix_bf16 + glm5next_mhc::glm5next_hc_finish | glm_hc_pre | 11 |
 | dsa [pool] | dsa_indexer::dsa_indexer_store | glm_index_store | 11 |
-| dsa [post] | (novel) | novel.hc_post | 11 |
-| dsa [pre] | (novel) | novel.hc_pre | 11 |
+| dsa [post] | glm5next_mhc::glm5next_hc_post | glm_hc_post | 11 |
 | dsa [q_a] | gemv::dense_gemv_bf16 | glm_bf16_gemv_dsa | 11 |
 | dsa [q_a_norm] | rms_norm_vanilla::rms_norm_vanilla | glm_rms_norm_plain_dsa | 11 |
 | dsa [q_b,attend,o] | gemv::dense_gemv_bf16 + glm5next_dsa_mla_decode::glm5next_dsa_mla_decode_fp8 + gemv::dense_gemv_bf16 | glm_mla_absorbed | 11 |
 | dsa [select] | dsa_indexer::dsa_kpool_compress + dsa_indexer::dsa_index_scores + dsa_indexer::dsa_topk_pools + dsa_indexer::dsa_expand_selection | glm_index_select | 11 |
 | embed [embed] | (embed_copy) | embed_row_copy | 1 |
-| embed [expand] | (novel) | novel.hc_expand | 1 |
+| embed [expand] | glm5next_mhc::glm5next_hc_expand | glm_hc_expand | 1 |
 | head [argmax] | (host_sampling) | argmax_host | 1 |
-| head [contract] | (novel) | novel.hc_contract | 1 |
+| head [contract] | glm5next_mhc::glm5next_hc_head | glm_hc_contract | 1 |
 | head [final_norm] | norm::rms_norm | final_norm | 1 |
 | head [lm_head] | gemv::dense_gemv_bf16 | lm_head_bf16_gemv | 1 |
 | kda [b] | gemv::dense_gemv_bf16 | glm_bf16_gemv_kda | 34 |
@@ -248,11 +239,10 @@ Rule `glm_hc_contract` left out of this plan: head.contract (rule `glm_hc_contra
 | kda [gates] | kda_gate::kda_gate_bf16 + kda_layer_ops::kda_sigmoid_bf16_f32 | glm_kda_gates | 34 |
 | kda [input_norm] | rms_norm_vanilla::rms_norm_vanilla | glm_rms_norm_plain_kda | 34 |
 | kda [k] | gemv::dense_gemv_bf16 | glm_bf16_gemv_kda | 34 |
-| kda [mix] | (novel) | novel.linear:hc_mix | 34 |
+| kda [mix,pre] | glm5next_mhc::glm5next_hc_mix_bf16 + glm5next_mhc::glm5next_hc_finish | glm_hc_pre | 34 |
 | kda [o] | gemv::dense_gemv_bf16 | glm_bf16_gemv_kda | 34 |
 | kda [out_norm] | kda_layer_ops::kda_o_norm_gated_bf16 | glm_kda_o_norm | 34 |
-| kda [post] | (novel) | novel.hc_post | 34 |
-| kda [pre] | (novel) | novel.hc_pre | 34 |
+| kda [post] | glm5next_mhc::glm5next_hc_post | glm_hc_post | 34 |
 | kda [q] | gemv::dense_gemv_bf16 | glm_bf16_gemv_kda | 34 |
 | kda [qkv] | kda_layer_ops::kda_pack_qkv_bf16 | glm_kda_pack | 34 |
 | kda [recur] | kda_recurrent::kda_recurrent_decode_bf16_smem | glm_kda_recurrence | 34 |
@@ -262,10 +252,9 @@ Rule `glm_hc_contract` left out of this plan: head.contract (rule `glm_hc_contra
 | mlp [clamp,act] | glm5next_ffn::glm5next_swiglu_clamp | glm_swiglu_clamp | 3 |
 | mlp [down] | w4a4_gemv_mx::w4a4_gemv_mx8 | w4a4_down_1_8 | 3 |
 | mlp [gate_up] | w4a4_gemv_mx::w4a4_gemv_mx8 + w4a4_gemv_mx::w4a4_gemv_mx8 | w4a4_gate_up_1_8 | 3 |
-| mlp [mix] | (novel) | novel.linear:hc_mix | 3 |
-| mlp [post] | (novel) | novel.hc_post | 3 |
+| mlp [mix,pre] | glm5next_mhc::glm5next_hc_mix_bf16 + glm5next_mhc::glm5next_hc_finish | glm_hc_pre | 3 |
+| mlp [post] | glm5next_mhc::glm5next_hc_post | glm_hc_post | 3 |
 | mlp [post_norm] | rms_norm_vanilla::rms_norm_vanilla | glm_rms_norm_plain_kda | 3 |
-| mlp [pre] | (novel) | novel.hc_pre | 3 |
 | mlp [xn_quant] | w4a4_gemv_mx::w4a4_quant_rows | w4a4_act_quant | 3 |
 | moe [blend] | glm5next_ffn::glm5next_moe_combine | glm_moe_combine_dsa | 11 |
 | moe [blend] | glm5next_ffn::glm5next_moe_combine | glm_moe_combine_kda | 31 |
@@ -274,11 +263,10 @@ Rule `glm_hc_contract` left out of this plan: head.contract (rule `glm_hc_contra
 | moe [experts_down] | (novel) | novel.expert_down.nvfp4/g16 | 42 |
 | moe [experts_gate_up] | (novel) | novel.expert_gate_up.nvfp4/g16 | 42 |
 | moe [gate] | gemv::dense_gemv_bf16_fp32out | glm_router_f32 | 42 |
-| moe [mix] | (novel) | novel.linear:hc_mix | 42 |
-| moe [post] | (novel) | novel.hc_post | 42 |
+| moe [mix,pre] | glm5next_mhc::glm5next_hc_mix_bf16 + glm5next_mhc::glm5next_hc_finish | glm_hc_pre | 42 |
+| moe [post] | glm5next_mhc::glm5next_hc_post | glm_hc_post | 42 |
 | moe [post_norm] | rms_norm_vanilla::rms_norm_vanilla | glm_rms_norm_plain_dsa | 11 |
 | moe [post_norm] | rms_norm_vanilla::rms_norm_vanilla | glm_rms_norm_plain_kda | 31 |
-| moe [pre] | (novel) | novel.hc_pre | 42 |
 | moe [shared_clamp,shared_act] | glm5next_ffn::glm5next_swiglu_clamp | glm_swiglu_clamp | 42 |
 | moe [shared_down] | gemv::dense_gemv_bf16 | glm_bf16_gemv_dsa | 11 |
 | moe [shared_down] | gemv::dense_gemv_bf16 | glm_bf16_gemv_kda | 31 |
@@ -317,12 +305,12 @@ Estimated step 84.522 ms. Shared 72.4% (measured on this class), shared-unmeasur
 | dsa.kv_a | linear:mla_kv_a | bf16 x bf16 | native bf16 | 11 | 0.2% | Shared | dense_bf16 | gemv::dense_gemv_bf16 rule=glm_bf16_gemv_dsa compute=cuda_core |
 | kda.f_a | linear:kda_f_a | bf16 x bf16 | native bf16 | 34 | 0.2% | Shared | dense_bf16 | gemv::dense_gemv_bf16 rule=glm_bf16_gemv_kda compute=cuda_core |
 | kda.g_a | linear:kda_g_a | bf16 x bf16 | native bf16 | 34 | 0.2% | Shared | dense_bf16 | gemv::dense_gemv_bf16 rule=glm_bf16_gemv_kda compute=cuda_core |
-| moe.mix | linear:hc_mix | bf16 x bf16 | native bf16 | 42 | 0.2% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
-| kda.mix | linear:hc_mix | bf16 x bf16 | native bf16 | 34 | 0.1% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| moe.mix | linear:hc_mix | bf16 x bf16 | native bf16 | 42 | 0.2% | Shared, unmeasured | glm_mhc | glm5next_mhc::glm5next_hc_mix_bf16 + glm5next_mhc::glm5next_hc_finish rule=glm_hc_pre compute=cuda_core |
+| kda.mix | linear:hc_mix | bf16 x bf16 | native bf16 | 34 | 0.1% | Shared, unmeasured | glm_mhc | glm5next_mhc::glm5next_hc_mix_bf16 + glm5next_mhc::glm5next_hc_finish rule=glm_hc_pre compute=cuda_core |
 | kda.b | linear:kda_b | bf16 x bf16 | native bf16 | 34 | 0.1% | Shared | dense_bf16 | gemv::dense_gemv_bf16 rule=glm_bf16_gemv_kda compute=cuda_core |
 | dsa.idx_gate | linear:index_gate | bf16 x bf16 | native bf16 | 11 | 0.1% | Shared | dense_bf16 | gemv::dense_gemv_bf16 rule=glm_bf16_gemv_dsa compute=cuda_core |
 | dsa.idx_k | linear:index_k | bf16 x bf16 | native bf16 | 11 | 0.1% | Shared | dense_bf16 | gemv::dense_gemv_bf16 rule=glm_bf16_gemv_dsa compute=cuda_core |
-| dsa.mix | linear:hc_mix | bf16 x bf16 | native bf16 | 11 | 0.0% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| dsa.mix | linear:hc_mix | bf16 x bf16 | native bf16 | 11 | 0.0% | Shared, unmeasured | glm_mhc | glm5next_mhc::glm5next_hc_mix_bf16 + glm5next_mhc::glm5next_hc_finish rule=glm_hc_pre compute=cuda_core |
 | kda.l2 | l2_norm | - | - | 34 | 0.0% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm rule=glm_kda_conv_l2 compute=cuda_core |
 | moe.experts_clamp | swiglu_clamp | - | - | 42 | 0.0% | Shared, unmeasured | glm_swiglu_clamp | glm5next_ffn::glm5next_swiglu_clamp rule=glm_swiglu_clamp compute=memory |
 | kda.short_conv | conv1d_update | - | - | 34 | 0.0% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm rule=glm_kda_conv_l2 compute=cuda_core |
@@ -330,35 +318,35 @@ Estimated step 84.522 ms. Shared 72.4% (measured on this class), shared-unmeasur
 | moe.blend | blend | - | - | 42 | 0.0% | Shared, unmeasured | glm_moe_combine | glm5next_ffn::glm5next_moe_combine rule=glm_moe_combine_dsa compute=memory |
 | kda.conv_ckpt | state_snapshot | - | - | 34 | 0.0% | Shared, unmeasured | causal_conv1d_l2norm | causal_conv1d::causal_conv1d_update_l2norm rule=glm_kda_conv_l2 compute=cuda_core |
 | kda.qkv | concat | - | - | 34 | 0.0% | Shared, unmeasured | kda_pack | kda_layer_ops::kda_pack_qkv_bf16 rule=glm_kda_pack compute=memory |
-| moe.post | hc_post | - | - | 42 | 0.0% | Shared, unmeasured | glm_mhc | no rule of this class covers it; family `glm_mhc` implements the op |
+| moe.post | hc_post | - | - | 42 | 0.0% | Shared, unmeasured | glm_mhc | glm5next_mhc::glm5next_hc_post rule=glm_hc_post compute=memory |
 | dsa.select | index_select | - | - | 11 | 0.0% | Shared, unmeasured | dsa_indexer | dsa_indexer::dsa_kpool_compress + dsa_indexer::dsa_index_scores + dsa_indexer::dsa_topk_pools + dsa_indexer::dsa_expand_selection rule=glm_index_select compute=cuda_core |
 | dsa.idx_w | linear:index_weights | bf16 x bf16 | native bf16 | 11 | 0.0% | Shared | dense_bf16 | gemv::dense_gemv_bf16_fp32out rule=glm_index_f32_gemv compute=cuda_core |
-| kda.post | hc_post | - | - | 34 | 0.0% | Shared, unmeasured | glm_mhc | no rule of this class covers it; family `glm_mhc` implements the op |
-| mlp.mix | linear:hc_mix | bf16 x bf16 | native bf16 | 3 | 0.0% | Shared, unmeasured | dense_bf16 | no rule of this class covers it; family `dense_bf16` implements the op |
+| kda.post | hc_post | - | - | 34 | 0.0% | Shared, unmeasured | glm_mhc | glm5next_mhc::glm5next_hc_post rule=glm_hc_post compute=memory |
+| mlp.mix | linear:hc_mix | bf16 x bf16 | native bf16 | 3 | 0.0% | Shared, unmeasured | glm_mhc | glm5next_mhc::glm5next_hc_mix_bf16 + glm5next_mhc::glm5next_hc_finish rule=glm_hc_pre compute=cuda_core |
 | kda.out_norm | gated_rms_norm | - | - | 34 | 0.0% | Shared, unmeasured | kda_o_norm | kda_layer_ops::kda_o_norm_gated_bf16 rule=glm_kda_o_norm compute=memory |
 | moe.eact_quant | act_quant:nvfp4/g16 | - | - | 42 | 0.0% | Shared, unmeasured | w4a4_mx | w4a4_gemv_mx::w4a4_quant_rows rule=w4a4_act_quant compute=memory |
-| moe.pre | hc_pre | - | - | 42 | 0.0% | Shared, unmeasured | glm_mhc | no rule of this class covers it; family `glm_mhc` implements the op |
+| moe.pre | hc_pre | - | - | 42 | 0.0% | Shared, unmeasured | glm_mhc | glm5next_mhc::glm5next_hc_mix_bf16 + glm5next_mhc::glm5next_hc_finish rule=glm_hc_pre compute=cuda_core |
 | kda.gates | gdn_gates | - | - | 34 | 0.0% | Shared, unmeasured | kda_gates | kda_gate::kda_gate_bf16 + kda_layer_ops::kda_sigmoid_bf16_f32 rule=glm_kda_gates compute=memory |
-| kda.pre | hc_pre | - | - | 34 | 0.0% | Shared, unmeasured | glm_mhc | no rule of this class covers it; family `glm_mhc` implements the op |
-| dsa.post | hc_post | - | - | 11 | 0.0% | Shared, unmeasured | glm_mhc | no rule of this class covers it; family `glm_mhc` implements the op |
+| kda.pre | hc_pre | - | - | 34 | 0.0% | Shared, unmeasured | glm_mhc | glm5next_mhc::glm5next_hc_mix_bf16 + glm5next_mhc::glm5next_hc_finish rule=glm_hc_pre compute=cuda_core |
+| dsa.post | hc_post | - | - | 11 | 0.0% | Shared, unmeasured | glm_mhc | glm5next_mhc::glm5next_hc_post rule=glm_hc_post compute=memory |
 | moe.post_norm | rms_norm | - | - | 42 | 0.0% | Shared, unmeasured | rms_norm | rms_norm_vanilla::rms_norm_vanilla rule=glm_rms_norm_plain_dsa compute=memory |
 | moe.shared_clamp | swiglu_clamp | - | - | 42 | 0.0% | Shared, unmeasured | glm_swiglu_clamp | glm5next_ffn::glm5next_swiglu_clamp rule=glm_swiglu_clamp compute=memory |
 | kda.input_norm | rms_norm | - | - | 34 | 0.0% | Shared, unmeasured | rms_norm | rms_norm_vanilla::rms_norm_vanilla rule=glm_rms_norm_plain_kda compute=memory |
 | moe.shared_act | silu_mul | - | - | 42 | 0.0% | Shared, unmeasured | glm_swiglu_clamp | glm5next_ffn::glm5next_swiglu_clamp rule=glm_swiglu_clamp compute=memory |
-| dsa.pre | hc_pre | - | - | 11 | 0.0% | Shared, unmeasured | glm_mhc | no rule of this class covers it; family `glm_mhc` implements the op |
+| dsa.pre | hc_pre | - | - | 11 | 0.0% | Shared, unmeasured | glm_mhc | glm5next_mhc::glm5next_hc_mix_bf16 + glm5next_mhc::glm5next_hc_finish rule=glm_hc_pre compute=cuda_core |
 | moe.xn_quant | act_quant:nvfp4/g16 | - | - | 42 | 0.0% | Shared, unmeasured | w4a4_mx | w4a4_gemv_mx::w4a4_quant_rows rule=w4a4_act_quant compute=memory |
 | head.argmax | argmax | - | - | 1 | 0.0% | Shared, unmeasured | argmax_host | (host_sampling emitter) rule=argmax_host |
 | mlp.clamp | swiglu_clamp | - | - | 3 | 0.0% | Shared, unmeasured | glm_swiglu_clamp | glm5next_ffn::glm5next_swiglu_clamp rule=glm_swiglu_clamp compute=memory |
-| mlp.post | hc_post | - | - | 3 | 0.0% | Shared, unmeasured | glm_mhc | no rule of this class covers it; family `glm_mhc` implements the op |
+| mlp.post | hc_post | - | - | 3 | 0.0% | Shared, unmeasured | glm_mhc | glm5next_mhc::glm5next_hc_post rule=glm_hc_post compute=memory |
 | mlp.act | silu_mul | - | - | 3 | 0.0% | Shared, unmeasured | glm_swiglu_clamp | glm5next_ffn::glm5next_swiglu_clamp rule=glm_swiglu_clamp compute=memory |
 | dsa.input_norm | rms_norm | - | - | 11 | 0.0% | Shared, unmeasured | rms_norm | rms_norm_vanilla::rms_norm_vanilla rule=glm_rms_norm_plain_dsa compute=memory |
-| mlp.pre | hc_pre | - | - | 3 | 0.0% | Shared, unmeasured | glm_mhc | no rule of this class covers it; family `glm_mhc` implements the op |
+| mlp.pre | hc_pre | - | - | 3 | 0.0% | Shared, unmeasured | glm_mhc | glm5next_mhc::glm5next_hc_mix_bf16 + glm5next_mhc::glm5next_hc_finish rule=glm_hc_pre compute=cuda_core |
 | mlp.a_quant | act_quant:nvfp4/g16 | - | - | 3 | 0.0% | Shared, unmeasured | w4a4_mx | w4a4_gemv_mx::w4a4_quant_rows rule=w4a4_act_quant compute=memory |
 | dsa.q_a_norm | rms_norm | - | - | 11 | 0.0% | Shared, unmeasured | rms_norm | rms_norm_vanilla::rms_norm_vanilla rule=glm_rms_norm_plain_dsa compute=memory |
 | moe.top_k | top_k | - | - | 42 | 0.0% | Shared, unmeasured | glm_router_topk | glm5next_ffn::glm5next_router_topk rule=glm_router_topk_dsa compute=memory |
 | mlp.post_norm | rms_norm | - | - | 3 | 0.0% | Shared, unmeasured | rms_norm | rms_norm_vanilla::rms_norm_vanilla rule=glm_rms_norm_plain_kda compute=memory |
-| embed.expand | hc_expand | - | - | 1 | 0.0% | Shared, unmeasured | glm_mhc | no rule of this class covers it; family `glm_mhc` implements the op |
-| head.contract | hc_contract | - | - | 1 | 0.0% | Shared, unmeasured | glm_mhc | no rule of this class covers it; family `glm_mhc` implements the op |
+| embed.expand | hc_expand | - | - | 1 | 0.0% | Shared, unmeasured | glm_mhc | glm5next_mhc::glm5next_hc_expand rule=glm_hc_expand compute=memory |
+| head.contract | hc_contract | - | - | 1 | 0.0% | Shared, unmeasured | glm_mhc | glm5next_mhc::glm5next_hc_head rule=glm_hc_contract compute=memory |
 | mlp.xn_quant | act_quant:nvfp4/g16 | - | - | 3 | 0.0% | Shared, unmeasured | w4a4_mx | w4a4_gemv_mx::w4a4_quant_rows rule=w4a4_act_quant compute=memory |
 | dsa.kv_norm | rms_norm | - | - | 11 | 0.0% | Shared, unmeasured | glm_mla_latent_write | glm5next_mla_latent_write::glm5next_mla_latent_write_fp8 rule=glm_mla_latent_write compute=memory |
 | head.final_norm | final_norm | - | - | 1 | 0.0% | Shared, unmeasured | rms_norm | norm::rms_norm rule=final_norm compute=memory |
