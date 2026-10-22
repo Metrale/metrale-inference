@@ -1310,6 +1310,9 @@ kernel_compute."w4a4_gemv_mx_moe::w4a4_quant_rows_static" = { compute = "memory"
 # 2026-10-10: The `_k64` twins (K % 64 for a routed down projection of a 64-unit expert slice,
 # activations at the 128-padded width) are the KH / PAD128 instantiations of the same bodies.
 kernel_compute."w4a4_gemv_mx_moe::w4a4_quant_rows_static_k64" = { compute = "memory" }
+# 2026-10-22: The union of the rows' experts the 2..=16-row union sweeps read (built once per
+# routed launch; w4a16_gemv.cu:2173-2209, glm5next_mlp/forward/w4a4.rs:340-353).
+kernel_compute."w4a16_gemv::glm5next_moe_row_union" = { compute = "memory" }
 kernels = [
   "w4a4_gemv_mx_moe::w4a4_quant_rows_static", "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots",
   "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union", "w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union",
@@ -1322,6 +1325,7 @@ kernels = [
   # 2026-10-21: The gate/up union sweeps launched stream-ordered (the SL instantiations).
   "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_sl",
   "w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_sl",
+  "w4a16_gemv::glm5next_moe_row_union",
   # 2026-10-10: The grouped GEMM for wide routed launches (prefill), each slot the slot GEMV's
   # bytes, and its tile pass.
   "w4a4_grouped_mx::w4a4_grouped_mx_m32", "w4a4_grouped_mx::w4a4_grouped_mx_m64",
@@ -1378,6 +1382,10 @@ files = ["kernels/gb10/common/w4a4_gemv_mx_moe.cu", "kernels/gb10/common/w4a4_gr
 point = {}
 rows = [2]
 measurement = "glm-5.3-flash::w4a4_quant_rows_static @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k"
+[[family.evidence]]
+point = {}
+rows = [2]
+measurement = "glm-5.3-flash::glm5next_moe_row_union @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k"
 
 [[family]]
 id = "w8a16_gemm"

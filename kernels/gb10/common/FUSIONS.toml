@@ -2978,3 +2978,252 @@ modes = ["decode"]
 numerics = "reference"
 priority = 20
 cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:92-126"
+
+# 2026-10-22: GLM-5's routed experts at declared W4A4 (`w4a4_experts`): the rows quantized once
+# under the checkpoint's static input scale (`w4a4_quant_rows_static`), then the persistent sweep
+# `sweep_kernel` picks by rows: at one row over the row's own slots, at 2..=8 and 9..=16 rows the
+# 8- and 16-row union sweep over the union of the rows' experts (`glm5next_moe_row_union`, built
+# once before gate/up and read again by down). Gate/up take the stream-ordered `_sl` entries;
+# down keeps its PDL entries. The circuit's moe_inter (2048) is a multiple of 128, so down runs
+# the plain entries, not the `_k64` twins a TP=3 slice (704) takes. Each rule chains through the
+# act_quant node at 110 so the static quantizer, not `w4a4_act_quant`'s dynamic one, covers it;
+# one rule per GLM layer kind, as no expert node names a GLM-only op or param. Above 16 rows the
+# grouped W4A4 GEMM runs (`takes_grouped`), which no rule here covers.
+
+[[rule]]
+id = "glm_moe_w4a4_gate_up_1_kda"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16", layer_kind = "linear_attention" },
+  { op = "expert_gate_up", weight = "nvfp4/g16", input = "nvfp4/g16", layer_kind = "linear_attention" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_quant_rows_static" },
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx8_moe_slots_sweep" },
+]
+repeat = "once"
+emitter = "glm_moe_w4a4"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 110
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:326-339,370-378 (quant_static, then the own-slots sweep `sweep_kernel` picks at one row, :170-188); crates/model-arch/src/glm5next_mlp/mod.rs:348-364"
+
+[[rule]]
+id = "glm_moe_w4a4_gate_up_1_dsa"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16", layer_kind = "deepseek_sparse_attention" },
+  { op = "expert_gate_up", weight = "nvfp4/g16", input = "nvfp4/g16", layer_kind = "deepseek_sparse_attention" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_quant_rows_static" },
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx8_moe_slots_sweep" },
+]
+repeat = "once"
+emitter = "glm_moe_w4a4"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 110
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:326-339,370-378 (quant_static, then the own-slots sweep `sweep_kernel` picks at one row, :170-188); crates/model-arch/src/glm5next_mlp/mod.rs:348-364"
+
+[[rule]]
+id = "glm_moe_w4a4_gate_up_2_8_kda"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16", layer_kind = "linear_attention" },
+  { op = "expert_gate_up", weight = "nvfp4/g16", input = "nvfp4/g16", layer_kind = "linear_attention" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_quant_rows_static" },
+  { module = "w4a16_gemv", func = "glm5next_moe_row_union" },
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx8_moe_union_sweep_sl" },
+]
+repeat = "once"
+emitter = "glm_moe_w4a4"
+rows = [2, 8]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 110
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:326-353,370-378 (quant_static, the row union, the 8-row union sweep, :177-180); crates/model-arch/src/glm5next_mlp/forward/sweep_entries.rs:22-31 (the `_sl` entry, METRALE_GLM_MOE_SWEEP_SERIAL default on); crates/model-arch/src/glm5next_mlp/mod.rs:292-296"
+
+[[rule]]
+id = "glm_moe_w4a4_gate_up_2_8_dsa"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16", layer_kind = "deepseek_sparse_attention" },
+  { op = "expert_gate_up", weight = "nvfp4/g16", input = "nvfp4/g16", layer_kind = "deepseek_sparse_attention" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_quant_rows_static" },
+  { module = "w4a16_gemv", func = "glm5next_moe_row_union" },
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx8_moe_union_sweep_sl" },
+]
+repeat = "once"
+emitter = "glm_moe_w4a4"
+rows = [2, 8]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 110
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:326-353,370-378 (quant_static, the row union, the 8-row union sweep, :177-180); crates/model-arch/src/glm5next_mlp/forward/sweep_entries.rs:22-31 (the `_sl` entry, METRALE_GLM_MOE_SWEEP_SERIAL default on); crates/model-arch/src/glm5next_mlp/mod.rs:292-296"
+
+[[rule]]
+id = "glm_moe_w4a4_gate_up_9_16_kda"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16", layer_kind = "linear_attention" },
+  { op = "expert_gate_up", weight = "nvfp4/g16", input = "nvfp4/g16", layer_kind = "linear_attention" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_quant_rows_static" },
+  { module = "w4a16_gemv", func = "glm5next_moe_row_union" },
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx16_moe_union_sweep_sl" },
+]
+repeat = "once"
+emitter = "glm_moe_w4a4"
+rows = [9, 16]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 110
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:326-353,370-378 (quant_static, the row union, the 16-row union sweep, :177-180); crates/model-arch/src/glm5next_mlp/forward/sweep_entries.rs:22-31 (the `_sl` entry, METRALE_GLM_MOE_SWEEP_SERIAL default on); crates/model-arch/src/glm5next_mlp/mod.rs:292-296"
+
+[[rule]]
+id = "glm_moe_w4a4_gate_up_9_16_dsa"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16", layer_kind = "deepseek_sparse_attention" },
+  { op = "expert_gate_up", weight = "nvfp4/g16", input = "nvfp4/g16", layer_kind = "deepseek_sparse_attention" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_quant_rows_static" },
+  { module = "w4a16_gemv", func = "glm5next_moe_row_union" },
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx16_moe_union_sweep_sl" },
+]
+repeat = "once"
+emitter = "glm_moe_w4a4"
+rows = [9, 16]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 110
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:326-353,370-378 (quant_static, the row union, the 16-row union sweep, :177-180); crates/model-arch/src/glm5next_mlp/forward/sweep_entries.rs:22-31 (the `_sl` entry, METRALE_GLM_MOE_SWEEP_SERIAL default on); crates/model-arch/src/glm5next_mlp/mod.rs:292-296"
+
+[[rule]]
+id = "glm_moe_w4a4_down_1_kda"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16", layer_kind = "linear_attention" },
+  { op = "expert_down", weight = "nvfp4/g16", input = "nvfp4/g16", layer_kind = "linear_attention" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_quant_rows_static" },
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx8_moe_slots_sweep" },
+]
+repeat = "once"
+emitter = "glm_moe_w4a4"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 110
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:408-422 (quant_static, then the own-slots sweep)"
+
+[[rule]]
+id = "glm_moe_w4a4_down_1_dsa"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16", layer_kind = "deepseek_sparse_attention" },
+  { op = "expert_down", weight = "nvfp4/g16", input = "nvfp4/g16", layer_kind = "deepseek_sparse_attention" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_quant_rows_static" },
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx8_moe_slots_sweep" },
+]
+repeat = "once"
+emitter = "glm_moe_w4a4"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 110
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:408-422 (quant_static, then the own-slots sweep)"
+
+[[rule]]
+id = "glm_moe_w4a4_down_2_8_kda"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16", layer_kind = "linear_attention" },
+  { op = "expert_down", weight = "nvfp4/g16", input = "nvfp4/g16", layer_kind = "linear_attention" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_quant_rows_static" },
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx8_moe_union_sweep" },
+]
+repeat = "once"
+emitter = "glm_moe_w4a4"
+rows = [2, 8]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 110
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:408-422 (quant_static, then the 8-row union sweep over the union built for gate/up; down keeps its PDL entry)"
+
+[[rule]]
+id = "glm_moe_w4a4_down_2_8_dsa"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16", layer_kind = "deepseek_sparse_attention" },
+  { op = "expert_down", weight = "nvfp4/g16", input = "nvfp4/g16", layer_kind = "deepseek_sparse_attention" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_quant_rows_static" },
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx8_moe_union_sweep" },
+]
+repeat = "once"
+emitter = "glm_moe_w4a4"
+rows = [2, 8]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 110
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:408-422 (quant_static, then the 8-row union sweep over the union built for gate/up; down keeps its PDL entry)"
+
+[[rule]]
+id = "glm_moe_w4a4_down_9_16_kda"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16", layer_kind = "linear_attention" },
+  { op = "expert_down", weight = "nvfp4/g16", input = "nvfp4/g16", layer_kind = "linear_attention" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_quant_rows_static" },
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx16_moe_union_sweep" },
+]
+repeat = "once"
+emitter = "glm_moe_w4a4"
+rows = [9, 16]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 110
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:408-422 (quant_static, then the 16-row union sweep over the union built for gate/up; down keeps its PDL entry)"
+
+[[rule]]
+id = "glm_moe_w4a4_down_9_16_dsa"
+pattern = [
+  { op = "act_quant", format = "nvfp4/g16", layer_kind = "deepseek_sparse_attention" },
+  { op = "expert_down", weight = "nvfp4/g16", input = "nvfp4/g16", layer_kind = "deepseek_sparse_attention" },
+]
+kernels = [
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_quant_rows_static" },
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx16_moe_union_sweep" },
+]
+repeat = "once"
+emitter = "glm_moe_w4a4"
+rows = [9, 16]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 110
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:408-422 (quant_static, then the 16-row union sweep over the union built for gate/up; down keeps its PDL entry)"
+
+# 2026-10-22: At 2..=16 routed rows the SwiGLU also writes +0.0 over `expert_out` (the memset the
+# down sweep needs, folded in; METRALE_GLM_MOE_ZERO_IN_SWIGLU default on). One row keeps the
+# plain kernel: the own-slots down sweep writes every row itself.
+[[rule]]
+id = "glm_swiglu_clamp_zero"
+pattern = [
+  { op = "swiglu_clamp", local = "experts_clamp", holds = "f32" },
+  { op = "silu_mul", local = "experts_act" },
+]
+kernels = [{ module = "glm5next_ffn", func = "glm5next_swiglu_clamp_zero" }]
+repeat = "once"
+emitter = "glm_swiglu"
+rows = [2, 16]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 120
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:385-395,215-225 (zeroes_in_swiglu: rows 2..=16, not the own-slots arm); crates/model-arch/src/glm5next_mlp/forward/launch.rs:147-171"

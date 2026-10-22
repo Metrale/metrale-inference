@@ -267,7 +267,16 @@ fn every_reference_rule_is_used_by_a_golden_plan_and_every_lever_moves_one() {
         cs.iter()
             .any(|c| (0..c.nodes.len()).any(|n| r.heads_a_node(c, n)))
     };
-    let waits = |r: &metrale_circuit::Rule| !heads(r, &golden) && heads(r, &pending);
+    // 2026-10-22: Or a later element fits no golden node (a GLM routed-expert rule chained
+    // through an `act_quant` that golden circuits also have): no golden plan could form it either.
+    let element_fits = |r: &metrale_circuit::Rule, p: &metrale_circuit::rules::PatternOp| {
+        let mut one = r.clone();
+        one.pattern = vec![p.clone()];
+        heads(&one, &golden)
+    };
+    let waits = |r: &metrale_circuit::Rule| {
+        r.pattern.iter().any(|p| !element_fits(r, p)) && heads(r, &pending)
+    };
     for r in &rules {
         match &r.numerics {
             Numerics::Differs { .. } => assert!(
