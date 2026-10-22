@@ -8,6 +8,7 @@
 
 use super::*;
 use crate::glm5next_layer_dump::tap as dump;
+use crate::glm5next_mhc_levers::fused_runs;
 
 mod drafter;
 mod forward;
@@ -104,8 +105,9 @@ impl Glm5NextLayer {
 
     /// 2026-10-09: One mHC site's pre-mix of `k` rows into `y` (with `post` and `comb`), then
     /// the RMS norm of `y` with `norm_w` into `normed`: `glm_hc_pre` and `norm`, or with
-    /// `mhc_fused()` the single `glm_hc_pre_norm` launch that writes the same bytes. Ends the
-    /// caller's `profile::MHC` span `t_mhc`; the unfused norm keeps its `profile::NORM` span.
+    /// `mhc_fused()` the single `glm_hc_pre_norm` launch that writes the same bytes (2026-10-22:
+    /// where `fused_runs` holds, else the two launches). Ends the caller's `profile::MHC` span
+    /// `t_mhc`; the unfused norm keeps its `profile::NORM` span.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::glm5next_layer) fn mhc_pre_norm_one(
         &self,
@@ -124,7 +126,7 @@ impl Glm5NextLayer {
     ) -> Result<()> {
         let (kt, ht, hct) = (k as u32, self.hidden as u32, mhc.hc_mult as u32);
         let iters = mhc.sinkhorn_iters as u32;
-        if self.levers.mhc_fused {
+        if self.levers.mhc_fused && fused_runs(&mhc.kernels, site, self.hidden, mhc.hc_mult) {
             crate::glm5next_mhc_fused::glm_hc_pre_norm(
                 gpu,
                 &mhc.kernels,

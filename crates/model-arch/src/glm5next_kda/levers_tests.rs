@@ -55,9 +55,11 @@ type Field<T> = (&'static str, fn(&KdaLevers) -> T);
 
 #[test]
 fn the_strict_switches_read_as_before_and_take_the_switch_spellings() {
-    let cases: [Field<bool>; 3] = [
+    // 2026-10-22: The two chunk64 children are on by default but off unset without
+    // `METRALE_GLM_KDA_CHUNK64` (as the old reader read unset); `METRALE_GLM_KDA_CONV_PACK` left
+    // this list (default on): `the_promoted_levers_are_on_by_default_and_0_turns_them_off`.
+    let cases: [Field<bool>; 2] = [
         ("METRALE_GLM_KDA_CHUNK64_CONV", |l| l.chunk64_conv),
-        ("METRALE_GLM_KDA_CONV_PACK", |l| l.conv_pack),
         ("METRALE_GLM_KDA_GATE_IN_PREPARE", |l| l.gate_in_prepare),
     ];
     for (env, field) in cases {
@@ -87,12 +89,12 @@ fn the_strict_switches_read_as_before_and_take_the_switch_spellings() {
 
 #[test]
 fn the_opt_in_switches_read_as_before_except_the_switch_spellings() {
-    let cases: [Field<bool>; 6] = [
+    // 2026-10-22: `METRALE_GLM_KDA_SEQ_TOKENS` left this list (default on).
+    let cases: [Field<bool>; 5] = [
         ("METRALE_GLM_KDA_GATES_FUSED", |l| l.gates_fused),
         ("METRALE_GLM_KDA_NO_SMEM", |l| l.no_smem),
         ("METRALE_GLM_KDA_ROW_REG", |l| l.row_reg),
         ("METRALE_GLM_KDA_ROWS_REG", |l| l.rows_reg),
-        ("METRALE_GLM_KDA_SEQ_TOKENS", |l| l.seq_tokens),
         ("METRALE_GLM_KDA_VERIFY_TOKENS", |l| l.verify_tokens),
     ];
     for (env, field) in cases {
@@ -170,6 +172,8 @@ fn the_seq_rows_text_reads_as_before() {
 }
 
 /// 2026-10-17: Every lever off at the declared defaults, as each old reader read unset.
+/// 2026-10-22: Except the levers on by default since today (`seq_tokens`, `conv_pack`); the
+/// chunk64 children are on by default too, but off here without the 64-token scan.
 #[test]
 fn the_declared_defaults_are_the_old_unset_values() {
     let l = KdaLevers::from_settings(&defaults()).expect("defaults resolve");
@@ -179,7 +183,7 @@ fn the_declared_defaults_are_the_old_unset_values() {
             chunk_scan: None,
             chunk64: None,
             chunk64_conv: false,
-            conv_pack: false,
+            conv_pack: true,
             conv_snap_to: true,
             gate_in_prepare: false,
             gates_fused: false,
@@ -188,8 +192,47 @@ fn the_declared_defaults_are_the_old_unset_values() {
             row_reg: false,
             rows_reg: false,
             seq_rows: KdaSeqRows::Off,
-            seq_tokens: false,
+            seq_tokens: true,
             verify_tokens: false,
         }
     );
+}
+
+/// 2026-10-22: The KDA levers on by default since today: unset is on, `0`/`off` off, and a
+/// value the switch rule cannot read is refused; the chunk64 children read so under
+/// `METRALE_GLM_KDA_CHUNK64`, and without it are on only when set.
+#[test]
+fn the_promoted_levers_are_on_by_default_and_0_turns_them_off() {
+    let plain: [Field<bool>; 2] = [
+        ("METRALE_GLM_KDA_SEQ_TOKENS", |l| l.seq_tokens),
+        ("METRALE_GLM_KDA_CONV_PACK", |l| l.conv_pack),
+    ];
+    let with = |pairs: &[(&str, &str)], f: fn(&KdaLevers) -> bool| {
+        settings_from(pairs)
+            .ok()
+            .and_then(|s| KdaLevers::from_settings(&s).ok())
+            .map(|l| f(&l))
+    };
+    for (env, f) in plain {
+        assert_eq!(with(&[], f), Some(true), "{env}");
+        assert_eq!(with(&[(env, "0")], f), Some(false), "{env}");
+        assert_eq!(with(&[(env, "off")], f), Some(false), "{env}");
+        assert_eq!(with(&[(env, "1")], f), Some(true), "{env}");
+        assert_eq!(with(&[(env, "garbage")], f), None, "{env}");
+    }
+    let chunk64 = ("METRALE_GLM_KDA_CHUNK64", "64");
+    let children: [Field<bool>; 2] = [
+        ("METRALE_GLM_KDA_CHUNK64_CONV", |l| l.chunk64_conv),
+        ("METRALE_GLM_KDA_GATE_IN_PREPARE", |l| l.gate_in_prepare),
+    ];
+    for (env, f) in children {
+        assert_eq!(with(&[chunk64], f), Some(true), "{env}");
+        assert_eq!(with(&[chunk64, (env, "0")], f), Some(false), "{env}");
+        assert_eq!(with(&[], f), Some(false), "{env} without the scan");
+        assert_eq!(
+            with(&[(env, "1")], f),
+            Some(true),
+            "{env}=1 without the scan"
+        );
+    }
 }

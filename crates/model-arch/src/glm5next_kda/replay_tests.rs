@@ -76,14 +76,11 @@ fn fixture() -> Fixture {
         o_proj: w(&gpu),
     };
     let kernels = Glm5NextKdaKernels::resolve(&gpu).unwrap();
-    let layer = Glm5NextKdaLayer::new(
-        7,
-        c,
-        weights,
-        kernels,
-        crate::glm5next_layer::GlmLevers::declared(),
-    )
-    .unwrap();
+    // 2026-10-22: `METRALE_GLM_KDA_SEQ_TOKENS` is on by default; these tests compare a verify's
+    // per-row launches with the replay's, so they pin the per-row walk.
+    let mut levers = crate::glm5next_layer::GlmLevers::declared();
+    levers.kda.seq_tokens = false;
+    let layer = Glm5NextKdaLayer::new(7, c, weights, kernels, levers).unwrap();
     let ws = Glm5NextKdaWorkspace::new(&gpu, &c, K).unwrap();
     let st = |gpu: &MockGpuBackend| KdaSeqState {
         conv: gpu.alloc(c.conv_state_elems() * 4).unwrap(),

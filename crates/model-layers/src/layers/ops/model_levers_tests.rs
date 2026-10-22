@@ -62,6 +62,9 @@ fn the_opt_out_lever_is_on_by_default_and_every_opt_in_is_off() {
             ssm_persistent: true,
             moe_zero_intermediates: true,
             shared_w4a4: true,
+            // 2026-10-22: The GLM-5.3 new-sequence levers, default on since today.
+            glm_keep_slot_graphs: true,
+            glm_mtp_state_pool: true,
             max_decode_seqs: 1,
             drafter: crate::drafter_context::DrafterContext::BOTH,
             ..ModelLevers::default()
@@ -115,49 +118,66 @@ fn exact_one_opt_ins_map_to_their_own_fields() {
 
 /// 2026-10-14: The new-sequence levers are opt-in switches (2026-10-17: settings switches), each
 /// on its own field only,
-/// off by default.
+/// off by default. 2026-10-22: The two GLM-5.3 ones are on by default since today; `0`, `off`
+/// and `false` turn each off, on its own field only.
 #[test]
 fn new_sequence_levers_are_strict_opt_ins_on_their_own_fields() {
-    let cases: [(&str, fn(&mut ModelLevers) -> &mut bool); 3] = [
-        ("METRALE_SEQ_ALLOC_ASYNC", |l| &mut l.seq_alloc_async),
-        ("METRALE_GLM_KEEP_SLOT_GRAPHS", |l| {
-            &mut l.glm_keep_slot_graphs
-        }),
-        ("METRALE_GLM_MTP_STATE_POOL", |l| &mut l.glm_mtp_state_pool),
+    let cases: [(&str, fn(&mut ModelLevers) -> &mut bool, bool); 3] = [
+        ("METRALE_SEQ_ALLOC_ASYNC", |l| &mut l.seq_alloc_async, false),
+        (
+            "METRALE_GLM_KEEP_SLOT_GRAPHS",
+            |l| &mut l.glm_keep_slot_graphs,
+            true,
+        ),
+        (
+            "METRALE_GLM_MTP_STATE_POOL",
+            |l| &mut l.glm_mtp_state_pool,
+            true,
+        ),
     ];
-    for (name, field) in cases {
-        assert!(!*field(&mut resolve(&[])), "{name} on by default");
+    for (name, field, default) in cases {
+        assert_eq!(*field(&mut resolve(&[])), default, "{name} default");
         for off in ["0", "off", "false"] {
-            assert!(
-                !*field(&mut resolve(&[(name, off)])),
-                "{name} armed at {off:?}"
-            );
+            let mut l = resolve(&[(name, off)]);
+            assert!(!*field(&mut l), "{name} armed at {off:?}");
+            *field(&mut l) = default;
+            assert_eq!(l, resolve(&[]), "{name}={off} moved another field");
         }
         let mut armed = resolve(&[(name, "1")]);
         assert!(*field(&mut armed), "{name} did not arm at =1");
-        *field(&mut armed) = false;
+        *field(&mut armed) = default;
         assert_eq!(armed, resolve(&[]), "{name} moved another field");
     }
 }
 
 #[test]
 fn new_sequence_readback_names_each_lever_with_its_own_state() {
-    let off = resolve(&[]).new_sequence_readback();
+    // 2026-10-22: The two GLM-5.3 levers are on by default since today, so each is probed off.
+    let all_off = [
+        ("METRALE_GLM_KEEP_SLOT_GRAPHS", "0"),
+        ("METRALE_GLM_MTP_STATE_POOL", "0"),
+    ];
+    let off = resolve(&all_off).new_sequence_readback();
     assert_eq!(
         off,
         "METRALE_SEQ_ALLOC_ASYNC=off METRALE_GLM_KEEP_SLOT_GRAPHS=off METRALE_GLM_MTP_STATE_POOL=off"
     );
-    let l1 = resolve(&[("METRALE_SEQ_ALLOC_ASYNC", "1")]).new_sequence_readback();
+    assert_eq!(
+        resolve(&[]).new_sequence_readback(),
+        "METRALE_SEQ_ALLOC_ASYNC=off METRALE_GLM_KEEP_SLOT_GRAPHS=on METRALE_GLM_MTP_STATE_POOL=on"
+    );
+    let l1 = resolve(&[all_off[0], all_off[1], ("METRALE_SEQ_ALLOC_ASYNC", "1")])
+        .new_sequence_readback();
     assert_eq!(
         l1,
         "METRALE_SEQ_ALLOC_ASYNC=on METRALE_GLM_KEEP_SLOT_GRAPHS=off METRALE_GLM_MTP_STATE_POOL=off"
     );
-    let l3 = resolve(&[("METRALE_GLM_KEEP_SLOT_GRAPHS", "1")]).new_sequence_readback();
+    let l3 = resolve(&[all_off[1]]).new_sequence_readback();
     assert_eq!(
         l3,
         "METRALE_SEQ_ALLOC_ASYNC=off METRALE_GLM_KEEP_SLOT_GRAPHS=on METRALE_GLM_MTP_STATE_POOL=off"
     );
-    let l2 = resolve(&[("METRALE_GLM_MTP_STATE_POOL", "1")]).new_sequence_readback();
+    let l2 = resolve(&[all_off[0]]).new_sequence_readback();
     assert_eq!(
         l2,
         "METRALE_SEQ_ALLOC_ASYNC=off METRALE_GLM_KEEP_SLOT_GRAPHS=off METRALE_GLM_MTP_STATE_POOL=on"

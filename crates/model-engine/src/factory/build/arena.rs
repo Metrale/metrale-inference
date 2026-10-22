@@ -6,6 +6,7 @@
 //! Owner: metrale-model-engine.
 //! Invariants:
 //! - The lean arena is for `glm5_next` stacks only; on another model type the lever is refused.
+//!   2026-10-22: when set; left at its default (on) it is off there.
 
 use anyhow::Result;
 use metrale_config::ModelConfig;
@@ -16,7 +17,7 @@ use metrale_gpu_runtime::gpu::GpuBackend;
 /// it, at KV sizing); the preflight sized the arena reserve for the same ceiling.
 /// 2026-10-12: `METRALE_GLM_ARENA_LEAN=1`: a `glm5_next` stack gets the arena with the other
 /// architectures' regions at 256 B (`BufferSizes::lean_hc_stack`); on another model type the
-/// lever is refused rather than ignored.
+/// lever is refused rather than ignored (2026-10-22: when set; the default is off there).
 pub(super) fn buffer_arena(
     config: &ModelConfig,
     max_batch_tokens: usize,
@@ -27,12 +28,9 @@ pub(super) fn buffer_arena(
     gpu: &dyn GpuBackend,
     settings: &metrale_settings::InferenceServerSettings,
 ) -> Result<BufferArena> {
-    let arena_lean = metrale_model_arch::glm5next_layer::arena_lean(settings);
-    anyhow::ensure!(
-        !arena_lean || config.model_type == "glm5_next",
-        "METRALE_GLM_ARENA_LEAN=1 is for glm5_next models, not {:?}",
-        config.model_type
-    );
+    // 2026-10-22: Default on, gated by model type: another model keeps the full arena
+    // (reported); a set `1` there is still refused.
+    let arena_lean = metrale_model_arch::glm5next_layer::arena_lean(settings, &config.model_type)?;
     if arena_lean {
         let sizes = metrale_gpu_runtime::buffers::BufferSizes::from_config_with(
             config,

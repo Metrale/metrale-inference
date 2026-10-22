@@ -248,6 +248,9 @@ fn decode_k_is_decode_rows_over_one_repeated_state() {
     let gpu = MockGpuBackend::new();
     let mut l = layer(&gpu);
     l.kernels.recurrent_smem_rows = KernelHandle(0);
+    // 2026-10-22: `METRALE_GLM_KDA_SEQ_TOKENS` is on by default; this test is about the per-row
+    // walk the two share, so it pins it (the token kernels have their own tests below).
+    l.levers.kda.seq_tokens = false;
     let ws = Glm5NextKdaWorkspace::new(&gpu, &cfg(), 16).unwrap();
     let st = seq_state(&gpu);
     let hidden = gpu.alloc(4 * 256 * 2).unwrap();
@@ -436,7 +439,10 @@ fn the_default_steps_row_by_row() {
 #[test]
 fn token_kernels_step_a_sequence_in_three_launches_without_snapshots() {
     let gpu = MockGpuBackend::new();
-    let l = layer(&gpu);
+    let mut l = layer(&gpu);
+    // 2026-10-22: `METRALE_GLM_KDA_CONV_PACK` is on by default; this test pins the separate pack
+    // and token conv (the fused pair: `conv_pack_tests.rs`).
+    l.levers.kda.conv_pack = false;
     let ws = Glm5NextKdaWorkspace::new(&gpu, &cfg(), 16).unwrap();
     let st = seq_state(&gpu);
     let hidden = gpu.alloc(16 * cfg().hidden * 2).unwrap();

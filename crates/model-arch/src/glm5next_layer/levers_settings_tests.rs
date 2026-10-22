@@ -28,6 +28,11 @@ fn from_values(mut value: impl FnMut(&str) -> Option<String>) -> GlmLevers {
         value("METRALE_GLM_DSA_VERIFY_SELECT_ONCE").as_deref() != Some("0");
     let dsa_proj_in_merged = value("METRALE_GLM_DSA_PROJ_IN_MERGED").as_deref() != Some("0");
     let dsa_selector_pair = value("METRALE_GLM_DSA_SELECTOR_PAIR").as_deref() != Some("0");
+    // 2026-10-22: Default on since today (byte-identical, GLM-only): the reader the settings now
+    // match is the opt-out one, `!= "0"`.
+    let dsa_indexer_rows = value("METRALE_GLM_DSA_INDEXER_ROWS").as_deref() != Some("0");
+    let dsa_idx_proj_whole = value("METRALE_GLM_DSA_IDX_PROJ_WHOLE").as_deref() != Some("0");
+    let mhc_fused = value("METRALE_GLM_MHC_FUSED").as_deref() != Some("0");
     let prefill_rows = value("METRALE_GLM_PREFILL_ROWS")
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|r| *r >= 1)
@@ -44,15 +49,15 @@ fn from_values(mut value: impl FnMut(&str) -> Option<String>) -> GlmLevers {
         router_topk_rank: opt_in("METRALE_GLM_ROUTER_TOPK_RANK"),
         moe_combine_split: opt_in("METRALE_GLM_MOE_COMBINE_SPLIT"),
         moe_combine_vec8: opt_in("METRALE_GLM_MOE_COMBINE_VEC8"),
-        dsa_indexer_rows: opt_in("METRALE_GLM_DSA_INDEXER_ROWS"),
-        dsa_idx_proj_whole: opt_in("METRALE_GLM_DSA_IDX_PROJ_WHOLE"),
+        dsa_indexer_rows,
+        dsa_idx_proj_whole,
         dsa_verify_rows: opt_in("METRALE_GLM_DSA_VERIFY_ROWS"),
         dsa_verify_select_once,
         dsa_proj_in_merged,
         dsa_selector_pair,
         ar_fused_post: opt_in("METRALE_GLM_AR_FUSED_POST"),
         mhc_post_fold: opt_in("METRALE_GLM_MHC_POST_FOLD"),
-        mhc_fused: opt_in("METRALE_GLM_MHC_FUSED"),
+        mhc_fused,
         kda_chunk_prefill: opt_in("METRALE_GLM_KDA_CHUNK_PREFILL"),
         prefill_rows,
         row_group,
@@ -86,24 +91,24 @@ fn old_arena_lean(value: Option<&str>) -> Option<bool> {
     }
 }
 
-const OPT_IN: [&str; 14] = [
+// 2026-10-22: `METRALE_GLM_DSA_INDEXER_ROWS`, `METRALE_GLM_DSA_IDX_PROJ_WHOLE` and
+// `METRALE_GLM_MHC_FUSED` moved to `OPT_OUT` (default on); `METRALE_GLM_ARENA_LEAN` stays last,
+// probed by its own test.
+const OPT_IN: [&str; 11] = [
     "METRALE_GLM_DSA_ALLOC_PER_STEP",
     "METRALE_GLM_DSA_BATCH_QIDX",
     "METRALE_GLM_ROUTER_ROWS",
     "METRALE_GLM_ROUTER_TOPK_RANK",
     "METRALE_GLM_MOE_COMBINE_SPLIT",
     "METRALE_GLM_MOE_COMBINE_VEC8",
-    "METRALE_GLM_DSA_INDEXER_ROWS",
-    "METRALE_GLM_DSA_IDX_PROJ_WHOLE",
     "METRALE_GLM_DSA_VERIFY_ROWS",
     "METRALE_GLM_AR_FUSED_POST",
     "METRALE_GLM_MHC_POST_FOLD",
-    "METRALE_GLM_MHC_FUSED",
     "METRALE_GLM_KDA_CHUNK_PREFILL",
     "METRALE_GLM_ARENA_LEAN",
 ];
 
-const OPT_OUT: [&str; 8] = [
+const OPT_OUT: [&str; 11] = [
     "METRALE_GLM_PDL",
     "METRALE_GLM_CUBLAS_PROJ",
     "METRALE_GLM_DSA_WS_SHARED",
@@ -112,6 +117,9 @@ const OPT_OUT: [&str; 8] = [
     "METRALE_GLM_DSA_VERIFY_SELECT_ONCE",
     "METRALE_GLM_DSA_PROJ_IN_MERGED",
     "METRALE_GLM_DSA_SELECTOR_PAIR",
+    "METRALE_GLM_DSA_INDEXER_ROWS",
+    "METRALE_GLM_DSA_IDX_PROJ_WHOLE",
+    "METRALE_GLM_MHC_FUSED",
 ];
 
 const WIDTHS: [&str; 2] = ["METRALE_GLM_PREFILL_ROWS", "METRALE_GLM_ROW_GROUP"];
@@ -129,7 +137,7 @@ fn changes(env: &'static str, old: Old) -> Vec<(&'static str, Option<&'static st
 
 #[test]
 fn every_switch_reads_as_before_except_the_switch_spellings() {
-    for env in &OPT_IN[..13] {
+    for env in &OPT_IN[..10] {
         assert_eq!(
             changes(env, Old::OptIn),
             [
@@ -152,17 +160,21 @@ fn every_switch_reads_as_before_except_the_switch_spellings() {
 }
 
 /// 2026-10-17: The old reader refused anything but unset, `0` and `1` at first use; the switch
-/// also reads `true` and `off`, and still refuses garbage, now at startup.
+/// also reads `true` and `off`, and still refuses garbage, now at startup. 2026-10-22: on a
+/// `glm5_next` load unset now reads on (default on since today).
 #[test]
 fn arena_lean_reads_as_before_and_takes_the_switch_spellings() {
     let env = "METRALE_GLM_ARENA_LEAN";
     let new = |probe: Option<&str>| {
         let pairs: Vec<(&str, &str)> = probe.map(|v| (env, v)).into_iter().collect();
-        settings_from(&pairs).ok().map(|s| arena_lean(&s))
+        settings_from(&pairs)
+            .ok()
+            .map(|s| arena_lean(&s, "glm5_next").expect("a glm5_next load takes the lever"))
     };
-    for probe in [None, Some("0"), Some("1"), Some("garbage"), Some("")] {
+    for probe in [Some("0"), Some("1"), Some("garbage"), Some("")] {
         assert_eq!(new(probe), old_arena_lean(probe), "{env}={probe:?}");
     }
+    assert_eq!((old_arena_lean(None), new(None)), (Some(false), Some(true)));
     assert_eq!(
         (old_arena_lean(Some("true")), new(Some("true"))),
         (None, Some(true))
@@ -218,7 +230,25 @@ fn the_declared_defaults_are_the_old_unset_values() {
     let levers = GlmLevers::from_settings(&defaults()).expect("defaults resolve");
     assert_eq!(levers, from_values(|_| None));
     assert_eq!(levers.row_group, DEFAULT_ROW_GROUP);
-    assert!(!arena_lean(&defaults()));
+    // 2026-10-22: The lean arena is on by default on a `glm5_next` load.
+    assert!(arena_lean(&defaults(), "glm5_next").unwrap());
+}
+
+/// 2026-10-22: `METRALE_GLM_ARENA_LEAN` is gated by model type: on another model the default is
+/// off (no refusal), a set `1` is refused as before, and `0` is off everywhere.
+#[test]
+fn arena_lean_is_gated_by_model_type() {
+    let at = |pairs: &[(&str, &str)], model: &str| {
+        arena_lean(&settings_from(pairs).unwrap(), model).map_err(|e| e.to_string())
+    };
+    let env = "METRALE_GLM_ARENA_LEAN";
+    assert_eq!(at(&[], "glm5_next"), Ok(true));
+    assert_eq!(at(&[], "qwen3_5"), Ok(false));
+    assert_eq!(at(&[(env, "0")], "glm5_next"), Ok(false));
+    assert_eq!(at(&[(env, "0")], "qwen3_5"), Ok(false));
+    assert_eq!(at(&[(env, "1")], "glm5_next"), Ok(true));
+    let e = at(&[(env, "1")], "qwen3_5").unwrap_err();
+    assert!(e.contains("is for glm5_next models"), "{e}");
 }
 
 /// 2026-10-17: The probe lists cover every variable the old readers read.

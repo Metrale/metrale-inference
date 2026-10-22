@@ -9,7 +9,7 @@
 //! Owner: model-arch (GLM-5.3).
 //! Invariants: none beyond the types.
 
-use super::super::super::w4a4_grouped_gu::check_ready;
+use super::super::super::w4a4_grouped_gu::{check_at_load, check_ready, runs};
 use super::super::smem_bytes_of;
 use super::*;
 
@@ -155,4 +155,29 @@ fn the_fused_lever_needs_the_grouped_path() {
     assert!(e.contains("METRALE_GLM_MOE_W4A4_GROUPED=1"), "{e}");
     let e = check_ready(true, false).unwrap_err();
     assert!(e.contains("w4a4_grouped_gu"), "{e}");
+}
+
+/// 2026-10-22: The lever is on by default: with the grouped path and every fused entry the
+/// routed experts take the fused launch (`runs`), and the load check passes; a missing entry
+/// leaves the separate launches (inert, no longer refused); the field off (`0`) runs nothing
+/// fused; and the grouped path missing is still refused at load (only a set `1` reaches it).
+#[test]
+fn the_default_runs_fused_and_a_missing_entry_is_inert() {
+    let gpu = MockGpuBackend::new();
+    let mut k = kernels(&gpu);
+    k.levers.mlp.w4a4_grouped = true;
+    k.levers.mlp.gu_fused = true;
+    assert!(runs(&k));
+    check_at_load(&k).unwrap();
+    let mut absent = k;
+    absent.w4a4_grouped.gu[2] = KernelHandle(0);
+    assert!(!runs(&absent));
+    check_at_load(&absent).unwrap();
+    let mut off = k;
+    off.levers.mlp.gu_fused = false;
+    assert!(!runs(&off));
+    let mut no_grouped = k;
+    no_grouped.levers.mlp.w4a4_grouped = false;
+    let e = check_at_load(&no_grouped).unwrap_err().to_string();
+    assert!(e.contains("METRALE_GLM_MOE_W4A4_GROUPED=1"), "{e}");
 }

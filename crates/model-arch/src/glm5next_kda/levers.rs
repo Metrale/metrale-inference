@@ -91,13 +91,29 @@ impl KdaLevers {
             Some("decode") => KdaSeqRows::DecodeOnly,
             _ => KdaSeqRows::Off,
         };
+        let chunk64 = floor("METRALE_GLM_KDA_CHUNK64", k.glm_kda_chunk64, CHUNK64)?;
+        // 2026-10-22: Both on by default; left at their defaults they run only under the 64-token
+        // scan (inert, reported once, without it). Set to `1` without it they stay on and, as
+        // before, never apply.
+        let under_chunk64 = |env, on| {
+            crate::glm5next_default_on::under_parent(
+                s,
+                env,
+                on,
+                chunk64.is_some(),
+                "METRALE_GLM_KDA_CHUNK64",
+            )
+        };
         Ok(Self {
             chunk_scan: floor("METRALE_GLM_KDA_CHUNK_SCAN", k.glm_kda_chunk_scan, CHUNK16)?,
-            chunk64: floor("METRALE_GLM_KDA_CHUNK64", k.glm_kda_chunk64, CHUNK64)?,
-            chunk64_conv: k.glm_kda_chunk64_conv,
+            chunk64,
+            chunk64_conv: under_chunk64("METRALE_GLM_KDA_CHUNK64_CONV", k.glm_kda_chunk64_conv),
             conv_pack: k.glm_kda_conv_pack,
             conv_snap_to: k.glm_kda_conv_snap_to,
-            gate_in_prepare: k.glm_kda_gate_in_prepare,
+            gate_in_prepare: under_chunk64(
+                "METRALE_GLM_KDA_GATE_IN_PREPARE",
+                k.glm_kda_gate_in_prepare,
+            ),
             gates_fused: k.glm_kda_gates_fused,
             gates_rows: k.glm_kda_gates_rows,
             no_smem: k.glm_kda_no_smem,
