@@ -296,7 +296,7 @@ notes = ""
 - **1593 kernel entry points** in **395 source files** across 7 hardware trees (b200, b300, gb10, hopper, metal, strix, strix-hip), compiled into 58 (hardware, model, quant) targets.
 - **1257** have at least one engine call site; **336** are compiled but launched only from tests, examples or not at all (see [Compiled but not launched](#compiled-but-not-launched)).
 - **15 architecture families**, **29 components**.
-- **85** entry points have a measured % of floor; every other row reads “not measured”.
+- **87** entry points have a measured % of floor; every other row reads “not measured”.
 
 ## Architecture families
 
@@ -1813,7 +1813,9 @@ No engine call site names these entry points: they are reached only from tests o
 | vector_add::`vector_add` | [gb10/common/vector_add.cu:6][f206] | Activations and elementwise · activation / gate / residual | b200 b300 gb10 hop strix hip | — | — | not measured |
 | w4a16::`w4a16_dequant` | [gb10/common/w4a16_gemm.cu:292][f208] | Quantization and format conversion · dequant / repack / transpose | b200 b300 gb10 | — | [1 note][t208] | not measured |
 | w4a16_gemv::`w4a16_gemv_{batch8_pf, batch8_pf2, batch8_pf3, batch8_pf_free, batch8_rt4, sw_moe_batchm_m16, sw_moe_batchm_m8}` (7) | [gb10/common/w4a16_gemv.cu:997][f209] | Projection GEMM/GEMV — NVFP4 W4A16 · NVFP4 W4A16 GEMM/GEMV | b200 b300 gb10 hop strix hip | — | [2 notes][t209] | not measured |
-| w4a4_gemv_mx_moe::`w4a4_gemv_{mx16_moe_union, mx16_moe_union_sweep_cs, mx16_moe_union_sweep_k64_cs, mx16_moe_union_sweep_sl_cs, mx8_moe_slots_cs, mx8_moe_slots_k64_cs, mx8_moe_slots_sweep_cs, mx8_moe_slots_sweep_k64_cs, mx8_moe_union, mx8_moe_union_sweep_cs, mx8_moe_union_sweep_k64_cs, mx8_moe_union_sweep_sl_cs}` (12) | [gb10/common/w4a4_gemv_mx_moe.cu:129][f218] | Projection GEMM/GEMV — W4A4 · W4A4 GEMM/GEMV | b200 gb10 hop | — | — | not measured |
+| w4a4_gemv_mx_moe::`w4a4_gemv_{mx16_moe_union, mx16_moe_union_sweep_cs, mx16_moe_union_sweep_k64_cs, mx16_moe_union_sweep_sl_cs, mx8_moe_slots_cs, mx8_moe_slots_k64_cs, mx8_moe_slots_sweep_cs, mx8_moe_slots_sweep_k64_cs, mx8_moe_union, mx8_moe_union_sweep_cs}` (10) | [gb10/common/w4a4_gemv_mx_moe.cu:129][f218] | Projection GEMM/GEMV — W4A4 · W4A4 GEMM/GEMV | b200 gb10 hop | — | — | not measured |
+| w4a4_gemv_mx_moe::`w4a4_gemv_mx8_moe_union_sweep_k64_cs` | [gb10/common/w4a4_gemv_mx_moe.cu:472][f218] | Projection GEMM/GEMV — W4A4 · W4A4 GEMM/GEMV | b200 gb10 hop | — | — | [84%][m218.w4a4_gemv_mx8_moe_union_sweep_k64_cs] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
+| w4a4_gemv_mx_moe::`w4a4_gemv_mx8_moe_union_sweep_sl_cs` | [gb10/common/w4a4_gemv_mx_moe.cu:475][f218] | Projection GEMM/GEMV — W4A4 · W4A4 GEMM/GEMV | b200 gb10 hop | — | — | [77%][m218.w4a4_gemv_mx8_moe_union_sweep_sl_cs] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
 | w4a4_grouped_mx::`w4a4_grouped_{gu_m128_cs, gu_m128_r_cs, gu_m32_cs, mx_m128_cs, mx_m128_k64_cs, mx_m128_k64_n_cs, mx_m128_k64_r_cs, mx_m128_n_cs, mx_m128_r_cs, mx_m128_s6, mx_m32_cs, mx_m32_k64_cs}` (12) | [gb10/common/w4a4_grouped_mx.cu:108][f219] | Projection GEMM/GEMV — W4A4 · W4A4 GEMM/GEMV | b200 gb10 hop | — | — | not measured |
 | w8a16_gemm::`w8a16_dequant` | [gb10/common/w8a16_gemm.cu:224][f220] | Quantization and format conversion · dequant / repack / transpose | b200 b300 gb10 hop strix | — | [1 note][t220] | not measured |
 | hc_v41::`hc_v41_mixes` | [gb10/deepseek-v4-flash/nvfp4/hc_v41.cu:46][f241] | Hyper-connections · hyper-connection mix | b200 gb10 hop | — | [2 notes][t241] | not measured |
@@ -1879,7 +1881,7 @@ No engine call site names these entry points: they are reached only from tests o
 
 ## Measurements
 
-259 rows over 85 entry points; every row, with its shape, time, floor, source and notes, is in [`docs/kernel-perf/MEASUREMENTS.md`](docs/kernel-perf/MEASUREMENTS.md). Per regime (median over the regime's rows, unweighted):
+261 rows over 87 entry points; every row, with its shape, time, floor, source and notes, is in [`docs/kernel-perf/MEASUREMENTS.md`](docs/kernel-perf/MEASUREMENTS.md). Per regime (median over the regime's rows, unweighted):
 
 | Hardware | Model | Regime | Rows | Entry points | Median % of floor |
 |---|---|---|---|---|---|
@@ -1888,7 +1890,7 @@ No engine call site names these entry points: they are reached only from tests o
 | gb10 | Qwen/Qwen3.6-35B-A3B-FP8 | prefill 32k (cold, 32772 tok) | 33 | 24 | 25% |
 | gb10 | Qwen/Qwen3.6-35B-A3B-FP8 | prefill 4k (cold, 4549 tok) | 35 | 27 | 33% |
 | gb10 | nvidia/GLM-5.3-Flash-NVFP4 | decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k | 30 | 24 | 53% |
-| gb10 | nvidia/GLM-5.3-Flash-NVFP4 | decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k | 30 | 24 | 58% |
+| gb10 | nvidia/GLM-5.3-Flash-NVFP4 | decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k | 32 | 26 | 66% |
 | gb10 | unsloth/Qwen3.8-27B-NVFP4 | decode C=1 (R=4, MTP k=3) | 19 | 10 | 89% |
 | gb10 | unsloth/Qwen3.8-27B-NVFP4 | decode C=16 (R=32, MTP k=1) | 20 | 13 | 68% |
 | gb10 | unsloth/Qwen3.8-27B-NVFP4 | prefill 32k (cold, 32772 tok) | 26 | 20 | 29% |
@@ -2371,6 +2373,8 @@ No engine call site names these entry points: they are reached only from tests o
 [m79.causal_conv1d_update_l2norm_tokens]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-kda-conv-tokens-cu-causal-conv1d-update-l2norm-tokens
 [m95.moe_weighted_sum_blend_fp8_grouped]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-moe-fp8-grouped-blend-cu-moe-weighted-sum-blend-fp8-grouped
 [m122.moe_expert_gate_up_act_fp8_grouped]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-moe-shared-expert-fused-fp8-grouped-cu-moe-expert-gate-up-act-fp8-grouped
+[m218.w4a4_gemv_mx8_moe_union_sweep_sl_cs]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-w4a4-gemv-mx-moe-cu-w4a4-gemv-mx8-moe-union-sweep-sl-cs
+[m218.w4a4_gemv_mx8_moe_union_sweep_k64_cs]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-w4a4-gemv-mx-moe-cu-w4a4-gemv-mx8-moe-union-sweep-k64-cs
 [m47.gated_delta_rule_chunk_delta_h_vfused]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-gated-delta-rule-fla-cu-gated-delta-rule-chunk-delta-h-vfused
 [m83.kda_recurrent_decode_bf16_seq_reg_snap]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-kda-recurrent-cu-kda-recurrent-decode-bf16-seq-reg-snap
 [m22.dense_gemv_bf16_batchm_few_fp32out_pair]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-dense-gemv-bf16-batchm-few-cu-dense-gemv-bf16-batchm-few-fp32out-pair
