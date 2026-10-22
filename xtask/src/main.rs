@@ -13,6 +13,8 @@
 //! - `cargo xtask selftest`: every gate refuses each known-bad fixture under `xtask/fixtures/`
 //!   for its named reason, and passes the clean code; the env-ban gate yields exactly its
 //!   expected violations on each `env-ban-*` fixture.
+//! - `cargo xtask kzx-corpus <dir>`: the private kzx benchmark corpus (bodies and `.kbp`
+//!   containers built from the PTX modules under `<dir>/ptx/`); see `kzx_corpus`.
 //! - `cargo xtask <roles|depgraph|wasm|file-size|vendor-ban|kv-codec-ban|lints>`: one purity gate (see
 //!   `gates.rs`); `cargo xtask purity` runs them all. Each reconciles its offenders with a
 //!   checked-in allowlist under `xtask/` that may only shrink.
@@ -23,6 +25,7 @@ mod env_ban;
 mod filesize;
 mod gates;
 mod kv_codec_ban;
+mod kzx_corpus;
 mod lints;
 mod manifest;
 mod metadata;
@@ -37,7 +40,7 @@ mod vendor;
 
 use std::process::ExitCode;
 
-const USAGE: &str = "usage: cargo xtask <deps|env-ban [--base <rev>]|selftest|purity|roles|depgraph|wasm|file-size|vendor-ban|kv-codec-ban|lints>";
+const USAGE: &str = "usage: cargo xtask <deps|env-ban [--base <rev>]|selftest|purity|roles|depgraph|wasm|file-size|vendor-ban|kv-codec-ban|lints|kzx-corpus <dir>>";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -53,6 +56,9 @@ fn main() -> ExitCode {
             shell::repo_root().and_then(|root| env_ban::gate(&root, Some(base)))
         }
         ["selftest"] => selftest(),
+        ["kzx-corpus", dir] => {
+            shell::repo_root().and_then(|root| kzx_corpus::run(&root, std::path::Path::new(dir)))
+        }
         ["purity"] => purity(&gates::ALL),
         [name] => match gates::Gate::parse(name) {
             Some(gate) => purity(&[gate]),

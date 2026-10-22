@@ -216,6 +216,7 @@ metrale-model-weights = { path = "crates/model-weights", version = "1.0.0-beta-p
 metrale-sampling = { path = "crates/sampling", version = "1.0.0-beta-preview", default-features = false }
 metrale-scheduler = { path = "crates/scheduler", version = "1.0.0-beta-preview", default-features = false }
 metrale-serve-identity = { path = "crates/serve-identity", version = "1.0.0-beta-preview", default-features = false }
+kzx = { path = "crates/kzx", version = "0.1.0", default-features = false }
 metrale-kv-codec = { path = "crates/kv-codec", version = "1.0.0-beta-preview", default-features = false }
 metrale-precision = { path = "crates/precision", version = "1.0.0-beta-preview", default-features = false }
 metrale-kv-tq128 = { path = "crates/kv-tq128", version = "1.0.0-beta-preview", default-features = false }

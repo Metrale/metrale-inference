@@ -11,7 +11,11 @@ description = "Repository gates: cargo xtask deps | env-ban | selftest | purity 
 publish = false
 
 [dependencies]
+# 2026-10-22: `cargo xtask kzx-corpus` writes postcard blueprint bodies and `.kbp` containers.
+postcard = { workspace = true, features = ["use-std"] }
+serde = { workspace = true, features = ["std", "derive"] }
 serde_json = { workspace = true, features = ["std"] }
+sha2 = { workspace = true }
 toml = { workspace = true, features = ["std", "serde", "parse"] }
 
 [lints]
