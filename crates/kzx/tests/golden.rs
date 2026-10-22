@@ -44,9 +44,9 @@ fn ptx_fixture_bytes_are_pinned() {
     check(
         &Pin {
             name: "ptx",
-            len: 963,
+            len: 948,
             head: [0x6b, 0x7a, 0x78, 0x01, 0x01, 0x00, 0x00, 0x00, 0x02, 0x0b, 0x00, 0x00, 0x04, 0xa0, 0x00, 0x00],
-            fnv: 0x2be0_73d5_a83f_695f,
+            fnv: 0xce1f_6cfe_d0e8_2e46,
         },
         &packed,
     );
@@ -60,9 +60,9 @@ fn elf_fixture_bytes_are_pinned() {
     check(
         &Pin {
             name: "elf",
-            len: 1984,
+            len: 1870,
             head: [0x6b, 0x7a, 0x78, 0x01, 0x01, 0x00, 0x00, 0x00, 0x03, 0x0b, 0x00, 0x00, 0x88, 0xbd, 0x00, 0x00],
-            fnv: 0xcf1c_bbfe_746f_3802,
+            fnv: 0x6287_9ccc_011d_cd9d,
         },
         &packed,
     );
@@ -76,9 +76,9 @@ fn body_fixture_bytes_are_pinned() {
     check(
         &Pin {
             name: "body",
-            len: 14138,
+            len: 13958,
             head: [0x6b, 0x7a, 0x78, 0x01, 0x01, 0x00, 0x00, 0x00, 0x01, 0x10, 0x00, 0x00, 0xd6, 0xb6, 0x00, 0x00],
-            fnv: 0x61ee_b61a_b3cc_1802,
+            fnv: 0xa395_2116_16e6_9426,
         },
         &packed,
     );
@@ -93,9 +93,9 @@ fn multi_block_fixture_bytes_are_pinned() {
     check(
         &Pin {
             name: "multi",
-            len: 3902,
+            len: 3857,
             head: [0x6b, 0x7a, 0x78, 0x01, 0x04, 0x00, 0x00, 0x00, 0x01, 0x0a, 0x00, 0x00, 0xb4, 0x20, 0x00, 0x00],
-            fnv: 0xeaaf_036d_4772_fa3c,
+            fnv: 0x082f_6260_90ae_f797,
         },
         &packed,
     );

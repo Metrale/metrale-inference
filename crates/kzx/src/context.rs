@@ -12,7 +12,7 @@ use crate::cast::ix;
 use crate::format::Profile;
 
 /// The most contexts any profile emits.
-pub const MAX_CTX: usize = 8;
+pub const MAX_CTX: usize = 10;
 const FIELDS: usize = 8;
 
 #[inline(always)]
@@ -52,7 +52,8 @@ impl Contexts {
     pub fn new(profile: Profile) -> Self {
         let n = match profile {
             Profile::Stored | Profile::Generic => 8,
-            Profile::Ptx | Profile::Elf => 8,
+            Profile::Ptx => 8,
+            Profile::Elf => 9,
         };
         let mut c = Self {
             profile,
@@ -181,6 +182,13 @@ impl Contexts {
                 );
                 self.h[6] = mix(mix(7, col), mix(w0 | (w1 << 8), c4 & 0xff));
                 self.h[7] = mix(mix(8, col), mix(b16, b32 << 8));
+                let b48 = u32::from(
+                    n.checked_sub(48)
+                        .and_then(|i| hist.get(i))
+                        .copied()
+                        .unwrap_or(0),
+                );
+                self.h[8] = mix(mix(9, col), mix(b16 | (b32 << 8), b48 | ((c4 & 0xff) << 8)));
             }
         }
     }

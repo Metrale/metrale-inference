@@ -36,7 +36,7 @@ impl Params {
     pub const fn for_profile(profile: Profile) -> Self {
         match profile {
             Profile::Stored | Profile::Generic => Params {
-                lzp_min: 24,
+                lzp_min: u32::MAX,
                 match_min: 6,
                 mixer_lr: 6,
             },
@@ -109,7 +109,12 @@ pub struct Predictor {
 impl Predictor {
     /// A predictor for `profile` with `2^mem_log2` buckets per high-order context.
     pub fn new(profile: Profile, mem_log2: u8) -> Self {
-        let params = Params::for_profile(profile);
+        Self::with_params(profile, mem_log2, Params::for_profile(profile))
+    }
+
+    /// A predictor for `profile` under explicit parameters (the inner number model reuses the
+    /// generic contexts with its own flag threshold).
+    pub fn with_params(profile: Profile, mem_log2: u8, params: Params) -> Self {
         let ctx = Contexts::new(profile);
         let n = ctx.n;
         let states = StateTable::new();
@@ -135,7 +140,7 @@ impl Predictor {
             bitpos: 0,
             excluded: None,
             pr: 2048,
-            lzp_a: alloc::vec![COUNTER_INIT; 16 * 16],
+            lzp_a: alloc::vec![COUNTER_INIT; 16 * 256],
             lzp_b: alloc::vec![COUNTER_INIT; 256 * 16],
             lzp_hist: 0,
             lzp_ctx_a: 0,
@@ -159,7 +164,7 @@ impl Predictor {
     pub fn lzp_p(&mut self) -> i32 {
         let bucket = MatchModel::len_bucket(self.mm.len());
         let expected = u32::from(self.mm.expected().unwrap_or(0));
-        self.lzp_ctx_a = bucket * 16 + (self.lzp_hist & 15);
+        self.lzp_ctx_a = bucket * 256 + (self.lzp_hist & 255);
         self.lzp_ctx_b = expected * 16 + bucket;
         let pa = predict(self.lzp_a[ix(self.lzp_ctx_a)]);
         let pb = predict(self.lzp_b[ix(self.lzp_ctx_b)]);
@@ -256,8 +261,8 @@ impl Predictor {
         }
         self.mm.update_bit(bit, &self.rates);
         self.mixer.update(bit);
-        self.apm1.update(bit, 6);
-        self.apm2.update(bit, 6);
+        self.apm1.update(bit, 5);
+        self.apm2.update(bit, 5);
         self.c0 = (self.c0 << 1) | bit;
         self.nibble = (self.nibble << 1) | bit;
         self.bitpos += 1;

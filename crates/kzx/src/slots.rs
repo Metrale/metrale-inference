@@ -88,7 +88,7 @@ impl StateMap {
     /// Learn `bit` under state `s`.
     #[inline(always)]
     pub fn update(&mut self, s: u8, bit: u32, rates: &Rates) {
-        rates.update(&mut self.t[ix(u32::from(s))], bit, 255);
+        rates.update(&mut self.t[ix(u32::from(s))], bit, 127);
     }
 }
 

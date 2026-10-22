@@ -15,7 +15,7 @@ use crate::cast::ix;
 use crate::coder::BitCoder;
 use crate::engine::code_byte;
 use crate::format::Profile;
-use crate::predictor::Predictor;
+use crate::predictor::{Params, Predictor};
 use alloc::vec::Vec;
 
 /// Replaces an extracted digit run in the skeleton.
@@ -169,6 +169,12 @@ impl Memory {
 
 /// Memory parameter of the inner delta-stream predictor.
 const INNER_MEM_LOG2: u8 = 16;
+/// The inner predictor's parameters: generic contexts, flags from 24-byte matches.
+const INNER_PARAMS: Params = Params {
+    lzp_min: 24,
+    match_min: 6,
+    mixer_lr: 6,
+};
 
 /// Codes one number per marker as a zigzag varint delta against the previous number of the
 /// same identifier class, through an inner generic context-mixing predictor whose history is
@@ -186,7 +192,7 @@ impl NumberModel {
     pub fn new() -> Self {
         Self {
             last: Memory::new(14),
-            pred: Predictor::new(Profile::Generic, INNER_MEM_LOG2),
+            pred: Predictor::with_params(Profile::Generic, INNER_MEM_LOG2, INNER_PARAMS),
             hist: Vec::new(),
         }
     }
