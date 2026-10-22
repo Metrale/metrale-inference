@@ -164,9 +164,9 @@ effort:
 
 Two corpora are reported. The **private** one is what kzx was tuned on: Metrale's compiled
 GB10 kernel set for one large model (254 PTX modules, 71.1 MB), the same modules compiled to
-`sm_121a` cubins where ptxas accepts them (250 objects, 25.7 MB), three GLM-scale postcard
-blueprint bodies (0.76–0.83 MB each, real kernel names, hashes and lever names) and a full
-`.kbp` container around them (71.9 MB). Only aggregate numbers are published; the corpus is not.
+`sm_121a` cubins where ptxas accepts them (250 objects, 25.7 MB), three postcard blueprint
+bodies at the scale of a 45–64-layer model (0.76–0.83 MB each, real kernel names, hashes and
+lever names) and the full and lite `.kbp` containers around them (71.9 MB and 0.84 MB). Only aggregate numbers are published; the corpus is not.
 The **synthetic** one ships in `examples/bench/synth.rs` so anyone can reproduce the shape of
 the result: template-generated PTX-like text, ELF-like objects with structured 128-bit
 instruction words, postcard-like bodies and a container.
@@ -190,6 +190,12 @@ payload and signature as five blocks of one stream while the baselines see the w
 | tool | packed bytes | ratio | compress MB/s | decompress MB/s |
 |---|---:|---:|---:|---:|
 | **kzx** | 2,231,579 | 31.84x ★ | 6.61 | 6.60 |
+| deflate-9 | 11,769,012 | 6.04x | 8.39 | 84.23 |
+| zstd-19-long | 6,488,752 | 10.95x | 1.85 | 106.91 |
+| zstd-22-ultra-long27 | 6,467,058 | 10.99x | 0.66 | 134.48 |
+| xz-9e | 5,531,788 | 12.84x | 2.29 | 135.22 |
+| bzip2-9 | 8,716,891 | 8.15x | 11.25 | 33.86 |
+| brotli-11 | 5,664,115 | 12.54x | 1.17 | 20.97 |
 
 **PTX**, `solid`: 1 file(s), 71,054,624 raw bytes
 
