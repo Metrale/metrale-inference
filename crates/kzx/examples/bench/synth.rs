@@ -212,8 +212,8 @@ pub fn elf_object(rng: &mut Rng, words: usize, symbols: usize) -> Vec<u8> {
     while n < words {
         for w in &body {
             let mut x = *w;
-            x[2] = x[2].wrapping_add((n / loop_len) as u8 * 2);
-            x[3] = x[3].wrapping_add((n / loop_len) as u8 * 2);
+            x[2] = x[2].wrapping_add(((n / loop_len) as u8).wrapping_mul(2));
+            x[3] = x[3].wrapping_add(((n / loop_len) as u8).wrapping_mul(2));
             if rng.below(16) == 0 {
                 x[6] = x[6].wrapping_add(4);
             }
