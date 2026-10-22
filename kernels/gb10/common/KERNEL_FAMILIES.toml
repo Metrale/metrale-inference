@@ -987,6 +987,27 @@ measurement = "qwen3.8-27b::dense_gemv_bf16_batchm @ decode C=1 (R=4, MTP k=3)"
 point = {}
 rows = [32]
 measurement = "qwen3.6-35b-a3b::dense_gemv_bf16_batchm @ decode C=16 (R=32, MTP k=1)"
+# 2026-10-22: GLM-5.3-Flash NVFP4, TP=3 rank 0, nsys: rows [2] are the MTP verify launches, rows [1] the MTP drafter's.
+[[family.evidence]]
+point = {}
+rows = [2]
+measurement = "glm-5.3-flash::dense_gemv_bf16_batchm_few_fp32out @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k"
+[[family.evidence]]
+point = {}
+rows = [2]
+measurement = "glm-5.3-flash::dense_gemv_bf16_batchm_few_fp32out_pair @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k"
+[[family.evidence]]
+point = {}
+rows = [1]
+measurement = "glm-5.3-flash::dense_gemv_bf16 @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k · MTP o_absorb M=1 N=4096 K=11264"
+[[family.evidence]]
+point = {}
+rows = [1]
+measurement = "glm-5.3-flash::dense_gemv_bf16 @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k · MTP catch-up eh_proj M=1 N=4096 K=8192"
+[[family.evidence]]
+point = {}
+rows = [1]
+measurement = "glm-5.3-flash::dense_gemv_bf16 @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k · MTP q_absorb M=1 N=11264 K=1536"
 
 [[family]]
 id = "dense_bf16_tc"
@@ -1064,6 +1085,23 @@ measurement = "qwen3.6-35b-a3b::w4a16_gemv_sw @ decode C=1 (R=2, MTP k=1)"
 point = {}
 rows = [1]
 measurement = "qwen3.8-27b::w4a16_gemv_sw @ decode C=1 (R=4, MTP k=3)"
+# 2026-10-22: GLM-5.3-Flash NVFP4, TP=3 rank 0, nsys: rows [2] are the MTP verify launches, rows [1] the MTP drafter's.
+[[family.evidence]]
+point = {}
+rows = [2]
+measurement = "glm-5.3-flash::w4a16_gemv_pipe_m2 @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k · KDA in-proj q|k|v|f_a|b|g_a M=2 N=8726 K=4096"
+[[family.evidence]]
+point = {}
+rows = [2]
+measurement = "glm-5.3-flash::w4a16_gemv_pipe_m2 @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k · KDA o_proj M=2 N=4096 K=2816"
+[[family.evidence]]
+point = {}
+rows = [2]
+measurement = "glm-5.3-flash::w4a16_gemv_pipe_m2 @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k · shared expert gate|up M=2 N=768+768 K=4096"
+[[family.evidence]]
+point = {}
+rows = [2]
+measurement = "glm-5.3-flash::w4a16_gemv_pipe_m2 @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k · shared expert down M=2 N=4096 K=768"
 
 # 2026-09-30: The 17..32-row CUDA-core tier the batched propose's LM head takes past the
 # tensor-core GEMV (`MtpHead::lm_head_batch_kernel`).
@@ -1249,6 +1287,11 @@ why = "w4a4_proj.rs:162-166 at max_m = 64"
 values = {}
 how = "instantiation"
 files = ["kernels/gb10/common/w4a4_gemv_mx.cu"]
+# 2026-10-22: GLM-5.3-Flash NVFP4, TP=3 rank 0, nsys: rows [2] are the MTP verify launches, rows [1] the MTP drafter's.
+[[family.evidence]]
+point = {}
+rows = [2]
+measurement = "glm-5.3-flash::w4a4_gemv_mx8 @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k"
 
 # 2026-10-08: W4A4 under a checkpoint's STATIC activation scale (ModelOpt `input_scale`, declared
 # `dynamic: false`), over the w4a4_mx core (w4a4_mx_core.cuh, no new MMA code): the static-scale row
@@ -1330,6 +1373,11 @@ op = [
 values = {}
 how = "instantiation"
 files = ["kernels/gb10/common/w4a4_gemv_mx_moe.cu", "kernels/gb10/common/w4a4_grouped_mx.cu"]
+# 2026-10-22: GLM-5.3-Flash NVFP4, TP=3 rank 0, nsys: rows [2] are the MTP verify launches, rows [1] the MTP drafter's.
+[[family.evidence]]
+point = {}
+rows = [2]
+measurement = "glm-5.3-flash::w4a4_quant_rows_static @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k"
 
 [[family]]
 id = "w8a16_gemm"
@@ -1411,6 +1459,19 @@ microbench = "standalone W8A8 GEMV, 10 dense-27B and 35B projection shapes, 2026
 point = { weight = "fp8/block128x128", activation = "fp8/g128" }
 rows = [1, 4, 16, 64]
 microbench = "standalone W8A8 GEMV, 10 dense-27B and 35B projection shapes, 2026-09-28: 116-253 GB/s (47-102% of the 249 GB/s floor; the 116 is one N=12288 shape at M=64)"
+# 2026-10-22: GLM-5.3-Flash NVFP4, TP=3 rank 0, nsys: rows [2] are the MTP verify launches, rows [1] the MTP drafter's.
+[[family.evidence]]
+point = { weight = "fp8/channel", activation = "fp8/token" }
+rows = [2]
+measurement = "glm-5.3-flash::w8a8_gemv_rowscale_mb1_ku8 @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k · DSA q_absorb M=2 N=11264 K=1536"
+[[family.evidence]]
+point = { weight = "fp8/channel", activation = "fp8/token" }
+rows = [2]
+measurement = "glm-5.3-flash::w8a8_gemv_rowscale_mb1_ku8 @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k · DSA o_absorb M=2 N=4096 K=11264"
+[[family.evidence]]
+point = { weight = "fp8/channel", activation = "fp8/token" }
+rows = [2]
+measurement = "glm-5.3-flash::w8a8_gemv_rowscale_mb1_ku8_split4 @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k"
 
 [[family]]
 id = "fp8_gemm_blockscaled"
@@ -2146,6 +2207,15 @@ op = [
 values = {}
 how = "instantiation"
 files = ["kernels/gb10/common/glm5next_mhc.cu", "kernels/gb10/common/glm5next_mhc_fused.cu", "kernels/gb10/common/glm5next_hc_post_sum.cu", "kernels/gb10/common/glm5next_mhc_tok.cu", "kernels/gb10/common/glm5next_mhc_tile.cu", "kernels/gb10/common/glm5next_mhc_c1.cu"]
+# 2026-10-22: GLM-5.3-Flash NVFP4, TP=3 rank 0, nsys: rows [2] are the MTP verify launches, rows [1] the MTP drafter's.
+[[family.evidence]]
+point = {}
+rows = [2]
+measurement = "glm-5.3-flash::glm5next_hc_pre_norm_c1 @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k"
+[[family.evidence]]
+point = {}
+rows = [2]
+measurement = "glm-5.3-flash::glm5next_hc_post_rank_sum @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k"
 
 # 2026-10-08: The KDA gates: the decay
 # `linear_lower_bound * sigmoid(exp(A_log[h]) * (g + dt_bias))` per channel from the BF16 `f_b`
@@ -2214,6 +2284,11 @@ absent = "silu"
 values = { gate_act = "sigmoid" }
 how = "instantiation"
 files = ["kernels/gb10/common/kda_layer_ops.cu"]
+# 2026-10-22: GLM-5.3-Flash NVFP4, TP=3 rank 0, nsys: rows [2] are the MTP verify launches, rows [1] the MTP drafter's.
+[[family.evidence]]
+point = { gate_act = "sigmoid" }
+rows = [2]
+measurement = "glm-5.3-flash::kda_o_norm_gated_bf16 @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k"
 
 # 2026-10-08: Interleaves the three BF16 q, k, v projections into one q|k|v row
 # (kda_layer_ops.cu:127-149).
@@ -2229,6 +2304,11 @@ op = [{ op = "concat" }]
 values = {}
 how = "instantiation"
 files = ["kernels/gb10/common/kda_layer_ops.cu"]
+# 2026-10-22: GLM-5.3-Flash NVFP4, TP=3 rank 0, nsys: rows [2] are the MTP verify launches, rows [1] the MTP drafter's.
+[[family.evidence]]
+point = {}
+rows = [2]
+measurement = "glm-5.3-flash::kda_pack_qkv_bf16 @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k"
 
 # 2026-10-08: LayerNorm with a bias, FP32 statistics, BF16 in and out (the DSA indexer's k_norm,
 # glm5next_dsa/mod.rs:53-55; written for the NLLB encoder).
@@ -2320,6 +2400,11 @@ how = "instantiation"
 # 2026-10-09: The bodies live in dsa_indexer_body.cuh; dsa_indexer_rows.cu runs them for one
 # sequence per grid row (the batched decode's paged rows, METRALE_GLM_DSA_INDEXER_ROWS).
 files = ["kernels/gb10/common/dsa_indexer.cu", "kernels/gb10/common/dsa_indexer_body.cuh", "kernels/gb10/common/dsa_indexer_pools.cuh", "kernels/gb10/common/dsa_indexer_rows.cu", "kernels/gb10/common/dsa_scores_warp.cu", "kernels/gb10/common/dsa_scores_heads.cuh", "kernels/gb10/common/dsa_scores_heads_window.cu", "kernels/gb10/common/dsa_indexer_fp8.cu", "kernels/gb10/common/dsa_scores_mma.cuh", "kernels/gb10/common/dsa_index_scores_pipe.cu", "kernels/gb10/common/dsa_sel_fold.cu", "kernels/gb10/common/dsa_topk_stream.cuh", "kernels/gb10/common/dsa_topk_radix.cuh", "kernels/gb10/common/dsa_topk_mc.cu"]
+# 2026-10-22: GLM-5.3-Flash NVFP4, TP=3 rank 0, nsys: rows [2] are the MTP verify launches, rows [1] the MTP drafter's.
+[[family.evidence]]
+point = {}
+rows = [2]
+measurement = "glm-5.3-flash::dsa_index_scores_heads_window @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k"
 
 # 2026-10-08: NoPE latent decode attention over the selected tokens of an FP8 latent cache, one
 # CTA per (head, row). Its query is already in latent space and its output stays there: the
@@ -2394,6 +2479,15 @@ files = [
   "kernels/gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_prefill_pipe.cu",
   "kernels/gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_prefill_tc.cu",
 ]
+# 2026-10-22: GLM-5.3-Flash NVFP4, TP=3 rank 0, nsys: rows [2] are the MTP verify launches, rows [1] the MTP drafter's.
+[[family.evidence]]
+point = { kv_lora = "512", kv_dtype = "fp8" }
+rows = [2]
+measurement = "glm-5.3-flash::glm5next_dsa_mla_decode_hb_fp8 @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k · rows=2 heads=22 latent=512 splits=8"
+[[family.evidence]]
+point = { kv_lora = "512", kv_dtype = "fp8" }
+rows = [2]
+measurement = "glm-5.3-flash::glm5next_dsa_mla_decode_hb_fp8 @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k · rows=2 heads=22 latent=512 splits=8"
 
 # 2026-10-08: RMSNorm (plain weight) of the kv_a row, FP8-quantised into its paged slot, one token
 # per launch (glm5next_mla_latent_write.cu:1-14).
@@ -2446,6 +2540,11 @@ op = [{ op = "swiglu_clamp" }, { op = "silu_mul", after = ["swiglu_clamp"] }]
 values = {}
 how = "instantiation"
 files = ["kernels/gb10/common/glm5next_ffn.cu"]
+# 2026-10-22: GLM-5.3-Flash NVFP4, TP=3 rank 0, nsys: rows [2] are the MTP verify launches, rows [1] the MTP drafter's.
+[[family.evidence]]
+point = {}
+rows = [2]
+measurement = "glm-5.3-flash::glm5next_swiglu_clamp @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k · shared expert n=2x768"
 
 # 2026-10-08: Sigmoid scores, top-k on score + e_score_correction_bias, the selected scores
 # renormalised and scaled by `routed_scaling_factor`, from FP32 logits, every row in one launch
@@ -2473,6 +2572,11 @@ from = "param:top_k"
 values = { scoring = "sigmoid_bias" }
 how = "instantiation"
 files = ["kernels/gb10/common/glm5next_ffn.cu"]
+# 2026-10-22: GLM-5.3-Flash NVFP4, TP=3 rank 0, nsys: rows [2] are the MTP verify launches, rows [1] the MTP drafter's.
+[[family.evidence]]
+point = { scoring = "sigmoid_bias" }
+rows = [2]
+measurement = "glm-5.3-flash::glm5next_router_topk_rank @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k · rows=2 experts=288 top_k=8"
 
 # 2026-10-08: The routed outputs weighted and summed with the ungated shared expert, BF16 out,
 # from slot order or the expert-sorted order (glm5next_ffn.cu:209-263).
@@ -2578,3 +2682,8 @@ rows_above = 1
 cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:203"
 holds = "for row in 0..k {"
 note = "DSA verify: latent write, indexer projections, store and selection one row per launch; 2026-10-21: the selection in one pass after the row loop under METRALE_GLM_DSA_VERIFY_SELECT_ONCE (layer/verify_select.rs)"
+# 2026-10-22: GLM-5.3-Flash NVFP4, TP=3 rank 0, nsys: rows [2] are the MTP verify launches, rows [1] the MTP drafter's.
+[[family.evidence]]
+point = { shared_gate = "none" }
+rows = [2]
+measurement = "glm-5.3-flash::glm5next_moe_combine @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k · rows=2 top_k=8 H=4096"
