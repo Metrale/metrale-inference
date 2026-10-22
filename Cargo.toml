@@ -42,6 +42,7 @@ members = [
     "crates/blueprint-trust",
     "crates/blueprint-sign",
     "crates/precision",
+    "crates/kzx",
 ]
 
 # 2026-10-17: A bare `cargo build` builds `met` only; CI and scripts name `--workspace` or `-p`.

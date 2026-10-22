@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "kzx"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+description = "Kernel compression: a no_std, zero-dependency context-mixing compressor tuned for GPU kernel artifacts (PTX, cubin/SASS) and postcard blueprint bodies, with bomb-proof decoding for untrusted input."
+repository = "https://github.com/tbraun96/kzx"
+homepage = "https://metrale.ai"
+documentation = "https://docs.rs/kzx"
+readme = "README.md"
+keywords = ["compression", "kernel", "no-std", "gpu", "cuda"]
+categories = ["compression", "no-std", "embedded"]
+authors = ["Metrale Engine contributors"]
+include = [
+    "src/**",
+    "examples/**",
+    "tests/**",
+    "README.md",
+    "CHANGELOG.md",
+    "DESIGN.md",
+    "LICENSE-MIT",
+    "LICENSE-APACHE",
+]
+
+# 2026-10-22: Standalone by design: no workspace inheritance, no dependencies, no features, so
+# the crate extracts to its own repository unchanged. Inside the Metrale workspace it is a pure
+# `core` crate for the NSCC/depgraph/wasm gates.
+[dependencies]
+
+[dev-dependencies]
+
+[package.metadata.metrale]
+role = "core"
+
+[package.metadata.docs.rs]
+all-features = false
