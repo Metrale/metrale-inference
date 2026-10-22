@@ -13,20 +13,24 @@
 //! on every request, while the server's own TTFT was unchanged. A 4 KB body was
 //! not delayed. At the kernel default, 131072, no request was delayed.
 //!
+//! 2026-10-22: Superseded for larger bodies: at the kernel default the first
+//! window is 131072 B, and a body written in one go that is larger than it
+//! waits on the same probe. Measured on GB10 rank 0 (`tcp_rmem` 4096 131072
+//! 134217728, GLM-5.3-Flash serve): bodies of 32-96 KB reached the server in
+//! 6-18 ms, 128-480 KB in 210-270 ms on every request (a 128k-token prompt is
+//! ~480 KB), while the same bytes sent as two writes (headers, then body)
+//! arrived in 6 ms. The 2026-10-03 run sent 127 KB, under that window. So the
+//! listener is now sized on every host whose default is below the buffer it
+//! needs, not only below the kernel's default.
+//!
 //! Owner: server (HTTP layer).
 //! Invariants:
-//! - A host at or above `KERNEL_DEFAULT_TCP_RMEM_BYTES` is left alone, so its
-//!   accepted sockets keep receive autotuning.
+//! - A host whose `tcp_rmem` default is at least `LISTENER_RCVBUF_BYTES` is left
+//!   alone, so its accepted sockets keep receive autotuning.
 //! - The listener's buffer is set before the first accept; accepted sockets
 //!   inherit it.
 
 use std::io;
-
-/// 2026-10-03: The `tcp_rmem` default Linux ships (the middle field of
-/// `net.ipv4.tcp_rmem`). Below it, the first loopback window can be smaller
-/// than one segment, which causes the delay this module removes. 87380 was
-/// measured to delay; 131072 was not.
-pub(crate) const KERNEL_DEFAULT_TCP_RMEM_BYTES: u64 = 131_072;
 
 /// 2026-10-03: The receive buffer the listener asks for on such a host. An
 /// explicit `SO_RCVBUF` turns off receive autotuning for the accepted sockets,
@@ -42,9 +46,11 @@ pub(crate) const LISTENER_RCVBUF_BYTES: usize = 4 * 1024 * 1024;
 /// `tcp_rmem` default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RcvbufPlan {
-    /// 2026-10-03: The host's default is at or above the kernel's; autotuning stays on.
+    /// 2026-10-03: The host's default is at least [`LISTENER_RCVBUF_BYTES`] (2026-10-22: was
+    /// the kernel's default); autotuning stays on.
     Keep { default_bytes: u64 },
-    /// 2026-10-03: The host's default is below the kernel's; set `bytes` on the listener.
+    /// 2026-10-03: The host's default is below [`LISTENER_RCVBUF_BYTES`]; set `bytes` on the
+    /// listener.
     Set { default_bytes: u64, bytes: usize },
     /// 2026-10-03: The default could not be read (not Linux, or `/proc` unreadable); the
     /// listener is left alone.
@@ -56,7 +62,7 @@ pub(crate) enum RcvbufPlan {
 pub(crate) fn plan(default_bytes: Option<u64>) -> RcvbufPlan {
     match default_bytes {
         None => RcvbufPlan::Unknown,
-        Some(d) if d >= KERNEL_DEFAULT_TCP_RMEM_BYTES => RcvbufPlan::Keep { default_bytes: d },
+        Some(d) if d >= LISTENER_RCVBUF_BYTES as u64 => RcvbufPlan::Keep { default_bytes: d },
         Some(d) => RcvbufPlan::Set {
             default_bytes: d,
             bytes: LISTENER_RCVBUF_BYTES,
@@ -125,23 +131,23 @@ pub(crate) fn size_listener_rcvbuf(listener: &tokio::net::TcpListener) -> Rcvbuf
     match decided {
         RcvbufPlan::Keep { default_bytes } => tracing::debug!(
             "TCP receive buffer left as is: net.ipv4.tcp_rmem default {default_bytes} B \
-             >= {KERNEL_DEFAULT_TCP_RMEM_BYTES} B"
+             >= {LISTENER_RCVBUF_BYTES} B"
         ),
         RcvbufPlan::Set {
             default_bytes,
             bytes,
         } => match set_listener_rcvbuf(listener, bytes) {
             Ok(effective) => tracing::info!(
-                "TCP receive buffer: net.ipv4.tcp_rmem default is {default_bytes} B, below the \
-                 kernel's {KERNEL_DEFAULT_TCP_RMEM_BYTES} B, which delays request bodies over \
-                 ~43 KB by 200 ms or more on loopback. Set SO_RCVBUF {bytes} B on the listener \
-                 (kernel reports {effective} B); accepted sockets inherit it"
+                "TCP receive buffer: net.ipv4.tcp_rmem default is {default_bytes} B, so a \
+                 request body larger than the first window ({default_bytes} B or less) waits \
+                 200 ms or more on loopback. Set SO_RCVBUF {bytes} B on the listener (kernel \
+                 reports {effective} B); accepted sockets inherit it"
             ),
             Err(e) => tracing::warn!(
-                "TCP receive buffer: net.ipv4.tcp_rmem default is {default_bytes} B, below the \
-                 kernel's {KERNEL_DEFAULT_TCP_RMEM_BYTES} B, and setting SO_RCVBUF {bytes} B \
-                 failed ({e}). Request bodies over ~43 KB may be delayed by 200 ms or more; \
-                 raise the middle field of net.ipv4.tcp_rmem to {KERNEL_DEFAULT_TCP_RMEM_BYTES}"
+                "TCP receive buffer: net.ipv4.tcp_rmem default is {default_bytes} B, and setting \
+                 SO_RCVBUF {bytes} B failed ({e}). Request bodies over ~{default_bytes} B may \
+                 be delayed by 200 ms or more; raise the middle field of net.ipv4.tcp_rmem \
+                 to {bytes}"
             ),
         },
         RcvbufPlan::Unknown => {}

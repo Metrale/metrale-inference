@@ -2,27 +2,36 @@
 
 //! 2026-10-03: Tests of the listener receive-buffer sizing: the plan for each
 //! kind of host, the `tcp_rmem` parse, inheritance by accepted sockets, and
-//! (ignored; it needs a host whose `tcp_rmem` default is below the kernel's)
-//! the request-body delay itself, through the real bind.
+//! (ignored; it needs a host whose `tcp_rmem` default is below the listener
+//! buffer, and it times loopback) the request-body delay itself, through the
+//! real bind.
 //!
 //! Owner: server (HTTP layer).
 //! Invariants: none beyond the types.
 
-use super::{
-    KERNEL_DEFAULT_TCP_RMEM_BYTES, LISTENER_RCVBUF_BYTES, RcvbufPlan, parse_tcp_rmem_default, plan,
-};
+use super::{LISTENER_RCVBUF_BYTES, RcvbufPlan, parse_tcp_rmem_default, plan};
+
+/// 2026-10-22: The kernel's own `tcp_rmem` default, measured on 2026-10-22 to delay
+/// bodies of 128 KB and more (the module doc).
+const KERNEL_DEFAULT_TCP_RMEM_BYTES: u64 = 131_072;
 
 #[test]
-fn a_host_at_or_above_the_kernel_default_keeps_autotuning() {
-    for d in [KERNEL_DEFAULT_TCP_RMEM_BYTES, 6 * 1024 * 1024] {
+fn a_host_whose_default_covers_the_listener_buffer_keeps_autotuning() {
+    for d in [LISTENER_RCVBUF_BYTES as u64, 6 * 1024 * 1024] {
         assert_eq!(plan(Some(d)), RcvbufPlan::Keep { default_bytes: d });
     }
 }
 
 #[test]
-fn a_host_below_the_kernel_default_gets_the_listener_buffer() {
-    // 2026-10-03: 87380 is the value measured to delay 32k-token bodies by 200 ms.
-    for d in [4096, 87_380, KERNEL_DEFAULT_TCP_RMEM_BYTES - 1] {
+fn a_host_below_the_listener_buffer_gets_it_even_at_the_kernel_default() {
+    // 2026-10-03: 87380 is the value measured to delay 32k-token bodies by 200 ms;
+    // 2026-10-22: the kernel's 131072 delays 128k-token bodies the same way.
+    for d in [
+        4096,
+        87_380,
+        KERNEL_DEFAULT_TCP_RMEM_BYTES,
+        LISTENER_RCVBUF_BYTES as u64 - 1,
+    ] {
         assert_eq!(
             plan(Some(d)),
             RcvbufPlan::Set {
@@ -129,10 +138,10 @@ async fn post_ms(addr: std::net::SocketAddr, body_bytes: usize) -> f64 {
     started.elapsed().as_secs_f64() * 1000.0
 }
 
-/// 2026-10-03: The slowest of five posts of a 32k-token-sized body (127 KB)
-/// to an axum app served on `listener`.
+/// 2026-10-03: The slowest of five posts of a `body_bytes` body to an axum app
+/// served on `listener`.
 #[cfg(target_os = "linux")]
-async fn slowest_post_ms(listener: tokio::net::TcpListener) -> f64 {
+async fn slowest_post_ms(listener: tokio::net::TcpListener, body_bytes: usize) -> f64 {
     let addr = listener.local_addr().expect("addr");
     let app = axum::Router::new().route(
         "/echo",
@@ -141,26 +150,27 @@ async fn slowest_post_ms(listener: tokio::net::TcpListener) -> f64 {
     let server = tokio::spawn(async move { axum::serve(listener, app).await });
     let mut slowest = 0.0_f64;
     for _ in 0..5 {
-        slowest = slowest.max(post_ms(addr, 127_000).await);
+        slowest = slowest.max(post_ms(addr, body_bytes).await);
     }
     server.abort();
     slowest
 }
 
-/// 2026-10-03: The delay this module removes, end to end. It needs a host whose
-/// `tcp_rmem` default is below the kernel's, which a CI runner is not, and it
-/// refuses to run anywhere else rather than pass without testing anything. Run
-/// it on such a host with
+/// 2026-10-03: The delay this module removes, end to end. 2026-10-22: with a
+/// 128k-token body (480 KB), which the kernel default 131072 delays too, so the
+/// test runs on any host whose default is below the listener buffer; it times
+/// loopback, so it stays ignored. Run it with
 /// `cargo test -p met listener_rcvbuf -- --ignored`.
 #[cfg(target_os = "linux")]
-#[ignore = "needs net.ipv4.tcp_rmem default < 131072 on the host; see the doc comment"]
+#[ignore = "times loopback; needs net.ipv4.tcp_rmem default below LISTENER_RCVBUF_BYTES"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_large_body_is_not_delayed_on_a_host_with_a_small_tcp_rmem_default() {
+async fn a_large_body_is_not_delayed() {
+    const BODY: usize = 480_000;
     let default = super::read_tcp_rmem_default().expect("read tcp_rmem");
     assert!(
-        default < KERNEL_DEFAULT_TCP_RMEM_BYTES,
+        default < LISTENER_RCVBUF_BYTES as u64,
         "this host's tcp_rmem default is {default} B; the test needs one below \
-         {KERNEL_DEFAULT_TCP_RMEM_BYTES} B to reproduce the delay"
+         {LISTENER_RCVBUF_BYTES} B to reproduce the delay"
     );
 
     // 2026-10-03: Control: a listener bound without the sizing shows the delay,
@@ -168,10 +178,10 @@ async fn a_large_body_is_not_delayed_on_a_host_with_a_small_tcp_rmem_default() {
     let plain = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind");
-    let unfixed = slowest_post_ms(plain).await;
+    let unfixed = slowest_post_ms(plain, BODY).await;
     assert!(
         unfixed >= 150.0,
-        "control: without the sizing a 127 KB body should wait on the 200 ms window \
+        "control: without the sizing a {BODY} B body should wait on the 200 ms window \
          probe; the slowest post took {unfixed:.1} ms"
     );
 
@@ -186,9 +196,9 @@ async fn a_large_body_is_not_delayed_on_a_host_with_a_small_tcp_rmem_default() {
         crate::main_modules::serve_router::bind_and_announce(&host, "127.0.0.1", port)
             .await
             .expect("bind");
-    let fixed = slowest_post_ms(fixed_listener).await;
+    let fixed = slowest_post_ms(fixed_listener, BODY).await;
     assert!(
         fixed < 20.0,
-        "with the sizing the slowest 127 KB post took {fixed:.1} ms (unfixed {unfixed:.1} ms)"
+        "with the sizing the slowest {BODY} B post took {fixed:.1} ms (unfixed {unfixed:.1} ms)"
     );
 }
