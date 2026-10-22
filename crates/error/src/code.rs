@@ -167,4 +167,43 @@ error_registry! {
         /// (cache, reason).
         KvLatentGeometry = 0x050B => "latent cache {}: {}",
     }
+    /// 2026-10-22: `0x0600–0x06FF`: blueprints (`.kbp`): framing, trust, signatures, kernel
+    /// resolution and the recipe projection (`metrale-blueprint`, `metrale-blueprint-trust`).
+    Blueprint = 0x0600..=0x06FF {
+        /// 2026-10-22: A `.kbp` whose framing is malformed: (what).
+        BlueprintFrame = 0x0600 => "blueprint frame: {}",
+        /// 2026-10-22: A section larger than its cap, refused before allocation: (section,
+        /// length, cap).
+        BlueprintTooLarge = 0x0601 => "blueprint {} is {} bytes, over the {}-byte cap",
+        /// 2026-10-22: A format or schema this reader does not know: (what, found, supported).
+        BlueprintFormat = 0x0602 => "blueprint {} {} is not supported (this reader knows {})",
+        /// 2026-10-22: The body's SHA-256 differs from the header's.
+        BlueprintBodyHash = 0x0603 => "blueprint body hash mismatch: header {} body {}",
+        /// 2026-10-22: A signature that does not verify: (what, algorithm, kid).
+        BlueprintSignature = 0x0604 => "blueprint {}: the {} signature of {} does not verify",
+        /// 2026-10-22: A key no trust anchor vouches for: (kid, reason).
+        BlueprintUntrusted = 0x0605 => "key {} is not trusted: {}",
+        /// 2026-10-22: A key on the revocation list: (kid, revocation serial).
+        BlueprintRevoked = 0x0606 => "key {} is revoked (revocations serial {})",
+        /// 2026-10-22: A certificate outside its validity window: (kid, not_before ms,
+        /// not_after ms, now ms).
+        BlueprintCertExpired = 0x0607 => "certificate of {} is valid {}..{} ms, now is {} ms",
+        /// 2026-10-22: A serial lower than the floor this reader holds: (what, found, floor).
+        BlueprintRollback = 0x0608 => "{} serial {} is below the floor {}: refused as a rollback",
+        /// 2026-10-22: A certificate whose scope does not allow the use: (kid, scope, needed).
+        BlueprintScope = 0x0609 => "key {} has scope {} but {} is needed",
+        /// 2026-10-22: A verified section that does not decode: (section, reason).
+        BlueprintDecode = 0x060A => "blueprint {} does not decode: {}",
+        /// 2026-10-22: An artifact whose bytes hash to another id: (module, expected, found).
+        ArtifactHashMismatch = 0x060B => "kernel module {} must hash to {} but hashes to {}",
+        /// 2026-10-22: A kernel module the chosen source cannot supply: (module, artifact, source).
+        KernelMissing = 0x060C => "kernel module {} ({}) is not available from {}",
+        /// 2026-10-22: A kernel source this build parses but cannot resolve yet: (source, module,
+        /// phase).
+        KernelSourceNotInPhase = 0x060D => "kernel source {} of {} is resolved from phase {}",
+        /// 2026-10-22: A recipe the blueprint projection refuses: (recipe, reason).
+        BlueprintRecipe = 0x060E => "recipe {} cannot be projected to a blueprint: {}",
+        /// 2026-10-22: A key file or seed that is malformed: (what, reason).
+        BlueprintKey = 0x060F => "key {}: {}",
+    }
 }

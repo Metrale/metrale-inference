@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-blueprint-sign"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: blueprint signing from seed files: reads a key file, zeroizes the seeds, and signs a .kbp, a key certificate or a revocation list."
+
+[package.metadata.metrale]
+role = "host-std"
+
+[dependencies]
+metrale-blueprint = { workspace = true }
+metrale-blueprint-trust = { workspace = true }
+metrale-error = { workspace = true }
+postcard = { workspace = true, features = ["alloc"] }
+serde = { workspace = true, features = ["std", "derive"] }
+zeroize = { workspace = true, features = ["alloc"] }
+
+[dev-dependencies]
+tempfile = { workspace = true, features = ["getrandom"] }
+
+[lints]
+workspace = true

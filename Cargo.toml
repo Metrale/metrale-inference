@@ -37,6 +37,9 @@ members = [
     "crates/kv-codec",
     "crates/kv-tq128",
     "crates/host-probe",
+    "crates/blueprint",
+    "crates/blueprint-trust",
+    "crates/blueprint-sign",
 ]
 
 # 2026-10-17: A bare `cargo build` builds `met` only; CI and scripts name `--workspace` or `-p`.
@@ -109,6 +112,9 @@ clap = { version = "4", default-features = false }
 criterion = { version = "0.8", default-features = false }
 crossterm = { version = "0.28", default-features = false }
 dispatch2 = { version = "0.3", default-features = false }
+# 2026-10-22: The Ed25519 half of the blueprint hybrid signature. 2.2, as metrale-auth runs it, so
+# both repos share one lock line; no default features keeps it no_std for the core crates.
+ed25519-dalek = { version = "2.2", default-features = false }
 flate2 = { version = "1.1", default-features = false }
 futures = { version = "0.3", default-features = false }
 getrandom = { version = "0.4", default-features = false }
@@ -125,6 +131,10 @@ lazy_static = { version = "1", default-features = false }
 libc = { version = "0.2", default-features = false }
 libloading = { version = "0.9", default-features = false }
 memmap2 = { version = "0.9", default-features = false }
+# 2026-10-22: Pure-Rust no_std deflate for `.kbp` bodies and inline kernel payloads.
+miniz_oxide = { version = "0.8", default-features = false }
+# 2026-10-22: ML-DSA (FIPS 204), exactly the version and features metrale-auth signs with.
+ml-dsa = { version = "=0.1.1", default-features = false }
 # 2026-09-30: Exactly 2.21.0. 2.22 changed how `none` and booleans render through `|string`
 # (to `None`/`True`/`False`), which changes the tool-call argument text inside the prompt the
 # model reads; `tokenizer::tests::qwen_dense_parity` pins today's rendering and fails on 2.24.
@@ -132,6 +142,8 @@ memmap2 = { version = "0.9", default-features = false }
 # (Dependabot ignores it in .github/dependabot.yml).
 minijinja = { version = "=2.21.0", default-features = false }
 objc2 = { version = "0.6", default-features = false }
+# 2026-10-22: The canonical, deterministic `.kbp` body encoding (serde, no_std).
+postcard = { version = "1", default-features = false }
 objc2-foundation = { version = "0.3", default-features = false }
 objc2-metal = { version = "0.3", default-features = false }
 prometheus = { version = "0.14", default-features = false }
@@ -156,6 +168,8 @@ tracing = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3", default-features = false }
 tui-textarea = { version = "0.7", default-features = false }
 unicode-width = { version = "0.2", default-features = false }
+# 2026-10-22: Wipes key seeds held in memory by the blueprint signer.
+zeroize = { version = "1.8", default-features = false }
 ureq = { version = "3", default-features = false }
 
 # Workspace crates, alphabetical. `default-features = false` so each consumer forwards the
@@ -165,6 +179,9 @@ ureq = { version = "3", default-features = false }
 # it must equal `[workspace.package] version` above.
 met = { path = "crates/server", version = "1.0.0-beta-preview", default-features = false }
 metrale-abstract-io = { path = "crates/abstract-io", version = "1.0.0-beta-preview", default-features = false }
+metrale-blueprint = { path = "crates/blueprint", version = "1.0.0-beta-preview", default-features = false }
+metrale-blueprint-sign = { path = "crates/blueprint-sign", version = "1.0.0-beta-preview", default-features = false }
+metrale-blueprint-trust = { path = "crates/blueprint-trust", version = "1.0.0-beta-preview", default-features = false }
 metrale-bench = { path = "crates/bench", version = "1.0.0-beta-preview", default-features = false }
 metrale-cache = { path = "crates/cache", version = "1.0.0-beta-preview", default-features = false }
 metrale-circuit = { path = "crates/circuit", version = "1.0.0-beta-preview", default-features = false }

@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-blueprint-trust"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: blueprint trust: the compiled anchors, key certificates, revocations and the hybrid ML-DSA + Ed25519 signature check. no_std + alloc."
+
+# 2026-10-22: No features (NSCC). Signing is deterministic (FIPS 204 deterministic ML-DSA,
+# RFC 8032 Ed25519), so a signer is a pure function of (seed, bytes) and needs no Entropy port.
+[features]
+
+[dependencies]
+metrale-abstract-io = { workspace = true }
+metrale-error = { workspace = true }
+# 2026-10-22: As metrale-auth (Cargo.toml:24, :28): ml-dsa =0.1.1 with alloc only; Ed25519 2.2
+# without default features (no_std), so both repos share one lock line.
+ml-dsa = { workspace = true, features = ["alloc"] }
+ed25519-dalek = { workspace = true }
+postcard = { workspace = true, features = ["alloc"] }
+serde = { workspace = true, features = ["alloc", "derive"] }
+
+[lints]
+workspace = true
+
+[package.metadata.metrale]
+role = "core"

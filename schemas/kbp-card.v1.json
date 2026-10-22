@@ -1,0 +1,462 @@
+{
+  "$defs": {
+    "Card": {
+      "additionalProperties": false,
+      "properties": {
+        "blueprint_id": {
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/CardEvidence"
+          },
+          "type": "array"
+        },
+        "execution": {
+          "type": "string"
+        },
+        "exported_by": {
+          "type": "string"
+        },
+        "hardware": {
+          "$ref": "#/$defs/CardHardware"
+        },
+        "kernels": {
+          "$ref": "#/$defs/CardKernels"
+        },
+        "lineage": {
+          "type": "string"
+        },
+        "model": {
+          "$ref": "#/$defs/CardModel"
+        },
+        "name": {
+          "type": "string"
+        },
+        "performance": {
+          "items": {
+            "$ref": "#/$defs/CardPerformance"
+          },
+          "type": "array"
+        },
+        "plans": {
+          "items": {
+            "$ref": "#/$defs/CardPlan"
+          },
+          "type": "array"
+        },
+        "precision": {
+          "$ref": "#/$defs/CardPrecision"
+        },
+        "revision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema": {
+          "type": "string"
+        },
+        "signature": {
+          "$ref": "#/$defs/CardSignature"
+        },
+        "sizes": {
+          "$ref": "#/$defs/CardSizes"
+        }
+      },
+      "required": [
+        "schema",
+        "blueprint_id",
+        "lineage",
+        "revision",
+        "name",
+        "exported_by",
+        "model",
+        "hardware",
+        "precision",
+        "execution",
+        "kernels",
+        "plans",
+        "sizes",
+        "signature",
+        "performance",
+        "evidence"
+      ],
+      "type": "object"
+    },
+    "CardEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "closure": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "closure"
+      ],
+      "type": "object"
+    },
+    "CardFingerprint": {
+      "additionalProperties": false,
+      "properties": {
+        "argv_sha256": {
+          "type": "string"
+        },
+        "closure": {
+          "type": "string"
+        },
+        "draw_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "env_sha256": {
+          "type": "string"
+        },
+        "git_sha": {
+          "type": "string"
+        },
+        "record_sha256": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_sha256",
+        "closure",
+        "argv_sha256",
+        "env_sha256",
+        "draw_sha256",
+        "git_sha"
+      ],
+      "type": "object"
+    },
+    "CardHardware": {
+      "additionalProperties": false,
+      "properties": {
+        "class": {
+          "type": "string"
+        },
+        "devices": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "min_visible_mib": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "ptx_arch": {
+          "type": "string"
+        },
+        "world_size": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "class",
+        "ptx_arch",
+        "world_size",
+        "min_visible_mib",
+        "devices"
+      ],
+      "type": "object"
+    },
+    "CardKernels": {
+      "additionalProperties": false,
+      "properties": {
+        "bytes_deflated": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "bytes_raw": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "count": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "entries": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "families": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kinds": {
+          "additionalProperties": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "planned": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "residual": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sources": {
+          "additionalProperties": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "count",
+        "entries",
+        "planned",
+        "families",
+        "residual",
+        "kinds",
+        "bytes_raw",
+        "bytes_deflated",
+        "sources"
+      ],
+      "type": "object"
+    },
+    "CardModel": {
+      "additionalProperties": false,
+      "properties": {
+        "arch": {
+          "type": "string"
+        },
+        "layer_kinds": {
+          "additionalProperties": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "max_seq_len": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "repo": {
+          "type": "string"
+        },
+        "revision": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "repo",
+        "revision",
+        "arch",
+        "layer_kinds",
+        "max_seq_len"
+      ],
+      "type": "object"
+    },
+    "CardPerformance": {
+      "additionalProperties": false,
+      "properties": {
+        "benchmark": {
+          "type": "string"
+        },
+        "box_class": {
+          "type": "string"
+        },
+        "fingerprint": {
+          "$ref": "#/$defs/CardFingerprint"
+        },
+        "metric": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "value": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "benchmark",
+        "metric",
+        "value",
+        "unit",
+        "box_class",
+        "fingerprint"
+      ],
+      "type": "object"
+    },
+    "CardPlan": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "groups": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "rows": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mode",
+        "rows",
+        "digest",
+        "groups"
+      ],
+      "type": "object"
+    },
+    "CardPrecision": {
+      "additionalProperties": false,
+      "properties": {
+        "kv_cache": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "linear_by_format": {
+          "additionalProperties": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        "table_sha256": {
+          "type": "string"
+        },
+        "tier": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "tier",
+        "table_sha256",
+        "linear_by_format",
+        "kv_cache"
+      ],
+      "type": "object"
+    },
+    "CardSignature": {
+      "additionalProperties": false,
+      "properties": {
+        "anchor": {
+          "type": "string"
+        },
+        "kid": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/SignatureStatus"
+        },
+        "suite": {
+          "type": "string"
+        },
+        "verified_at": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "status",
+        "suite",
+        "kid",
+        "anchor",
+        "verified_at"
+      ],
+      "type": "object"
+    },
+    "CardSizes": {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "full_file": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lite_file": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "body",
+        "lite_file",
+        "full_file"
+      ],
+      "type": "object"
+    },
+    "SignatureStatus": {
+      "enum": [
+        "verified",
+        "unverified",
+        "revoked",
+        "expired"
+      ],
+      "type": "string"
+    }
+  },
+  "$id": "https://metrale.ai/schemas/kbp-card.v1.json",
+  "$ref": "#/$defs/Card",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "kbp-card/v1"
+}

@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-blueprint"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: blueprints (.kbp): typed, content-addressed, signed descriptions of one serve; the container, verification, the recipe view and the store exports. no_std + alloc."
+
+# 2026-10-22: No features (NSCC).
+[features]
+
+[dependencies]
+metrale-blueprint-trust = { workspace = true }
+metrale-error = { workspace = true }
+# 2026-10-22: The lever table types `env:` levers (RecipeView) and is digested into ServeSettings.
+metrale-settings = { workspace = true }
+# 2026-10-22: `kbp1.` transport (standard padded alphabet).
+base64 = { workspace = true, features = ["alloc"] }
+miniz_oxide = { workspace = true, features = ["with-alloc"] }
+postcard = { workspace = true, features = ["alloc"] }
+serde = { workspace = true, features = ["alloc", "derive"] }
+# 2026-10-22: The card and graph exports and their schemas (presentation, never signed).
+serde_json = { workspace = true, features = ["alloc"] }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+metrale-abstract-io = { workspace = true }
+
+[lints]
+workspace = true
+
+[package.metadata.metrale]
+role = "core"

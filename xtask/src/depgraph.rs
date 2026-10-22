@@ -21,18 +21,40 @@ use std::collections::{BTreeMap, VecDeque};
 /// one-line reason. `thiserror` is here because the wasm32v1-none build already refuses its
 /// `std` feature, which is the only part a pure crate may not use.
 pub const PURE_ALLOWLIST: &[&str] = &[
+    // 2026-10-22: miniz_oxide checksum; no_std.
+    "adler2",
     "allocator-api2",
     "autocfg",
+    // 2026-10-22: The `kbp1.` blueprint transport; no_std + alloc, no I/O.
+    "base64",
+    // 2026-10-22: constant-time base64 under spki (ML-DSA key encoding); no_std.
+    "base64ct",
     "bit-set",
     "bit-vec",
     "block-buffer",
     "byteorder",
     "cfg-if",
+    // 2026-10-22: ctutils constant-time move; no_std, no I/O.
+    "cmov",
+    // 2026-10-22: postcard's COBS framing; no_std, no I/O.
+    "cobs",
     // 2026-10-18: no_std OID constants that digest 0.11 names; no I/O, builds for wasm32v1-none.
     "const-oid",
     "cpufeatures",
     "crypto-common",
+    // 2026-10-22: RustCrypto constant-time helpers under hybrid-array (sha2, ml-dsa); no_std.
+    "ctutils",
+    // 2026-10-22: Ed25519 group arithmetic (serial backend on wasm); no_std.
+    "curve25519-dalek",
+    // 2026-10-22: DER types under pkcs8 (ML-DSA key encoding), no I/O; no_std.
+    "der",
     "digest",
+    // 2026-10-22: Ed25519 signature types; no_std.
+    "ed25519",
+    // 2026-10-22: The Ed25519 half of the blueprint signature (2.2 as metrale-auth); no_std.
+    "ed25519-dalek",
+    // 2026-10-22: postcard's optional I/O traits, compiled as plain traits; no_std, no I/O.
+    "embedded-io",
     "equivalent",
     "fancy-regex",
     "foldhash",
@@ -45,9 +67,22 @@ pub const PURE_ALLOWLIST: &[&str] = &[
     // 2026-10-18: serde_json's ordered map; no_std + alloc over hashbrown and equivalent.
     "indexmap",
     "itoa",
+    // 2026-10-22: Keccak permutation under SHAKE (ML-DSA); no_std.
+    "keccak",
+    // 2026-10-22: num-traits float fallback under module-lattice; pure math, no_std.
+    "libm",
     "memchr",
+    // 2026-10-22: Pure-Rust no_std deflate for `.kbp` bodies and inline kernels (also
+    // flate2's rust_backend, crates/kernel-tree/Cargo.toml).
+    "miniz_oxide",
+    // 2026-10-22: ML-DSA (FIPS 204), =0.1.1 as metrale-auth; no_std + alloc, deterministic.
+    "ml-dsa",
+    // 2026-10-22: ML-DSA polynomial arithmetic; no_std.
+    "module-lattice",
     "num-traits",
     "paste",
+    // 2026-10-22: ML-DSA key encoding types, never used for I/O; no_std.
+    "pkcs8",
     "postcard",
     "ppv-lite86",
     "proc-macro2",
@@ -62,7 +97,19 @@ pub const PURE_ALLOWLIST: &[&str] = &[
     "serde_derive",
     "serde_json",
     "sha2",
+    // 2026-10-22: ML-DSA SHAKE XOF; no_std.
+    "shake",
+    // 2026-10-22: RustCrypto signature traits; no_std.
+    "signature",
+    // 2026-10-22: miniz_oxide checksum (portable fallback on wasm); no_std.
+    "simd-adler32",
+    // 2026-10-22: SPKI types under pkcs8, no I/O; no_std.
+    "spki",
+    // 2026-10-22: SHAKE sponge state (ML-DSA); no_std.
+    "sponge-cursor",
     "stable_deref_trait",
+    // 2026-10-22: constant-time comparisons (Ed25519); no_std.
+    "subtle",
     "syn",
     "thiserror",
     "thiserror-impl",
@@ -70,6 +117,8 @@ pub const PURE_ALLOWLIST: &[&str] = &[
     "unicode-ident",
     "zerocopy",
     "zerocopy-derive",
+    // 2026-10-22: secure memory wiping (der, ed25519-dalek, the blueprint signer); no_std.
+    "zeroize",
     // 2026-10-18: serde_json's float formatter (the ryu successor); no_std, no I/O.
     "zmij",
 ];
