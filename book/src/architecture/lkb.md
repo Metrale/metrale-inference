@@ -181,12 +181,31 @@ How to read them today, per (model, device):
   - An op that a family implements but no lowering rule of this class covers is planned by a
     placeholder. Its row is filed under "Shared, unmeasured" with the detail "no rule of this
     class covers it". No kernel runs it, so it is uncovered too.
-  - Coverage is therefore `100 - V - (those rows)`.
+  - Coverage is therefore `100 - V - (those rows)`. Per gap table of a checked-in hardware
+    report (`kernels/circuits/plans/hw/<model>--<device>.md`):
+
+    ```bash
+    awk -F'|' '
+      function out() { if (t != "") printf "%s: coverage %.1f%%\n", t, 100 - u - v }
+      /^## / { out(); t = ""; if (/^## Gap report:/) { t = substr($0, 16); u = v = 0 } }
+      /^Estimated step/ && t != "" { match($0, /novel [0-9.]+%/); v = substr($0, RSTART + 6, RLENGTH - 7) }
+      /^\| / && t != "" && $10 ~ /no rule of this class covers it/ { s = $7; gsub(/[ %]/, "", s); u += s }
+      END { out() }' kernels/circuits/plans/hw/glm-5.3-flash-nvfp4--gb10.md
+    ```
 - **Two blind spots.** Only planned kernels count, and a class kernel that no lowering rule names
   is invisible to the plan. So a class with a large residual can still show high coverage. Read
   the two metrics together until residual kernels are modelled in the class overlays.
 - **LKB residual.** The class's `common/` sources and their lines, plus its `[shadow]` and `copy`
-  entries.
+  entries. The ledger's `residual_count` / `residual_loc` are the first two counts, and
+  `residual_copy_points` the last:
+
+  ```bash
+  cd kernels/<class>
+  ls common/*.cu common/*.cuh | wc -l; cat common/*.cu common/*.cuh | wc -l    # class sources, lines
+  ls <model>/<quant>/*.cu* | wc -l; cat <model>/<quant>/*.cu* | wc -l          # model-dir sources, lines
+  awk '/^\[shadow\]/{f=1;next} /^\[/{f=0} f&&/=/' <model>/<quant>/KERNEL.toml | wc -l  # shadows
+  grep -c 'how = "copy"' common/KERNEL_FAMILIES.toml                           # copy points
+  ```
 
 Every campaign exit report states two lines:
 ```
