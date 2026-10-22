@@ -110,7 +110,7 @@
 <rect x='680' y='327' width='12' height='12' rx='2' fill='#aebbc8'/>
 <text x='696' y='337' font-size='11' text-anchor='start' font-weight='normal' fill='#8b949e'>brotli-11</text>
 <text x='60' y='362' font-size='10' text-anchor='start' font-weight='normal' fill='#8b949e'>Private corpus (aggregates only): Metrale's compiled GB10 kernel set for one large model, 254 PTX modules (71.1 MB); 250 of them</text>
-<text x='60' y='376' font-size='10' text-anchor='start' font-weight='normal' fill='#8b949e'>compiled to sm_121a cubins with ptxas 13.0 (25.7 MB); three GLM-scale postcard blueprint bodies (2.4 MB); one full and one lite .kbp</text>
-<text x='60' y='390' font-size='10' text-anchor='start' font-weight='normal' fill='#8b949e'>container (72.7 MB). Host: NVIDIA DGX Spark GB10 Grace CPU (Cortex-X925), single thread, Linux 6.17, rustc 1.93.1; zstd 1.5.5, xz</text>
-<text x='60' y='404' font-size='10' text-anchor='start' font-weight='normal' fill='#8b949e'>5.4.5, gzip 1.12, bzip2 1.0.8, Python brotli 1.2.0 (lgwin 24). Every row is a verified round trip.</text>
+<text x='60' y='376' font-size='10' text-anchor='start' font-weight='normal' fill='#8b949e'>compiled to sm_121a cubins with ptxas 13.0 (25.7 MB); three postcard blueprint bodies at 45-64-layer scale (2.4 MB); one full and one</text>
+<text x='60' y='390' font-size='10' text-anchor='start' font-weight='normal' fill='#8b949e'>lite .kbp container (72.7 MB). Host: NVIDIA DGX Spark GB10 Grace CPU (Cortex-X925), single thread, Linux 6.17, rustc 1.93.1; zstd</text>
+<text x='60' y='404' font-size='10' text-anchor='start' font-weight='normal' fill='#8b949e'>1.5.5, xz 5.4.5, gzip 1.12, bzip2 1.0.8, Python brotli 1.2.0 (lgwin 24). Every row is a verified round trip.</text>
 </svg>
