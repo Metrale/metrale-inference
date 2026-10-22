@@ -18,7 +18,12 @@ use alloc::vec::Vec;
 
 /// Code one model byte (`Some` when encoding) and append it to `hist`. Returns the byte.
 #[inline]
-pub fn code_byte(pred: &mut Predictor, io: &mut impl BitCoder, byte: Option<u8>, hist: &mut Vec<u8>) -> u8 {
+pub fn code_byte(
+    pred: &mut Predictor,
+    io: &mut impl BitCoder,
+    byte: Option<u8>,
+    hist: &mut Vec<u8>,
+) -> u8 {
     if let Some(e) = pred.lzp_candidate() {
         let hit = io.code(u32::from(byte == Some(e)), pred.lzp_p()) == 1;
         pred.lzp_update(hit);
@@ -83,7 +88,13 @@ pub fn compress_block(raw: &[u8], profile: Profile, mem_log2: u8) -> Vec<u8> {
 /// Decompress one block of exactly `raw_len` bytes into `out` (appended). Never fails: a
 /// corrupt stream yields wrong bytes of the declared length, which the caller's hash check
 /// catches; bounds are enforced by the caller before this runs.
-pub fn decompress_block(packed: &[u8], raw_len: usize, profile: Profile, mem_log2: u8, out: &mut Vec<u8>) {
+pub fn decompress_block(
+    packed: &[u8],
+    raw_len: usize,
+    profile: Profile,
+    mem_log2: u8,
+    out: &mut Vec<u8>,
+) {
     let mut pred = Predictor::new(profile, mem_log2);
     let mut dec = Decoder::new(packed);
     let start = out.len();

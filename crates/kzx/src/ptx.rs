@@ -160,7 +160,10 @@ impl Memory {
 
     #[inline]
     fn set(&mut self, key: u32, value: u64) {
-        self.cells[ix(key & self.mask)] = Cell { key: key | 1, value };
+        self.cells[ix(key & self.mask)] = Cell {
+            key: key | 1,
+            value,
+        };
     }
 }
 
@@ -195,7 +198,13 @@ impl NumberModel {
 
     /// Code (encode when `value` is `Some`, else decode) the number at a marker whose identifier
     /// class hashes to `class` on skeleton line context `line`. Returns the value.
-    pub fn code(&mut self, io: &mut impl BitCoder, class: u32, line: u32, value: Option<u64>) -> u64 {
+    pub fn code(
+        &mut self,
+        io: &mut impl BitCoder,
+        class: u32,
+        line: u32,
+        value: Option<u64>,
+    ) -> u64 {
         let _ = line;
         let last = self.last.get(class).unwrap_or(0);
         let tag = (class ^ (class >> 8) ^ (class >> 16) ^ (class >> 24)) & 0xff;
@@ -237,10 +246,28 @@ mod tests {
     fn events_follow_the_identifier_rules() {
         let s = b"\tadd.s32 \t%r12, %r007, $L__BB6_2, 0f3F800000, x9;";
         let at = |needle: &[u8]| s.windows(needle.len()).position(|w| w == needle).unwrap();
-        assert_eq!(next_event(s, at(b"12,")), Event::Number { digits: 2, value: 12 });
+        assert_eq!(
+            next_event(s, at(b"12,")),
+            Event::Number {
+                digits: 2,
+                value: 12
+            }
+        );
         assert_eq!(next_event(s, at(b"007")), Event::Literal(b'0'));
-        assert_eq!(next_event(s, at(b"6_2")), Event::Number { digits: 1, value: 6 });
-        assert_eq!(next_event(s, at(b"2,") + 0), Event::Number { digits: 1, value: 2 });
+        assert_eq!(
+            next_event(s, at(b"6_2")),
+            Event::Number {
+                digits: 1,
+                value: 6
+            }
+        );
+        assert_eq!(
+            next_event(s, at(b"_2,") + 1),
+            Event::Number {
+                digits: 1,
+                value: 2
+            }
+        );
         assert_eq!(next_event(s, at(b"0f3F")), Event::Literal(b'0'));
         assert_eq!(next_event(s, at(b"9;")), Event::Literal(b'9'));
     }

@@ -71,7 +71,11 @@ pub fn memory_bytes(profile: Profile, mem_log2: u8) -> u64 {
     let matcher = MatchModel::bytes(mem_log2.saturating_add(2));
     let mixers = 4096u64 * 24 * 4 + 16 * 4 * 4;
     let apms = (256u64 + 65_536) * 24 * 2;
-    let numbers = if profile == Profile::Ptx { crate::ptx::NumberModel::bytes() } else { 0 };
+    let numbers = if profile == Profile::Ptx {
+        crate::ptx::NumberModel::bytes()
+    } else {
+        0
+    };
     tables + matcher + mixers + apms + numbers + 4096 * 2 + 4096 + 256 * 4 * 8
 }
 
@@ -109,7 +113,9 @@ impl Predictor {
         let ctx = Contexts::new(profile);
         let n = ctx.n;
         let states = StateTable::new();
-        let slots = (0..n).map(|i| Slots::new(table_log2(i, mem_log2))).collect();
+        let slots = (0..n)
+            .map(|i| Slots::new(table_log2(i, mem_log2)))
+            .collect();
         let maps = (0..n).map(|_| StateMap::new(&states)).collect();
         Self {
             params,
@@ -168,8 +174,10 @@ impl Predictor {
     #[inline]
     pub fn lzp_update(&mut self, hit: bool) {
         let bit = u32::from(hit);
-        self.rates.update(&mut self.lzp_a[ix(self.lzp_ctx_a)], bit, 1023);
-        self.rates.update(&mut self.lzp_b[ix(self.lzp_ctx_b)], bit, 1023);
+        self.rates
+            .update(&mut self.lzp_a[ix(self.lzp_ctx_a)], bit, 1023);
+        self.rates
+            .update(&mut self.lzp_b[ix(self.lzp_ctx_b)], bit, 1023);
         self.lzp_mixer.update(bit);
         self.lzp_hist = (self.lzp_hist << 1) | bit;
     }
@@ -211,7 +219,8 @@ impl Predictor {
             };
             self.mixer.add(det);
         }
-        self.mm.add_inputs(self.c0, self.bitpos, &mut self.mixer, &self.stretch);
+        self.mm
+            .add_inputs(self.c0, self.bitpos, &mut self.mixer, &self.stretch);
         let excl = match self.excluded {
             Some(e) if (u32::from(e) | 0x100) >> (8 - self.bitpos) == self.c0 => {
                 let bit = (u32::from(e) >> (7 - self.bitpos)) & 1;
@@ -228,7 +237,9 @@ impl Predictor {
         let p1 = self.apm1.refine(p0, self.c0, &self.stretch);
         let p = (p0 + 3 * p1) >> 2;
         let o1 = self.ctx.h[0] & 0xff;
-        let p2 = self.apm2.refine(p, (self.c0 | (o1 << 8)) & 0xffff, &self.stretch);
+        let p2 = self
+            .apm2
+            .refine(p, (self.c0 | (o1 << 8)) & 0xffff, &self.stretch);
         self.pr = ((p + p2) >> 1).clamp(1, 4095);
         self.pr
     }

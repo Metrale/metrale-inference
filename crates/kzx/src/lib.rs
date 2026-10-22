@@ -76,8 +76,8 @@ mod matcher;
 mod mixer;
 mod predictor;
 mod ptx;
-mod sniff;
 mod slots;
+mod sniff;
 mod states;
 mod tables;
 
@@ -114,7 +114,11 @@ fn frame_one(out: &mut Vec<u8>, raw: &[u8], profile: Profile, mem_log2: u8) {
     let (profile, mem_log2, packed) = if profile == Profile::Stored || raw.len() < STORED_BELOW {
         (Profile::Stored, 0u8, raw.to_vec())
     } else {
-        (profile, mem_log2, engine::compress_block(raw, profile, mem_log2))
+        (
+            profile,
+            mem_log2,
+            engine::compress_block(raw, profile, mem_log2),
+        )
     };
     format::write_block_header(
         out,
@@ -152,7 +156,9 @@ pub fn compress_with(raw: &[u8], profile: Profile, mem_log2: u8) -> Result<Vec<u
 /// Compress several parts as independent blocks of one stream (at most
 /// [`format::MAX_BLOCKS`]; extra parts are dropped, so check the count first).
 pub fn compress_blocks(parts: &[&[u8]]) -> Vec<u8> {
-    let n = u32::try_from(parts.len()).unwrap_or(format::MAX_BLOCKS).min(format::MAX_BLOCKS);
+    let n = u32::try_from(parts.len())
+        .unwrap_or(format::MAX_BLOCKS)
+        .min(format::MAX_BLOCKS);
     let mut out = Vec::new();
     format::write_stream_header(&mut out, n);
     for part in parts.iter().take(cast::ix(n)) {
@@ -229,7 +235,8 @@ fn decode_into(packed: &[u8], info: &StreamInfo, mut sink: impl FnMut(&[u8])) ->
 pub fn decompress(packed: &[u8], limits: &Limits) -> Result<Vec<u8>> {
     let info = inspect(packed)?;
     check(&info, limits)?;
-    let mut out = Vec::with_capacity(usize::try_from(info.total_raw).map_err(|_| Error::LengthOverflow)?);
+    let mut out =
+        Vec::with_capacity(usize::try_from(info.total_raw).map_err(|_| Error::LengthOverflow)?);
     decode_into(packed, &info, |b| out.extend_from_slice(b))?;
     Ok(out)
 }

@@ -72,16 +72,24 @@ impl fmt::Display for Error {
             Error::UnsupportedVersion { found } => {
                 write!(f, "kzx format version {found} is not supported")
             }
-            Error::Truncated { needed } => write!(f, "kzx stream truncated: {needed} bytes missing"),
+            Error::Truncated { needed } => {
+                write!(f, "kzx stream truncated: {needed} bytes missing")
+            }
             Error::UnknownCodec { id } => write!(f, "kzx block names unknown codec id {id}"),
             Error::BadMemoryParameter { mem_log2 } => {
                 write!(f, "kzx block memory parameter {mem_log2} is out of range")
             }
             Error::OutputCapExceeded { declared, cap } => {
-                write!(f, "kzx declares {declared} output bytes, above the cap of {cap}")
+                write!(
+                    f,
+                    "kzx declares {declared} output bytes, above the cap of {cap}"
+                )
             }
             Error::MemoryCapExceeded { needed, cap } => {
-                write!(f, "kzx block needs {needed} bytes of model memory, above the cap of {cap}")
+                write!(
+                    f,
+                    "kzx block needs {needed} bytes of model memory, above the cap of {cap}"
+                )
             }
             Error::LengthOverflow => f.write_str("kzx length arithmetic overflowed"),
             Error::StoredLengthMismatch => {

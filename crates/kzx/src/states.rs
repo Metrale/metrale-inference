@@ -61,7 +61,7 @@ impl StateTable {
             let (n0, n1) = pairs[s];
             n0s[s] = u8::try_from(n0).unwrap_or(0);
             n1s[s] = u8::try_from(n1).unwrap_or(0);
-            for bit in 0..2usize {
+            for (bit, slot) in next[s].iter_mut().enumerate() {
                 let (mut same, mut other) = if bit == 1 { (n1, n0) } else { (n0, n1) };
                 if same < MAX_COUNT {
                     same += 1;
@@ -69,7 +69,11 @@ impl StateTable {
                 if other > 3 {
                     other = 3 + (other - 3) / 3;
                 }
-                let (mut a, mut b) = if bit == 1 { (other, same) } else { (same, other) };
+                let (mut a, mut b) = if bit == 1 {
+                    (other, same)
+                } else {
+                    (same, other)
+                };
                 let mut guard = 0;
                 while !allowed(a, b) && guard < 64 {
                     if bit == 1 {
@@ -79,7 +83,7 @@ impl StateTable {
                     }
                     guard += 1;
                 }
-                next[s][bit] = index[ix(a)][ix(b)];
+                *slot = index[ix(a)][ix(b)];
             }
         }
         // Unused slots (if any) loop to state 0.

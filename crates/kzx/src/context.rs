@@ -75,12 +75,6 @@ impl Contexts {
         c
     }
 
-    /// The field index within the current line (PTX), for mixer selection.
-    #[inline(always)]
-    pub fn field(&self) -> u32 {
-        self.field.min(7)
-    }
-
     /// Hash of the current token so far (the identifier class at a PTX marker).
     #[inline(always)]
     pub fn word(&self) -> u32 {
@@ -99,7 +93,11 @@ impl Contexts {
         self.c8 = (self.c8 << 8) | (self.c4 >> 24);
         self.c4 = (self.c4 << 8) | u32::from(byte);
         self.pos = self.pos.wrapping_add(1);
-        self.line = if byte == b'\n' { 0 } else { mix(self.line, u32::from(byte)) };
+        self.line = if byte == b'\n' {
+            0
+        } else {
+            mix(self.line, u32::from(byte))
+        };
         if is_token_byte(byte) {
             self.word = mix(self.word, u32::from(byte));
         } else {
@@ -153,8 +151,18 @@ impl Contexts {
             }
             Profile::Elf => {
                 let n = hist.len();
-                let b16 = u32::from(n.checked_sub(16).and_then(|i| hist.get(i)).copied().unwrap_or(0));
-                let b32 = u32::from(n.checked_sub(32).and_then(|i| hist.get(i)).copied().unwrap_or(0));
+                let b16 = u32::from(
+                    n.checked_sub(16)
+                        .and_then(|i| hist.get(i))
+                        .copied()
+                        .unwrap_or(0),
+                );
+                let b32 = u32::from(
+                    n.checked_sub(32)
+                        .and_then(|i| hist.get(i))
+                        .copied()
+                        .unwrap_or(0),
+                );
                 let col = self.pos & 15;
                 self.h[6] = mix(mix(7, col), mix(b16, c4 & 0xff));
                 self.h[7] = mix(mix(8, col), mix(b16, b32 << 8));
@@ -176,10 +184,10 @@ mod tests {
         for &b in line.iter() {
             hist.push(b);
             c.update(b, &hist);
-            max_field = max_field.max(c.field());
+            max_field = max_field.max(c.field);
         }
         assert_eq!(max_field, 3);
-        assert_eq!(c.field(), 0);
+        assert_eq!(c.field, 0);
         assert_ne!(c.prev_line[1], 0);
     }
 
@@ -187,7 +195,9 @@ mod tests {
     fn same_history_gives_same_hashes() {
         let mut a = Contexts::new(Profile::Elf);
         let mut b = Contexts::new(Profile::Elf);
-        let data: alloc::vec::Vec<u8> = (0..200u32).map(|i| (i.wrapping_mul(31) & 0xff) as u8).collect();
+        let data: alloc::vec::Vec<u8> = (0..200u32)
+            .map(|i| u8::try_from(i.wrapping_mul(31) & 0xff).unwrap_or(0))
+            .collect();
         for i in 1..=data.len() {
             a.update(data[i - 1], &data[..i]);
             b.update(data[i - 1], &data[..i]);

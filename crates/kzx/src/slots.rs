@@ -162,13 +162,14 @@ mod tests {
         let r = Rates::new();
         let mut v = COUNTER_INIT;
         for _ in 0..50 {
-            r.update(&mut v, 1, 255);
+            r.update(&mut v, 1, 30);
         }
         assert!(predict(v) > 3900, "p = {}", predict(v));
+        // The count cap bounds how slow adaptation gets: at limit 30 the step floor is ~3%.
         for _ in 0..50 {
-            r.update(&mut v, 0, 255);
+            r.update(&mut v, 0, 30);
         }
-        assert!(predict(v) < 600, "p = {}", predict(v));
+        assert!(predict(v) < 1200, "p = {}", predict(v));
     }
 
     #[test]

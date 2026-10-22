@@ -80,16 +80,6 @@ impl Encoder {
         self.out.extend_from_slice(&self.x1.to_be_bytes());
         self.out
     }
-
-    /// Bytes written so far (before the flush).
-    pub fn len(&self) -> usize {
-        self.out.len()
-    }
-
-    /// Whether nothing has been written yet.
-    pub fn is_empty(&self) -> bool {
-        self.out.is_empty()
-    }
 }
 
 impl Default for Encoder {
@@ -166,7 +156,11 @@ mod tests {
             s ^= s >> 17;
             s ^= s << 5;
             let p = if i % 3 == 0 { 4000 } else { 2048 };
-            let bit = if i % 3 == 0 { u32::from(s % 50 != 0) } else { s & 1 };
+            let bit = if i % 3 == 0 {
+                u32::from(s % 50 != 0)
+            } else {
+                s & 1
+            };
             e.encode(bit, p);
             bits.push((bit, p));
         }
