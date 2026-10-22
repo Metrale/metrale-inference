@@ -254,6 +254,12 @@ if_same_then_else = "allow"
 [profile.dev]
 debug = "line-tables-only"
 
+# 2026-10-22: kzx is a bit-level context-mixing coder: unoptimized it decodes a full kernel
+# payload in minutes, not seconds, so dev and test builds (met's blueprint tests open GLM's
+# 71 MB full file) optimize it. Codegen only: its output is identical at every opt level.
+[profile.dev.package.kzx]
+opt-level = 3
+
 # 2026-10-17: Release codegen for the edit-run loop: incremental, many codegen units.
 # Opt-in by name (`--profile iter`); never used for gate, certify or release builds.
 [profile.iter]

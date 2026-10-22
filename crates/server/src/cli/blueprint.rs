@@ -14,20 +14,25 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use metrale_abstract_io::{Clock as _, UnixMs};
+use metrale_blueprint::codec::DecodeMemory;
 use metrale_blueprint::export::{self, ExportContext};
 use metrale_blueprint::frame::{self, Opened};
-use metrale_circuit::Mode;
 use metrale_blueprint::{recipe_view, resolve, transport};
 use metrale_blueprint_sign::{read_key, read_public, write_public};
 use metrale_blueprint_trust::{
     Anchor, KeyCert, Kid, Revocations, Revoked, Scope, SignedRevocations, TrustAnchors,
     TrustPolicy, certify, sign_revocations, verify_revocations,
 };
+use metrale_circuit::Mode;
 
 use super::blueprint_args::{
     BlueprintAction, BlueprintArgs, ExportArgs, KeyAction, OutArgs, TrustArgs,
 };
 use super::blueprint_build as build;
+
+/// 2026-10-22: This host's kzx decode model-memory budget (kzx DESIGN.md §4.2: about 1 GiB on a
+/// server). The core takes it as a parameter and has no default (PCND).
+pub(crate) const DECODE_MEMORY: DecodeMemory = DecodeMemory(1 << 30);
 
 fn now() -> UnixMs {
     metrale_io_host_std::SystemClock::new().now_unix_ms()
@@ -92,7 +97,7 @@ fn open_with(path: &Path, t: &TrustArgs) -> Result<(Vec<u8>, Opened, TrustAnchor
         revoked: &revoked,
         now: now(),
     };
-    let opened = frame::open(&file, &policy)?;
+    let opened = frame::open(&file, &policy, DECODE_MEMORY)?;
     Ok((file, opened, anchors, revoked))
 }
 
@@ -317,7 +322,7 @@ pub(crate) fn dispatch(args: BlueprintArgs) -> Result<()> {
             out,
         } => write_kbp(
             &out,
-            &metrale_blueprint_sign::sign_kbp(&read_kbp(&input)?, &key, &cert)?,
+            &metrale_blueprint_sign::sign_kbp(&read_kbp(&input)?, &key, &cert, DECODE_MEMORY)?,
         ),
         BlueprintAction::Verify { input, trust } => {
             let (file, o, _, _) = open_with(&input, &trust)?;
@@ -368,7 +373,10 @@ pub(crate) fn dispatch(args: BlueprintArgs) -> Result<()> {
                 revoked: &revoked,
                 now: now(),
             };
-            write_kbp(&out, &frame::rewrite(&file, &policy, &u, &p)?)
+            write_kbp(
+                &out,
+                &frame::rewrite(&file, &policy, DECODE_MEMORY, &u, &p)?,
+            )
         }
         BlueprintAction::Full { input, trust, out } => {
             let (file, o, anchors, revoked) = open_with(&input, &trust)?;
@@ -378,7 +386,10 @@ pub(crate) fn dispatch(args: BlueprintArgs) -> Result<()> {
                 revoked: &revoked,
                 now: now(),
             };
-            write_kbp(&out, &frame::rewrite(&file, &policy, &u, &p)?)
+            write_kbp(
+                &out,
+                &frame::rewrite(&file, &policy, DECODE_MEMORY, &u, &p)?,
+            )
         }
         BlueprintAction::Export(a) => export_cmd(&a),
         BlueprintAction::Key(k) => key_cmd(k),

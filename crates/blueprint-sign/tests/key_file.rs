@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
+use metrale_blueprint::codec::DecodeMemory;
 use metrale_blueprint_sign::{read_key, sign_kbp, write_public};
 use metrale_blueprint_trust::{KeyCert, Kid, Scope, Signer, Suite, certify};
 use metrale_error::ErrorCode;
@@ -101,7 +102,10 @@ fn a_certificate_for_another_kid_is_refused() {
     let cert_path = d.path().join("c");
     write_public(&cert_path, &cert).unwrap();
     assert_eq!(
-        sign_kbp(&[], &key, &cert_path).unwrap_err().code(),
+        // 2026-10-22: Test budget: the file is refused before anything decodes.
+        sign_kbp(&[], &key, &cert_path, DecodeMemory(64 << 20))
+            .unwrap_err()
+            .code(),
         ErrorCode::BlueprintKey
     );
 }

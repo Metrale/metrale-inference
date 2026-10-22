@@ -99,7 +99,7 @@ json_struct! {
         pub kinds: BTreeMap<String, u64>,
         /// 2026-10-22: Raw module bytes.
         pub bytes_raw: u64,
-        /// 2026-10-22: Inline payload bytes as stored (after the codec), for a full file.
+        /// 2026-10-22: The payload section as stored (after the codec), for a full file.
         pub bytes_stored: Option<u64>,
         /// 2026-10-22: Modules by source.
         pub sources: BTreeMap<String, u64>,
@@ -319,7 +319,7 @@ pub fn card(o: &Opened, ctx: &ExportContext) -> Card {
             residual: n(k.specs.iter().filter(|s| s.family.is_none()).count()),
             kinds,
             bytes_raw: k.modules.iter().map(|m| m.len).sum(),
-            bytes_stored: full.then(|| o.payload.iter().map(|p| n(p.stored.len())).sum()),
+            bytes_stored: full.then_some(o.header.payload_len),
             sources,
         },
         plans: bp

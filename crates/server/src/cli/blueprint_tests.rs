@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use crate::cli::blueprint::DECODE_MEMORY;
 use metrale_abstract_io::UnixMs;
 use metrale_blueprint::frame::{self, KernelSource};
 use metrale_blueprint::{recipe_view, resolve};
@@ -202,14 +203,14 @@ fn the_glm_recipe_builds_signs_verifies_and_round_trips() {
         },
     )
     .unwrap();
-    let lite = frame::sign(&a, &leaf, vec![cert]).unwrap();
+    let lite = frame::sign(&a, &leaf, vec![cert], DECODE_MEMORY).unwrap();
     let revoked = Revoked::embedded().unwrap();
     let policy = TrustPolicy {
         anchors: &anchors,
         revoked: &revoked,
         now: UnixMs(1_760_000_000_000),
     };
-    let o = frame::open(&lite, &policy).unwrap();
+    let o = frame::open(&lite, &policy, DECODE_MEMORY).unwrap();
     let modules = embedded(&o.blueprint.kernels.target).unwrap();
     let internal = |n: &str| modules.iter().find(|(m, _)| *m == n).map(|(_, b)| *b);
     assert_eq!(
@@ -218,8 +219,8 @@ fn the_glm_recipe_builds_signs_verifies_and_round_trips() {
     );
 
     let (u, p) = resolve::full(&o, internal).unwrap();
-    let full = frame::rewrite(&lite, &policy, &u, &p).unwrap();
-    let f = frame::open(&full, &policy).unwrap();
+    let full = frame::rewrite(&lite, &policy, DECODE_MEMORY, &u, &p).unwrap();
+    let f = frame::open(&full, &policy, DECODE_MEMORY).unwrap();
     assert_eq!(f.id, o.id);
     assert!(
         f.unsigned
@@ -229,7 +230,10 @@ fn the_glm_recipe_builds_signs_verifies_and_round_trips() {
     );
     assert!(full.len() > lite.len());
     let (u, p) = resolve::lite(&f);
-    assert_eq!(frame::rewrite(&full, &policy, &u, &p).unwrap(), lite);
+    assert_eq!(
+        frame::rewrite(&full, &policy, DECODE_MEMORY, &u, &p).unwrap(),
+        lite
+    );
 
     let original = recipe_at(&recipe_path).unwrap();
     let back = recipe_of(recipe_view::recipe_parts(

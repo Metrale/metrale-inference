@@ -7,7 +7,6 @@ mod common;
 
 use common::*;
 use metrale_abstract_io::UnixMs;
-use metrale_blueprint::codec::Codec;
 use metrale_blueprint::frame::{self, InlineArtifact, KernelSource, MAX_BODY, Opened};
 use metrale_blueprint::resolve;
 use metrale_blueprint::types::Blueprint;
@@ -18,7 +17,7 @@ use metrale_blueprint_trust::{
 use metrale_error::ErrorCode;
 
 fn open(w: &World, file: &[u8]) -> Result<Opened, ErrorCode> {
-    frame::open(file, &w.policy()).map_err(|e| e.code())
+    frame::open(file, &w.policy(), MEM).map_err(|e| e.code())
 }
 
 #[test]
@@ -51,7 +50,7 @@ fn lite_and_full_share_the_id_and_the_signature() {
     let lite = w.signed();
     let o = open(&w, &lite).unwrap();
     let (u, p) = resolve::full(&o, internal).unwrap();
-    let full = frame::rewrite(&lite, &w.policy(), &u, &p).unwrap();
+    let full = frame::rewrite(&lite, &w.policy(), MEM, &u, &p).unwrap();
     let f = open(&w, &full).unwrap();
     assert_eq!(f.id, o.id);
     assert!(
@@ -66,7 +65,7 @@ fn lite_and_full_share_the_id_and_the_signature() {
     assert_eq!(&*bytes[0].1, MOD_A);
     assert_eq!(&*bytes[1].1, MOD_B);
     let (u, p) = resolve::lite(&f);
-    let back = frame::rewrite(&full, &w.policy(), &u, &p).unwrap();
+    let back = frame::rewrite(&full, &w.policy(), MEM, &u, &p).unwrap();
     assert_eq!(
         back, lite,
         "full then lite is the original lite file, byte for byte"
@@ -122,6 +121,7 @@ fn resign(w: &World, f: &[u8], purpose: Purpose) -> Vec<u8> {
                             &f[s.body.clone()],
                             h.body_raw_len,
                             frame::MAX_BODY_RAW,
+                            MEM,
                         )
                         .unwrap(),
                 ),
@@ -168,7 +168,7 @@ fn trust_refusals_reach_open_with_their_codes() {
         &[8; 32],
         &[8; 32],
     );
-    let g = frame::sign(&f, &stranger, vec![w.cert()]).unwrap();
+    let g = frame::sign(&f, &stranger, vec![w.cert()], MEM).unwrap();
     assert_eq!(open(&w, &g).err(), Some(ErrorCode::BlueprintUntrusted));
     // 2026-10-22: Revoked kid.
     let list = sign_revocations(
@@ -185,7 +185,7 @@ fn trust_refusals_reach_open_with_their_codes() {
         ..w.policy()
     };
     assert_eq!(
-        frame::open(&f, &p).map(|_| ()).map_err(|e| e.code()),
+        frame::open(&f, &p, MEM).map(|_| ()).map_err(|e| e.code()),
         Err(ErrorCode::BlueprintRevoked)
     );
     // 2026-10-22: Expired certificate.
@@ -194,7 +194,9 @@ fn trust_refusals_reach_open_with_their_codes() {
         ..w.policy()
     };
     assert_eq!(
-        frame::open(&f, &late).map(|_| ()).map_err(|e| e.code()),
+        frame::open(&f, &late, MEM)
+            .map(|_| ())
+            .map_err(|e| e.code()),
         Err(ErrorCode::BlueprintCertExpired)
     );
     // 2026-10-22: Rollback to a lower revocation serial.
@@ -226,7 +228,7 @@ fn trust_refusals_reach_open_with_their_codes() {
     )
     .unwrap();
     assert_eq!(
-        open(&w, &frame::sign(&f, &w.leaf, vec![art]).unwrap()).err(),
+        open(&w, &frame::sign(&f, &w.leaf, vec![art], MEM).unwrap()).err(),
         Some(ErrorCode::BlueprintScope)
     );
 }
@@ -284,7 +286,7 @@ fn a_newer_body_schema_is_refused() {
     let mut bp = blueprint();
     bp.schema = metrale_blueprint::BODY_SCHEMA + 1;
     let f = frame::encode_unsigned(&bp, &unsigned(&bp), &[]).unwrap();
-    let f = frame::sign(&f, &w.leaf, vec![w.cert()]).unwrap();
+    let f = frame::sign(&f, &w.leaf, vec![w.cert()], MEM).unwrap();
     assert_eq!(open(&w, &f).err(), Some(ErrorCode::BlueprintFormat));
 }
 
@@ -296,11 +298,11 @@ fn a_body_schema_older_than_the_reader_decodes_is_refused() {
     let mut bp = blueprint();
     bp.schema = metrale_blueprint::OLDEST_BODY_SCHEMA - 1;
     let f = frame::encode_unsigned(&bp, &unsigned(&bp), &[]).unwrap();
-    let f = frame::sign(&f, &w.leaf, vec![w.cert()]).unwrap();
+    let f = frame::sign(&f, &w.leaf, vec![w.cert()], MEM).unwrap();
     assert_eq!(open(&w, &f).err(), Some(ErrorCode::BlueprintFormat));
     bp.schema = metrale_blueprint::OLDEST_BODY_SCHEMA;
     let f = frame::encode_unsigned(&bp, &unsigned(&bp), &[]).unwrap();
-    let f = frame::sign(&f, &w.leaf, vec![w.cert()]).unwrap();
+    let f = frame::sign(&f, &w.leaf, vec![w.cert()], MEM).unwrap();
     assert_eq!(open(&w, &f).err(), None);
 }
 
@@ -314,9 +316,9 @@ fn a_tampered_inline_kernel_is_a_hash_mismatch() {
     evil.extend_from_slice(b"// planted\n");
     p[0] = InlineArtifact {
         artifact: p[0].artifact,
-        ..InlineArtifact::pack(&evil, Codec::WRITE).unwrap()
+        bytes: evil,
     };
-    let full = frame::rewrite(&lite, &w.policy(), &u, &p).unwrap();
+    let full = frame::rewrite(&lite, &w.policy(), MEM, &u, &p).unwrap();
     let f = open(&w, &full).expect("the payload is unsigned, so the file still opens");
     let err = resolve::resolve_modules(&f, |_| None).unwrap_err();
     assert_eq!(err.code(), ErrorCode::ArtifactHashMismatch);
@@ -354,7 +356,11 @@ fn disk_and_remote_sources_parse_but_are_not_in_phase_1() {
     ] {
         let mut u = o.unsigned.clone();
         u.sources[0] = src;
-        let f = open(&w, &frame::rewrite(&lite, &w.policy(), &u, &[]).unwrap()).unwrap();
+        let f = open(
+            &w,
+            &frame::rewrite(&lite, &w.policy(), MEM, &u, &[]).unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             resolve::resolve_modules(&f, internal).unwrap_err().code(),
             ErrorCode::KernelSourceNotInPhase

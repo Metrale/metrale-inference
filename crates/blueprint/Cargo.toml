@@ -20,6 +20,9 @@ metrale-circuit = { workspace = true }
 metrale-settings = { workspace = true }
 # 2026-10-22: `kbp1.` transport (standard padded alphabet).
 base64 = { workspace = true, features = ["alloc"] }
+# 2026-10-22: kzx is the write codec (no_std, no dependencies); miniz_oxide stays so files
+# written under deflate remain readable (DESIGN.md §2: a reader reads older files).
+kzx = { workspace = true }
 miniz_oxide = { workspace = true, features = ["with-alloc"] }
 postcard = { workspace = true, features = ["alloc"] }
 serde = { workspace = true, features = ["alloc", "derive"] }

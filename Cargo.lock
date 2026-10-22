@@ -1765,6 +1765,7 @@ name = "metrale-blueprint"
 version = "1.0.0-beta-preview"
 dependencies = [
  "base64 0.23.1",
+ "kzx",
  "metrale-abstract-io",
  "metrale-blueprint-trust",
  "metrale-circuit",

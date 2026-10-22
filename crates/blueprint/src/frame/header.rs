@@ -3,7 +3,8 @@
 //! 2026-10-22: The fixed 80-byte `.kbp` header and its caps.
 //!
 //! ```text
-//! [0..4]   magic "MKBP"   [4..6] KBP_FORMAT u16   [6] flags u8   [7] body codec id u8
+//! [0..4]   magic "MKBP"   [4..6] KBP_FORMAT u16   [6] flags u8 (bit0 full, bit1 solid payload)
+//! [7]      body codec id u8
 //! [8..16]  body_len (stored)        [16..24] body_raw_len      [24..56] body_sha256 (raw)
 //! [56..64] locator_len    [64..72] payload_len    [72..80] sig_len
 //! then body, locator, payload, sig
@@ -29,6 +30,9 @@ pub const KBP_FORMAT: u16 = 1;
 pub const HEADER_LEN: usize = 80;
 /// 2026-10-22: Flag: the payload section carries inline artifacts.
 pub const FLAG_FULL: u8 = 1;
+/// 2026-10-22: Flag: the payload section is one solid block (`payload.rs`); set only with
+/// [`FLAG_FULL`]. Unsigned, like every flag.
+pub const FLAG_SOLID: u8 = 2;
 
 /// 2026-10-22: Stored body cap (hard refusal, DESIGN.md §3).
 pub const MAX_BODY: u64 = 4 << 20;
@@ -42,6 +46,9 @@ pub const MAX_PAYLOAD: u64 = 1 << 30;
 pub const MAX_SIG: u64 = 256 << 10;
 /// 2026-10-22: One raw artifact's cap.
 pub const MAX_ARTIFACT: u64 = 256 << 20;
+/// 2026-10-22: The raw solid payload's cap (every inline artifact together); GLM's full gb10 set
+/// is 71 MB raw. @human-review: a full file whose kernels exceed 256 MiB raw is refused.
+pub const MAX_PAYLOAD_RAW: u64 = 256 << 20;
 
 /// 2026-10-22: The parsed header.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -107,7 +114,7 @@ impl Header {
             ));
         }
         let flags = file[6];
-        if flags & !FLAG_FULL != 0 {
+        if flags & !(FLAG_FULL | FLAG_SOLID) != 0 {
             return Err(error!(ErrorCode::BlueprintFrame, "unknown flag bits"));
         }
         let mut body_sha256 = [0u8; 32];

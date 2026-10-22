@@ -29,6 +29,7 @@
 
 use std::path::Path;
 
+use metrale_blueprint::codec::DecodeMemory;
 use metrale_blueprint_trust::{Kid, SignedCert, Signer, Suite};
 use metrale_error::{Error, ErrorCode, error};
 use serde::Serialize;
@@ -143,12 +144,18 @@ pub fn write_public<T: Serialize>(path: &Path, v: &T) -> Result<(), Error> {
     std::fs::write(path, bytes).map_err(|e| io(path, &e))
 }
 
-/// 2026-10-22: Sign a `.kbp` with the key at `key` and its certificate at `cert`.
-pub fn sign_kbp(file: &[u8], key: &Path, cert: &Path) -> Result<Vec<u8>, Error> {
+/// 2026-10-22: Sign a `.kbp` with the key at `key` and its certificate at `cert`; the body
+/// decodes within the caller's `memory` budget.
+pub fn sign_kbp(
+    file: &[u8],
+    key: &Path,
+    cert: &Path,
+    memory: DecodeMemory,
+) -> Result<Vec<u8>, Error> {
     let signer = read_key(key)?;
     let cert: SignedCert = read_public(cert)?;
     if &cert.subject != signer.kid() {
         return Err(bad(key, "the certificate is for another kid"));
     }
-    metrale_blueprint::frame::sign(file, &signer, vec![cert])
+    metrale_blueprint::frame::sign(file, &signer, vec![cert], memory)
 }

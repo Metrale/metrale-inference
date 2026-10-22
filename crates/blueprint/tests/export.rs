@@ -113,7 +113,7 @@ fn ctx(len: usize) -> ExportContext {
 fn a_card_and_a_graph_validate_and_state_the_blueprint() {
     let w = world();
     let f = w.signed();
-    let o = frame::open(&f, &w.policy()).unwrap();
+    let o = frame::open(&f, &w.policy(), MEM).unwrap();
     let c = serde_json::to_value(card::card(&o, &ctx(f.len()))).unwrap();
     let cs = card_schema();
     validate(&cs, &cs, &c, "card").unwrap();
@@ -148,7 +148,7 @@ fn the_validator_rejects_what_the_schema_forbids() {
     let cs = card_schema();
     let w = world();
     let f = w.signed();
-    let o = frame::open(&f, &w.policy()).unwrap();
+    let o = frame::open(&f, &w.policy(), MEM).unwrap();
     let mut c = serde_json::to_value(card::card(&o, &ctx(f.len()))).unwrap();
     c["surprise"] = Value::from(1);
     assert!(validate(&cs, &cs, &c, "card").is_err());

@@ -14,10 +14,13 @@
 //!   never the stored bytes: the codec is outside identity ([`recode`]).
 //! - [`rewrite`] copies the body and signature bytes verbatim and replaces only the locator
 //!   and payload sections, so lite and full share the [`BlueprintId`] and the signature.
+//! - Every decompression is bounded by a header or section length under its cap and by the
+//!   caller's [`DecodeMemory`]; there is no default memory budget (PCND).
 //! - The body is canonical: a decoded body re-encodes to the bytes it came from.
 
 mod header;
 mod locator;
+mod payload;
 
 use alloc::borrow::Cow;
 use alloc::vec::Vec;
@@ -30,12 +33,13 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 pub use header::{
-    FLAG_FULL, HEADER_LEN, Header, KBP_FORMAT, MAX_ARTIFACT, MAX_BODY, MAX_BODY_RAW, MAX_LOCATOR,
-    MAX_PAYLOAD, MAX_SIG, Sections,
+    FLAG_FULL, FLAG_SOLID, HEADER_LEN, Header, KBP_FORMAT, MAX_ARTIFACT, MAX_BODY, MAX_BODY_RAW,
+    MAX_LOCATOR, MAX_PAYLOAD, MAX_PAYLOAD_RAW, MAX_SIG, Sections,
 };
 pub use locator::{InlineArtifact, KernelSource, Unsigned};
+pub use payload::PayloadEntry;
 
-use crate::codec::Codec;
+use crate::codec::{Codec, DecodeMemory};
 use crate::ids::{BlueprintId, Sha256};
 use crate::types::{BODY_SCHEMA, Blueprint, OLDEST_BODY_SCHEMA};
 
@@ -108,12 +112,8 @@ fn assemble(flags: u8, body: Body<'_>, locator: &[u8], payload: &[u8], sig: &[u8
     out
 }
 
-fn full_flag(payload: &[InlineArtifact]) -> u8 {
-    if payload.is_empty() { 0 } else { FLAG_FULL }
-}
-
-/// 2026-10-22: An unsigned file: the canonical body stored under [`Codec::WRITE`], the locator
-/// table and payload.
+/// 2026-10-22: An unsigned file: the canonical body and the payload stored under
+/// [`Codec::WRITE`], and the locator table.
 pub fn encode_unsigned(
     bp: &Blueprint,
     unsigned: &Unsigned,
@@ -125,18 +125,19 @@ pub fn encode_unsigned(
             "the locator table must have one source per module"
         ));
     }
+    let (flags, payload) = payload::encode_payload(payload, Codec::WRITE)?;
     Ok(assemble(
-        full_flag(payload),
+        flags,
         Body::encode(&encode("body", bp)?, Codec::WRITE),
         &encode("locator", unsigned)?,
-        &encode("payload", &payload)?,
+        &payload,
         &[],
     ))
 }
 
-fn raw_body(h: &Header, stored: &[u8]) -> Result<Vec<u8>, Error> {
+fn raw_body(h: &Header, stored: &[u8], memory: DecodeMemory) -> Result<Vec<u8>, Error> {
     h.codec
-        .decompress("body", stored, h.body_raw_len, MAX_BODY_RAW)
+        .decompress("body", stored, h.body_raw_len, MAX_BODY_RAW, memory)
 }
 
 fn check_body_hash(h: &Header, raw: &[u8]) -> Result<(), Error> {
@@ -152,11 +153,17 @@ fn check_body_hash(h: &Header, raw: &[u8]) -> Result<(), Error> {
 }
 
 /// 2026-10-22: Sign `file` (signed or not) with `signer`, whose certificate chain is `chain`.
-/// The body hash is checked first; the old signature block, if any, is replaced.
-pub fn sign(file: &[u8], signer: &Signer, chain: Vec<SignedCert>) -> Result<Vec<u8>, Error> {
+/// The body hash is checked first (the body decodes under `memory`); the old signature block,
+/// if any, is replaced.
+pub fn sign(
+    file: &[u8],
+    signer: &Signer,
+    chain: Vec<SignedCert>,
+    memory: DecodeMemory,
+) -> Result<Vec<u8>, Error> {
     let (h, s) = Header::parse(file)?;
     let stored = &file[s.body.clone()];
-    let raw = raw_body(&h, stored)?;
+    let raw = raw_body(&h, stored, memory)?;
     check_body_hash(&h, &raw)?;
     let block = SigBlock {
         kid: signer.kid().clone(),
@@ -231,15 +238,16 @@ fn decode_body(raw: &[u8]) -> Result<Blueprint, Error> {
     Ok(bp)
 }
 
-/// 2026-10-22: Verify `file` under `policy`, then decode it. See the module invariants.
-pub fn open(file: &[u8], policy: &TrustPolicy<'_>) -> Result<Opened, Error> {
+/// 2026-10-22: Verify `file` under `policy`, then decode it, every kzx block within `memory`.
+/// See the module invariants.
+pub fn open(file: &[u8], policy: &TrustPolicy<'_>, memory: DecodeMemory) -> Result<Opened, Error> {
     let (h, s) = Header::parse(file)?;
-    let raw = raw_body(&h, &file[s.body.clone()])?;
+    let raw = raw_body(&h, &file[s.body.clone()], memory)?;
     check_body_hash(&h, &raw)?;
     let signer = verify_body(policy, &h, &raw, &file[s.sig])?;
     let blueprint = decode_body(&raw)?;
     let unsigned: Unsigned = decode("locator", &file[s.locator])?;
-    let payload: Vec<InlineArtifact> = decode("payload", &file[s.payload])?;
+    let payload = payload::decode_payload(h.flags, &file[s.payload], memory)?;
     if unsigned.sources.len() != blueprint.kernels.modules.len() {
         return Err(error!(
             ErrorCode::BlueprintFrame,
@@ -262,15 +270,16 @@ pub fn open(file: &[u8], policy: &TrustPolicy<'_>) -> Result<Opened, Error> {
     })
 }
 
-/// 2026-10-22: Verify `file`, then write it with new locator and payload sections; the body
-/// and signature bytes are copied verbatim.
+/// 2026-10-22: Verify `file`, then write it with new locator and payload sections (the payload
+/// under [`Codec::WRITE`]); the body and signature bytes are copied verbatim.
 pub fn rewrite(
     file: &[u8],
     policy: &TrustPolicy<'_>,
+    memory: DecodeMemory,
     unsigned: &Unsigned,
     payload: &[InlineArtifact],
 ) -> Result<Vec<u8>, Error> {
-    let opened = open(file, policy)?;
+    let opened = open(file, policy, memory)?;
     if unsigned.sources.len() != opened.blueprint.kernels.modules.len() {
         return Err(error!(
             ErrorCode::BlueprintFrame,
@@ -278,31 +287,33 @@ pub fn rewrite(
         ));
     }
     let (h, s) = Header::parse(file)?;
+    let (flags, payload) = payload::encode_payload(payload, Codec::WRITE)?;
     Ok(assemble(
-        full_flag(payload),
+        flags,
         Body::verbatim(&h, &file[s.body]),
         &encode("locator", unsigned)?,
-        &encode("payload", &payload)?,
+        &payload,
         &file[s.sig],
     ))
 }
 
-/// 2026-10-22: Verify `file`, then write it with its body and every inline artifact stored
-/// under `codec`; the locator and signature bytes are copied verbatim. The id and the signature
-/// do not change, because neither covers stored bytes.
-pub fn recode(file: &[u8], policy: &TrustPolicy<'_>, codec: Codec) -> Result<Vec<u8>, Error> {
-    let opened = open(file, policy)?;
-    let payload = opened
-        .payload
-        .iter()
-        .map(|a| a.recode(codec))
-        .collect::<Result<Vec<_>, _>>()?;
-    let (h, s) = Header::parse(file)?;
+/// 2026-10-22: Verify `file`, then write it with its body and its payload stored under `codec`
+/// (a per-entry payload becomes one solid block); the locator and signature bytes are copied
+/// verbatim. The id and the signature do not change, because neither covers stored bytes.
+pub fn recode(
+    file: &[u8],
+    policy: &TrustPolicy<'_>,
+    memory: DecodeMemory,
+    codec: Codec,
+) -> Result<Vec<u8>, Error> {
+    let opened = open(file, policy, memory)?;
+    let (flags, payload) = payload::encode_payload(&opened.payload, codec)?;
+    let (_, s) = Header::parse(file)?;
     Ok(assemble(
-        h.flags,
+        flags,
         Body::encode(&encode("body", &opened.blueprint)?, codec),
         &file[s.locator],
-        &encode("payload", &payload)?,
+        &payload,
         &file[s.sig],
     ))
 }

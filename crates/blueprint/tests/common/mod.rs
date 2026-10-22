@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 
 use metrale_abstract_io::UnixMs;
-use metrale_blueprint::codec::Codec;
+use metrale_blueprint::codec::{Codec, DecodeMemory};
 use metrale_blueprint::frame::{self, KernelSource, Unsigned};
 use metrale_blueprint::ids::{ArtifactId, LineageId, Sha256};
 use metrale_blueprint::types::*;
@@ -24,6 +24,9 @@ use metrale_circuit::rules::{Numerics, Repeat};
 use metrale_circuit::venn::compute::ComputeUnit;
 
 pub const NOW: i64 = 1_760_000_000_000;
+/// 2026-10-22: Test decode budget: the store's wasm verifier budget (kzx DESIGN.md §4.2); every
+/// toy file here fits it.
+pub const MEM: DecodeMemory = DecodeMemory(64 << 20);
 pub const MOD_A: &[u8] = b".version 8.8\n.visible .entry add_one(\n.param .u64 p)\n{ ret; }\n";
 pub const MOD_B: &[u8] = b".version 8.8\n.visible .entry scale(\n.param .u64 p)\n{ ret; }\n";
 
@@ -311,14 +314,14 @@ impl World {
     pub fn signed(&self) -> Vec<u8> {
         let bp = blueprint();
         let file = frame::encode_unsigned(&bp, &unsigned(&bp), &[]).unwrap();
-        frame::sign(&file, &self.leaf, vec![self.cert()]).unwrap()
+        frame::sign(&file, &self.leaf, vec![self.cert()], MEM).unwrap()
     }
 }
 
 /// 2026-10-22: [`World::signed`] with its body stored raw (`Codec::Stored`), so a test can
 /// edit body bytes directly.
 pub fn stored(w: &World) -> Vec<u8> {
-    frame::recode(&w.signed(), &w.policy(), Codec::Stored).unwrap()
+    frame::recode(&w.signed(), &w.policy(), MEM, Codec::Stored).unwrap()
 }
 
 /// 2026-10-22: The body section's range.
@@ -333,4 +336,19 @@ pub fn rehash(file: &mut [u8]) {
     assert_eq!(file[7], Codec::Stored.id(), "rehash needs a stored body");
     let h = Sha256::of(&[&file[body_range(file)]]);
     file[24..56].copy_from_slice(&h.0);
+}
+
+/// 2026-10-22: The signed full file of [`blueprint`]: both modules inline, the payload one
+/// solid block under `Codec::WRITE`.
+pub fn full(w: &World) -> Vec<u8> {
+    let lite = w.signed();
+    let o = frame::open(&lite, &w.policy(), MEM).unwrap();
+    let (u, p) = metrale_blueprint::resolve::full(&o, internal).unwrap();
+    frame::rewrite(&lite, &w.policy(), MEM, &u, &p).unwrap()
+}
+
+/// 2026-10-22: The payload section's range.
+pub fn payload_range(file: &[u8]) -> std::ops::Range<usize> {
+    let (_, s) = frame::Header::parse(file).unwrap();
+    s.payload
 }
