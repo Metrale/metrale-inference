@@ -224,8 +224,9 @@ class and exact citation.
 | `glm_kda_o_norm` | reference | crates/model-arch/src/glm5next_kda/mod.rs:368-377 |
 | `glm_mla_latent_write` | reference | crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:95-105 |
 | `glm_index_k_norm` | reference | crates/model-arch/src/glm5next_dsa/layer.rs:168-178 |
-| `glm_index_store` | reference | crates/model-arch/src/glm5next_dsa/layer/rows.rs:24-50 (dsa_indexer_store on the replay-safe path; the host path writes the GEMV outputs into the cache row directly) |
-| `glm_index_select` | reference | crates/model-arch/src/glm5next_dsa/select/launch.rs:17-150; crates/model-arch/src/glm5next_dsa/layer.rs:226-313 |
+| `glm_index_store` | reference | crates/model-arch/src/glm5next_dsa/layer/rows.rs:24-50 (dsa_indexer_store on the replay-safe path; the host path writes the GEMV outputs into the cache row directly); crates/model-arch/src/glm5next_dsa/layer/rows.rs:50-79 (store_pool_keys) |
+| `glm_index_select` | reference | crates/model-arch/src/glm5next_dsa/select/launch.rs:291-310,409-436,451-470 (an exact launch: compress, scores, top-k, expand); crates/model-arch/src/glm5next_dsa/select/scores.rs:175-197 (dsa_index_scores_warp under METRALE_GLM_DSA_SCORES_WARP, default on); crates/model-arch/src/glm5next_dsa/layer.rs:226-313 |
+| `glm_index_select_persisted` | reference | crates/model-arch/src/glm5next_dsa/select/launch.rs:244,291,409-449 (a ceiling launch over persisted pool keys: no compression); crates/model-arch/src/glm5next_dsa/select/scores.rs:56-77,141-160 (heads_paged below SCORES_WINDOW_MIN_ROWS); crates/model-arch/src/glm5next_dsa/select/topk.rs:122-147 (four histogram passes, then the collect); crates/model-arch/src/glm5next_dsa/select/scores.rs:221-252 |
 | `glm_index_f32_gemv` | reference | crates/model-arch/src/glm5next_dsa/layer.rs:200-213,246-259 |
 | `glm_mla_absorbed` | reference | crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:54-66,137-149; crates/model-arch/src/glm5next_dsa/layer.rs:321-363 (attend_rows); crates/model-arch/src/glm5next_dsa/attend.rs:163-190 |
 | `glm_router_f32` | reference | crates/model-arch/src/glm5next_mlp/forward.rs:345-358 |

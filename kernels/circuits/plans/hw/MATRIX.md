@@ -167,6 +167,12 @@ Rule kernels a matrix model's policy could select that the device cannot run (th
 | dense_gemv_bf16_tc::dense_gemv_bf16_tc16 | not compiled for this class | 11 |
 | dense_gemv_bf16_tc::dense_gemv_bf16_tc32 | not compiled for this class | 11 |
 | dense_gemv_bf16_tc::dense_gemv_bf16_tc8 | not compiled for this class | 11 |
+| dsa_indexer_rows::dsa_expand_selection_rows | not compiled for this class | 1 |
+| dsa_scores_warp::dsa_index_scores_heads_paged | not compiled for this class | 1 |
+| dsa_scores_warp::dsa_index_scores_warp | not compiled for this class | 1 |
+| dsa_scores_warp::dsa_pool_keys_store_rows | not compiled for this class | 1 |
+| dsa_topk_mc::dsa_topk_mc_collect | not compiled for this class | 1 |
+| dsa_topk_mc::dsa_topk_mc_pass | not compiled for this class | 1 |
 | gated_delta_rule_carry::gdn_carry_conv | not compiled for this class | 10 |
 | gated_delta_rule_carry::gdn_carry_conv_flush | not compiled for this class | 10 |
 | gated_delta_rule_carry::gdn_carry_flush | not compiled for this class | 10 |

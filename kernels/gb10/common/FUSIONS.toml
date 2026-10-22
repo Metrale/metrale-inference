@@ -2840,21 +2840,30 @@ cite = "crates/model-arch/src/glm5next_dsa/layer.rs:168-178"
 [[rule]]
 id = "glm_index_store"
 pattern = [{ op = "kpool_compress" }]
-kernels = [{ module = "dsa_indexer", func = "dsa_indexer_store" }]
+# 2026-10-22: Then `dsa_pool_keys_store_rows` persists the pooled key the persisted select scores;
+# it stores on 1 of `index_kpool` steps, the one whose row completes a pool (the host path
+# launches only then; a captured graph launches every step and the kernel returns at once).
+kernels = [
+  { module = "dsa_indexer", func = "dsa_indexer_store" },
+  { module = "dsa_scores_warp", func = "dsa_pool_keys_store_rows" },
+]
 repeat = "once"
 emitter = "dsa"
 rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 10
-cite = "crates/model-arch/src/glm5next_dsa/layer/rows.rs:24-50 (dsa_indexer_store on the replay-safe path; the host path writes the GEMV outputs into the cache row directly)"
+cite = "crates/model-arch/src/glm5next_dsa/layer/rows.rs:24-50 (dsa_indexer_store on the replay-safe path; the host path writes the GEMV outputs into the cache row directly); crates/model-arch/src/glm5next_dsa/layer/rows.rs:50-79 (store_pool_keys)"
 
+# 2026-10-22: The exact (eager) arm: a pass outside a captured graph compresses the pools from
+# the raw keys, scores them warp-per-pool (`dsa_index_scores_warp`, default on when the shape
+# fits; else `dsa_index_scores`), selects the top pools and expands them to tokens.
 [[rule]]
 id = "glm_index_select"
 pattern = [{ op = "index_select", input = "f32" }]
 kernels = [
   { module = "dsa_indexer", func = "dsa_kpool_compress" },
-  { module = "dsa_indexer", func = "dsa_index_scores" },
+  { module = "dsa_scores_warp", func = "dsa_index_scores_warp" },
   { module = "dsa_indexer", func = "dsa_topk_pools" },
   { module = "dsa_indexer", func = "dsa_expand_selection" },
 ]
@@ -2864,7 +2873,32 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 10
-cite = "crates/model-arch/src/glm5next_dsa/select/launch.rs:17-150; crates/model-arch/src/glm5next_dsa/layer.rs:226-313"
+cite = "crates/model-arch/src/glm5next_dsa/select/launch.rs:291-310,409-436,451-470 (an exact launch: compress, scores, top-k, expand); crates/model-arch/src/glm5next_dsa/select/scores.rs:175-197 (dsa_index_scores_warp under METRALE_GLM_DSA_SCORES_WARP, default on); crates/model-arch/src/glm5next_dsa/layer.rs:226-313"
+
+# 2026-10-22: The captured decode row (a ceiling launch) over a paged cache that keeps the pool
+# keys (METRALE_GLM_DSA_POOL_KEYS, default on): no compression; the lane-per-head scores over the
+# persisted keys (one row is below the heads-window kernel's two), the multi-CTA radix top-k (four
+# histogram passes, then the collect; METRALE_GLM_DSA_TOPK_MC and _DECODE_TOPK_RADIX, default on)
+# and the expansion from each row's device geometry. The served decode runs this arm.
+[[rule]]
+id = "glm_index_select_persisted"
+pattern = [{ op = "index_select", input = "f32" }]
+kernels = [
+  { module = "dsa_scores_warp", func = "dsa_index_scores_heads_paged" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_pass" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_pass" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_pass" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_pass" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_collect" },
+  { module = "dsa_indexer_rows", func = "dsa_expand_selection_rows" },
+]
+repeat = "once"
+emitter = "dsa"
+rows = [1, 1]
+modes = ["decode"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_dsa/select/launch.rs:244,291,409-449 (a ceiling launch over persisted pool keys: no compression); crates/model-arch/src/glm5next_dsa/select/scores.rs:56-77,141-160 (heads_paged below SCORES_WINDOW_MIN_ROWS); crates/model-arch/src/glm5next_dsa/select/topk.rs:122-147 (four histogram passes, then the collect); crates/model-arch/src/glm5next_dsa/select/scores.rs:221-252"
 
 # 2026-10-08: The indexer query and head weights are FP32-out GEMVs (`*_fp32out`), so the
 # selection reads FP32 where the circuit's edges are BF16.
