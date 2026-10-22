@@ -1410,6 +1410,16 @@ measurement = "glm-5.3-flash::w4a4_quant_rows_static @ decode C=1 (R=2, MTP k=1,
 point = {}
 rows = [2]
 measurement = "glm-5.3-flash::glm5next_moe_row_union @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k"
+# 2026-10-22: The routed union sweeps' `_cs` twins the recipe runs (METRALE_GLM_MOE_W4A4_GROUPED=1 under
+# the tp layout): gate/up the stream-ordered `_sl_cs`, down the `_k64_cs` of the TP=3 slice (704).
+[[family.evidence]]
+point = {}
+rows = [2]
+measurement = "glm-5.3-flash::w4a4_gemv_mx8_moe_union_sweep_sl_cs @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k"
+[[family.evidence]]
+point = {}
+rows = [2]
+measurement = "glm-5.3-flash::w4a4_gemv_mx8_moe_union_sweep_k64_cs @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k"
 
 [[family]]
 id = "w8a16_gemm"
@@ -2237,9 +2247,13 @@ pipeline.hc_contract = { in = ["f32"], compute = "f32", out = ["bf16"] }
 # format (crates/circuit/src/pipeline/require.rs:218), the BF16 embedding `h`; the kernel widens
 # it to the FP32 highway on the store (glm5next_mhc.cu:706-709).
 pipeline.hc_expand = { in = ["bf16"], move = "bf16", out = ["f32"] }
+# 2026-10-22: The fused pre-norm entries (glm5next_hc_pre_norm*, the recipe's glm_mhc_fused) also
+# run the site's RMSNorm on the collapsed BF16 row (rms_norm_vanilla's expressions,
+# glm5next_mhc_fused.cu), so the family implements a norm whose input hc_pre produces.
+pipeline.rms_norm = { in = ["bf16"], compute = "f32", out = ["bf16"] }
 op = [
   { op = "linear", roles = ["hc_mix"] }, { op = "hc_pre" }, { op = "hc_post" },
-  { op = "hc_contract" }, { op = "hc_expand" },
+  { op = "hc_contract" }, { op = "hc_expand" }, { op = "rms_norm", after = ["hc_pre"] },
 ]
 [[family.point]]
 values = {}

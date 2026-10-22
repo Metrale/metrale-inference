@@ -115,3 +115,14 @@ index_kpool_always_select_tail = { require = true, why = "the circuit's latent a
 mlp_layer_types = { require = [["dense", "dense", "dense", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse", "sparse"]], why = "the circuit takes the dense prefix from first_k_dense_replace; this list must agree with it" }
 indexer_types = { require = [["full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full", "full"]], why = "every sparse-attention layer runs its own full indexer" }
 linear_attn_config = { param = "linear_attn_config", object = { full_attn_layers = { ignore = "restates layer_types, which the layer kinds read" }, kda_layers = { ignore = "restates layer_types, which the layer kinds read" }, head_dim = { ignore = "a copy of linear_head_dim" }, num_heads = { ignore = "a copy of linear_num_heads" }, short_conv_kernel_size = { ignore = "a copy of linear_conv_kernel_dim" }, gate_lower_bound = "param" } }
+
+# 2026-10-22: The engine's code defaults of the GLM layer levers that pick which kernel a planned
+# node runs (crates/settings/src/groups/kernels.rs; the recipe glm-5.3/glm-5.3-flash-nvfp4-tp3-512k
+# sets other values in kernels/circuits/INSTANCES.toml). A checkpoint planned at its declared formats
+# runs these. Each `why` is the setting's line.
+[policy]
+glm_mhc_fused = { value = "off", why = "METRALE_GLM_MHC_FUSED unset: crates/settings/src/groups/kernels.rs:134, read at crates/model-arch/src/glm5next_layer/steps.rs:127" }
+glm_router_rows = { value = "off", why = "METRALE_GLM_ROUTER_ROWS unset: crates/settings/src/groups/kernels.rs:157, read at crates/model-arch/src/glm5next_mlp/forward/router.rs:56" }
+glm_router_topk_rank = { value = "off", why = "METRALE_GLM_ROUTER_TOPK_RANK unset: crates/settings/src/groups/kernels.rs:158, read at crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:32-50" }
+glm_moe_w4a4_grouped = { value = "off", why = "METRALE_GLM_MOE_W4A4_GROUPED unset: crates/settings/src/groups/kernels.rs:151; the routed W4A4 row cap stays 16 (crates/model-arch/src/weight_loader/glm5_next_load/mlp_precision.rs:43-52)" }
+glm_moe_expert_layout = { value = "ep", why = "--moe-expert-layout default ep: crates/server/src/cli/serve_args/service.rs:176" }

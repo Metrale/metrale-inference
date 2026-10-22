@@ -358,7 +358,12 @@ reason = "The BF16 head above 8 rows runs dense_gemm_bf16, a CUDA-core tiled FMA
 ops = ["linear:hc_mix"]
 modes = ["decode", "multi_seq", "verify"]
 rows = [1, 16]
-kernels = ["glm5next_mhc::glm5next_hc_mix_bf16", "glm5next_mhc::glm5next_hc_finish"]
+# 2026-10-22: And the recipe's fused pre-norm (glm_mhc_fused: the same mix GEMV with the Sinkhorn,
+# collapse and norm in one launch, `glm5next_hc_pre_norm_c1` at 1-2 rows, `glm5next_hc_pre_norm` above).
+kernels = [
+  "glm5next_mhc::glm5next_hc_mix_bf16", "glm5next_mhc::glm5next_hc_finish",
+  "glm5next_mhc_c1::glm5next_hc_pre_norm_c1", "glm5next_mhc_fused::glm5next_hc_pre_norm",
+]
 kind = "backlog"
 reason = "GLM-5 hyper-connection mix: the 4 x hidden streams projected to 24 FP32 columns by a CUDA-core reduction, then the Sinkhorn finish. At one row it is a GEMV; a tensor-core tile (N = 24 pads to 32) is the path once the multi-sequence decode exists."
 [[tensor_core_policy.exempt]]
@@ -369,6 +374,10 @@ kernels = [
   "gemv::dense_gemv_bf16_fp32out",
   "dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out_pair",
   "dense_gemv_bf16_batchm::dense_gemv_bf16_batchm_wide_fp32out",
+  # 2026-10-22: The recipe's batched router (glm_router_rows) at 2-8 rows, in one group with the
+  # top-k after it (FUSIONS.toml `glm_router_rows_*`), which has no MMA.
+  "dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out",
+  "glm5next_ffn::glm5next_router_topk", "glm5next_ffn::glm5next_router_topk_rank",
 ]
 kind = "backlog"
 reason = "GLM-5 indexer query, indexer head weights and the FP32-logit MoE router: the BF16 CUDA-core GEMV with an FP32 output at one row. dense_bf16_tc has no FP32-out point; measure one against this GEMV at M = 1-16."
