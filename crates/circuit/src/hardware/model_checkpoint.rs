@@ -21,8 +21,8 @@ use super::model::{CircuitSource, InstancesSource, ModelSpec, ModelUnderPlan, Pr
 use super::sources::KernelTree;
 use crate::format::Format;
 use crate::fuser::Policy;
-use crate::ir::{Circuit, OpKind};
-use crate::{QuantMetadata, ServePrecision, resolve_checkpoint};
+use crate::ir::OpKind;
+use crate::{QuantMetadata, ResolvedCheckpoint, ServePrecision, resolve_checkpoint};
 
 /// 2026-09-30: The kernel quant axis every target is built for: the build compiles
 /// `METRALE_TARGET_QUANT=nvfp4` unless told otherwise, and the FP8 35B-A3B golden instance
@@ -116,7 +116,7 @@ impl CircuitSource for CheckpointSource<'_> {
                 format!("unresolved: the engine's config parse refuses this checkpoint ({e})"),
             ),
         };
-        let policy = derive_policy(&rc.circuit, rc.kv_cache)?;
+        let policy = derive_policy(&rc)?;
         let kernel_model = target.clone().unwrap_or_else(|| "(none)".into());
         let settings: Vec<String> = policy
             .settings
@@ -150,6 +150,11 @@ impl CircuitSource for CheckpointSource<'_> {
             policy_sources: POLICY_SOURCES
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
+                .chain(
+                    rc.policy_defaults
+                        .iter()
+                        .map(|(k, d)| (k.clone(), d.why.clone())),
+                )
                 .collect(),
             settings_class: None,
         })
@@ -170,7 +175,10 @@ fn dtype_name(f: Format) -> Result<&'static str, HwError> {
 }
 
 /// 2026-09-30: The serving policy of a checkpoint-derived circuit ([`POLICY_SOURCES`]).
-pub fn derive_policy(c: &Circuit, kv_cache: Option<Format>) -> Result<Policy, HwError> {
+/// 2026-10-22: Plus the code defaults of the arch's own settings (its config map's `[policy]`);
+/// one that restates a derived setting is an error.
+pub fn derive_policy(rc: &ResolvedCheckpoint) -> Result<Policy, HwError> {
+    let (c, kv_cache) = (&rc.circuit, rc.kv_cache);
     let fp8_experts = c
         .nodes
         .iter()
@@ -197,7 +205,7 @@ pub fn derive_policy(c: &Circuit, kv_cache: Option<Format>) -> Result<Policy, Hw
     };
     // 2026-09-30: The two class settings are re-read from the device's class before any plan;
     // "class" never reaches a rule (policy_on_class refuses a class that does not state them).
-    let settings: BTreeMap<String, String> = [
+    let mut settings: BTreeMap<String, String> = [
         ("row_tiers", if canonical { "canonical" } else { "by_rows" }),
         ("kv_cache_dtype", kv),
         ("lm_head_dtype", dtype_name(head)?),
@@ -213,6 +221,14 @@ pub fn derive_policy(c: &Circuit, kv_cache: Option<Format>) -> Result<Policy, Hw
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
     .collect();
+    for (k, d) in &rc.policy_defaults {
+        if settings.insert(k.clone(), d.value.clone()).is_some() {
+            return Err(HwError::Model(format!(
+                "the `{}` config map's [policy] restates the derived setting `{k}`",
+                rc.arch
+            )));
+        }
+    }
     Ok(Policy {
         opt_in_levers: BTreeSet::new(),
         settings,

@@ -12,6 +12,8 @@
 //! - Every node of the mode's section ends in exactly one group, or `fuse` returns
 //!   [`FuseError::Uncovered`]; no node is left to an implicit kernel.
 //! - A policy must state every setting any rule reads ([`FuseError::PolicyMissing`]).
+//!   2026-10-22: Any rule whose pattern matches a node of the planned section: another
+//!   model's lever, read only by rules that match none of this circuit, need not be stated.
 //! - The plan is a pure function of its inputs; [`FusionPlan::digest`] changes exactly when
 //!   what the plan runs changes (see [`crate::digest`]).
 
@@ -247,14 +249,6 @@ fn fuse_inner(
     if rows == 0 {
         return Err(FuseError::ZeroRows);
     }
-    for r in rules {
-        if let Some(key) = r.when.keys().find(|k| !policy.settings.contains_key(*k)) {
-            return Err(FuseError::PolicyMissing {
-                rule: r.id.clone(),
-                key: key.clone(),
-            });
-        }
-    }
     let section = section_of(mode);
     let block_of = block_index(circuit);
     let in_scope: Vec<bool> = block_of
@@ -263,6 +257,24 @@ fn fuse_inner(
         .collect();
     if !in_scope.iter().any(|&s| s) {
         return Err(FuseError::EmptySection(mode.name()));
+    }
+    let m = fuser_match::Matcher {
+        circuit,
+        in_scope: &in_scope,
+        block_of: &block_of,
+    };
+    // 2026-10-22: A setting is required where a rule reading it matches a node of this section;
+    // a rule whose pattern matches none (another model's lever) decides nothing here.
+    let free = vec![None; circuit.nodes.len()];
+    for r in rules {
+        if let Some(key) = r.when.keys().find(|k| !policy.settings.contains_key(*k))
+            && (0..circuit.nodes.len()).any(|s| in_scope[s] && m.chain_at(r, s, &free).is_some())
+        {
+            return Err(FuseError::PolicyMissing {
+                rule: r.id.clone(),
+                key: key.clone(),
+            });
+        }
     }
     let mut order: Vec<&Rule> = rules
         .iter()
@@ -276,11 +288,6 @@ fn fuse_inner(
 
     let mut owner: Vec<Option<usize>> = vec![None; circuit.nodes.len()];
     let mut found: Vec<(&Rule, Vec<NodeIdx>)> = Vec::new();
-    let m = fuser_match::Matcher {
-        circuit,
-        in_scope: &in_scope,
-        block_of: &block_of,
-    };
     for rule in order {
         for s in 0..circuit.nodes.len() {
             if !in_scope[s] || owner[s].is_some() {

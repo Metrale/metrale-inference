@@ -20,7 +20,7 @@ use metrale_config::DeclaredPrecisionPlan;
 use serde_json::Value;
 
 use crate::circuit_toml::CircuitError;
-use crate::config_map::{ConfigMap, ConfigMapError, MappedConfig, map_config};
+use crate::config_map::{ConfigMap, ConfigMapError, MappedConfig, PolicyDefault, map_config};
 use crate::declared_precision::DeclaredPrecision;
 use crate::format::{Format, Scale};
 use crate::instantiate::instantiate;
@@ -71,6 +71,9 @@ pub struct ResolvedCheckpoint {
     pub kv_cache: Option<Format>,
     /// 2026-09-30: The instantiated circuit.
     pub circuit: Circuit,
+    /// 2026-10-22: The code defaults of the arch's own policy settings (its config map's
+    /// `[policy]`), by setting.
+    pub policy_defaults: BTreeMap<String, PolicyDefault>,
 }
 
 /// 2026-09-30: Why a checkpoint has no circuit.
@@ -202,7 +205,7 @@ pub fn resolve_checkpoint(
     serve: &ServePrecision,
 ) -> Result<ResolvedCheckpoint, CheckpointError> {
     let config = parse_config(config_json)?;
-    let (i, mapped) = map_checkpoint_value(&config)?;
+    let (i, mapped, policy_defaults) = map_checkpoint_value(&config)?;
     let qc = quantization_config(&config, quant)?;
     let plan = match &qc {
         Some(qc) => DeclaredPrecisionPlan::from_quantization_config(qc)
@@ -251,6 +254,7 @@ pub fn resolve_checkpoint(
         params: mapped.params,
         kv_cache,
         circuit,
+        policy_defaults,
     })
 }
 
@@ -268,7 +272,10 @@ fn parse_config(config_json: &str) -> Result<Value, CheckpointError> {
 }
 
 /// 2026-09-30: The index of the arch whose map serves `config`'s model type, and the mapping.
-fn map_checkpoint_value(config: &Value) -> Result<(usize, MappedConfig), CheckpointError> {
+/// 2026-10-22: Also the map's `[policy]` code defaults.
+fn map_checkpoint_value(
+    config: &Value,
+) -> Result<(usize, MappedConfig, BTreeMap<String, PolicyDefault>), CheckpointError> {
     let model_type = config
         .get("model_type")
         .and_then(Value::as_str)
@@ -290,7 +297,7 @@ fn map_checkpoint_value(config: &Value) -> Result<(usize, MappedConfig), Checkpo
             served: served.join(", "),
         });
     };
-    Ok((i, map_config(map, config)?))
+    Ok((i, map_config(map, config)?, map.policy_defaults().clone()))
 }
 
 /// 2026-09-30: The checkpoint's `quantization_config`: config.json's own, else the sidecar's.

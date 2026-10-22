@@ -434,7 +434,7 @@ pub(crate) fn prepare_with<'a>(
         None,
     )?;
     model.circuit = served.circuit.clone();
-    model.policy = hardware::model_checkpoint::derive_policy(&served.circuit, served.kv_cache)?;
+    model.policy = hardware::model_checkpoint::derive_policy(&served)?;
     let set = &mut model.policy.settings;
     set.insert("kv_cache_dtype".into(), facts.kv_dtype.clone());
     set.insert(

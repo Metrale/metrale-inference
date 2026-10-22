@@ -183,6 +183,30 @@ fn when_settings_select_and_an_unstated_setting_is_an_error() {
     );
 }
 
+// 2026-10-22: Another model's lever: a rule whose pattern matches no node of the circuit may
+// read a setting the policy does not state; the same rule matching a node may not.
+#[test]
+fn an_unstated_setting_is_an_error_only_where_its_rule_matches() {
+    let c = circuit(1);
+    let foreign = fused("foreign", r#"{ op = "hc_pre" }"#, 100)
+        .replace("priority = 100", "priority = 100\nwhen = { other_lever = \"on\" }");
+    let r = rules(&foreign);
+    let avail = AvailableKernels::all_named_by(&r);
+    let p = fuse(&c, &r, &avail, &policy(), Mode::Decode, 1).expect("foreign lever ignored");
+    assert!(p.groups.iter().all(|g| g.rule != "foreign"));
+    let matching = fused("a_act_down", ACT_DOWN, 100)
+        .replace("priority = 100", "priority = 100\nwhen = { other_lever = \"on\" }");
+    let r = rules(&matching);
+    let avail = AvailableKernels::all_named_by(&r);
+    assert_eq!(
+        fuse(&c, &r, &avail, &policy(), Mode::Decode, 1),
+        Err(FuseError::PolicyMissing {
+            rule: "a_act_down".into(),
+            key: "other_lever".into()
+        })
+    );
+}
+
 #[test]
 fn an_escaping_intermediate_needs_keep_and_then_stays_materialized() {
     let c = circuit(3);
