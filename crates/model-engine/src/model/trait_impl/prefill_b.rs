@@ -244,6 +244,16 @@ impl TransformerModel {
         }
 
         let stream = self.forward_stream(stream);
+        if let Some(ptr) = self.prefill_b_skip_cached_chunk(
+            tokens,
+            seq,
+            chunk_start,
+            chunk_len,
+            is_last_chunk,
+            stream,
+        )? {
+            return Ok(ptr);
+        }
 
         // 2026-09-25: With `comm` set, every buffer is zeroed on every chunk.
         // Otherwise only the first chunk zeroes, and only the prefill
@@ -323,14 +333,8 @@ impl TransformerModel {
                 effective_seq_len_start,
             } => (proc_start, proc_count, effective_seq_len_start),
             proc_range::ProcRange::EarlyReturn(ptr) => {
-                // 2026-09-25: A fully cached chunk still records its tokens:
-                // decode-checkpoint registration and the radix insert in
-                // `cache_sequence` read `seq.tokens`, paired with the full block
-                // table.
-                seq.tokens
-                    .extend_from_slice(&tokens[chunk_start..chunk_start + chunk_len]);
                 seq.seq_len = chunk_start + chunk_len;
-                seq.last_decode_ckpt_block = seq.tokens.len() / bs;
+                Self::record_cached_chunk(tokens, seq, chunk_start, chunk_len, bs);
                 return Ok(ptr);
             }
         };

@@ -259,12 +259,8 @@ impl TransformerModel {
                         effective_seq_len_start,
                     } => (proc_start, proc_count, effective_seq_len_start),
                     ProcRange::EarlyReturn(ptr) => {
-                        // 2026-09-25: A fully cached chunk still records its
-                        // tokens, as in `prefill_chunk_dispatch`.
-                        seq.tokens
-                            .extend_from_slice(&tokens[chunk_start..chunk_start + chunk_len]);
                         seq.seq_len = chunk_start + chunk_len;
-                        seq.last_decode_ckpt_block = seq.tokens.len() / bs;
+                        Self::record_cached_chunk(tokens, seq, chunk_start, chunk_len, bs);
                         return Ok(ptr);
                     }
                 };

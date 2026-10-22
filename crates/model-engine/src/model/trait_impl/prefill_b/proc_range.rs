@@ -154,4 +154,52 @@ impl TransformerModel {
             })
         }
     }
+
+    /// 2026-10-22: A middle chunk wholly below chunk 0's restored skip point
+    /// (`seq.marconi_skip_to`) is settled before the pass zeroes the arena and embeds its
+    /// rows: the same chunks [`Self::prefill_b_proc_range`] answers with `EarlyReturn`, which
+    /// read neither. A warm 145k-token GLM-5.3 TP=3 prompt walked 17 such chunks at ~2.6 ms
+    /// each. `None`: the chunk takes the full pass.
+    pub(in crate::model) fn prefill_b_skip_cached_chunk(
+        &self,
+        tokens: &[u32],
+        seq: &mut SequenceState,
+        chunk_start: usize,
+        chunk_len: usize,
+        is_last_chunk: bool,
+        stream: u64,
+    ) -> Result<Option<DevicePtr>> {
+        if chunk_start == 0 || is_last_chunk || seq.marconi_skip_to < chunk_start + chunk_len {
+            return Ok(None);
+        }
+        let mut kv_cache = self.kv_cache.lock();
+        let bs = kv_cache.block_size();
+        super::super::super::block_mgmt::ensure_blocks_through_prefill(
+            seq,
+            (chunk_start + chunk_len - 1) / bs,
+            &mut kv_cache,
+            self.prefix_cache.as_ref(),
+            self.gpu.as_ref(),
+            stream,
+            self.prefill_block_fill(),
+        )?;
+        seq.seq_len = chunk_start + chunk_len;
+        Self::record_cached_chunk(tokens, seq, chunk_start, chunk_len, bs);
+        Ok(Some(DevicePtr::NULL))
+    }
+
+    /// 2026-09-25: A fully cached chunk still records its tokens: decode-checkpoint
+    /// registration and the radix insert in `cache_sequence` read `seq.tokens`, paired with
+    /// the full block table.
+    pub(in crate::model) fn record_cached_chunk(
+        tokens: &[u32],
+        seq: &mut SequenceState,
+        chunk_start: usize,
+        chunk_len: usize,
+        block_size: usize,
+    ) {
+        seq.tokens
+            .extend_from_slice(&tokens[chunk_start..chunk_start + chunk_len]);
+        seq.last_decode_ckpt_block = seq.tokens.len() / block_size;
+    }
 }
