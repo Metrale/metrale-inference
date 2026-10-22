@@ -142,7 +142,7 @@ length equals `raw_len` and the hash equals the pinned id, exactly as for deflat
 
 Compress **per section, and the payload as one solid block**:
 
-- The **body** is its own block (`cm-generic`, ~90 KB from ~830 KB for a GLM-scale body (45 layers, 843 levers, ~950 kernel entries)). It must
+- The **body** is its own block (`cm-generic`, ~90 KB from ~830 KB for a large-model body (45 layers, 843 levers, ~950 kernel entries)). It must
   stay separately addressable: the signed bytes are the raw body, and lite ↔ full conversion
   rewrites the other sections without touching it.
 - The **payload** (all inline artifacts) should be one block, not one block per artifact: the
@@ -206,7 +206,7 @@ Map at the adapter (the crate itself stays dependency-free):
 
 `kbp1.` + padded standard base64 of the file bytes is unchanged. The lite form is what gets
 pasted; its size is header + body block + locator + sig, so the body ratio sets the transport
-size: a GLM-scale body of ~830 KB becomes ~90 KB compressed → ~120 KB of base64, inside the
+size: a large-model body of ~830 KB becomes ~90 KB compressed → ~120 KB of base64, inside the
 256 KB lite target (deflate would give ~170 KB → ~230 KB).
 
 ### 4.6 Consuming the crate
