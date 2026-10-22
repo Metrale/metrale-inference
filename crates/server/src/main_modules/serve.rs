@@ -72,6 +72,7 @@ pub(crate) async fn serve(
     // the listener is up, also while no model is loaded.
     host.set_auth(build_auth_config(&args)?);
     let body_limit = crate::main_modules::serve_router::max_body_bytes(&settings)?;
+    let listener_rcvbuf = settings.runtime.listener_rcvbuf;
     // 2026-10-17: Before any weight conversion; a process serves under one rounding.
     anyhow::ensure!(
         metrale_core::numeric::install_disable_rne(settings.sampling.disable_rne),
@@ -97,6 +98,7 @@ pub(crate) async fn serve(
                 &prepared.bind,
                 prepared.port,
                 body_limit,
+                listener_rcvbuf,
             )
             .await
         }
@@ -106,7 +108,7 @@ pub(crate) async fn serve(
         // published, routes that need a model answer 503 `model_not_loaded`.
         Startup::AwaitingModel => {
             crate::main_modules::serve_router::build_and_serve(
-                host, &bind_addr, bind_port, body_limit,
+                host, &bind_addr, bind_port, body_limit, listener_rcvbuf,
             )
             .await
         }

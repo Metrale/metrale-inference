@@ -71,7 +71,7 @@ fn the_ready_line_is_emitted_after_a_successful_bind_with_the_real_address() {
     let port = free_port();
     let (result, lines) = logged(|| {
         let rt = current_thread_rt();
-        rt.block_on(bind_and_announce(&ModelHost::empty(), "127.0.0.1", port))
+        rt.block_on(bind_and_announce(&ModelHost::empty(), "127.0.0.1", port, true))
     });
     assert!(result.is_ok(), "the bind succeeds: {result:?}");
     // 2026-09-26: No model is loaded, so the line is the live-only variant.
@@ -92,7 +92,7 @@ fn a_failed_bind_never_announces_readiness() {
     let port = taken.local_addr().expect("addr").port();
     let (result, lines) = logged(|| {
         let rt = current_thread_rt();
-        rt.block_on(bind_and_announce(&ModelHost::empty(), "127.0.0.1", port))
+        rt.block_on(bind_and_announce(&ModelHost::empty(), "127.0.0.1", port, true))
     });
     assert!(result.is_err(), "the bind must fail: port is held");
     assert!(

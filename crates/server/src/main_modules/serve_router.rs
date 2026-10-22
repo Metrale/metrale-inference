@@ -44,6 +44,8 @@ pub(crate) async fn build_and_serve(
     port: u16,
     // 2026-10-17: [`max_body_bytes`], resolved at boot.
     body_limit: usize,
+    // 2026-10-22: `METRALE_LISTENER_RCVBUF`, resolved at boot (`listener_rcvbuf.rs`).
+    listener_rcvbuf: bool,
 ) -> Result<()> {
     metrale_telemetry::progress::phase(10, "router");
     host.set_bound(bind.to_string(), port);
@@ -170,7 +172,7 @@ pub(crate) async fn build_and_serve(
              --auth-tokens-file for non-trusted networks."
         );
     }
-    let listener = bind_and_announce(&host, bind, port).await?;
+    let listener = bind_and_announce(&host, bind, port, listener_rcvbuf).await?;
     serve_with_header_timeout(listener, app).await
 }
 
@@ -182,13 +184,14 @@ pub(super) async fn bind_and_announce(
     host: &crate::main_modules::model_host::ModelHost,
     bind: &str,
     port: u16,
+    listener_rcvbuf: bool,
 ) -> Result<tokio::net::TcpListener> {
     let addr = format!("{bind}:{port}");
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .with_context(|| format!("binding {addr}"))?;
     // 2026-10-03: Before the first accept, so every accepted socket inherits it.
-    crate::main_modules::listener_rcvbuf::size_listener_rcvbuf(&listener);
+    crate::main_modules::listener_rcvbuf::size_listener_rcvbuf(&listener, listener_rcvbuf);
     tracing::info!("{}", ready_line(bind, port, host.live_model().as_deref()));
     metrale_telemetry::progress::phase(11, "listening");
     metrale_telemetry::progress::ready(port);

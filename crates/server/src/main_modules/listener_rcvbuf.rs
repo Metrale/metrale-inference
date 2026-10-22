@@ -55,6 +55,8 @@ pub(crate) enum RcvbufPlan {
     /// 2026-10-03: The default could not be read (not Linux, or `/proc` unreadable); the
     /// listener is left alone.
     Unknown,
+    /// 2026-10-22: `METRALE_LISTENER_RCVBUF=0`; the listener is left alone.
+    Off,
 }
 
 /// 2026-10-03: The plan for a host whose `tcp_rmem` default is `default_bytes`
@@ -119,7 +121,11 @@ pub(crate) fn set_listener_rcvbuf(
 /// 2026-10-03: Read the host's default, apply the plan to `listener` and log
 /// what was done. A failure to set the buffer is logged as a warning: the
 /// server still serves, but large request bodies can be delayed.
-pub(crate) fn size_listener_rcvbuf(listener: &tokio::net::TcpListener) -> RcvbufPlan {
+pub(crate) fn size_listener_rcvbuf(listener: &tokio::net::TcpListener, enabled: bool) -> RcvbufPlan {
+    if !enabled {
+        tracing::info!("TCP receive buffer left as is: METRALE_LISTENER_RCVBUF=0");
+        return RcvbufPlan::Off;
+    }
     let default = match read_tcp_rmem_default() {
         Ok(d) => Some(d),
         Err(e) => {
@@ -150,7 +156,7 @@ pub(crate) fn size_listener_rcvbuf(listener: &tokio::net::TcpListener) -> Rcvbuf
                  to {bytes}"
             ),
         },
-        RcvbufPlan::Unknown => {}
+        RcvbufPlan::Unknown | RcvbufPlan::Off => {}
     }
     decided
 }

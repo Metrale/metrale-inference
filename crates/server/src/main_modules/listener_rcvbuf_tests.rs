@@ -112,6 +112,38 @@ fn accepted_sockets_inherit_the_listener_buffer() {
     );
 }
 
+/// 2026-10-22: `METRALE_LISTENER_RCVBUF=0`: the production bind leaves the listener's buffer
+/// as a plain bind's, and the switch on changes it (on a host below the listener buffer).
+#[cfg(target_os = "linux")]
+#[test]
+fn the_kill_switch_leaves_the_listener_as_a_plain_bind() {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    let plain = rt
+        .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+        .expect("bind");
+    let host = crate::main_modules::model_host::ModelHost::empty();
+    let bound = |on: bool| {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("probe a free port")
+            .local_addr()
+            .expect("addr")
+            .port();
+        rt.block_on(crate::main_modules::serve_router::bind_and_announce(
+            &host, "127.0.0.1", port, on,
+        ))
+        .expect("bind")
+    };
+    let off = bound(false);
+    assert_eq!(accepted_rcvbuf(&off, &rt), accepted_rcvbuf(&plain, &rt));
+    if super::read_tcp_rmem_default().expect("tcp_rmem") < LISTENER_RCVBUF_BYTES as u64 {
+        let on = bound(true);
+        assert_ne!(accepted_rcvbuf(&on, &rt), accepted_rcvbuf(&plain, &rt));
+    }
+}
+
 /// 2026-10-03: Time one HTTP/1.1 POST of `body_bytes` to `addr`, the way the
 /// bench client sends it (one write, `TCP_NODELAY`, `Connection: close`), until
 /// the response has been read to EOF.
@@ -193,7 +225,7 @@ async fn a_large_body_is_not_delayed() {
         .port();
     let host = crate::main_modules::model_host::ModelHost::empty();
     let fixed_listener =
-        crate::main_modules::serve_router::bind_and_announce(&host, "127.0.0.1", port)
+        crate::main_modules::serve_router::bind_and_announce(&host, "127.0.0.1", port, true)
             .await
             .expect("bind");
     let fixed = slowest_post_ms(fixed_listener, BODY).await;
