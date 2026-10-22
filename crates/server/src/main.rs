@@ -135,6 +135,11 @@ async fn serve_main() -> Result<()> {
         return cli::circuit::dispatch(args);
     }
 
+    // 2026-10-22: `blueprint` builds, signs and verifies files; no subscriber, TUI or GPU.
+    if let Command::Blueprint(args) = cli.command {
+        return cli::blueprint::dispatch(args);
+    }
+
     // 2026-10-17: A serve's levers resolve here, once, before the dashboard decision reads
     // them: the serve settings, the harness group and the harness projection `serve` hands to
     // the dashboard and the auto-swap catalogue. A malformed lever stops the boot before any
@@ -165,7 +170,8 @@ async fn serve_main() -> Result<()> {
         Command::DumpServeOptions
         | Command::SyncRecipes
         | Command::Doctor
-        | Command::Circuit(_) => true,
+        | Command::Circuit(_)
+        | Command::Blueprint(_) => true,
     };
 
     // 2026-09-26: `benchmark certify --json` writes JSON lines on stdout, so
@@ -208,7 +214,8 @@ async fn serve_main() -> Result<()> {
         Command::DumpServeOptions
         | Command::SyncRecipes
         | Command::Doctor
-        | Command::Circuit(_) => {
+        | Command::Circuit(_)
+        | Command::Blueprint(_) => {
             unreachable!("handled before initialisation")
         }
         #[cfg(feature = "bench")]

@@ -121,6 +121,18 @@ json_struct! {
 }
 
 json_struct! {
+    /// 2026-10-22: A listed arm the rules do not cover.
+    pub struct CardPlanGap {
+        /// 2026-10-22: Mode.
+        pub mode: String,
+        /// 2026-10-22: Rows.
+        pub rows: u64,
+        /// 2026-10-22: Why.
+        pub reason: String,
+    }
+}
+
+json_struct! {
     /// 2026-10-22: Sizes in bytes; a file reports its own form, the other is null.
     pub struct CardSizes {
         /// 2026-10-22: The body section.
@@ -223,6 +235,8 @@ json_struct! {
         pub kernels: CardKernels,
         /// 2026-10-22: Plans.
         pub plans: Vec<CardPlan>,
+        /// 2026-10-22: Listed arms the rules do not cover (legacy engines only).
+        pub plan_gaps: Vec<CardPlanGap>,
         /// 2026-10-22: Sizes.
         pub sizes: CardSizes,
         /// 2026-10-22: Signature.
@@ -312,6 +326,15 @@ pub fn card(o: &Opened, ctx: &ExportContext) -> Card {
                 rows: p.rows,
                 digest: p.digest.hex(),
                 groups: n(p.groups.len()),
+            })
+            .collect(),
+        plan_gaps: bp
+            .plan_gaps
+            .iter()
+            .map(|g| CardPlanGap {
+                mode: String::from(g.mode.name()),
+                rows: g.rows,
+                reason: g.reason.clone(),
             })
             .collect(),
         sizes: CardSizes {

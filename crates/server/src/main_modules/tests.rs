@@ -31,7 +31,8 @@ fn test_cli_parse_positional_model() {
         | Command::DumpServeOptions
         | Command::SyncRecipes
         | Command::Doctor
-        | Command::Circuit(_) => {
+        | Command::Circuit(_)
+        | Command::Blueprint(_) => {
             unreachable!("this test parses a serve command")
         }
         Command::Serve(args) => {
@@ -66,7 +67,8 @@ fn test_cli_parse_model_from_path() {
         | Command::DumpServeOptions
         | Command::SyncRecipes
         | Command::Doctor
-        | Command::Circuit(_) => {
+        | Command::Circuit(_)
+        | Command::Blueprint(_) => {
             unreachable!("this test parses a serve command")
         }
         Command::Serve(args) => {
@@ -96,7 +98,8 @@ fn test_cli_parse_slai_policy() {
         | Command::DumpServeOptions
         | Command::SyncRecipes
         | Command::Doctor
-        | Command::Circuit(_) => {
+        | Command::Circuit(_)
+        | Command::Blueprint(_) => {
             unreachable!("this test parses a serve command")
         }
         Command::Serve(args) => {
@@ -182,7 +185,8 @@ fn test_cli_parse_kv_high_precision_layers() {
         | Command::DumpServeOptions
         | Command::SyncRecipes
         | Command::Doctor
-        | Command::Circuit(_) => {
+        | Command::Circuit(_)
+        | Command::Blueprint(_) => {
             unreachable!("this test parses a serve command")
         }
         Command::Serve(args) => {
@@ -200,7 +204,8 @@ fn test_cli_default_kv_high_precision_layers() {
         | Command::DumpServeOptions
         | Command::SyncRecipes
         | Command::Doctor
-        | Command::Circuit(_) => {
+        | Command::Circuit(_)
+        | Command::Blueprint(_) => {
             unreachable!("this test parses a serve command")
         }
         Command::Serve(args) => {

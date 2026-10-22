@@ -174,6 +174,7 @@ pub fn blueprint() -> Blueprint {
             edge_formats: vec!["bf16".into(), "bf16".into(), "bf16".into()],
             digest: Sha256::of(&[b"plan"]),
         }],
+        plan_gaps: vec![],
         kernels: KernelSet {
             target: KernelTarget {
                 arch: "sm_121".into(),

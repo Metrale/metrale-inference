@@ -157,3 +157,14 @@ pub struct GroupSpec {
     /// 2026-10-22: The nodes it covers.
     pub nodes: Vec<u32>,
 }
+
+/// 2026-10-22: An arm the instance lists that no rule set covers, and why.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlanGap {
+    /// 2026-10-22: Mode.
+    pub mode: Mode,
+    /// 2026-10-22: Rows.
+    pub rows: u64,
+    /// 2026-10-22: The fuser's refusal.
+    pub reason: String,
+}

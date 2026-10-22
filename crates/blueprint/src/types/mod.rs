@@ -26,7 +26,7 @@ pub use circuit::{
     BlockSpec, CircuitSpec, EdgeSpec, LayerKind, NodeSpec, Section, StateAccess, StateSpec,
 };
 pub use kernel::{ArtifactKind, KernelId, KernelSet, KernelSpec, KernelTarget, ModuleSpec};
-pub use plan::{EdgeStateSpec, GroupSpec, Mode, Numerics, PlanSpec, Repeat};
+pub use plan::{EdgeStateSpec, GroupSpec, Mode, Numerics, PlanGap, PlanSpec, Repeat};
 pub use settings::{
     Fixed, FlagValue, LeverValue, PrecisionSpec, Resources, ServePolicy, ServeSettings, TemplatePin,
 };
@@ -58,8 +58,11 @@ pub struct Blueprint {
     pub circuit: CircuitSpec,
     /// 2026-10-22: Where the per-node formats came from.
     pub precision: PrecisionSpec,
-    /// 2026-10-22: Every `(mode, rows)` arm the instance lists.
+    /// 2026-10-22: Every `(mode, rows)` arm the instance lists that the rules fuse.
     pub plans: Vec<PlanSpec>,
+    /// 2026-10-22: The listed arms the rules do not cover. Empty for `Execution::Executor`
+    /// (the builder refuses a gap there); a legacy engine runs those arms outside the plan.
+    pub plan_gaps: Vec<PlanGap>,
     /// 2026-10-22: Every module the serve may load, by hash.
     pub kernels: KernelSet,
     /// 2026-10-22: The `METRALE_*` levers.

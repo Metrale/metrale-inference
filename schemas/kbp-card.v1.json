@@ -39,6 +39,12 @@
           },
           "type": "array"
         },
+        "plan_gaps": {
+          "items": {
+            "$ref": "#/$defs/CardPlanGap"
+          },
+          "type": "array"
+        },
         "plans": {
           "items": {
             "$ref": "#/$defs/CardPlan"
@@ -75,6 +81,7 @@
         "execution",
         "kernels",
         "plans",
+        "plan_gaps",
         "sizes",
         "signature",
         "performance",
@@ -342,6 +349,27 @@
         "rows",
         "digest",
         "groups"
+      ],
+      "type": "object"
+    },
+    "CardPlanGap": {
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "rows": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mode",
+        "rows",
+        "reason"
       ],
       "type": "object"
     },

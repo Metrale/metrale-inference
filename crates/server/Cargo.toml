@@ -36,6 +36,11 @@ bench = ["dep:metrale-bench"]
 
 [dependencies]
 metrale-bench = { workspace = true, optional = true }
+metrale-abstract-io = { workspace = true }
+# 2026-10-22: `met blueprint`: the .kbp format, its trust check and seed-file signing.
+metrale-blueprint = { workspace = true }
+metrale-blueprint-sign = { workspace = true }
+metrale-blueprint-trust = { workspace = true }
 metrale-cache = { workspace = true }
 metrale-comm = { workspace = true }
 metrale-config = { workspace = true }
@@ -108,7 +113,6 @@ unicode-width = { workspace = true, features = ["cjk"] }
 ureq = { workspace = true, features = ["rustls", "gzip", "json"] }
 
 [dev-dependencies]
-metrale-abstract-io = { workspace = true }
 metrale-io-host-mem = { workspace = true }
 tempfile = { workspace = true, features = ["getrandom"] }
 

@@ -36,6 +36,10 @@ mod bench_selfstart;
 mod bench_serve_plan;
 #[cfg(feature = "bench")]
 pub mod bench_spec_cost;
+pub(crate) mod blueprint;
+pub mod blueprint_args;
+mod blueprint_build;
+mod blueprint_convert;
 pub(crate) mod circuit;
 mod circuit_diff;
 pub(crate) mod circuit_hw;
@@ -67,6 +71,7 @@ mod validate_spec_cost;
 pub use bench_args::BenchmarkArgs;
 #[cfg(not(feature = "bench"))]
 pub(crate) mod no_bench;
+pub use blueprint_args::BlueprintArgs;
 #[cfg(not(feature = "bench"))]
 pub use no_bench::BenchmarkArgs;
 pub use serve_args::{DEFAULT_KV_CACHE_DTYPE, DEFAULT_NUM_DRAFTS, ServeArgs};
@@ -133,6 +138,8 @@ pub enum Command {
     /// The circuits, precision tables and fusion rules are the ones this binary was built
     /// with (`kernels/circuits/`, `kernels/<hw>/common/FUSIONS.toml`).
     Circuit(CircuitArgs),
+    /// Build, sign, verify and convert signed blueprints (`.kbp`): one serve, fully stated.
+    Blueprint(BlueprintArgs),
 }
 
 /// `met circuit`: inspect an architecture circuit.
