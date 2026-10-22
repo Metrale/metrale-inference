@@ -2599,7 +2599,14 @@ cite = "ml/dense_ffn_prefill_nvfp4.rs:272-286,330-372; ml/ops/nvfp4_mmq.rs:175-1
 # Not a golden instance yet: these rules cover the GLM-specific kernels and the BF16 projections
 # at one row; the routed experts and the dense MLP (declared W4A4, run by the engine W4A16 and as
 # load-time BF16 dequantisations), the draft head, the multi-sequence decode (vetoed; the
-# `[[legacy_path]]` of KERNEL_FAMILIES.toml) and the K-row verify have no rule. Every pattern
+# `[[legacy_path]]` of KERNEL_FAMILIES.toml) and the K-row verify have no rule.
+# 2026-10-22: They now also cover the K-row verify and the batched decode up to 16 rows (one
+# `glm_row_group`), each naming what runs at the default levers: the kernels that take every row
+# in one launch are widened to 1..=16 rows; the per-row walks (KDA conv and recurrence, the DSA
+# indexer, latent write in a verify, the router GEMV) are `per_row`; the BF16 projections take
+# the batched entries in sibling rules. Recipe-only levers (METRALE_GLM_MHC_FUSED, _KDA_SEQ_ROWS,
+# _KDA_VERIFY_TOKENS, _DSA_VERIFY_ROWS, _DSA_INDEXER_ROWS, _ROUTER_ROWS, _DSA_DECODE_HB) have no
+# rule. Every pattern
 # names a GLM-only op, role, local id or param, or a GLM layer kind, so no rule here matches a
 # node of another circuit. The engine keeps the hyper-connection highway FP32 (`writes`).
 
@@ -2609,11 +2616,11 @@ pattern = [{ op = "hc_expand", writes = "f32" }]
 kernels = [{ module = "glm5next_mhc", func = "glm5next_hc_expand" }]
 repeat = "once"
 emitter = "glm_hc"
-rows = [1, 1]
-modes = ["decode"]
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 10
-cite = "crates/model-arch/src/glm5next_mhc.rs:68-87; crates/model-arch/src/glm5next_layer/steps/forward.rs:75"
+cite = "crates/model-arch/src/glm5next_mhc.rs:68-87; crates/model-arch/src/glm5next_layer/steps/forward.rs:75; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_layer/steps/forward.rs:359-368 (grid = rows)"
 
 [[rule]]
 id = "glm_hc_pre"
@@ -2624,11 +2631,11 @@ kernels = [
 ]
 repeat = "once"
 emitter = "glm_hc"
-rows = [1, 1]
-modes = ["decode"]
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 100
-cite = "crates/model-arch/src/glm5next_mhc.rs:153-214 (hc_mix_bf16 for the BF16 hc_fn the loader uploads, then hc_finish); crates/model-arch/src/glm5next_layer/steps/forward.rs:87,144"
+cite = "crates/model-arch/src/glm5next_mhc.rs:153-214 (hc_mix_bf16 for the BF16 hc_fn the loader uploads, then hc_finish); crates/model-arch/src/glm5next_layer/steps/forward.rs:87,144; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); glm_mhc_fused off (crates/settings/src/groups/kernels.rs:134; crates/model-arch/src/glm5next_layer/steps.rs:123), so the unfused site at crates/model-arch/src/glm5next_layer/steps/forward.rs:,409 (crates/model-arch/src/glm5next_mhc.rs:308-337: hc_mix_bf16 grid [rows, 24]; the `_rows` mix only from 32 tokens, :316-318)"
 
 [[rule]]
 id = "glm_hc_post"
@@ -2636,11 +2643,11 @@ pattern = [{ op = "hc_post", writes = "f32" }]
 kernels = [{ module = "glm5next_mhc", func = "glm5next_hc_post" }]
 repeat = "once"
 emitter = "glm_hc"
-rows = [1, 1]
-modes = ["decode"]
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 10
-cite = "crates/model-arch/src/glm5next_mhc.rs:218-245; crates/model-arch/src/glm5next_layer/steps/forward.rs:128,166"
+cite = "crates/model-arch/src/glm5next_mhc.rs:218-245; crates/model-arch/src/glm5next_layer/steps/forward.rs:128,166; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_layer/steps/forward.rs:,426 -> crates/model-arch/src/glm5next_layer/steps/reduce_post.rs:106 (glm_ar_fused_post off, crates/settings/src/groups/kernels.rs:87)"
 
 [[rule]]
 id = "glm_hc_contract"
@@ -2648,11 +2655,11 @@ pattern = [{ op = "hc_contract" }]
 kernels = [{ module = "glm5next_mhc", func = "glm5next_hc_head" }]
 repeat = "once"
 emitter = "glm_hc"
-rows = [1, 1]
-modes = ["decode"]
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 10
-cite = "crates/model-arch/src/glm5next_mhc.rs:90-109; crates/model-arch/src/glm5next_layer/steps/forward.rs:181"
+cite = "crates/model-arch/src/glm5next_mhc.rs:90-109; crates/model-arch/src/glm5next_layer/steps/forward.rs:181; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_layer/steps/forward.rs: (grid = rows)"
 
 [[rule]]
 id = "glm_rms_norm_plain_kda"
@@ -2660,11 +2667,11 @@ pattern = [{ op = "rms_norm", layer_kind = "linear_attention", params = { weight
 kernels = [{ module = "rms_norm_vanilla", func = "rms_norm_vanilla" }]
 repeat = "once"
 emitter = "rms_norm"
-rows = [1, 1]
-modes = ["decode"]
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_layer/steps.rs:17-37; crates/model-arch/src/glm5next_layer/steps/forward.rs:105,162"
+cite = "crates/model-arch/src/glm5next_layer/steps.rs:17-37; crates/model-arch/src/glm5next_layer/steps/forward.rs:105,162; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_layer/steps.rs:164 (rms_norm_vanilla, one block per row)"
 
 [[rule]]
 id = "glm_rms_norm_plain_dsa"
@@ -2672,11 +2679,11 @@ pattern = [{ op = "rms_norm", layer_kind = "deepseek_sparse_attention", params =
 kernels = [{ module = "rms_norm_vanilla", func = "rms_norm_vanilla" }]
 repeat = "once"
 emitter = "rms_norm"
-rows = [1, 1]
-modes = ["decode"]
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_layer/steps.rs:17-37; crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:43-53 (q_a_layernorm)"
+cite = "crates/model-arch/src/glm5next_layer/steps.rs:17-37; crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:43-53 (q_a_layernorm); 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:51-61 (q_a_layernorm, grid [k])"
 
 # 2026-10-08: Every BF16 projection of one row runs the M = 1 GEMV (`ops::dense_mm_bf16`).
 [[rule]]
@@ -2740,11 +2747,11 @@ pattern = [{ op = "concat", layer_kind = "linear_attention" }]
 kernels = [{ module = "kda_layer_ops", func = "kda_pack_qkv_bf16" }]
 repeat = "once"
 emitter = "kda"
-rows = [1, 1]
-modes = ["decode"]
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 10
-cite = "crates/model-arch/src/glm5next_kda/mod.rs:269-278"
+cite = "crates/model-arch/src/glm5next_kda/mod.rs:269-278; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_kda/conv_pack.rs:48,75 (Pack::InFrontEnd: glm_kda_conv_pack off, crates/settings/src/groups/kernels.rs:123; grid.y = rows)"
 
 # 2026-10-08: The decode conv writes BF16 q|k|v rows (`causal_conv1d_update_l2norm`), which the
 # recurrence reads; the circuit's conv edges are FP32 as the GatedDeltaNet decode keeps them.
@@ -2773,24 +2780,24 @@ kernels = [
 ]
 repeat = "once"
 emitter = "kda"
-rows = [1, 1]
-modes = ["decode"]
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_kda/mod.rs:303-314,328-334"
+cite = "crates/model-arch/src/glm5next_kda/mod.rs:303-314,328-334; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_kda/gate_at.rs:89 (kda_gate_bf16 grid rows x heads), crates/model-arch/src/glm5next_kda/mod.rs:396; kda_gates_w8a8_k128_rows declines at declared formats (crates/model-arch/src/glm5next_kda/gates_fused.rs:76-81,109-113)"
 
 [[rule]]
 id = "glm_kda_recurrence"
 pattern = [{ op = "gdn_recurrence", input = "bf16", params = { decay = "channel" } }]
 kernels = [{ module = "kda_recurrent", func = "kda_recurrent_decode_bf16_smem" }]
-repeat = "once"
+repeat = "per_row"
 emitter = "kda"
-rows = [1, 1]
-modes = ["decode"]
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify"]
 when = { ssm_h_dtype = "f32" }
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_kda/decode.rs:95-111 (the shared-memory kernel when the target ships it; :112-127 the 2R+2W fallback)"
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:95-111 (the shared-memory kernel when the target ships it; :112-127 the 2R+2W fallback); 2026-10-22: one launch per row in every mode at the default levers: a verify walks its rows (crates/model-arch/src/glm5next_kda/decode.rs:301-330, stateful_row :94; glm_kda_seq_tokens and glm_kda_verify_tokens off, crates/settings/src/groups/kernels.rs:132-133), a batched decode steps row by row (crates/model-arch/src/glm5next_kda/rows.rs:105-135, glm_kda_seq_rows unset = Off, crates/settings/src/groups/kernels.rs:131); glm_kda_row_reg off (crates/model-arch/src/glm5next_kda/decode.rs:148)"
 
 [[rule]]
 id = "glm_kda_o_norm"
@@ -2798,11 +2805,11 @@ pattern = [{ op = "gated_rms_norm", params = { gate_act = "sigmoid" } }]
 kernels = [{ module = "kda_layer_ops", func = "kda_o_norm_gated_bf16" }]
 repeat = "once"
 emitter = "kda"
-rows = [1, 1]
-modes = ["decode"]
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_kda/mod.rs:368-377"
+cite = "crates/model-arch/src/glm5next_kda/mod.rs:368-377; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_kda/mod.rs:439 (grid rows x heads)"
 
 # 2026-10-08: RMSNorm, FP8 quantisation and the paged store in one kernel; the norm hands its
 # FP32 result to the quantizer in registers.
@@ -2815,24 +2822,24 @@ pattern = [
 kernels = [{ module = "glm5next_mla_latent_write", func = "glm5next_mla_latent_write_fp8" }]
 repeat = "once"
 emitter = "dsa"
-rows = [1, 1]
-modes = ["decode"]
+rows = [1, 16]
+modes = ["decode", "multi_seq"]
 when = { kv_cache_dtype = "fp8" }
 numerics = "reference"
 priority = 100
-cite = "crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:95-105"
+cite = "crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:95-105; 2026-10-22: a batched decode writes every row in one launch (crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:224-231; grid = rows, crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:106)"
 
 [[rule]]
 id = "glm_index_k_norm"
 pattern = [{ op = "layer_norm" }]
 kernels = [{ module = "nllb_encoder", func = "nllb_layernorm_bf16" }]
-repeat = "once"
+repeat = "per_row"
 emitter = "dsa"
-rows = [1, 1]
-modes = ["decode"]
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 10
-cite = "crates/model-arch/src/glm5next_dsa/layer.rs:168-178"
+cite = "crates/model-arch/src/glm5next_dsa/layer.rs:168-178; 2026-10-22: per row in a verify (crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:200,252-263 -> indexer_forward, crates/model-arch/src/glm5next_dsa/layer.rs:220) and a batched decode (crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:328-337): glm_dsa_verify_rows and glm_dsa_indexer_rows off (crates/settings/src/groups/kernels.rs:100,115)"
 
 # 2026-10-08: The engine stores each token's raw normed key and gate score in a flat
 # per-sequence cache and pools at selection time (`dsa_kpool_compress` below); the circuit's
@@ -2847,13 +2854,13 @@ kernels = [
   { module = "dsa_indexer", func = "dsa_indexer_store" },
   { module = "dsa_scores_warp", func = "dsa_pool_keys_store_rows" },
 ]
-repeat = "once"
+repeat = "per_row"
 emitter = "dsa"
-rows = [1, 1]
-modes = ["decode"]
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 10
-cite = "crates/model-arch/src/glm5next_dsa/layer/rows.rs:24-50 (dsa_indexer_store on the replay-safe path; the host path writes the GEMV outputs into the cache row directly); crates/model-arch/src/glm5next_dsa/layer/rows.rs:50-79 (store_pool_keys)"
+cite = "crates/model-arch/src/glm5next_dsa/layer/rows.rs:24-50 (dsa_indexer_store on the replay-safe path; the host path writes the GEMV outputs into the cache row directly); crates/model-arch/src/glm5next_dsa/layer/rows.rs:50-79 (store_pool_keys); 2026-10-22: per row in a verify and a batched decode (crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:252-263, crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:328-337 -> crates/model-arch/src/glm5next_dsa/layer.rs:268): glm_dsa_verify_rows and glm_dsa_indexer_rows off (crates/settings/src/groups/kernels.rs:100,115)"
 
 # 2026-10-22: The exact (eager) arm: a pass outside a captured graph compresses the pools from
 # the raw keys, scores them warp-per-pool (`dsa_index_scores_warp`, default on when the shape
@@ -2892,13 +2899,13 @@ kernels = [
   { module = "dsa_topk_mc", func = "dsa_topk_mc_collect" },
   { module = "dsa_indexer_rows", func = "dsa_expand_selection_rows" },
 ]
-repeat = "once"
+repeat = "per_row"
 emitter = "dsa"
-rows = [1, 1]
-modes = ["decode"]
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_dsa/select/launch.rs:244,291,409-449 (a ceiling launch over persisted pool keys: no compression); crates/model-arch/src/glm5next_dsa/select/scores.rs:56-77,141-160 (heads_paged below SCORES_WINDOW_MIN_ROWS); crates/model-arch/src/glm5next_dsa/select/topk.rs:122-147 (four histogram passes, then the collect); crates/model-arch/src/glm5next_dsa/select/scores.rs:221-252"
+cite = "crates/model-arch/src/glm5next_dsa/select/launch.rs:244,291,409-449 (a ceiling launch over persisted pool keys: no compression); crates/model-arch/src/glm5next_dsa/select/scores.rs:56-77,141-160 (heads_paged below SCORES_WINDOW_MIN_ROWS); crates/model-arch/src/glm5next_dsa/select/topk.rs:122-147 (four histogram passes, then the collect); crates/model-arch/src/glm5next_dsa/select/scores.rs:221-252; 2026-10-22: per row, each a one-query-row pass (q_rows 1, so heads_paged, not heads_window: crates/model-arch/src/glm5next_dsa/select/scores.rs:68-70) in a captured verify (crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:320-329 -> select_row, crates/model-arch/src/glm5next_dsa/layer.rs:336-354; select_once needs glm_dsa_verify_rows, off, crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:179-185) and a batched decode (crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:355-364; select_paged_rows needs glm_dsa_indexer_rows, off); the verify and decode graphs are captured (glm_keep_slot_graphs, crates/settings/src/groups/scheduler.rs:41)"
 
 # 2026-10-08: The indexer query and head weights are FP32-out GEMVs (`*_fp32out`), so the
 # selection reads FP32 where the circuit's edges are BF16.
@@ -2906,13 +2913,13 @@ cite = "crates/model-arch/src/glm5next_dsa/select/launch.rs:244,291,409-449 (a c
 id = "glm_index_f32_gemv"
 pattern = [{ op = "linear", roles = ["index_q", "index_weights"], weight = "bf16", writes = "f32" }]
 kernels = [{ module = "gemv", func = "dense_gemv_bf16_fp32out" }]
-repeat = "once"
+repeat = "per_row"
 emitter = "dense_gemv"
-rows = [1, 1]
-modes = ["decode"]
+rows = [1, 16]
+modes = ["decode", "verify"]
 numerics = "reference"
 priority = 10
-cite = "crates/model-arch/src/glm5next_dsa/layer.rs:200-213,246-259"
+cite = "crates/model-arch/src/glm5next_dsa/layer.rs:200-213,246-259; 2026-10-22: a verify computes both per row at M = 1 (weights_proj in indexer_forward, crates/model-arch/src/glm5next_dsa/layer.rs:251-265; wq_b in select_row, crates/model-arch/src/glm5next_dsa/layer.rs:298-311): the batched selector query needs glm_dsa_verify_rows, off (crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:190-191; crates/settings/src/groups/kernels.rs:115)"
 
 # 2026-10-08: The absorbed latent attention on load-time products: `q_absorb` is q_b_proj times
 # kv_b_proj's key half and `o_absorb` o_proj times its value half (glm5next_dsa/layer.rs:67-78),
@@ -2943,13 +2950,13 @@ cite = "crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:54-66,137-149; crate
 id = "glm_router_f32"
 pattern = [{ op = "router", local = "gate", weight = "bf16" }]
 kernels = [{ module = "gemv", func = "dense_gemv_bf16_fp32out" }]
-repeat = "once"
+repeat = "per_row"
 emitter = "moe_router"
-rows = [1, 1]
-modes = ["decode"]
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_mlp/forward.rs:345-358"
+cite = "crates/model-arch/src/glm5next_mlp/forward.rs:345-358; 2026-10-22: one M = 1 FP32-out GEMV per row at every row count: glm_router_rows off (crates/settings/src/groups/kernels.rs:157), so crates/model-arch/src/glm5next_mlp/forward/router.rs:56-61 declines the batched arm and :78-92 loops the rows"
 
 [[rule]]
 id = "glm_router_topk_kda"
@@ -2957,11 +2964,11 @@ pattern = [{ op = "top_k", layer_kind = "linear_attention", params = { scoring =
 kernels = [{ module = "glm5next_ffn", func = "glm5next_router_topk" }]
 repeat = "once"
 emitter = "moe_router"
-rows = [1, 1]
-modes = ["decode"]
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:62-86"
+cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:62-86; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_mlp/forward.rs:372; crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:74-77 (grid [rows]; glm_router_topk_rank off, crates/settings/src/groups/kernels.rs:158)"
 
 [[rule]]
 id = "glm_router_topk_dsa"
@@ -2969,11 +2976,11 @@ pattern = [{ op = "top_k", layer_kind = "deepseek_sparse_attention", params = { 
 kernels = [{ module = "glm5next_ffn", func = "glm5next_router_topk" }]
 repeat = "once"
 emitter = "moe_router"
-rows = [1, 1]
-modes = ["decode"]
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:62-86"
+cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:62-86; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_mlp/forward.rs:372; crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:74-77 (grid [rows]; glm_router_topk_rank off, crates/settings/src/groups/kernels.rs:158)"
 
 # 2026-10-08: Clamp, SiLU and multiply in one pass over separate gate and up rows; the clamped
 # values stay in FP32 registers.
@@ -2983,11 +2990,11 @@ pattern = [{ op = "swiglu_clamp", holds = "f32" }, { op = "silu_mul" }]
 kernels = [{ module = "glm5next_ffn", func = "glm5next_swiglu_clamp" }]
 repeat = "once"
 emitter = "glm_swiglu"
-rows = [1, 1]
-modes = ["decode"]
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 110
-cite = "crates/model-arch/src/glm5next_mlp/forward/launch.rs:130-150; crates/model-arch/src/glm5next_mlp/forward/dense.rs:72-82"
+cite = "crates/model-arch/src/glm5next_mlp/forward/launch.rs:130-150; crates/model-arch/src/glm5next_mlp/forward/dense.rs:72-82; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_mlp/forward/dense.rs:103 (one launch over rows x inter); the routed experts at 2..=16 rows take glm_swiglu_clamp_zero below"
 
 [[rule]]
 id = "glm_moe_combine_kda"
@@ -2995,11 +3002,11 @@ pattern = [{ op = "blend", layer_kind = "linear_attention", params = { shared_ga
 kernels = [{ module = "glm5next_ffn", func = "glm5next_moe_combine" }]
 repeat = "once"
 emitter = "moe_blend"
-rows = [1, 1]
-modes = ["decode"]
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:92-126"
+cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:92-126; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:204-205 (grid [rows, 1]; glm_moe_combine_split and _vec8 off, crates/settings/src/groups/kernels.rs:145-146)"
 
 [[rule]]
 id = "glm_moe_combine_dsa"
@@ -3007,11 +3014,280 @@ pattern = [{ op = "blend", layer_kind = "deepseek_sparse_attention", params = { 
 kernels = [{ module = "glm5next_ffn", func = "glm5next_moe_combine" }]
 repeat = "once"
 emitter = "moe_blend"
-rows = [1, 1]
-modes = ["decode"]
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:92-126"
+cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:92-126; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:204-205 (grid [rows, 1]; glm_moe_combine_split and _vec8 off, crates/settings/src/groups/kernels.rs:145-146)"
+
+# 2026-10-22: The GLM BF16 projections at 2..=16 rows (a verify's k rows, a batched decode
+# group's rows): `glm_mm` (glm5next_layer/wide_gemv.rs:174-202) launches the register-resident
+# entry `fixed_entry` picks (:105-115): `dense_gemv_bf16_batchm_few` at 2..=8 rows
+# (glm_batchm_few, on: crates/settings/src/groups/kernels.rs:90) and `dense_gemv_bf16_batchm_wide`
+# at 9..=16 (glm_batchm_wide, on: kernels.rs:89; `takes_wide`, :98-99). Each block resolves both
+# (glm5next_kda/kernels.rs:74-84, glm5next_dsa/layer/kernels.rs:75-89, glm5next_mlp/mod.rs:254-271).
+# At the declared formats the W4A16 and FP8 registries hold no weight (`--dense-quantization` and
+# `--dsa-quantization` default to declared), so glm_mm reaches these entries. The DSA indexer key
+# and gate are not here: they run per row (`glm_index_kgate_rows`).
+[[rule]]
+id = "glm_bf16_gemv_few_kda"
+pattern = [{ op = "linear", roles = ["q", "k", "v", "o", "kda_b", "kda_f_a", "kda_f_b", "kda_g_a", "kda_g_b", "shared_down"], weight = "bf16", layer_kind = "linear_attention" }]
+kernels = [{ module = "dense_gemv_bf16_batchm_few", func = "dense_gemv_bf16_batchm_few" }]
+repeat = "once"
+emitter = "dense_gemv"
+rows = [2, 8]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_kda/mod.rs:213-250 (gemm -> glm_mm), :334 (q|k|v), :363 (f_a), :384 (b), :407,418 (g_a, g_b), :449 (o); crates/model-arch/src/glm5next_kda/gate_at.rs:76 (f_b); crates/model-arch/src/glm5next_mlp/forward/dense.rs:114 (shared expert down); crates/model-arch/src/glm5next_layer/wide_gemv.rs:105-115,191-202"
+
+[[rule]]
+id = "glm_bf16_gemv_wide_kda"
+pattern = [{ op = "linear", roles = ["q", "k", "v", "o", "kda_b", "kda_f_a", "kda_f_b", "kda_g_a", "kda_g_b", "shared_down"], weight = "bf16", layer_kind = "linear_attention" }]
+kernels = [{ module = "dense_gemv_bf16_batchm", func = "dense_gemv_bf16_batchm_wide" }]
+repeat = "once"
+emitter = "dense_gemv"
+rows = [9, 16]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_kda/mod.rs:213-250,334,363,384,407,418,449; crates/model-arch/src/glm5next_kda/gate_at.rs:76; crates/model-arch/src/glm5next_mlp/forward/dense.rs:114; crates/model-arch/src/glm5next_layer/wide_gemv.rs:98-99,105-115,191-202"
+
+[[rule]]
+id = "glm_bf16_gemv_few_dsa"
+pattern = [{ op = "linear", roles = ["mla_q_a", "mla_kv_a", "shared_down"], weight = "bf16", layer_kind = "deepseek_sparse_attention" }]
+kernels = [{ module = "dense_gemv_bf16_batchm_few", func = "dense_gemv_bf16_batchm_few" }]
+repeat = "once"
+emitter = "dense_gemv"
+rows = [2, 8]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:30-42,67-79 (q_a, kv_a; glm_dsa_proj_in_merged needs the FP8 registry: crates/model-arch/src/glm5next_dsa/layer/proj_in_merged.rs:61-72); crates/model-arch/src/glm5next_mlp/forward/dense.rs:114; crates/model-arch/src/glm5next_layer/wide_gemv.rs:105-115,191-202"
+
+[[rule]]
+id = "glm_bf16_gemv_wide_dsa"
+pattern = [{ op = "linear", roles = ["mla_q_a", "mla_kv_a", "shared_down"], weight = "bf16", layer_kind = "deepseek_sparse_attention" }]
+kernels = [{ module = "dense_gemv_bf16_batchm", func = "dense_gemv_bf16_batchm_wide" }]
+repeat = "once"
+emitter = "dense_gemv"
+rows = [9, 16]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:30-42,67-79; crates/model-arch/src/glm5next_mlp/forward/dense.rs:114; crates/model-arch/src/glm5next_layer/wide_gemv.rs:98-99,105-115,191-202"
+
+[[rule]]
+id = "glm_shared_gate_up_few_kda"
+pattern = [{ op = "linear", role = "shared_gate_up", weight = "bf16", layer_kind = "linear_attention" }]
+kernels = [
+  { module = "dense_gemv_bf16_batchm_few", func = "dense_gemv_bf16_batchm_few" },
+  { module = "dense_gemv_bf16_batchm_few", func = "dense_gemv_bf16_batchm_few" },
+]
+repeat = "once"
+emitter = "dense_gemv"
+rows = [2, 8]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_mlp/forward/dense.rs:62-101 (gate and up, one GEMV each: proj_group declines without the W4A16 registry); crates/model-arch/src/glm5next_layer/wide_gemv.rs:105-115"
+
+[[rule]]
+id = "glm_shared_gate_up_few_dsa"
+pattern = [{ op = "linear", role = "shared_gate_up", weight = "bf16", layer_kind = "deepseek_sparse_attention" }]
+kernels = [
+  { module = "dense_gemv_bf16_batchm_few", func = "dense_gemv_bf16_batchm_few" },
+  { module = "dense_gemv_bf16_batchm_few", func = "dense_gemv_bf16_batchm_few" },
+]
+repeat = "once"
+emitter = "dense_gemv"
+rows = [2, 8]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_mlp/forward/dense.rs:62-101; crates/model-arch/src/glm5next_layer/wide_gemv.rs:105-115"
+
+[[rule]]
+id = "glm_shared_gate_up_wide_kda"
+pattern = [{ op = "linear", role = "shared_gate_up", weight = "bf16", layer_kind = "linear_attention" }]
+kernels = [
+  { module = "dense_gemv_bf16_batchm", func = "dense_gemv_bf16_batchm_wide" },
+  { module = "dense_gemv_bf16_batchm", func = "dense_gemv_bf16_batchm_wide" },
+]
+repeat = "once"
+emitter = "dense_gemv"
+rows = [9, 16]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_mlp/forward/dense.rs:62-101; crates/model-arch/src/glm5next_layer/wide_gemv.rs:98-99,105-115"
+
+[[rule]]
+id = "glm_shared_gate_up_wide_dsa"
+pattern = [{ op = "linear", role = "shared_gate_up", weight = "bf16", layer_kind = "deepseek_sparse_attention" }]
+kernels = [
+  { module = "dense_gemv_bf16_batchm", func = "dense_gemv_bf16_batchm_wide" },
+  { module = "dense_gemv_bf16_batchm", func = "dense_gemv_bf16_batchm_wide" },
+]
+repeat = "once"
+emitter = "dense_gemv"
+rows = [9, 16]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_mlp/forward/dense.rs:62-101; crates/model-arch/src/glm5next_layer/wide_gemv.rs:98-99,105-115"
+
+# 2026-10-22: The DSA indexer key and compress gate run one M = 1 GEMV per row in a verify and a
+# batched decode alike: both reach `indexer_forward` once per row, which projects one row
+# (glm_dsa_verify_rows and glm_dsa_indexer_rows, the one-pass arms, are off:
+# crates/settings/src/groups/kernels.rs:100,115).
+[[rule]]
+id = "glm_index_kgate_rows"
+pattern = [{ op = "linear", roles = ["index_k", "index_gate"], weight = "bf16", layer_kind = "deepseek_sparse_attention" }]
+kernels = [{ module = "gemv", func = "dense_gemv_bf16" }]
+repeat = "per_row"
+emitter = "dense_gemv"
+rows = [2, 16]
+modes = ["multi_seq", "verify"]
+numerics = "reference"
+priority = 20
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:252-263 (verify: indexer_forward per row); crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:328-337 (batched decode: per row, staged needs glm_dsa_indexer_rows, :259-267); crates/model-arch/src/glm5next_dsa/layer.rs:207-244 (M = 1)"
+
+# 2026-10-22: A batched decode of 2..=8 rows computes the selector query (wq_b over q_resid) and
+# head weights (weights_proj over the layer input) of every row in one paired launch
+# (glm_dsa_selector_pair, on: crates/settings/src/groups/kernels.rs:118); at 9..=16 rows each
+# is one `dense_gemv_bf16_batchm_wide_fp32out` launch. A verify does neither (glm_index_f32_gemv).
+[[rule]]
+id = "glm_index_selector_pair"
+pattern = [
+  { op = "linear", role = "index_weights", weight = "bf16", writes = "f32", keep = true },
+  { op = "linear", role = "index_q", weight = "bf16", writes = "f32", sibling = true },
+]
+kernels = [{ module = "dense_gemv_bf16_batchm_few", func = "dense_gemv_bf16_batchm_few_fp32out_pair" }]
+repeat = "once"
+emitter = "dense_gemv"
+rows = [2, 8]
+modes = ["multi_seq"]
+numerics = "reference"
+priority = 30
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:244-254 (selector_query_rows); crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:181 -> crates/model-arch/src/glm5next_dsa/layer/selector_pair.rs:24-35 (takes where fixed_entry picks the few entry: 2..=8 rows, unquantized weights)"
+
+[[rule]]
+id = "glm_index_f32_gemv_wide"
+pattern = [{ op = "linear", roles = ["index_q", "index_weights"], weight = "bf16", writes = "f32" }]
+kernels = [{ module = "dense_gemv_bf16_batchm", func = "dense_gemv_bf16_batchm_wide_fp32out" }]
+repeat = "once"
+emitter = "dense_gemv"
+rows = [9, 16]
+modes = ["multi_seq"]
+numerics = "reference"
+priority = 10
+cite = "crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:184-230 (the pair declines above 8 rows; each projection through glm_mm with batchm_f32); crates/model-arch/src/glm5next_dsa/layer/kernels.rs:78-83; crates/model-arch/src/glm5next_layer/wide_gemv.rs:98-99"
+
+# 2026-10-22: The absorbed latent attention at 2..=16 rows: q_absorb and o_absorb on the batched
+# entries glm_mm picks, and the per-head latent decode once over every row (rows on grid y;
+# glm_dsa_decode_hb unset, so no head-batched kernel: crates/settings/src/groups/kernels.rs:94,
+# glm5next_dsa/attend.rs:113-121,419-443).
+[[rule]]
+id = "glm_mla_absorbed_few"
+pattern = [
+  { op = "linear", role = "mla_q_b", weight = "bf16" },
+  { op = "mla_attention" },
+  { op = "linear", role = "o", weight = "bf16", layer_kind = "deepseek_sparse_attention" },
+]
+kernels = [
+  { module = "dense_gemv_bf16_batchm_few", func = "dense_gemv_bf16_batchm_few" },
+  { module = "glm5next_dsa_mla_decode", func = "glm5next_dsa_mla_decode_fp8" },
+  { module = "dense_gemv_bf16_batchm_few", func = "dense_gemv_bf16_batchm_few" },
+]
+repeat = "once"
+emitter = "dsa"
+rows = [2, 8]
+modes = ["multi_seq", "verify"]
+when = { kv_cache_dtype = "fp8" }
+numerics = "reference"
+priority = 100
+cite = "crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:62 (q_absorb), :137-149 (o_absorb); crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:366-378 (verify: one attend over k rows); crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:376-386 (batched decode); crates/model-arch/src/glm5next_dsa/layer/attend_rows.rs:55"
+
+[[rule]]
+id = "glm_mla_absorbed_wide"
+pattern = [
+  { op = "linear", role = "mla_q_b", weight = "bf16" },
+  { op = "mla_attention" },
+  { op = "linear", role = "o", weight = "bf16", layer_kind = "deepseek_sparse_attention" },
+]
+kernels = [
+  { module = "dense_gemv_bf16_batchm", func = "dense_gemv_bf16_batchm_wide" },
+  { module = "glm5next_dsa_mla_decode", func = "glm5next_dsa_mla_decode_fp8" },
+  { module = "dense_gemv_bf16_batchm", func = "dense_gemv_bf16_batchm_wide" },
+]
+repeat = "once"
+emitter = "dsa"
+rows = [9, 16]
+modes = ["multi_seq", "verify"]
+when = { kv_cache_dtype = "fp8" }
+numerics = "reference"
+priority = 100
+cite = "crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:62,137-149; crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:366-378; crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:376-386; crates/model-arch/src/glm5next_layer/wide_gemv.rs:98-99"
+
+# 2026-10-22: A verify writes each row's latent in its own launch inside the row loop (the
+# staged one-launch write needs glm_dsa_indexer_rows, off: decode_k.rs:160-163).
+[[rule]]
+id = "glm_mla_latent_write_verify"
+pattern = [
+  { op = "rms_norm", local = "kv_norm", holds = "f32" },
+  { op = "kv_write", params = { layout = "latent" } },
+]
+kernels = [{ module = "glm5next_mla_latent_write", func = "glm5next_mla_latent_write_fp8" }]
+repeat = "per_row"
+emitter = "dsa"
+rows = [2, 16]
+modes = ["verify"]
+when = { kv_cache_dtype = "fp8" }
+numerics = "reference"
+priority = 100
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:200-212 (write_latent_rows(row, 1) per row); crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:95-106"
+
+# 2026-10-22: The KDA conv at 2..=16 rows runs one row per launch: a verify walks its rows and
+# snapshots the conv window after each row but the last (glm5next_kda/decode.rs:301-330,
+# stateful_row :94, conv_row :108); a batched decode steps row by row (glm5next_kda/rows.rs:
+# 105-135; glm_kda_seq_rows unset = Off, crates/settings/src/groups/kernels.rs:131). The one-launch
+# token kernel (`causal_conv1d_update_l2norm_tokens`) needs glm_kda_seq_tokens or
+# glm_kda_verify_tokens, both off (kernels.rs:132-133). The batched-decode rule outranks the
+# Qwen GDN `gdn_conv_l2_f32_batched` (110), whose `ssm_batched_recurrent` setting the GLM layer
+# code never reads: its FP32 strided kernel is not what GLM launches.
+[[rule]]
+id = "glm_kda_conv_l2_verify"
+pattern = [
+  { op = "conv1d_update", local = "short_conv" },
+  { op = "state_snapshot" },
+  { op = "l2_norm", writes = "bf16" },
+]
+kernels = [{ module = "causal_conv1d", func = "causal_conv1d_update_l2norm" }]
+repeat = "per_row"
+copies = "per_row_but_last"
+emitter = "kda"
+rows = [2, 16]
+modes = ["verify"]
+numerics = "reference"
+priority = 110
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:301-330 (stateful_row per row, then snapshot_state for rows with a snapshot slot), :94-115"
+
+[[rule]]
+id = "glm_kda_conv_l2_rows"
+pattern = [
+  { op = "conv1d_update", local = "short_conv" },
+  { op = "state_snapshot" },
+  { op = "l2_norm", writes = "bf16" },
+]
+kernels = [{ module = "causal_conv1d", func = "causal_conv1d_update_l2norm" }]
+repeat = "per_row"
+emitter = "kda"
+rows = [2, 16]
+modes = ["multi_seq"]
+numerics = "reference"
+priority = 120
+cite = "crates/model-arch/src/glm5next_kda/rows.rs:105-135 (decode_rows_then: stateful_row per row); crates/model-arch/src/glm5next_kda/decode.rs:94-115"
 
 # 2026-10-22: GLM-5's routed experts at declared W4A4 (`w4a4_experts`): the rows quantized once
 # under the checkpoint's static input scale (`w4a4_quant_rows_static`), then the persistent sweep

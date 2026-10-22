@@ -399,9 +399,13 @@ description = "Causal conv1d update + SiLU + L2 norm of the q/k heads (GDN)"
 compute = "cuda_core"
 # 2026-09-30: The strided twin runs every sequence's row in one launch (the batched GDN arm,
 # kernels/gb10/common/FUSIONS.toml).
+# 2026-10-22: `causal_conv1d_update_l2norm_tokens` runs T consecutive tokens of one sequence in
+# one launch, token t's window built in registers (kda_conv_tokens.cu:15-50): per token the
+# per-token kernel's body, so its bits; the window is only read (the advance is another kernel).
 kernels = [
   "causal_conv1d::causal_conv1d_update_l2norm_f32", "causal_conv1d::causal_conv1d_update_l2norm",
   "causal_conv1d::causal_conv1d_update_l2norm_f32_strided",
+  "kda_conv_tokens::causal_conv1d_update_l2norm_tokens",
 ]
 rows = [1, 4096]
 # 2026-10-02: The conv output reaches the L2 norm in FP32 registers; the verify kernel
@@ -411,6 +415,7 @@ pipeline.conv1d_update = { in = ["bf16"], state = "f32", compute = "f32", out = 
 pipeline.state_snapshot = { in = ["f32"], state = "f32", out = [] }
 pipeline.l2_norm = { in = ["f32"], compute = "f32", out = ["f32"] }
 kernel_pipeline."causal_conv1d::causal_conv1d_update_l2norm".l2_norm = { in = ["f32"], compute = "f32", out = ["bf16"] }
+kernel_pipeline."kda_conv_tokens::causal_conv1d_update_l2norm_tokens".l2_norm = { in = ["f32"], compute = "f32", out = ["bf16"] }
 op = [
   { op = "conv1d_update", feeds = ["l2_norm"] },
   { op = "state_snapshot", after = ["conv1d_update"], beside = ["l2_norm"] },
@@ -419,7 +424,7 @@ op = [
 [[family.point]]
 values = {}
 how = "instantiation"
-files = ["kernels/gb10/common/causal_conv1d.cu"]
+files = ["kernels/gb10/common/causal_conv1d.cu", "kernels/gb10/common/kda_conv_tokens.cu"]
 [[family.evidence]]
 point = {}
 rows = [2]
@@ -428,6 +433,15 @@ measurement = "qwen3.6-35b-a3b::causal_conv1d_update_l2norm @ decode C=1 (R=2, M
 point = {}
 rows = [4]
 measurement = "qwen3.8-27b::causal_conv1d_update_l2norm @ decode C=1 (R=4, MTP k=3)"
+# 2026-10-22: GLM-5.3-Flash NVFP4, TP=3 rank 0, nsys: the 2-row MTP verify's conv.
+[[family.evidence]]
+point = {}
+rows = [2]
+measurement = "glm-5.3-flash::causal_conv1d_update_l2norm_tokens @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k"
+[[family.evidence]]
+point = {}
+rows = [2]
+measurement = "glm-5.3-flash::causal_conv1d_update_l2norm_tokens @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k"
 
 [[family]]
 id = "gdn_recurrence"
@@ -933,6 +947,8 @@ kernels = [
   "dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few",
   "dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out",
   "dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out_pair",
+  "dense_gemv_bf16_batchm::dense_gemv_bf16_batchm_wide",
+  "dense_gemv_bf16_batchm::dense_gemv_bf16_batchm_wide_fp32out",
 ]
 rows = [1, 65536]
 # 2026-10-02: Every kernel widens BF16 exactly and sums in FP32 (no 16-bit partials), one BF16
@@ -952,6 +968,11 @@ kernel_pipeline."gemm::dense_gemm_bf16_f32out".router = { in = ["bf16"], act = "
 # order, so the same bits.
 kernel_pipeline."dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out".linear = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["f32"] }
 kernel_pipeline."dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out".router = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["f32"] }
+# 2026-10-22: dense_gemv_bf16_batchm at 9..16 rows, register-resident (default-on
+# METRALE_GLM_BATCHM_WIDE, dense_gemv_bf16_batchm.cu:403-425); the runtime-M kernel's arithmetic
+# in its order, so the same bits. Its FP32-out twin writes the sums unrounded.
+kernel_pipeline."dense_gemv_bf16_batchm::dense_gemv_bf16_batchm_wide_fp32out".linear = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["f32"] }
+kernel_pipeline."dense_gemv_bf16_batchm::dense_gemv_bf16_batchm_wide_fp32out".router = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["f32"] }
 # 2026-10-21: Two dense_gemv_bf16_batchm_few_fp32out operand sets in one launch (default-on
 # METRALE_GLM_DSA_SELECTOR_PAIR); each block runs that entry's body on its set, so the same bits.
 kernel_pipeline."dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out_pair".linear = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["f32"] }
@@ -2260,10 +2281,18 @@ files = ["kernels/gb10/common/kda_gate.cu", "kernels/gb10/common/kda_layer_ops.c
 # (kda_recurrent.cu:3-22). The `_smem` twin keeps the decayed column in shared memory.
 [[family]]
 id = "kda_recurrent"
-description = "KDA gated delta rule with per-channel decay, one token per launch"
+description = "KDA gated delta rule with per-channel decay, one token per launch; up to 4 tokens of one sequence with per-token state snapshots (seq_reg_snap)"
 compute = "cuda_core"
-kernels = ["kda_recurrent::kda_recurrent_decode_bf16", "kda_recurrent::kda_recurrent_decode_bf16_smem"]
-rows = [1, 1]
+# 2026-10-22: `kda_recurrent_decode_bf16_seq_reg_snap` steps T <= 4 tokens of one sequence in one
+# launch, the state in registers, and stores the state after each of the first T - 1 (a K-row
+# verify's snapshots; METRALE_GLM_KDA_VERIFY_TOKENS, opt-in). Per token it is seq_reg's
+# arithmetic, and the outputs, snapshots and final state are the per-row walk's bits
+# (kda_recurrent.cu:500-511).
+kernels = [
+  "kda_recurrent::kda_recurrent_decode_bf16", "kda_recurrent::kda_recurrent_decode_bf16_smem",
+  "kda_recurrent::kda_recurrent_decode_bf16_seq_reg_snap",
+]
+rows = [1, 4]
 pipeline.gdn_recurrence = { in = ["bf16", "f32", "f32"], state = "f32", compute = "f32", out = ["f32"] }
 op = [{ op = "gdn_recurrence" }]
 [[family.param]]
@@ -2275,6 +2304,15 @@ absent = "head"
 values = { decay = "channel" }
 how = "instantiation"
 files = ["kernels/gb10/common/kda_recurrent.cu"]
+# 2026-10-22: GLM-5.3-Flash NVFP4, TP=3 rank 0, nsys: the 2-row MTP verify (one snapshot).
+[[family.evidence]]
+point = { decay = "channel" }
+rows = [2]
+measurement = "glm-5.3-flash::kda_recurrent_decode_bf16_seq_reg_snap @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k"
+[[family.evidence]]
+point = { decay = "channel" }
+rows = [2]
+measurement = "glm-5.3-flash::kda_recurrent_decode_bf16_seq_reg_snap @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k"
 
 # 2026-10-08: The KDA output norm: RMSNorm over each head of the FP32 core, times the BF16 weight,
 # times sigmoid of the BF16 gate, BF16 out (kda_layer_ops.cu:40-63). One block per (row, head).
