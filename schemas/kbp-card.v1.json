@@ -191,7 +191,11 @@
     "CardKernels": {
       "additionalProperties": false,
       "properties": {
-        "bytes_deflated": {
+        "bytes_raw": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "bytes_stored": {
           "anyOf": [
             {
               "minimum": 0,
@@ -201,10 +205,6 @@
               "type": "null"
             }
           ]
-        },
-        "bytes_raw": {
-          "minimum": 0,
-          "type": "integer"
         },
         "count": {
           "minimum": 0,
@@ -249,7 +249,7 @@
         "residual",
         "kinds",
         "bytes_raw",
-        "bytes_deflated",
+        "bytes_stored",
         "sources"
       ],
       "type": "object"
@@ -439,7 +439,14 @@
     "CardSizes": {
       "additionalProperties": false,
       "properties": {
-        "body": {
+        "body_codec": {
+          "type": "string"
+        },
+        "body_raw": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "body_stored": {
           "minimum": 0,
           "type": "integer"
         },
@@ -467,7 +474,9 @@
         }
       },
       "required": [
-        "body",
+        "body_raw",
+        "body_stored",
+        "body_codec",
         "lite_file",
         "full_file"
       ],

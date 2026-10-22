@@ -17,9 +17,8 @@ use alloc::vec::Vec;
 
 use metrale_error::{Error, ErrorCode, error};
 
-use crate::frame::{
-    InlineArtifact, KernelSource, MAX_ARTIFACT, Opened, Unsigned, deflate, inflate,
-};
+use crate::codec::Codec;
+use crate::frame::{InlineArtifact, KernelSource, Opened, Unsigned};
 use crate::ids::ArtifactId;
 use crate::types::ModuleSpec;
 
@@ -48,14 +47,7 @@ fn inline_bytes(m: &ModuleSpec, payload: &[InlineArtifact], entry: u32) -> Resul
                 "inline"
             )
         })?;
-    let raw = inflate("inline artifact", &e.deflated, e.raw_len.min(MAX_ARTIFACT))?;
-    if u64::try_from(raw.len()).ok() != Some(e.raw_len) {
-        return Err(error!(
-            ErrorCode::BlueprintDecode,
-            "inline artifact", "length differs from its entry"
-        ));
-    }
-    Ok(raw)
+    e.unpack()
 }
 
 /// 2026-10-22: Every module's verified bytes, in module order. `internal` returns the
@@ -127,18 +119,13 @@ pub fn inline_all(modules: &[&[u8]]) -> Result<(Vec<KernelSource>, Vec<InlineArt
     for (i, bytes) in modules.iter().enumerate() {
         let entry =
             u32::try_from(i).map_err(|_| error!(ErrorCode::BlueprintFrame, "too many modules"))?;
-        payload.push(InlineArtifact {
-            artifact: ArtifactId::of(bytes),
-            raw_len: u64::try_from(bytes.len())
-                .map_err(|_| error!(ErrorCode::BlueprintFrame, "module length"))?,
-            deflated: deflate(bytes),
-        });
+        payload.push(InlineArtifact::pack(bytes, Codec::WRITE)?);
         sources.push(KernelSource::Inline { entry });
     }
     Ok((sources, payload))
 }
 
-/// 2026-10-22: The full form: every module's verified bytes inline, deflated.
+/// 2026-10-22: The full form: every module's verified bytes inline, under [`Codec::WRITE`].
 pub fn full<'b, F>(opened: &Opened, internal: F) -> Result<(Unsigned, Vec<InlineArtifact>), Error>
 where
     F: Fn(&str) -> Option<&'b [u8]>,

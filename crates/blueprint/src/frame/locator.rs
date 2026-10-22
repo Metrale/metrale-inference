@@ -12,8 +12,11 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use metrale_error::{Error, ErrorCode, error};
 use serde::{Deserialize, Serialize};
 
+use super::MAX_ARTIFACT;
+use crate::codec::Codec;
 use crate::ids::{ArtifactId, Sha256};
 use crate::types::Resources;
 
@@ -62,13 +65,46 @@ pub struct Unsigned {
     pub resources: Resources,
 }
 
-/// 2026-10-22: One inline artifact: its id, raw length and deflated bytes.
+/// 2026-10-22: One inline artifact: its id, raw length, codec and stored bytes. The id is
+/// over the raw bytes, so the codec never changes it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InlineArtifact {
     /// 2026-10-22: SHA-256 of the raw bytes.
     pub artifact: ArtifactId,
     /// 2026-10-22: Raw length.
     pub raw_len: u64,
-    /// 2026-10-22: Deflated bytes.
-    pub deflated: Vec<u8>,
+    /// 2026-10-22: How `stored` encodes the raw bytes.
+    pub codec: Codec,
+    /// 2026-10-22: Stored bytes.
+    pub stored: Vec<u8>,
+}
+
+impl InlineArtifact {
+    /// 2026-10-22: `raw` stored under `codec`.
+    pub fn pack(raw: &[u8], codec: Codec) -> Result<Self, Error> {
+        Ok(Self {
+            artifact: ArtifactId::of(raw),
+            raw_len: u64::try_from(raw.len())
+                .map_err(|_| error!(ErrorCode::BlueprintFrame, "artifact length"))?,
+            codec,
+            stored: codec.compress(raw),
+        })
+    }
+
+    /// 2026-10-22: The raw bytes, bounded by [`MAX_ARTIFACT`]. Not hash-checked: the caller
+    /// checks them against the signed module spec (`resolve`).
+    pub fn unpack(&self) -> Result<Vec<u8>, Error> {
+        self.codec
+            .decompress("inline artifact", &self.stored, self.raw_len, MAX_ARTIFACT)
+    }
+
+    /// 2026-10-22: The same raw bytes stored under `codec`.
+    pub fn recode(&self, codec: Codec) -> Result<Self, Error> {
+        Ok(Self {
+            artifact: self.artifact,
+            raw_len: self.raw_len,
+            codec,
+            stored: codec.compress(&self.unpack()?),
+        })
+    }
 }

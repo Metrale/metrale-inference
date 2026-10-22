@@ -1,55 +1,60 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-22: The fixed 72-byte `.kbp` header and its caps.
+//! 2026-10-22: The fixed 80-byte `.kbp` header and its caps.
 //!
 //! ```text
-//! [0..4]   magic "MKBP"      [4..6] KBP_FORMAT u16   [6..8] flags u16
-//! [8..16]  body_len          [16..48] body_sha256     [48..56] locator_len
-//! [56..64] payload_len       [64..72] sig_len         then body, locator, payload, sig
+//! [0..4]   magic "MKBP"   [4..6] KBP_FORMAT u16   [6] flags u8   [7] body codec id u8
+//! [8..16]  body_len (stored)        [16..24] body_raw_len      [24..56] body_sha256 (raw)
+//! [56..64] locator_len    [64..72] payload_len    [72..80] sig_len
+//! then body, locator, payload, sig
 //! ```
 //!
 //! Owner: blueprint.
 //! Invariants:
 //! - Little-endian; every length is `u64` and checked against its cap before anything is
 //!   sliced or allocated; the sections tile the file exactly (no trailing bytes).
-//! - Unknown flag bits and an unknown format are refused.
+//! - Unknown flag bits, an unknown codec id and an unknown format are refused.
+//! - `body_sha256` and the signed message cover the raw (decompressed, canonical) body, never
+//!   the stored bytes, so neither depends on the codec.
 
 use metrale_error::{Error, ErrorCode, error};
+
+use crate::codec::Codec;
 
 /// 2026-10-22: The file magic.
 pub const MAGIC: &[u8; 4] = b"MKBP";
 /// 2026-10-22: The framing version; bumps only on a framing change.
 pub const KBP_FORMAT: u16 = 1;
 /// 2026-10-22: The header length.
-pub const HEADER_LEN: usize = 72;
+pub const HEADER_LEN: usize = 80;
 /// 2026-10-22: Flag: the payload section carries inline artifacts.
-pub const FLAG_FULL: u16 = 1;
-/// 2026-10-22: Flag: the body section is deflated.
-pub const FLAG_COMPRESSED: u16 = 2;
-/// 2026-10-22: The flags the signature covers (`FLAG_FULL` is rewritten by lite/full).
-pub const SIGNED_FLAGS: u16 = FLAG_COMPRESSED;
+pub const FLAG_FULL: u8 = 1;
 
 /// 2026-10-22: Stored body cap (hard refusal, DESIGN.md §3).
 pub const MAX_BODY: u64 = 4 << 20;
-/// 2026-10-22: Inflated body cap: a deflate bomb stops here.
-pub const MAX_BODY_INFLATED: u64 = 64 << 20;
+/// 2026-10-22: Raw body cap: a decompression bomb stops here.
+pub const MAX_BODY_RAW: u64 = 64 << 20;
 /// 2026-10-22: Locator section cap.
 pub const MAX_LOCATOR: u64 = 16 << 20;
 /// 2026-10-22: Payload section cap (the 1 GiB full-file cap).
 pub const MAX_PAYLOAD: u64 = 1 << 30;
 /// 2026-10-22: Signature block cap.
 pub const MAX_SIG: u64 = 256 << 10;
-/// 2026-10-22: One inflated artifact's cap.
+/// 2026-10-22: One raw artifact's cap.
 pub const MAX_ARTIFACT: u64 = 256 << 20;
 
 /// 2026-10-22: The parsed header.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Header {
     /// 2026-10-22: Flag bits.
-    pub flags: u16,
-    /// 2026-10-22: Body section length.
+    pub flags: u8,
+    /// 2026-10-22: How the body section is stored.
+    pub codec: Codec,
+    /// 2026-10-22: Body section (stored) length.
     pub body_len: u64,
-    /// 2026-10-22: SHA-256 of the body section.
+    /// 2026-10-22: Raw body length.
+    pub body_raw_len: u64,
+    /// 2026-10-22: SHA-256 of the raw body.
     pub body_sha256: [u8; 32],
     /// 2026-10-22: Locator section length.
     pub locator_len: u64,
@@ -101,21 +106,24 @@ impl Header {
                 "KBP_FORMAT", format, KBP_FORMAT
             ));
         }
-        let flags = u16::from_le_bytes([file[6], file[7]]);
-        if flags & !(FLAG_FULL | FLAG_COMPRESSED) != 0 {
+        let flags = file[6];
+        if flags & !FLAG_FULL != 0 {
             return Err(error!(ErrorCode::BlueprintFrame, "unknown flag bits"));
         }
         let mut body_sha256 = [0u8; 32];
-        body_sha256.copy_from_slice(&file[16..48]);
+        body_sha256.copy_from_slice(&file[24..56]);
         let h = Header {
             flags,
+            codec: Codec::from_id(file[7])?,
             body_len: u64_at(file, 8),
+            body_raw_len: u64_at(file, 16),
             body_sha256,
-            locator_len: u64_at(file, 48),
-            payload_len: u64_at(file, 56),
-            sig_len: u64_at(file, 64),
+            locator_len: u64_at(file, 56),
+            payload_len: u64_at(file, 64),
+            sig_len: u64_at(file, 72),
         };
         cap("body", h.body_len, MAX_BODY)?;
+        cap("raw body", h.body_raw_len, MAX_BODY_RAW)?;
         cap("locator", h.locator_len, MAX_LOCATOR)?;
         cap("payload", h.payload_len, MAX_PAYLOAD)?;
         cap("signature", h.sig_len, MAX_SIG)?;
@@ -154,30 +162,32 @@ impl Header {
         ))
     }
 
-    /// 2026-10-22: The 72 header bytes.
+    /// 2026-10-22: The 80 header bytes.
     pub fn write(&self) -> [u8; HEADER_LEN] {
         let mut b = [0u8; HEADER_LEN];
         b[0..4].copy_from_slice(MAGIC);
         b[4..6].copy_from_slice(&KBP_FORMAT.to_le_bytes());
-        b[6..8].copy_from_slice(&self.flags.to_le_bytes());
+        b[6] = self.flags;
+        b[7] = self.codec.id();
         b[8..16].copy_from_slice(&self.body_len.to_le_bytes());
-        b[16..48].copy_from_slice(&self.body_sha256);
-        b[48..56].copy_from_slice(&self.locator_len.to_le_bytes());
-        b[56..64].copy_from_slice(&self.payload_len.to_le_bytes());
-        b[64..72].copy_from_slice(&self.sig_len.to_le_bytes());
+        b[16..24].copy_from_slice(&self.body_raw_len.to_le_bytes());
+        b[24..56].copy_from_slice(&self.body_sha256);
+        b[56..64].copy_from_slice(&self.locator_len.to_le_bytes());
+        b[64..72].copy_from_slice(&self.payload_len.to_le_bytes());
+        b[72..80].copy_from_slice(&self.sig_len.to_le_bytes());
         b
     }
 
-    /// 2026-10-22: The bytes the signature covers:
-    /// `"kbp-sig-v1\0" ‖ KBP_FORMAT ‖ signed flags ‖ body_len ‖ body_sha256 ‖ body`.
-    pub fn signed_message(&self, body: &[u8]) -> alloc::vec::Vec<u8> {
-        let mut m = alloc::vec::Vec::with_capacity(body.len() + 64);
+    /// 2026-10-22: The bytes the signature covers, given the raw body:
+    /// `"kbp-sig-v1\0" ‖ KBP_FORMAT ‖ body_raw_len ‖ body_sha256 ‖ raw body`. No flag, codec or
+    /// stored length is covered, so lite/full and any re-encoding keep the signature.
+    pub fn signed_message(&self, raw: &[u8]) -> alloc::vec::Vec<u8> {
+        let mut m = alloc::vec::Vec::with_capacity(raw.len() + 64);
         m.extend_from_slice(b"kbp-sig-v1\0");
         m.extend_from_slice(&KBP_FORMAT.to_le_bytes());
-        m.extend_from_slice(&(self.flags & SIGNED_FLAGS).to_le_bytes());
-        m.extend_from_slice(&self.body_len.to_le_bytes());
+        m.extend_from_slice(&self.body_raw_len.to_le_bytes());
         m.extend_from_slice(&self.body_sha256);
-        m.extend_from_slice(body);
+        m.extend_from_slice(raw);
         m
     }
 }

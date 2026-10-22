@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 
 use metrale_abstract_io::UnixMs;
+use metrale_blueprint::codec::Codec;
 use metrale_blueprint::frame::{self, KernelSource, Unsigned};
 use metrale_blueprint::ids::{ArtifactId, LineageId, Sha256};
 use metrale_blueprint::types::*;
@@ -301,9 +302,22 @@ impl World {
     }
 }
 
-/// 2026-10-22: Patch the header's body hash to match the (possibly edited) body.
-pub fn rehash(file: &mut [u8]) {
+/// 2026-10-22: [`World::signed`] with its body stored raw (`Codec::Stored`), so a test can
+/// edit body bytes directly.
+pub fn stored(w: &World) -> Vec<u8> {
+    frame::recode(&w.signed(), &w.policy(), Codec::Stored).unwrap()
+}
+
+/// 2026-10-22: The body section's range.
+pub fn body_range(file: &[u8]) -> std::ops::Range<usize> {
     let body_len = u64::from_le_bytes(file[8..16].try_into().unwrap()) as usize;
-    let h = Sha256::of(&[&file[72..72 + body_len]]);
-    file[16..48].copy_from_slice(&h.0);
+    frame::HEADER_LEN..frame::HEADER_LEN + body_len
+}
+
+/// 2026-10-22: Patch the header's body hash to match the (possibly edited) body of a
+/// `Codec::Stored` file, whose stored bytes are its raw bytes.
+pub fn rehash(file: &mut [u8]) {
+    assert_eq!(file[7], Codec::Stored.id(), "rehash needs a stored body");
+    let h = Sha256::of(&[&file[body_range(file)]]);
+    file[24..56].copy_from_slice(&h.0);
 }

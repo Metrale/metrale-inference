@@ -67,3 +67,4 @@
 0x060d KernelSourceNotInPhase
 0x060e BlueprintRecipe
 0x060f BlueprintKey
+0x0610 BlueprintCodec

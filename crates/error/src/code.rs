@@ -205,5 +205,8 @@ error_registry! {
         BlueprintRecipe = 0x060E => "recipe {} cannot be projected to a blueprint: {}",
         /// 2026-10-22: A key file or seed that is malformed: (what, reason).
         BlueprintKey = 0x060F => "key {}: {}",
+        /// 2026-10-22: A stored section that does not decompress to its declared raw length:
+        /// (section, codec, reason).
+        BlueprintCodec = 0x0610 => "blueprint {} does not decompress under {}: {}",
     }
 }

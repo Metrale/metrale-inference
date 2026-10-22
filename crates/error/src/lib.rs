@@ -18,7 +18,7 @@
 //! | `0x0300–0x03FF` | serve-identity and host-probe (bench support) | serve env `0x0300–0x030F` |
 //! | `0x0400–0x04FF` | device settings projections (`metrale-settings` `groups::device*`) | out of range `0x0400` |
 //! | `0x0500–0x05FF` | KV-cache codec registry and plan (`metrale-kv-codec`) | unknown codec `0x0500`, pair `0x0501`, transition `0x0502`, capability `0x0503`, spill `0x0504`, plan `0x0505`, ladder `0x0506`, ABI `0x0507`, indexer geometry `0x0508`, host dequant `0x0509`, codec feature `0x050a` |
-//! | `0x0600–0x06FF` | blueprints (`metrale-blueprint`, `metrale-blueprint-trust`) | framing `0x0600–0x0603`, trust and signatures `0x0604–0x0609`, decode `0x060a`, kernel resolution `0x060b–0x060d`, recipe projection `0x060e`, keys `0x060f` |
+//! | `0x0600–0x06FF` | blueprints (`metrale-blueprint`, `metrale-blueprint-trust`) | framing `0x0600–0x0603`, trust and signatures `0x0604–0x0609`, decode `0x060a`, kernel resolution `0x060b–0x060d`, recipe projection `0x060e`, keys `0x060f`, codec `0x0610` |
 //!
 //! A code is never renumbered or removed; `codes.lock` and its test enforce that.
 //!

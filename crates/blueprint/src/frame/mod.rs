@@ -5,10 +5,13 @@
 //!
 //! Owner: blueprint.
 //! Invariants:
-//! - [`open`] runs: header → body hash → certificate chain → both signatures → only then any
-//!   postcard decode of the body, locator or payload. Nothing but the fixed-width header is
-//!   interpreted before the signature verifies (the signature block itself is decoded to be
-//!   checked).
+//! - [`open`] runs: header → bounded decompression of the body (`crate::codec`; not a decode:
+//!   the raw length is declared and capped) → raw body hash → certificate chain → both
+//!   signatures → only then any postcard decode of the body, locator or payload. Nothing but
+//!   the fixed-width header is interpreted before the signature verifies (the signature block
+//!   itself is decoded to be checked).
+//! - The body hash, the signed message and the [`BlueprintId`] cover the raw canonical body,
+//!   never the stored bytes: the codec is outside identity ([`recode`]).
 //! - [`rewrite`] copies the body and signature bytes verbatim and replaces only the locator
 //!   and payload sections, so lite and full share the [`BlueprintId`] and the signature.
 //! - The body is canonical: a decoded body re-encodes to the bytes it came from.
@@ -16,6 +19,7 @@
 mod header;
 mod locator;
 
+use alloc::borrow::Cow;
 use alloc::vec::Vec;
 
 use metrale_blueprint_trust::{
@@ -26,16 +30,14 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 pub use header::{
-    FLAG_COMPRESSED, FLAG_FULL, HEADER_LEN, Header, KBP_FORMAT, MAX_ARTIFACT, MAX_BODY,
-    MAX_BODY_INFLATED, MAX_LOCATOR, MAX_PAYLOAD, MAX_SIG, Sections,
+    FLAG_FULL, HEADER_LEN, Header, KBP_FORMAT, MAX_ARTIFACT, MAX_BODY, MAX_BODY_RAW, MAX_LOCATOR,
+    MAX_PAYLOAD, MAX_SIG, Sections,
 };
 pub use locator::{InlineArtifact, KernelSource, Unsigned};
 
+use crate::codec::Codec;
 use crate::ids::{BlueprintId, Sha256};
 use crate::types::{BODY_SCHEMA, Blueprint};
-
-/// 2026-10-22: The deflate level every writer uses; inflating does not depend on it.
-const DEFLATE_LEVEL: u8 = 9;
 
 pub(crate) fn encode<T: Serialize>(what: &'static str, v: &T) -> Result<Vec<u8>, Error> {
     postcard::to_allocvec(v)
@@ -50,47 +52,68 @@ pub(crate) fn decode<T: DeserializeOwned>(what: &'static str, bytes: &[u8]) -> R
     }
 }
 
-pub(crate) fn deflate(bytes: &[u8]) -> Vec<u8> {
-    miniz_oxide::deflate::compress_to_vec(bytes, DEFLATE_LEVEL)
-}
-
-pub(crate) fn inflate(what: &'static str, bytes: &[u8], limit: u64) -> Result<Vec<u8>, Error> {
-    let lim = usize::try_from(limit).unwrap_or(usize::MAX);
-    miniz_oxide::inflate::decompress_to_vec_with_limit(bytes, lim).map_err(|_| {
-        error!(
-            ErrorCode::BlueprintDecode,
-            what, "deflate stream is corrupt or over its cap"
-        )
-    })
-}
-
 fn len64(n: usize) -> u64 {
     u64::try_from(n).unwrap_or(u64::MAX)
 }
 
-fn assemble(flags: u16, body: &[u8], locator: &[u8], payload: &[u8], sig: &[u8]) -> Vec<u8> {
+/// 2026-10-22: The body section as written: stored bytes, their codec, and the raw body's
+/// length and hash.
+struct Body<'a> {
+    stored: Cow<'a, [u8]>,
+    codec: Codec,
+    raw_len: u64,
+    raw_sha256: [u8; 32],
+}
+
+impl<'a> Body<'a> {
+    /// 2026-10-22: `raw` stored under `codec`.
+    fn encode(raw: &[u8], codec: Codec) -> Self {
+        Self {
+            stored: Cow::Owned(codec.compress(raw)),
+            codec,
+            raw_len: len64(raw.len()),
+            raw_sha256: Sha256::of(&[raw]).0,
+        }
+    }
+
+    /// 2026-10-22: An existing file's body section, copied byte for byte.
+    fn verbatim(h: &Header, stored: &'a [u8]) -> Self {
+        Self {
+            stored: Cow::Borrowed(stored),
+            codec: h.codec,
+            raw_len: h.body_raw_len,
+            raw_sha256: h.body_sha256,
+        }
+    }
+}
+
+fn assemble(flags: u8, body: Body<'_>, locator: &[u8], payload: &[u8], sig: &[u8]) -> Vec<u8> {
+    let stored = &body.stored[..];
     let h = Header {
         flags,
-        body_len: len64(body.len()),
-        body_sha256: Sha256::of(&[body]).0,
+        codec: body.codec,
+        body_len: len64(stored.len()),
+        body_raw_len: body.raw_len,
+        body_sha256: body.raw_sha256,
         locator_len: len64(locator.len()),
         payload_len: len64(payload.len()),
         sig_len: len64(sig.len()),
     };
     let mut out =
-        Vec::with_capacity(HEADER_LEN + body.len() + locator.len() + payload.len() + sig.len());
+        Vec::with_capacity(HEADER_LEN + stored.len() + locator.len() + payload.len() + sig.len());
     out.extend_from_slice(&h.write());
-    for s in [body, locator, payload, sig] {
+    for s in [stored, locator, payload, sig] {
         out.extend_from_slice(s);
     }
     out
 }
 
-fn full_flag(payload: &[InlineArtifact]) -> u16 {
+fn full_flag(payload: &[InlineArtifact]) -> u8 {
     if payload.is_empty() { 0 } else { FLAG_FULL }
 }
 
-/// 2026-10-22: An unsigned file: the deflated canonical body, the locator table and payload.
+/// 2026-10-22: An unsigned file: the canonical body stored under [`Codec::WRITE`], the locator
+/// table and payload.
 pub fn encode_unsigned(
     bp: &Blueprint,
     unsigned: &Unsigned,
@@ -102,19 +125,22 @@ pub fn encode_unsigned(
             "the locator table must have one source per module"
         ));
     }
-    let body = deflate(&encode("body", bp)?);
-    let flags = FLAG_COMPRESSED | full_flag(payload);
     Ok(assemble(
-        flags,
-        &body,
+        full_flag(payload),
+        Body::encode(&encode("body", bp)?, Codec::WRITE),
         &encode("locator", unsigned)?,
         &encode("payload", &payload)?,
         &[],
     ))
 }
 
-fn check_body_hash(h: &Header, body: &[u8]) -> Result<(), Error> {
-    let found = Sha256::of(&[body]);
+fn raw_body(h: &Header, stored: &[u8]) -> Result<Vec<u8>, Error> {
+    h.codec
+        .decompress("body", stored, h.body_raw_len, MAX_BODY_RAW)
+}
+
+fn check_body_hash(h: &Header, raw: &[u8]) -> Result<(), Error> {
+    let found = Sha256::of(&[raw]);
     if found.0 != h.body_sha256 {
         return Err(error!(
             ErrorCode::BlueprintBodyHash,
@@ -129,16 +155,17 @@ fn check_body_hash(h: &Header, body: &[u8]) -> Result<(), Error> {
 /// The body hash is checked first; the old signature block, if any, is replaced.
 pub fn sign(file: &[u8], signer: &Signer, chain: Vec<SignedCert>) -> Result<Vec<u8>, Error> {
     let (h, s) = Header::parse(file)?;
-    let body = &file[s.body.clone()];
-    check_body_hash(&h, body)?;
+    let stored = &file[s.body.clone()];
+    let raw = raw_body(&h, stored)?;
+    check_body_hash(&h, &raw)?;
     let block = SigBlock {
         kid: signer.kid().clone(),
         chain,
-        sig: signer.sign(Purpose::KbpBody, &h.signed_message(body))?,
+        sig: signer.sign(Purpose::KbpBody, &h.signed_message(&raw))?,
     };
     Ok(assemble(
         h.flags,
-        body,
+        Body::verbatim(&h, stored),
         &file[s.locator],
         &file[s.payload],
         &encode("signature block", &block)?,
@@ -185,13 +212,8 @@ pub struct Opened {
     pub signer: Verified,
 }
 
-fn decode_body(h: &Header, body: &[u8]) -> Result<Blueprint, Error> {
-    let raw = if h.flags & FLAG_COMPRESSED != 0 {
-        inflate("body", body, MAX_BODY_INFLATED)?
-    } else {
-        body.to_vec()
-    };
-    let schema = postcard::take_from_bytes::<u32>(&raw)
+fn decode_body(raw: &[u8]) -> Result<Blueprint, Error> {
+    let schema = postcard::take_from_bytes::<u32>(raw)
         .map_err(|_| error!(ErrorCode::BlueprintDecode, "body", "no schema"))?
         .0;
     if schema > BODY_SCHEMA {
@@ -200,7 +222,7 @@ fn decode_body(h: &Header, body: &[u8]) -> Result<Blueprint, Error> {
             "BODY_SCHEMA", schema, BODY_SCHEMA
         ));
     }
-    let bp: Blueprint = decode("body", &raw)?;
+    let bp: Blueprint = decode("body", raw)?;
     if encode("body", &bp)? != raw {
         return Err(error!(ErrorCode::BlueprintDecode, "body", "not canonical"));
     }
@@ -210,10 +232,10 @@ fn decode_body(h: &Header, body: &[u8]) -> Result<Blueprint, Error> {
 /// 2026-10-22: Verify `file` under `policy`, then decode it. See the module invariants.
 pub fn open(file: &[u8], policy: &TrustPolicy<'_>) -> Result<Opened, Error> {
     let (h, s) = Header::parse(file)?;
-    let body = &file[s.body.clone()];
-    check_body_hash(&h, body)?;
-    let signer = verify_body(policy, &h, body, &file[s.sig])?;
-    let blueprint = decode_body(&h, body)?;
+    let raw = raw_body(&h, &file[s.body.clone()])?;
+    check_body_hash(&h, &raw)?;
+    let signer = verify_body(policy, &h, &raw, &file[s.sig])?;
+    let blueprint = decode_body(&raw)?;
     let unsigned: Unsigned = decode("locator", &file[s.locator])?;
     let payload: Vec<InlineArtifact> = decode("payload", &file[s.payload])?;
     if unsigned.sources.len() != blueprint.kernels.modules.len() {
@@ -229,7 +251,7 @@ pub fn open(file: &[u8], policy: &TrustPolicy<'_>) -> Result<Opened, Error> {
         ));
     }
     Ok(Opened {
-        id: BlueprintId::of_body(body),
+        id: BlueprintId::of_body(&raw),
         header: h,
         blueprint,
         unsigned,
@@ -254,11 +276,30 @@ pub fn rewrite(
         ));
     }
     let (h, s) = Header::parse(file)?;
-    let flags = (h.flags & !FLAG_FULL) | full_flag(payload);
     Ok(assemble(
-        flags,
-        &file[s.body],
+        full_flag(payload),
+        Body::verbatim(&h, &file[s.body]),
         &encode("locator", unsigned)?,
+        &encode("payload", &payload)?,
+        &file[s.sig],
+    ))
+}
+
+/// 2026-10-22: Verify `file`, then write it with its body and every inline artifact stored
+/// under `codec`; the locator and signature bytes are copied verbatim. The id and the signature
+/// do not change, because neither covers stored bytes.
+pub fn recode(file: &[u8], policy: &TrustPolicy<'_>, codec: Codec) -> Result<Vec<u8>, Error> {
+    let opened = open(file, policy)?;
+    let payload = opened
+        .payload
+        .iter()
+        .map(|a| a.recode(codec))
+        .collect::<Result<Vec<_>, _>>()?;
+    let (h, s) = Header::parse(file)?;
+    Ok(assemble(
+        h.flags,
+        Body::encode(&encode("body", &opened.blueprint)?, codec),
+        &file[s.locator],
         &encode("payload", &payload)?,
         &file[s.sig],
     ))

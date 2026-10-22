@@ -105,14 +105,16 @@ fn summary(o: &Opened, file_len: usize) -> String {
     let bp = &o.blueprint;
     let full = o.header.flags & frame::FLAG_FULL != 0;
     let mut s = format!(
-        "blueprint {}\n  name      {} (revision {}, lineage {})\n  form      {} ({} bytes, body {} bytes)\n  signed    {} under {} ({})\n",
+        "blueprint {}\n  name      {} (revision {}, lineage {})\n  form      {} ({} bytes, body {} bytes raw, {} stored under {})\n  signed    {} under {} ({})\n",
         o.id,
         bp.name,
         bp.revision,
         bp.lineage.0.hex(),
         if full { "full" } else { "lite" },
         file_len,
+        o.header.body_raw_len,
         o.header.body_len,
+        o.header.codec.name(),
         o.signer.kid,
         o.signer.anchor,
         o.signer.cert.keys.suite.name(),

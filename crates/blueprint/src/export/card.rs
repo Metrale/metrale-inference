@@ -99,8 +99,8 @@ json_struct! {
         pub kinds: BTreeMap<String, u64>,
         /// 2026-10-22: Raw module bytes.
         pub bytes_raw: u64,
-        /// 2026-10-22: Inline payload bytes, for a full file.
-        pub bytes_deflated: Option<u64>,
+        /// 2026-10-22: Inline payload bytes as stored (after the codec), for a full file.
+        pub bytes_stored: Option<u64>,
         /// 2026-10-22: Modules by source.
         pub sources: BTreeMap<String, u64>,
     }
@@ -135,8 +135,12 @@ json_struct! {
 json_struct! {
     /// 2026-10-22: Sizes in bytes; a file reports its own form, the other is null.
     pub struct CardSizes {
-        /// 2026-10-22: The body section.
-        pub body: u64,
+        /// 2026-10-22: The raw canonical body (what the id and signature cover).
+        pub body_raw: u64,
+        /// 2026-10-22: The body section as stored.
+        pub body_stored: u64,
+        /// 2026-10-22: The body's codec (`stored`, `deflate`).
+        pub body_codec: String,
         /// 2026-10-22: The lite file.
         pub lite_file: Option<u64>,
         /// 2026-10-22: The full file.
@@ -315,7 +319,7 @@ pub fn card(o: &Opened, ctx: &ExportContext) -> Card {
             residual: n(k.specs.iter().filter(|s| s.family.is_none()).count()),
             kinds,
             bytes_raw: k.modules.iter().map(|m| m.len).sum(),
-            bytes_deflated: full.then(|| o.payload.iter().map(|p| n(p.deflated.len())).sum()),
+            bytes_stored: full.then(|| o.payload.iter().map(|p| n(p.stored.len())).sum()),
             sources,
         },
         plans: bp
@@ -338,7 +342,9 @@ pub fn card(o: &Opened, ctx: &ExportContext) -> Card {
             })
             .collect(),
         sizes: CardSizes {
-            body: o.header.body_len,
+            body_raw: o.header.body_raw_len,
+            body_stored: o.header.body_len,
+            body_codec: String::from(o.header.codec.name()),
             lite_file: (!full).then_some(ctx.file_len),
             full_file: full.then_some(ctx.file_len),
         },

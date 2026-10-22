@@ -7,7 +7,8 @@ mod common;
 
 use common::*;
 use metrale_abstract_io::UnixMs;
-use metrale_blueprint::frame::{self, KernelSource, MAX_BODY, Opened};
+use metrale_blueprint::codec::Codec;
+use metrale_blueprint::frame::{self, InlineArtifact, KernelSource, MAX_BODY, Opened};
 use metrale_blueprint::resolve;
 use metrale_blueprint::types::Blueprint;
 use metrale_blueprint_trust::{
@@ -75,8 +76,10 @@ fn lite_and_full_share_the_id_and_the_signature() {
 #[test]
 fn a_flipped_body_byte_is_a_body_hash_error() {
     let w = world();
-    let mut f = w.signed();
-    f[80] ^= 1;
+    let mut f = stored(&w);
+    assert!(open(&w, &f).is_ok(), "the control opens");
+    let at = body_range(&f).start + 8;
+    f[at] ^= 1;
     assert_eq!(open(&w, &f).err(), Some(ErrorCode::BlueprintBodyHash));
 }
 
@@ -85,9 +88,9 @@ fn a_flipped_body_byte_is_a_body_hash_error() {
 #[test]
 fn a_malformed_body_under_a_bad_signature_reports_the_signature() {
     let w = world();
-    let mut f = w.signed();
-    let body_len = u64::from_le_bytes(f[8..16].try_into().unwrap()) as usize;
-    for b in &mut f[72..72 + body_len] {
+    let mut f = stored(&w);
+    let body = body_range(&f);
+    for b in &mut f[body] {
         *b = 0xff;
     }
     rehash(&mut f);
@@ -110,13 +113,25 @@ fn resign(w: &World, f: &[u8], purpose: Purpose) -> Vec<u8> {
         chain: vec![w.cert()],
         sig: w
             .leaf
-            .sign(purpose, &h.signed_message(&f[s.body.clone()]))
+            .sign(
+                purpose,
+                &h.signed_message(
+                    &h.codec
+                        .decompress(
+                            "body",
+                            &f[s.body.clone()],
+                            h.body_raw_len,
+                            frame::MAX_BODY_RAW,
+                        )
+                        .unwrap(),
+                ),
+            )
             .unwrap(),
     };
     let sig = postcard::to_allocvec(&block).unwrap();
     let mut out = f[..s.sig.start].to_vec();
     out.extend_from_slice(&sig);
-    out[64..72].copy_from_slice(&(sig.len() as u64).to_le_bytes());
+    out[72..80].copy_from_slice(&(sig.len() as u64).to_le_bytes());
     out
 }
 
@@ -245,7 +260,7 @@ fn truncated_trailing_and_oversized_files_are_refused() {
         "body over its cap"
     );
     let mut huge = f.clone();
-    huge[56..64].copy_from_slice(&u64::MAX.to_le_bytes());
+    huge[64..72].copy_from_slice(&u64::MAX.to_le_bytes());
     assert_eq!(
         open(&w, &huge).err(),
         Some(ErrorCode::BlueprintTooLarge),
@@ -281,8 +296,10 @@ fn a_tampered_inline_kernel_is_a_hash_mismatch() {
     let (u, mut p) = resolve::full(&o, internal).unwrap();
     let mut evil = MOD_A.to_vec();
     evil.extend_from_slice(b"// planted\n");
-    p[0].deflated = miniz_oxide::deflate::compress_to_vec(&evil, 6);
-    p[0].raw_len = evil.len() as u64;
+    p[0] = InlineArtifact {
+        artifact: p[0].artifact,
+        ..InlineArtifact::pack(&evil, Codec::WRITE).unwrap()
+    };
     let full = frame::rewrite(&lite, &w.policy(), &u, &p).unwrap();
     let f = open(&w, &full).expect("the payload is unsigned, so the file still opens");
     let err = resolve::resolve_modules(&f, |_| None).unwrap_err();
