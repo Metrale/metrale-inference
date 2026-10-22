@@ -385,5 +385,8 @@ fn a_legacy_loop_runs_unless_its_lever_is_stated() {
     l.unless.insert("lever".into(), "on".into());
     assert!(!l.runs_under(&on));
     assert!(l.runs_under(&off));
-    assert!(l.runs_under(&BTreeMap::new()), "an unstated lever is not the lifting arm");
+    assert!(
+        l.runs_under(&BTreeMap::new()),
+        "an unstated lever is not the lifting arm"
+    );
 }

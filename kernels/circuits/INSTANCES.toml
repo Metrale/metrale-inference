@@ -180,7 +180,8 @@ settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "nvf
 #   glm_router_rows (METRALE_GLM_ROUTER_ROWS=1), glm_router_topk_rank (METRALE_GLM_ROUTER_TOPK_RANK=1),
 #   glm_moe_w4a4_grouped (METRALE_GLM_MOE_W4A4_GROUPED=1) and glm_moe_expert_layout (the recipe's
 #   `moe_expert_layout: tp`), glm_kda_row_reg, glm_kda_rows_reg, glm_kda_seq_rows (`decode`) and
-#   glm_kda_verify_tokens (METRALE_GLM_KDA_ROW_REG, _ROWS_REG, _SEQ_ROWS, _VERIFY_TOKENS). Their code defaults are kernels/circuits/glm5_next.config.toml [policy].
+#   glm_kda_verify_tokens (METRALE_GLM_KDA_ROW_REG, _ROWS_REG, _SEQ_ROWS, _VERIFY_TOKENS), glm_w4a16_gemv_seg,
+#   glm_w4a16_gemv_rows (`2`) and glm_w4a16_seg (`fuse`) (METRALE_GLM_W4A16_GEMV_SEG, _GEMV_ROWS, _SEG). Their code defaults are kernels/circuits/glm5_next.config.toml [policy].
 [[instance]]
 recipe = "glm-5.3/glm-5.3-flash-nvfp4-tp3-512k"
 checkpoint = "nvidia/GLM-5.3-Flash-NVFP4"
@@ -194,7 +195,7 @@ plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], 
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", glm_mhc_fused = "on", glm_router_rows = "on", glm_router_topk_rank = "on", glm_moe_w4a4_grouped = "on", glm_moe_expert_layout = "tp", glm_kda_row_reg = "on", glm_kda_rows_reg = "on", glm_kda_seq_rows = "decode", glm_kda_verify_tokens = "on" }
+settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", glm_mhc_fused = "on", glm_router_rows = "on", glm_router_topk_rank = "on", glm_moe_w4a4_grouped = "on", glm_moe_expert_layout = "tp", glm_kda_row_reg = "on", glm_kda_rows_reg = "on", glm_kda_seq_rows = "decode", glm_kda_verify_tokens = "on", glm_w4a16_gemv_seg = "on", glm_w4a16_gemv_rows = "2", glm_w4a16_seg = "fuse" }
 
 # 2026-10-08: nvidia/GLM-5.3-Flash-NVFP4 (`glm5_next`), the GLM campaign's model, built by the
 # `new-model` method. The recipe id is the planned one: no recipe serves this checkpoint yet, and
@@ -226,7 +227,7 @@ plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], 
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", glm_mhc_fused = "off", glm_router_rows = "off", glm_router_topk_rank = "off", glm_moe_w4a4_grouped = "off", glm_moe_expert_layout = "ep", glm_kda_row_reg = "off", glm_kda_rows_reg = "off", glm_kda_seq_rows = "off", glm_kda_verify_tokens = "off" }
+settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", glm_mhc_fused = "off", glm_router_rows = "off", glm_router_topk_rank = "off", glm_moe_w4a4_grouped = "off", glm_moe_expert_layout = "ep", glm_kda_row_reg = "off", glm_kda_rows_reg = "off", glm_kda_seq_rows = "off", glm_kda_verify_tokens = "off", glm_w4a16_gemv_seg = "off", glm_w4a16_gemv_rows = "off", glm_w4a16_seg = "off" }
 
 # 2026-10-18: deepseek-ai/DeepSeek-V4.1-Flash-1017 (`deepseek_v41`), the three-node campaign's
 # model. The recipe id is the planned one: no recipe serves this checkpoint yet, and the circuit

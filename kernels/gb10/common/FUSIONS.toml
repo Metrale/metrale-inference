@@ -4246,7 +4246,7 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 120
-cite = "crates/model-arch/src/glm5next_mlp/forward/dense.rs:62-114 (gate, up, the clamp + SiLU, down; proj_group declines with glm_w4a16_seg unset); crates/model-arch/src/glm5next_w4a16_dense.rs:350-362"
+cite = "crates/model-arch/src/glm5next_mlp/forward/dense.rs:62-125 (gate, up, the clamp + SiLU, down; proj_group declines with glm_w4a16_seg unset); crates/model-arch/src/glm5next_w4a16_dense.rs:350-362"
 
 [[rule]]
 id = "glm_w4a16_shared_tc_rows"
@@ -4268,7 +4268,266 @@ rows = [2, 16]
 modes = ["multi_seq", "verify"]
 numerics = "reference"
 priority = 120
-cite = "crates/model-arch/src/glm5next_mlp/forward/dense.rs:62-114; crates/model-arch/src/glm5next_w4a16_dense.rs:364-404"
+cite = "crates/model-arch/src/glm5next_mlp/forward/dense.rs:62-125; crates/model-arch/src/glm5next_w4a16_dense.rs:364-404"
+
+# 2026-10-22: The recipe arms of the GLM W4A16 levers (METRALE_GLM_W4A16_GEMV_SEG=1,
+# _GEMV_ROWS=2, _SEG=fuse; `--dense-quantization w4a16`). One row (glm_w4a16_gemv_seg) and two rows
+# (with glm_w4a16_gemv_rows 2) run `w4a16_gemv_pipe` (glm_w4a16_gemv_pipe, default on): the KDA
+# q|k|v|f_a|b|g_a as one launch (`group_of_six`), the shared expert's gate|up as one; KDA o and the
+# shared down alone (o keeps `w4a16_gemv` at one row, K 2816 >= 2048). From 3 rows (2 without the
+# GEMV tier) `glm_w4a16_seg = fuse` runs the segmented row tile `w4a16_tc_rows_seg_16_k1`
+# (split 1 under fuse): q|k|v, f_a|b|g_a and gate|up as one launch each, o and down as one segment.
+# KDA o is matched through its output norm (`kda_o_norm_gated_bf16`, launched as before), as a
+# lone `o` would also match Qwen3.8's GDN out projection.
+
+[[rule]]
+id = "glm_w4a16_pipe_kda_six_1row"
+pattern = [
+  { op = "linear", role = "q", weight = "nvfp4/g16", input = "bf16", layer_kind = "linear_attention", keep = true },
+  { op = "linear", role = "k", weight = "nvfp4/g16", input = "bf16", layer_kind = "linear_attention", keep = true, sibling = true },
+  { op = "linear", role = "v", weight = "nvfp4/g16", input = "bf16", layer_kind = "linear_attention", keep = true, sibling = true },
+  { op = "linear", role = "kda_f_a", weight = "nvfp4/g16", input = "bf16", layer_kind = "linear_attention", keep = true, sibling = true },
+  { op = "linear", role = "kda_b", weight = "nvfp4/g16", input = "bf16", layer_kind = "linear_attention", keep = true, sibling = true },
+  { op = "linear", role = "kda_g_a", weight = "nvfp4/g16", input = "bf16", layer_kind = "linear_attention", sibling = true },
+]
+kernels = [
+  { module = "w4a16_gemv_pipe", func = "w4a16_gemv_pipe_m1" },
+]
+repeat = "once"
+emitter = "glm_w4a16"
+rows = [1, 1]
+modes = ["decode"]
+when = { glm_w4a16_gemv_seg = "on" }
+numerics = "reference"
+priority = 130
+cite = "crates/model-arch/src/glm5next_w4a16_seg.rs:246-256 (seg_gemv: one row, or 2..=gemv_rows rows; pipe_rows: glm_w4a16_gemv_pipe default on, crates/settings/src/groups/kernels.rs:164); crates/model-arch/src/glm5next_w4a16_dense.rs:446-495 (group_of_six, proj_group_registered); crates/model-layers/src/layers/ops/w4a16_gemv_pipe.rs:47-53 (w4a16_gemv_pipe_m1, _m2); crates/model-arch/src/glm5next_kda/mod.rs:291-313 (the six projections of one row as one group)"
+
+[[rule]]
+id = "glm_w4a16_pipe_shared_1row"
+pattern = [
+  { op = "linear", role = "shared_gate_up", weight = "nvfp4/g16", input = "bf16" },
+  { op = "swiglu_clamp", local = "shared_clamp", holds = "f32" },
+  { op = "silu_mul", local = "shared_act" },
+  { op = "linear", role = "shared_down", weight = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a16_gemv_pipe", func = "w4a16_gemv_pipe_m1" },
+  { module = "glm5next_ffn", func = "glm5next_swiglu_clamp" },
+  { module = "w4a16_gemv_pipe", func = "w4a16_gemv_pipe_m1" },
+]
+repeat = "once"
+emitter = "glm_w4a16"
+rows = [1, 1]
+modes = ["decode"]
+when = { glm_w4a16_gemv_seg = "on" }
+numerics = "reference"
+priority = 130
+cite = "crates/model-arch/src/glm5next_w4a16_seg.rs:246-256 (seg_gemv: one row, or 2..=gemv_rows rows; pipe_rows: glm_w4a16_gemv_pipe default on, crates/settings/src/groups/kernels.rs:164); crates/model-arch/src/glm5next_w4a16_dense.rs:446-495 (group_of_six, proj_group_registered); crates/model-layers/src/layers/ops/w4a16_gemv_pipe.rs:47-53 (w4a16_gemv_pipe_m1, _m2); crates/model-arch/src/glm5next_mlp/forward/dense.rs:62-125 (gate|up one group, the clamp + SiLU, down alone: K 768 < 2048, crates/model-arch/src/glm5next_w4a16_dense.rs:332-339)"
+
+[[rule]]
+id = "glm_w4a16_pipe_kda_six_2rows"
+pattern = [
+  { op = "linear", role = "q", weight = "nvfp4/g16", input = "bf16", layer_kind = "linear_attention", keep = true },
+  { op = "linear", role = "k", weight = "nvfp4/g16", input = "bf16", layer_kind = "linear_attention", keep = true, sibling = true },
+  { op = "linear", role = "v", weight = "nvfp4/g16", input = "bf16", layer_kind = "linear_attention", keep = true, sibling = true },
+  { op = "linear", role = "kda_f_a", weight = "nvfp4/g16", input = "bf16", layer_kind = "linear_attention", keep = true, sibling = true },
+  { op = "linear", role = "kda_b", weight = "nvfp4/g16", input = "bf16", layer_kind = "linear_attention", keep = true, sibling = true },
+  { op = "linear", role = "kda_g_a", weight = "nvfp4/g16", input = "bf16", layer_kind = "linear_attention", sibling = true },
+]
+kernels = [
+  { module = "w4a16_gemv_pipe", func = "w4a16_gemv_pipe_m2" },
+]
+repeat = "once"
+emitter = "glm_w4a16"
+rows = [2, 2]
+modes = ["multi_seq", "verify"]
+when = { glm_w4a16_gemv_seg = "on", glm_w4a16_gemv_rows = "2" }
+numerics = "reference"
+priority = 130
+cite = "crates/model-arch/src/glm5next_w4a16_seg.rs:246-256 (seg_gemv: one row, or 2..=gemv_rows rows; pipe_rows: glm_w4a16_gemv_pipe default on, crates/settings/src/groups/kernels.rs:164); crates/model-arch/src/glm5next_w4a16_dense.rs:446-495 (group_of_six, proj_group_registered); crates/model-layers/src/layers/ops/w4a16_gemv_pipe.rs:47-53 (w4a16_gemv_pipe_m1, _m2); crates/model-arch/src/glm5next_kda/mod.rs:291-313 (the six projections as one group)"
+
+[[rule]]
+id = "glm_w4a16_pipe_kda_o_2rows"
+pattern = [
+  { op = "gated_rms_norm", params = { gate_act = "sigmoid" } },
+  { op = "linear", role = "o", weight = "nvfp4/g16", input = "bf16", layer_kind = "linear_attention" },
+]
+kernels = [
+  { module = "kda_layer_ops", func = "kda_o_norm_gated_bf16" },
+  { module = "w4a16_gemv_pipe", func = "w4a16_gemv_pipe_m2" },
+]
+repeat = "once"
+emitter = "glm_w4a16"
+rows = [2, 2]
+modes = ["multi_seq", "verify"]
+when = { glm_w4a16_gemv_seg = "on", glm_w4a16_gemv_rows = "2" }
+numerics = "reference"
+priority = 130
+cite = "crates/model-arch/src/glm5next_w4a16_seg.rs:246-256 (seg_gemv: one row, or 2..=gemv_rows rows; pipe_rows: glm_w4a16_gemv_pipe default on, crates/settings/src/groups/kernels.rs:164); crates/model-arch/src/glm5next_w4a16_dense.rs:446-495 (group_of_six, proj_group_registered); crates/model-layers/src/layers/ops/w4a16_gemv_pipe.rs:47-53 (w4a16_gemv_pipe_m1, _m2); crates/model-arch/src/glm5next_w4a16_dense.rs:364-375 (a lone 2-row projection of any K on the pipe); crates/model-arch/src/glm5next_kda/mod.rs:439-452 (the output norm, then o)"
+
+[[rule]]
+id = "glm_w4a16_pipe_shared_2rows"
+pattern = [
+  { op = "linear", role = "shared_gate_up", weight = "nvfp4/g16", input = "bf16" },
+  { op = "swiglu_clamp", local = "shared_clamp", holds = "f32" },
+  { op = "silu_mul", local = "shared_act" },
+  { op = "linear", role = "shared_down", weight = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a16_gemv_pipe", func = "w4a16_gemv_pipe_m2" },
+  { module = "glm5next_ffn", func = "glm5next_swiglu_clamp" },
+  { module = "w4a16_gemv_pipe", func = "w4a16_gemv_pipe_m2" },
+]
+repeat = "once"
+emitter = "glm_w4a16"
+rows = [2, 2]
+modes = ["multi_seq", "verify"]
+when = { glm_w4a16_gemv_seg = "on", glm_w4a16_gemv_rows = "2" }
+numerics = "reference"
+priority = 130
+cite = "crates/model-arch/src/glm5next_w4a16_seg.rs:246-256 (seg_gemv: one row, or 2..=gemv_rows rows; pipe_rows: glm_w4a16_gemv_pipe default on, crates/settings/src/groups/kernels.rs:164); crates/model-arch/src/glm5next_w4a16_dense.rs:446-495 (group_of_six, proj_group_registered); crates/model-layers/src/layers/ops/w4a16_gemv_pipe.rs:47-53 (w4a16_gemv_pipe_m1, _m2); crates/model-arch/src/glm5next_mlp/forward/dense.rs:62-125"
+
+[[rule]]
+id = "glm_w4a16_seg_kda_qkv"
+pattern = [
+  { op = "linear", role = "q", weight = "nvfp4/g16", input = "bf16", layer_kind = "linear_attention", keep = true },
+  { op = "linear", role = "k", weight = "nvfp4/g16", input = "bf16", layer_kind = "linear_attention", keep = true, sibling = true },
+  { op = "linear", role = "v", weight = "nvfp4/g16", input = "bf16", layer_kind = "linear_attention", sibling = true },
+]
+kernels = [
+  { module = "w4a16_tc_rows_seg", func = "w4a16_tc_rows_seg_16_k1" },
+]
+repeat = "once"
+emitter = "glm_w4a16"
+rows = [2, 16]
+modes = ["multi_seq", "verify"]
+when = { glm_w4a16_seg = "fuse" }
+numerics = "reference"
+priority = 125
+cite = "crates/model-arch/src/glm5next_dense_levers.rs:59-68,114 (glm_w4a16_seg fuse); crates/model-arch/src/glm5next_w4a16_seg.rs:259-269 (gemv_tier above gemv_rows; split 1 under fuse); crates/model-arch/src/glm5next_w4a16_dense.rs:381-388,451-495 (the segmented row tile); crates/model-layers/src/layers/ops/w4a16_tc_rows_seg.rs:47-75 (w4a16_tc_rows_seg_16_k1 up to 16 rows); crates/model-arch/src/glm5next_kda/mod.rs:291-295,314-324 (q|k|v one group)"
+
+[[rule]]
+id = "glm_w4a16_seg_kda_low"
+pattern = [
+  { op = "linear", role = "kda_f_a", weight = "nvfp4/g16", input = "bf16", layer_kind = "linear_attention", keep = true },
+  { op = "linear", role = "kda_b", weight = "nvfp4/g16", input = "bf16", layer_kind = "linear_attention", keep = true, sibling = true },
+  { op = "linear", role = "kda_g_a", weight = "nvfp4/g16", input = "bf16", layer_kind = "linear_attention", sibling = true },
+]
+kernels = [
+  { module = "w4a16_tc_rows_seg", func = "w4a16_tc_rows_seg_16_k1" },
+]
+repeat = "once"
+emitter = "glm_w4a16"
+rows = [2, 16]
+modes = ["multi_seq", "verify"]
+when = { glm_w4a16_seg = "fuse" }
+numerics = "reference"
+priority = 125
+cite = "crates/model-arch/src/glm5next_dense_levers.rs:59-68,114 (glm_w4a16_seg fuse); crates/model-arch/src/glm5next_w4a16_seg.rs:259-269 (gemv_tier above gemv_rows; split 1 under fuse); crates/model-arch/src/glm5next_w4a16_dense.rs:381-388,451-495 (the segmented row tile); crates/model-layers/src/layers/ops/w4a16_tc_rows_seg.rs:47-75 (w4a16_tc_rows_seg_16_k1 up to 16 rows); crates/model-arch/src/glm5next_kda/mod.rs:296-300,353-361 (f_a|b|g_a one group)"
+
+[[rule]]
+id = "glm_w4a16_seg_kda_o"
+pattern = [
+  { op = "gated_rms_norm", params = { gate_act = "sigmoid" } },
+  { op = "linear", role = "o", weight = "nvfp4/g16", input = "bf16", layer_kind = "linear_attention" },
+]
+kernels = [
+  { module = "kda_layer_ops", func = "kda_o_norm_gated_bf16" },
+  { module = "w4a16_tc_rows_seg", func = "w4a16_tc_rows_seg_16_k1" },
+]
+repeat = "once"
+emitter = "glm_w4a16"
+rows = [2, 16]
+modes = ["multi_seq", "verify"]
+when = { glm_w4a16_seg = "fuse" }
+numerics = "reference"
+priority = 125
+cite = "crates/model-arch/src/glm5next_dense_levers.rs:59-68,114 (glm_w4a16_seg fuse); crates/model-arch/src/glm5next_w4a16_seg.rs:259-269 (gemv_tier above gemv_rows; split 1 under fuse); crates/model-arch/src/glm5next_w4a16_dense.rs:381-388,451-495 (the segmented row tile); crates/model-layers/src/layers/ops/w4a16_tc_rows_seg.rs:47-75 (w4a16_tc_rows_seg_16_k1 up to 16 rows); crates/model-arch/src/glm5next_kda/mod.rs:439-452 (the output norm, then o)"
+
+[[rule]]
+id = "glm_w4a16_seg_shared"
+pattern = [
+  { op = "linear", role = "shared_gate_up", weight = "nvfp4/g16", input = "bf16" },
+  { op = "swiglu_clamp", local = "shared_clamp", holds = "f32" },
+  { op = "silu_mul", local = "shared_act" },
+  { op = "linear", role = "shared_down", weight = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a16_tc_rows_seg", func = "w4a16_tc_rows_seg_16_k1" },
+  { module = "glm5next_ffn", func = "glm5next_swiglu_clamp" },
+  { module = "w4a16_tc_rows_seg", func = "w4a16_tc_rows_seg_16_k1" },
+]
+repeat = "once"
+emitter = "glm_w4a16"
+rows = [2, 16]
+modes = ["multi_seq", "verify"]
+when = { glm_w4a16_seg = "fuse" }
+numerics = "reference"
+priority = 125
+cite = "crates/model-arch/src/glm5next_dense_levers.rs:59-68,114 (glm_w4a16_seg fuse); crates/model-arch/src/glm5next_w4a16_seg.rs:259-269 (gemv_tier above gemv_rows; split 1 under fuse); crates/model-arch/src/glm5next_w4a16_dense.rs:381-388,451-495 (the segmented row tile); crates/model-layers/src/layers/ops/w4a16_tc_rows_seg.rs:47-75 (w4a16_tc_rows_seg_16_k1 up to 16 rows); crates/model-arch/src/glm5next_mlp/forward/dense.rs:62-125 (gate|up one group, down one segment)"
+
+# 2026-10-22: Where the KDA f_a, b and g_a came from one grouped launch (the pipe's six-group at 1-2
+# rows, the fused f_a|b|g_a segment from 2 rows) and f_b, g_b are on the per-row FP8 tier, the gate
+# chain of 1..=8 rows (f_b and g_b W8A8 with their activation quantization, kda_gate, the beta
+# sigmoid) is one `kda_gates_w8a8_k128_rows` launch (glm_kda_gates_rows, default on); above 8 rows,
+# or without the grouped low-rank launch, the unfused chain.
+
+[[rule]]
+id = "glm_kda_gates_w8a8_rows_1row"
+pattern = [
+  { op = "act_quant", format = "fp8/token", local = "fa_quant", layer_kind = "linear_attention" },
+  { op = "linear", role = "kda_f_b", weight = "fp8/channel", input = "fp8/token", layer_kind = "linear_attention" },
+  { op = "gdn_gates", params = { gate = "sigmoid_bounded", decay = "channel" }, keep = true },
+  { op = "act_quant", format = "fp8/token", local = "ga_quant", layer_kind = "linear_attention", sibling = true },
+  { op = "linear", role = "kda_g_b", weight = "fp8/channel", input = "fp8/token", layer_kind = "linear_attention" },
+]
+kernels = [{ module = "kda_gates_w8a8", func = "kda_gates_w8a8_k128_rows" }]
+repeat = "once"
+emitter = "kda"
+rows = [1, 1]
+modes = ["decode"]
+when = { glm_w4a16_gemv_seg = "on" }
+numerics = "reference"
+priority = 40
+cite = "crates/model-arch/src/glm5next_kda/gates_fused.rs:43-62 (the one-row kernel needs glm_kda_gates_fused, off), :66-84 (try_gates_rows: glm_kda_gates_rows default on, crates/settings/src/groups/kernels.rs:126; 1..=GATES_MAX_ROWS 8, :36), :103-130 (refused unless f_a and g_a came from one grouped launch and f_b, g_b are on the per-row FP8 tier); the low-rank group: the pipe six-group (crates/model-arch/src/glm5next_w4a16_dense.rs:446-448)"
+
+[[rule]]
+id = "glm_kda_gates_w8a8_rows_2rows"
+pattern = [
+  { op = "act_quant", format = "fp8/token", local = "fa_quant", layer_kind = "linear_attention" },
+  { op = "linear", role = "kda_f_b", weight = "fp8/channel", input = "fp8/token", layer_kind = "linear_attention" },
+  { op = "gdn_gates", params = { gate = "sigmoid_bounded", decay = "channel" }, keep = true },
+  { op = "act_quant", format = "fp8/token", local = "ga_quant", layer_kind = "linear_attention", sibling = true },
+  { op = "linear", role = "kda_g_b", weight = "fp8/channel", input = "fp8/token", layer_kind = "linear_attention" },
+]
+kernels = [{ module = "kda_gates_w8a8", func = "kda_gates_w8a8_k128_rows" }]
+repeat = "once"
+emitter = "kda"
+rows = [2, 2]
+modes = ["multi_seq", "verify"]
+when = { glm_w4a16_gemv_seg = "on", glm_w4a16_gemv_rows = "2" }
+numerics = "reference"
+priority = 40
+cite = "crates/model-arch/src/glm5next_kda/gates_fused.rs:43-62 (the one-row kernel needs glm_kda_gates_fused, off), :66-84 (try_gates_rows: glm_kda_gates_rows default on, crates/settings/src/groups/kernels.rs:126; 1..=GATES_MAX_ROWS 8, :36), :103-130 (refused unless f_a and g_a came from one grouped launch and f_b, g_b are on the per-row FP8 tier); the low-rank group: the pipe six-group at 2 rows (crates/model-arch/src/glm5next_w4a16_dense.rs:446-448)"
+
+[[rule]]
+id = "glm_kda_gates_w8a8_rows_seg"
+pattern = [
+  { op = "act_quant", format = "fp8/token", local = "fa_quant", layer_kind = "linear_attention" },
+  { op = "linear", role = "kda_f_b", weight = "fp8/channel", input = "fp8/token", layer_kind = "linear_attention" },
+  { op = "gdn_gates", params = { gate = "sigmoid_bounded", decay = "channel" }, keep = true },
+  { op = "act_quant", format = "fp8/token", local = "ga_quant", layer_kind = "linear_attention", sibling = true },
+  { op = "linear", role = "kda_g_b", weight = "fp8/channel", input = "fp8/token", layer_kind = "linear_attention" },
+]
+kernels = [{ module = "kda_gates_w8a8", func = "kda_gates_w8a8_k128_rows" }]
+repeat = "once"
+emitter = "kda"
+rows = [2, 8]
+modes = ["multi_seq", "verify"]
+when = { glm_w4a16_seg = "fuse" }
+numerics = "reference"
+priority = 40
+cite = "crates/model-arch/src/glm5next_kda/gates_fused.rs:43-62 (the one-row kernel needs glm_kda_gates_fused, off), :66-84 (try_gates_rows: glm_kda_gates_rows default on, crates/settings/src/groups/kernels.rs:126; 1..=GATES_MAX_ROWS 8, :36), :103-130 (refused unless f_a and g_a came from one grouped launch and f_b, g_b are on the per-row FP8 tier); the low-rank group: the fused f_a|b|g_a segment (crates/model-arch/src/glm5next_kda/mod.rs:296-300,353-361)"
 
 # 2026-10-22: W8A8 (FP8 per-channel weights, per-token FP8 activations): `glm5next_fp8_dense::proj`
 # (crates/model-arch/src/glm5next_fp8_dense.rs:306-366) quantizes the input

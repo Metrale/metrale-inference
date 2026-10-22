@@ -2311,6 +2311,49 @@ values = { gate = "sigmoid_bounded", decay = "channel" }
 how = "instantiation"
 files = ["kernels/gb10/common/kda_gate.cu", "kernels/gb10/common/kda_layer_ops.cu"]
 
+# 2026-10-22: The KDA gate chain in one launch (kda_gates_w8a8.cu:3-26): f_b and g_b as two W8A8
+# segments of one grid at K = 128 (per-row E4M3 activation quantization in each warp's prologue,
+# the rowscale MMA chunk), the decay as f_b's epilogue, the beta sigmoid on block 0; the unfused
+# chain's bytes. `_rows` takes 1..=8 rows in the MMA's n8 token columns (METRALE_GLM_KDA_GATES_ROWS,
+# default on), and the grouped low-rank launch the recipe's W4A16 levers give.
+[[family]]
+id = "kda_gates_w8a8"
+description = "KDA gate chain: f_b and g_b W8A8 with their activation quantization, the decay and the beta sigmoid, one launch over 1-8 rows"
+compute = "tensor_core"
+mma = "mma.sync.m16n8k32.e4m3"
+kernels = ["kda_gates_w8a8::kda_gates_w8a8_k128", "kda_gates_w8a8::kda_gates_w8a8_k128_rows"]
+rows = [1, 8]
+pipeline.act_quant = { in = ["bf16"], compute = "f32", out = ["fp8/token"] }
+pipeline.linear = { in = ["fp8/token"], act = "fp8/token", weight = "fp8/channel->e4m3", mma = "e4m3*e4m3", accumulate = "f32", scale = "f32", out = ["bf16"] }
+pipeline.gdn_gates = { in = ["bf16", "bf16"], compute = "f32", out = ["f32", "f32"] }
+op = [
+  { op = "act_quant", feeds = ["linear:kda_f_b", "linear:kda_g_b"] },
+  { op = "linear", roles = ["kda_f_b", "kda_g_b"] },
+  { op = "gdn_gates", after = ["linear:kda_b"] },
+]
+[[family.param]]
+name = "gate"
+kind = "policy"
+from = { gdn_gates = "param:gate" }
+absent = "softplus"
+[[family.param]]
+name = "decay"
+kind = "policy"
+from = { gdn_gates = "param:decay" }
+absent = "head"
+[[family.point]]
+values = { gate = "sigmoid_bounded", decay = "channel" }
+how = "instantiation"
+files = ["kernels/gb10/common/kda_gates_w8a8.cu"]
+[[family.evidence]]
+point = { gate = "sigmoid_bounded", decay = "channel" }
+rows = [2]
+measurement = "glm-5.3-flash::kda_gates_w8a8_k128_rows @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k"
+[[family.evidence]]
+point = { gate = "sigmoid_bounded", decay = "channel" }
+rows = [2]
+measurement = "glm-5.3-flash::kda_gates_w8a8_k128_rows @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k"
+
 # 2026-10-08: The KDA recurrence for one token of one sequence (grid = heads): BF16 q/k/v from the
 # decode conv, FP32 log-decay and beta, the FP32 [H, D, D] state updated in place, FP32 out
 # (kda_recurrent.cu:3-22). The `_smem` twin keeps the decayed column in shared memory.

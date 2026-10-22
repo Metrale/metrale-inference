@@ -130,3 +130,6 @@ glm_kda_row_reg = { value = "off", why = "METRALE_GLM_KDA_ROW_REG unset: crates/
 glm_kda_rows_reg = { value = "off", why = "METRALE_GLM_KDA_ROWS_REG unset: crates/settings/src/groups/kernels.rs:129, read at crates/model-arch/src/glm5next_kda/rows.rs:193-215" }
 glm_kda_seq_rows = { value = "off", why = "METRALE_GLM_KDA_SEQ_ROWS unset = KdaSeqRows::Off: crates/settings/src/groups/kernels.rs:131, crates/model-arch/src/glm5next_kda/levers.rs:89-93" }
 glm_kda_verify_tokens = { value = "off", why = "METRALE_GLM_KDA_VERIFY_TOKENS unset: crates/settings/src/groups/kernels.rs:133, read at crates/model-arch/src/glm5next_kda/decode.rs:302-306" }
+glm_w4a16_gemv_seg = { value = "off", why = "METRALE_GLM_W4A16_GEMV_SEG unset: crates/settings/src/groups/kernels.rs:166, read at crates/model-arch/src/glm5next_dense_levers.rs:116 (SegPlan::seg_gemv, crates/model-arch/src/glm5next_w4a16_seg.rs:246-248)" }
+glm_w4a16_gemv_rows = { value = "off", why = "METRALE_GLM_W4A16_GEMV_ROWS unset: crates/settings/src/groups/kernels.rs:165, read at crates/model-arch/src/glm5next_dense_levers.rs:85-90 (SegPlan::gemv_tier, crates/model-arch/src/glm5next_w4a16_seg.rs:259-261)" }
+glm_w4a16_seg = { value = "off", why = "METRALE_GLM_W4A16_SEG unset = SegMode::Off: crates/settings/src/groups/kernels.rs:167, read at crates/model-arch/src/glm5next_dense_levers.rs:59-68,114" }

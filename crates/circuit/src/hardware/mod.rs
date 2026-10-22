@@ -20,6 +20,7 @@
 //!   it).
 
 pub mod avail;
+mod avail_paste;
 pub mod class;
 pub mod device;
 pub mod estimate;

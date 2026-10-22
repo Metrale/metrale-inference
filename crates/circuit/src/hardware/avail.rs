@@ -96,12 +96,27 @@ pub fn names_word(text: &str, word: &str) -> bool {
     })
 }
 
+/// 2026-10-22: `text` names kernel `func`: as a whole identifier, or as the name a macro
+/// invocation pastes together (`avail_paste`), which no line spells out.
+pub fn names_kernel(text: &str, func: &str) -> bool {
+    names_word(text, func)
+        || super::avail_paste::pasted_entries(&text.lines().collect::<Vec<_>>())
+            .iter()
+            .any(|(n, _)| n == func)
+}
+
 /// 2026-09-30: The guard whose region holds the `__global__` definition of `func` in `text`,
 /// when every definition sits in one.
 pub fn guard_of<'g>(text: &str, func: &str, guards: &'g [Guard]) -> Option<&'g Guard> {
     let lines: Vec<&str> = text.lines().collect();
     let regions = regions(&lines, guards);
     let macros = entry_macros(&lines);
+    // 2026-10-22: And the lines whose invocation pastes `func` together (`avail_paste`).
+    let pasted: BTreeSet<usize> = super::avail_paste::pasted_entries(&lines)
+        .into_iter()
+        .filter(|(n, _)| n == func)
+        .map(|(_, i)| i)
+        .collect();
     let mut found: Option<&Guard> = None;
     let mut any = false;
     for (i, line) in lines.iter().enumerate() {
@@ -109,7 +124,7 @@ pub fn guard_of<'g>(text: &str, func: &str, guards: &'g [Guard]) -> Option<&'g G
             && lines[i.saturating_sub(3)..=i]
                 .join(" ")
                 .contains("__global__");
-        if !direct && !instantiates(line, func, &macros) {
+        if !direct && !instantiates(line, func, &macros) && !pasted.contains(&i) {
             continue;
         }
         any = true;
@@ -251,7 +266,7 @@ pub fn kernel_status(
     k: &KernelId,
 ) -> (Result<(), Absence>, Option<Instr>) {
     let text = sources.modules.get(&k.module).map(|m| m.text.as_str());
-    let Some(text) = text.filter(|t| names_word(t, &k.func)) else {
+    let Some(text) = text.filter(|t| names_kernel(t, &k.func)) else {
         return (Err(Absence::NotCompiled), None);
     };
     if let Some(why) = sources
