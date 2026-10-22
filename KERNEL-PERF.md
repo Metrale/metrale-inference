@@ -240,6 +240,7 @@ all on GB10 at main `e37e3cb2` (kernel-equivalent binary), `nsys --trace=cuda --
 | unsloth/Qwen3.8-27B-NVFP4 | decode C=1, R=4 | decode-floor recipe (BF16 KV and LM head, 3 drafts), KV ≈ 245 |
 | unsloth/Qwen3.8-27B-NVFP4 | decode C=16, R=32 | concurrency-sweep recipe (FP8 KV, FP16 SSM pool, batched recurrent), KV ≈ 308 |
 | unsloth/Qwen3.8-27B-NVFP4 | prefill 4k (4103 tok) and 32k (32772 tok), cold | decode-floor recipe flags |
+| nvidia/GLM-5.3-Flash-NVFP4 | decode C=1, R=2, TP=3 rank 0, KV ≈ 1k and ≈ 128k | `recipes/glm-5.3/glm-5.3-flash-nvfp4-tp3-512k.yaml` (W4A4 experts, W4A16 dense, W8A8 DSA, FP8 KV, MTP 1 draft forced, shared-expert fork), fast13 = `c5b9a80e6`, 2026-10-22. Kernel times include PDL and side-stream waits (each row's notes give a solo time); the routed-expert union sweeps (~28 %) have no row because the trace does not carry the union's distinct-expert count |
 
 Between 99.8 % and 99.9 % of each regime's GPU kernel time has a floor model; a (kernel, shape) is
 written as a row when it is at least 0.3 % of its regime's kernel time. Each window's purity is
@@ -295,7 +296,7 @@ notes = ""
 - **1593 kernel entry points** in **395 source files** across 7 hardware trees (b200, b300, gb10, hopper, metal, strix, strix-hip), compiled into 58 (hardware, model, quant) targets.
 - **1257** have at least one engine call site; **336** are compiled but launched only from tests, examples or not at all (see [Compiled but not launched](#compiled-but-not-launched)).
 - **15 architecture families**, **29 components**.
-- **61** entry points have a measured % of floor; every other row reads “not measured”.
+- **85** entry points have a measured % of floor; every other row reads “not measured”.
 
 ## Architecture families
 
@@ -323,27 +324,27 @@ notes = ""
 |---|---|---|---|---|---|---|
 | Attention (GQA/MHA: paged decode, split-K, prefill/flash) | every family | 84 | 300 | 150 | 64 | 20 |
 | MLA (multi-head latent attention) | families listing it | 36 | 36 | 2 | 5 | 0 |
-| Sparse / compressed attention (DSA, CSA/HCA, QSA) | families listing it | 74 | 97 | 75 | 0 | 3 |
+| Sparse / compressed attention (DSA, CSA/HCA, QSA) | families listing it | 74 | 97 | 75 | 0 | 6 |
 | GDN (gated delta rule linear attention) | families listing it | 214 | 342 | 211 | 11 | 27 |
-| KDA (Kimi delta attention, linear attention) | families listing it | 24 | 44 | 29 | 3 | 5 |
+| KDA (Kimi delta attention, linear attention) | families listing it | 24 | 44 | 29 | 3 | 11 |
 | Mamba2 (selective state-space scan) | families listing it | 6 | 63 | 7 | 1 | 8 |
-| Causal conv1d (short convolution of GDN/KDA/Mamba2) | families listing it | 16 | 16 | 1 | 3 | 2 |
-| MoE (routing, dispatch, expert GEMM/GEMV, combine) | families listing it | 199 | 338 | 243 | 45 | 22 |
+| Causal conv1d (short convolution of GDN/KDA/Mamba2) | families listing it | 16 | 16 | 1 | 3 | 4 |
+| MoE (routing, dispatch, expert GEMM/GEMV, combine) | families listing it | 199 | 338 | 243 | 45 | 29 |
 | Dense FFN (gate/up/down projections of non-MoE layers) | families listing it | 0 | 88 | 27 | 0 | 12 |
-| Projection GEMM/GEMV — BF16/F32 | every family | 36 | 36 | 11 | 1 | 4 |
-| Projection GEMM/GEMV — FP8 (W8A16, W8A8, block-scaled) | every family | 90 | 90 | 24 | 1 | 6 |
-| Projection GEMM/GEMV — NVFP4 W4A16 | every family | 93 | 93 | 41 | 8 | 7 |
-| Projection GEMM/GEMV — W4A4 (FP4 activations) | every family | 51 | 51 | 9 | 24 | 2 |
+| Projection GEMM/GEMV — BF16/F32 | every family | 36 | 36 | 11 | 1 | 6 |
+| Projection GEMM/GEMV — FP8 (W8A16, W8A8, block-scaled) | every family | 90 | 90 | 24 | 1 | 9 |
+| Projection GEMM/GEMV — NVFP4 W4A16 | every family | 93 | 93 | 41 | 8 | 9 |
+| Projection GEMM/GEMV — W4A4 (FP4 activations) | every family | 51 | 51 | 9 | 24 | 4 |
 | Projection GEMM/GEMV — integer / K-quant (Q2_0, Q2_K..Q6_K, INT8, MLX INT8) | every family | 23 | 23 | 6 | 31 | 0 |
 | Normalization (RMSNorm, LayerNorm, L2, gated norms) | every family | 66 | 66 | 2 | 39 | 4 |
 | Activations and elementwise (SiLU/GELU/ReLU², residual, gates, scale) | every family | 17 | 17 | 1 | 16 | 3 |
 | Positional encoding (RoPE, YaRN, MRoPE) | every family | 12 | 12 | 0 | 0 | 1 |
 | KV cache (write, quantize, TurboQuant rotation, slot metadata) | every family | 17 | 17 | 4 | 29 | 0 |
 | Quantization and format conversion | every family | 54 | 54 | 10 | 7 | 4 |
-| Embedding and LM head (lookup, overlays, softcap, scale) | every family | 17 | 24 | 13 | 6 | 0 |
+| Embedding and LM head (lookup, overlays, softcap, scale) | every family | 17 | 24 | 13 | 6 | 1 |
 | Sampling (argmax, top-p, feed-forward of the chosen token) | every family | 9 | 9 | 6 | 1 | 1 |
-| Speculative decoding (MTP heads, DFlash drafter, verify helpers) | every family | 11 | 105 | 20 | 2 | 12 |
-| Hyper-connections (mHC) | families listing it | 39 | 39 | 25 | 2 | 0 |
+| Speculative decoding (MTP heads, DFlash drafter, verify helpers) | every family | 11 | 105 | 20 | 2 | 13 |
+| Hyper-connections (mHC) | families listing it | 39 | 39 | 25 | 2 | 2 |
 | N-gram and memory embeddings (Engram, PLE, n-gram tables) | families listing it | 5 | 17 | 6 | 0 | 2 |
 | Vision encoder (ViT towers) | families listing it | 32 | 36 | 32 | 3 | 0 |
 | Encoder-decoder translation (NLLB, self-contained kernel set) | families listing it | 26 | 29 | 24 | 28 | 1 |
@@ -372,11 +373,11 @@ Entry points used by **every one of the 14 decoder families** (every family with
 | gemm_splitk::`dense_gemm_splitk_{partial, reduce}` (2) | [gb10/common/dense_gemm_splitk.cu:27][f16] | Projection GEMM/GEMV — BF16/F32 · BF16/F32 GEMM/GEMV | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [1 note][t16] | not measured |
 | gemm_tc::`dense_gemm_{tc, tc_scaled_acc}` (2) | [gb10/common/dense_gemm_tc.cu:17][f17] | Projection GEMM/GEMV — BF16/F32 · BF16/F32 GEMM/GEMV | b200 b300 gb10 hop strix | all 14 decoder families (30 ckpts) | [2 notes][t17] | not measured |
 | dense_gemm_tc_f32out::`dense_{gemm_tc_f32out, gemv_bf16_tc16_f32out, gemv_bf16_tc32_f32out, gemv_bf16_tc8_f32out}` (4) | [gb10/common/dense_gemm_tc_f32out.cu:28][f18] | Projection GEMM/GEMV — BF16/F32 · BF16/F32 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
-| gemv::`dense_gemv_bf16` | [gb10/common/dense_gemv_bf16.cu:33][f19] | Projection GEMM/GEMV — BF16/F32 · BF16/F32 GEMM/GEMV | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [3 notes][t19] | [94–100%][m19.dense_gemv_bf16] (decode C=1 (R=4, MTP k=3)) |
+| gemv::`dense_gemv_bf16` | [gb10/common/dense_gemv_bf16.cu:33][f19] | Projection GEMM/GEMV — BF16/F32 · BF16/F32 GEMM/GEMV | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [3 notes][t19] | [91–100%][m19.dense_gemv_bf16] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
 | dense_gemv_bf16_batchm::`dense_gemv_bf16_batchm` | [gb10/common/dense_gemv_bf16_batchm.cu:229][f21] | Projection GEMM/GEMV — BF16/F32 · BF16/F32 GEMM/GEMV | b200 b300 gb10 hop | all 14 decoder families (30 ckpts) | [2 notes][t21] | [16–92%][m21.dense_gemv_bf16_batchm] (decode C=16 (R=32, MTP k=1)) |
 | dense_gemv_bf16_tc::`dense_gemv_bf16_tc16` | [gb10/common/dense_gemv_bf16_tc.cu:47][f23] | Projection GEMM/GEMV — BF16/F32 · BF16/F32 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | [4 notes][t23] · [#1][pr1] | [86–95%][m23.dense_gemv_bf16_tc16] (decode C=16 (R=32, MTP k=1)) |
 | dense_gemv_bf16_tc::`dense_gemv_bf16_{tc32, tc8}` (2) | [gb10/common/dense_gemv_bf16_tc.cu:46][f23] | Projection GEMM/GEMV — BF16/F32 · BF16/F32 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | [4 notes][t23] · [#1][pr1] | not measured |
-| gemv_fp8w::`dense_gemv_fp8w` | [gb10/common/dense_gemv_fp8w.cu:131][f24] | Projection GEMM/GEMV — FP8 · FP8 GEMM/GEMV | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [1 note][t24] | not measured |
+| gemv_fp8w::`dense_gemv_fp8w` | [gb10/common/dense_gemv_fp8w.cu:131][f24] | Projection GEMM/GEMV — FP8 · FP8 GEMM/GEMV | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [1 note][t24] | [98–99%][m24.dense_gemv_fp8w] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k) |
 | gemv_fp8w::`quantize_bf16_to_fp8` | [gb10/common/dense_gemv_fp8w.cu:65][f24] | Quantization and format conversion · activation quantize | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [1 note][t24] | not measured |
 | dense_gemv_fp8w_batch2::`dense_gemv_fp8w_batch2` | [gb10/common/dense_gemv_fp8w_batch2.cu:74][f25] | Projection GEMM/GEMV — FP8 · FP8 GEMM/GEMV | b200 b300 gb10 hop | all 14 decoder families (30 ckpts) | [1 note][t25] | not measured |
 | dequant_fp8_blockscaled_bf16::`dequant_fp8_blockscaled_bf16` | [gb10/common/dequant_fp8_blockscaled_bf16.cu:92][f26] | Quantization and format conversion · dequant / repack / transpose | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [3 notes][t26] | not measured |
@@ -428,7 +429,8 @@ Entry points used by **every one of the 14 decoder families** (every family with
 | rms_norm_vanilla::`rms_norm_{vanilla, vanilla_warp_row}` (2) | [gb10/common/rms_norm_vanilla.cu:38][f193] | Normalization · normalization | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [1 note][t193] | not measured |
 | rope_mrope_interleaved::`rope_forward_mrope_interleaved` | [gb10/common/rope_mrope_interleaved.cu:34][f195] | Positional encoding · rotary | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [1 note][t195] | [6%][m195.rope_forward_mrope_interleaved] (prefill 32k (cold, 32772 tok)) |
 | rope_mrope_interleaved::`rope_forward_mrope_interleaved_k_only` | [gb10/common/rope_mrope_interleaved.cu:108][f195] | Positional encoding · rotary | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [1 note][t195] | not measured |
-| screen_head::`screen_head_{exact_id, local, quant_int8, rescore, resolve, scan}` (6) | [gb10/common/screen_head.cu:116][f196] | Embedding and LM head · screened LM head (INT8 screen, exact rescore) | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
+| screen_head::`screen_head_{exact_id, local, quant_int8, rescore, resolve}` (5) | [gb10/common/screen_head.cu:116][f196] | Embedding and LM head · screened LM head (INT8 screen, exact rescore) | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
+| screen_head::`screen_head_scan` | [gb10/common/screen_head.cu:176][f196] | Embedding and LM head · screened LM head (INT8 screen, exact rescore) | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | [93–94%][m196.screen_head_scan] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k) |
 | token_overlay::`embed_overlay_routed_bf16`, `embed_rowdiff_bf16`, `lmhead_overlay_routed_bf16`, `lmhead_overlay_routed_f32` | [gb10/common/token_overlay.cu:20][f202] | Embedding and LM head · embedding / LM head | b200 b300 gb10 hop | all 14 decoder families (30 ckpts) | [2 notes][t202] | not measured |
 | tq_plus_innerq_apply::`tq_plus_innerq_apply_{k, q}` (2) | [gb10/common/tq_plus_innerq_apply.cu:71][f204] | KV cache · TurboQuant rotation | b200 b300 gb10 hop | all 14 decoder families (30 ckpts) | [1 note][t204] | not measured |
 | transpose_u8::`transpose_u8` | [gb10/common/transpose_u8.cu:15][f205] | Quantization and format conversion · dequant / repack / transpose | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | — | not measured |
@@ -437,14 +439,16 @@ Entry points used by **every one of the 14 decoder families** (every family with
 | w4a16_gemv::`w4a16_{gemv, gemv_batch16, gemv_batch2, gemv_batch3, gemv_batch32, gemv_batch8, gemv_batch8_rt2, gemv_dual_batch2, gemv_dual_batch3, gemv_logits, gemv_qg, gemv_qg_batch2, gemv_qg_batch3}` (13) | [gb10/common/w4a16_gemv.cu:168][f209] | Projection GEMM/GEMV — NVFP4 W4A16 · NVFP4 W4A16 GEMM/GEMV | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [6 notes][t209] | not measured |
 | w4a16_gemv::`w4a16_gemv_sw` | [gb10/common/w4a16_gemv.cu:234][f209] | Projection GEMM/GEMV — NVFP4 W4A16 · NVFP4 W4A16 GEMM/GEMV | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [1 note][t209] | [96–99%][m209.w4a16_gemv_sw] (decode C=1 (R=4, MTP k=3)) |
 | w4a16_gemv_fused::`w4a16_gemv_{dual, dual_sw}` (2) | [gb10/common/w4a16_gemv_fused.cu:144][f210] | Projection GEMM/GEMV — NVFP4 W4A16 · NVFP4 W4A16 GEMM/GEMV | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [1 note][t210] | not measured |
-| w4a16_gemv_pipe::`w4a16_gemv_pipe_{m1, m2}` (2) | [gb10/common/w4a16_gemv_pipe.cu:316][f211] | Projection GEMM/GEMV — NVFP4 W4A16 · NVFP4 W4A16 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
+| w4a16_gemv_pipe::`w4a16_gemv_pipe_m1` | [gb10/common/w4a16_gemv_pipe.cu:316][f211] | Projection GEMM/GEMV — NVFP4 W4A16 · NVFP4 W4A16 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
+| w4a16_gemv_pipe::`w4a16_gemv_pipe_m2` | [gb10/common/w4a16_gemv_pipe.cu:317][f211] | Projection GEMM/GEMV — NVFP4 W4A16 · NVFP4 W4A16 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | [4–90%][m211.w4a16_gemv_pipe_m2] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
 | w4a16_gemv_seg::`w4a16_gemv_seg_{m2, m3, m4, r1, r2, r4}` (6) | [gb10/common/w4a16_gemv_seg.cu:305][f212] | Projection GEMM/GEMV — NVFP4 W4A16 · NVFP4 W4A16 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
 | w4a16_gemv_tc::`w4a16_gemv_tc16` | [gb10/common/w4a16_gemv_tc.cu:256][f213] | Projection GEMM/GEMV — NVFP4 W4A16 · NVFP4 W4A16 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | [4 notes][t213] · [#1][pr1] | [86–92%][m213.w4a16_gemv_tc16] (decode C=16 (R=32, MTP k=1)) |
 | w4a16_gemv_tc::`w4a16_gemv_tc8` | [gb10/common/w4a16_gemv_tc.cu:255][f213] | Projection GEMM/GEMV — NVFP4 W4A16 · NVFP4 W4A16 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | [4 notes][t213] · [#1][pr1] | [59–90%][m213.w4a16_gemv_tc8] (decode C=1 (R=4, MTP k=3)) |
 | w4a16_tc_gemm::`w4a16_tc_gemm_64x128` | [gb10/common/w4a16_tc_gemm.cu:22][f214] | Projection GEMM/GEMV — NVFP4 W4A16 · NVFP4 W4A16 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
 | w4a16_tc_rows::`w4a16_tc_rows_{16, 32, 64, 8_w1, 8_w2}` (5) | [gb10/common/w4a16_tc_rows.cu:26][f215] | Projection GEMM/GEMV — NVFP4 W4A16 · NVFP4 W4A16 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
 | w4a16_tc_rows_seg::`w4a16_tc_rows_seg_{16_k1, 16_k2, 16_k4, 32_k1, 32_k2, 32_k4, 64_k1, 64_k2, 64_k4}` (9) | [gb10/common/w4a16_tc_rows_seg.cu:123][f216] | Projection GEMM/GEMV — NVFP4 W4A16 · NVFP4 W4A16 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
-| w4a4_gemv_mx::`w4a4_{gemv_mx16, gemv_mx16_nt2, gemv_mx16_ps, gemv_mx32, gemv_mx32_nt4, gemv_mx32_ps, gemv_mx64, gemv_mx64_nt2, gemv_mx8, quant_rows}` (10) | [gb10/common/w4a4_gemv_mx.cu:226][f217] | Projection GEMM/GEMV — W4A4 · W4A4 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | [23 notes][t217] · [#1][pr1] [#14][pr14] [#18][pr18] | not measured |
+| w4a4_gemv_mx::`w4a4_{gemv_mx16, gemv_mx16_nt2, gemv_mx16_ps, gemv_mx32, gemv_mx32_nt4, gemv_mx32_ps, gemv_mx64, gemv_mx64_nt2, quant_rows}` (9) | [gb10/common/w4a4_gemv_mx.cu:227][f217] | Projection GEMM/GEMV — W4A4 · W4A4 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | [23 notes][t217] · [#1][pr1] [#14][pr14] [#18][pr18] | not measured |
+| w4a4_gemv_mx::`w4a4_gemv_mx8` | [gb10/common/w4a4_gemv_mx.cu:226][f217] | Projection GEMM/GEMV — W4A4 · W4A4 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | [13 notes][t217] · [#1][pr1] [#14][pr14] [#18][pr18] | [72–73%][m217.w4a4_gemv_mx8] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
 | w8a16_gemm::`w8a16_gemm` | [gb10/common/w8a16_gemm.cu:86][f220] | Projection GEMM/GEMV — FP8 · FP8 GEMM/GEMV | b200 b300 gb10 hop strix | all 14 decoder families (30 ckpts) | [1 note][t220] | not measured |
 | w8a16_gemm_pipe128::`w8a16_gemm_pipe128` | [gb10/common/w8a16_gemm_pipe128.cu:58][f221] | Projection GEMM/GEMV — FP8 · FP8 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
 | w8a16_gemm_pipelined::`w8a16_gemm_pipelined` | [gb10/common/w8a16_gemm_pipelined.cu:174][f222] | Projection GEMM/GEMV — FP8 · FP8 GEMM/GEMV | b200 b300 gb10 hop strix | all 14 decoder families (30 ckpts) | [1 note][t222] | [23–24%][m222.w8a16_gemm_pipelined] (prefill 32k (cold, 32772 tok)) |
@@ -457,7 +461,9 @@ Entry points used by **every one of the 14 decoder families** (every family with
 | w8a16_gemv_batch4::`w8a16_gemv_{batch16, batch16_strided, batch4, batch4_strided}` (4) | [gb10/common/w8a16_gemv_batch4.cu:234][f227] | Projection GEMM/GEMV — FP8 · FP8 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | [2 notes][t227] | not measured |
 | w8a16_tc_rows::`w8a16_tc_rows_{16, 32, 64, 64c}` (4) | [gb10/common/w8a16_tc_rows.cu:38][f229] | Projection GEMM/GEMV — FP8 · FP8 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | [1 note][t229] | not measured |
 | w8a8_act_quant::`w8a8_act_quant_{g128, row, silu_g128, silu_row}` (4) | [gb10/common/w8a8_act_quant.cu:53][f230] | Quantization and format conversion · activation quantize | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
-| w8a8_gemv::`w8a8_gemv_{blk128_mb16, blk128_mb1_ku8, blk128_mb2, blk128_mb4, blk128_mb8, rowscale_mb16, rowscale_mb1_ku8, rowscale_mb1_ku8_split4, rowscale_mb2, rowscale_mb4, rowscale_mb8}` (11) | [gb10/common/w8a8_gemv.cu:39][f231] | Projection GEMM/GEMV — FP8 · FP8 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
+| w8a8_gemv::`w8a8_gemv_{blk128_mb16, blk128_mb1_ku8, blk128_mb2, blk128_mb4, blk128_mb8, rowscale_mb16, rowscale_mb2, rowscale_mb4, rowscale_mb8}` (9) | [gb10/common/w8a8_gemv.cu:40][f231] | Projection GEMM/GEMV — FP8 · FP8 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
+| w8a8_gemv::`w8a8_gemv_rowscale_mb1_ku8` | [gb10/common/w8a8_gemv.cu:39][f231] | Projection GEMM/GEMV — FP8 · FP8 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | [85–93%][m231.w8a8_gemv_rowscale_mb1_ku8] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
+| w8a8_gemv::`w8a8_gemv_rowscale_mb1_ku8_split4` | [gb10/common/w8a8_gemv.cu:54][f231] | Projection GEMM/GEMV — FP8 · FP8 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | [84–85%][m231.w8a8_gemv_rowscale_mb1_ku8_split4] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
 | wht_bf16::`wht_bf16_{inplace, inplace_inv}` (2) | [gb10/common/wht_bf16.cu:51][f232] | KV cache · TurboQuant rotation | b200 b300 gb10 hop | all 14 decoder families (30 ckpts) | [1 note][t232] | not measured |
 | widen_block_scale_f32::`widen_block_scale_f32` | [gb10/common/widen_block_scale_f32.cu:21][f233] | Quantization and format conversion · dequant / repack / transpose | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [1 note][t233] | not measured |
 
@@ -543,7 +549,7 @@ Also launched here: [Activations and elementwise](#activations-and-elementwise-s
 | dsa_indexer::`dsa_{compact_pools, expand_selection, index_scores, indexer_store, kpool_compress, mla_masked_attn, topk_pools, topk_to_mask, write_geom}` (9) | [gb10/common/dsa_indexer.cu:43][f31] | DSA indexer / sparse MLA | b200 gb10 hop | GLM-5.3 (1 ckpts) | [5 notes][t31] | not measured |
 | dsa_indexer_fp8::`dsa_{indexer_store_fp8, kpool_compress_fp8, pool_scores_rows_fp8}` (3) | [gb10/common/dsa_indexer_fp8.cu:120][f32] | DSA indexer / sparse MLA | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
 | dsa_indexer_rows::`dsa_{expand_selection_rows, index_scores_mma, index_scores_tiled, indexer_store_rows, pool_scores_rows, topk_pools_radix, topk_pools_rows, write_geom_rows}` (8) | [gb10/common/dsa_indexer_rows.cu:34][f33] | DSA indexer / sparse MLA | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
-| dsa_scores_heads_window::`dsa_index_scores_heads_window` | [gb10/common/dsa_scores_heads_window.cu:29][f34] | DSA indexer / sparse MLA | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
+| dsa_scores_heads_window::`dsa_index_scores_heads_window` | [gb10/common/dsa_scores_heads_window.cu:29][f34] | DSA indexer / sparse MLA | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | [52%][m34.dsa_index_scores_heads_window] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k) |
 | dsa_scores_warp::`dsa_{index_scores_heads_paged, index_scores_warp, index_scores_warp_paged, pool_keys_store_rows}` (4) | [gb10/common/dsa_scores_warp.cu:123][f35] | DSA indexer / sparse MLA | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
 | dsa_sel_fold::`dsa_{expand_selection_folded, sel_fold}` (2) | [gb10/common/dsa_sel_fold.cu:25][f36] | DSA indexer / sparse MLA | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
 | dsa_topk_mc::`dsa_topk_mc_{collect, pass}` (2) | [gb10/common/dsa_topk_mc.cu:145][f37] | DSA indexer / sparse MLA | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
@@ -552,12 +558,13 @@ Also launched here: [Activations and elementwise](#activations-and-elementwise-s
 | csa_compress::`csa_compress` | [gb10/deepseek-v4-flash/nvfp4/csa_compress.cu:20][f237] | CSA/HCA compressed attention | b200 gb10 hop | DeepSeek-V4 (2 ckpts) | [1 note][t237] | not measured |
 | prefill_attn_compressed::`prefill_attn_compressed` | [gb10/deepseek-v4-flash/nvfp4/prefill_attn_compressed.cu:23][f258] | CSA/HCA compressed attention | b200 gb10 hop | DeepSeek-V4 (2 ckpts) | [1 note][t258] | not measured |
 | glm5next_dsa_mla_decode::`glm5next_dsa_mla_decode_fp8` | [gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_decode.cu:96][f276] | DSA indexer / sparse MLA | gb10 | GLM-5.3 (1 ckpts) | [1 note][t276] | not measured |
-| glm5next_dsa_mla_decode_hb::`glm5next_dsa_mla_{decode_hb_fp8, decode_hb_fp8_phi, merge}` (3) | [gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_decode_hb.cu:177][f277] | DSA indexer / sparse MLA | gb10 | GLM-5.3 (1 ckpts) | — | not measured |
+| glm5next_dsa_mla_decode_hb::`glm5next_dsa_mla_decode_hb_fp8` | [gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_decode_hb.cu:177][f277] | DSA indexer / sparse MLA | gb10 | GLM-5.3 (1 ckpts) | — | [14–17%][m277.glm5next_dsa_mla_decode_hb_fp8] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k) |
+| glm5next_dsa_mla_decode_hb::`glm5next_dsa_mla_{decode_hb_fp8_phi, merge}` (2) | [gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_decode_hb.cu:186][f277] | DSA indexer / sparse MLA | gb10 | GLM-5.3 (1 ckpts) | — | not measured |
 | glm5next_dsa_mla_prefill_pipe::`glm5next_dsa_mla_prefill_pipe_phi` | [gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_prefill_pipe.cu:75][f278] | DSA indexer / sparse MLA | gb10 | GLM-5.3 (1 ckpts) | — | not measured |
 | glm5next_dsa_mla_prefill_tc::`glm5next_dsa_mla_prefill_tc_{phi, phi_nanor}` (2) | [gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_prefill_tc.cu:325][f279] | DSA indexer / sparse MLA | gb10 | GLM-5.3 (1 ckpts) | — | not measured |
 | qsa_indexer::`qsa_{block_pool, gather, prefill_attn, qprep, qprep_rows, score, score_rows, score_rows_tc}` (8) | [gb10/qwen3.8-flash-next/nvfp4/qsa_indexer.cu:70][f325] | QSA sparse attention | gb10 | Qwen3.8-FN (1 ckpts) | [3 notes][t325] | not measured |
 
-Also launched here: [Encoder-decoder translation](#encoder-decoder-translation-nllb-self-contained-kernel-set): `nllb_layernorm_bf16`, `nllb_layernorm_bf16`; [MLA](#mla-multi-head-latent-attention): `glm5next_mla_latent_write_fp8`; [MoE](#moe-routing-dispatch-expert-gemm-gemv-combine): `kquant_mmvq_q2_k_{groups_w, pair_w}` (2); [Normalization](#normalization-rmsnorm-layernorm-l2-gated-norms): `rms_norm_vanilla`; [Projection GEMM/GEMV — BF16/F32](#projection-gemm-gemv-bf16-f32): `dense_gemm_bf16`, `dense_gemm_bf16_f32out`, `dense_gemv_bf16`, `dense_gemv_bf16_fp32out`, `dense_gemv_bf16_batchm`, `dense_gemv_bf16_batchm_{fp32out, wide, wide_fp32out}` (3), `dense_gemv_bf16_batchm_{few, few_fp32out_pair}` (2), `dense_gemm_{bf16, bf16_f32out}` (2); [Projection GEMM/GEMV — integer / K-quant](#projection-gemm-gemv-integer-k-quant-q2-0-q2-k-q6-k-int8-mlx-int8): `kquant_mmvq_q2_k_w`, `metrale_q2_k_mmq128_nc`, `metrale_q2_k_mmq128_wc`; [Quantization and format conversion](#quantization-and-format-conversion): `kquant_q8_1_rows_bf16`, `metrale_q8_1_quantize_d2s6_bf16`.
+Also launched here: [Encoder-decoder translation](#encoder-decoder-translation-nllb-self-contained-kernel-set): `nllb_layernorm_bf16`, `nllb_layernorm_bf16`; [MLA](#mla-multi-head-latent-attention): `glm5next_mla_latent_write_fp8`; [MoE](#moe-routing-dispatch-expert-gemm-gemv-combine): `kquant_mmvq_q2_k_{groups_w, pair_w}` (2); [Normalization](#normalization-rmsnorm-layernorm-l2-gated-norms): `rms_norm_vanilla`; [Projection GEMM/GEMV — BF16/F32](#projection-gemm-gemv-bf16-f32): `dense_gemm_bf16`, `dense_gemm_bf16_f32out`, `dense_gemv_bf16`, `dense_gemv_bf16_fp32out`, `dense_gemv_bf16_batchm`, `dense_gemv_bf16_batchm_{fp32out, wide, wide_fp32out}` (3), `dense_gemv_bf16_batchm_few`, `dense_gemv_bf16_batchm_few_fp32out_pair`, `dense_gemm_{bf16, bf16_f32out}` (2); [Projection GEMM/GEMV — integer / K-quant](#projection-gemm-gemv-integer-k-quant-q2-0-q2-k-q6-k-int8-mlx-int8): `kquant_mmvq_q2_k_w`, `metrale_q2_k_mmq128_nc`, `metrale_q2_k_mmq128_wc`; [Quantization and format conversion](#quantization-and-format-conversion): `kquant_q8_1_rows_bf16`, `metrale_q8_1_quantize_d2s6_bf16`.
 
 ### GDN (gated delta rule linear attention)
 
@@ -630,12 +637,16 @@ Also launched here: [Activations and elementwise](#activations-and-elementwise-s
 | kda_chunk64::`kda_chunk64_scan` | [gb10/common/kda_chunk64.cu:129][f77] | KDA op | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
 | kda_chunk64_prepare::`kda_chunk64_{prepare, prepare_conv, prepare_conv_graw, prepare_graw}` (4) | [gb10/common/kda_chunk64_prepare.cu:356][f78] | KDA op | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
 | kda_gate::`kda_gate_bf16` | [gb10/common/kda_gate.cu:72][f80] | KDA op | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
-| kda_gates_w8a8::`kda_gates_w8a8_{k128, k128_rows}` (2) | [gb10/common/kda_gates_w8a8.cu:180][f81] | KDA op | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
-| kda_layer_ops::`kda_{fill_f32, o_norm_gated_bf16, pack_qkv_bf16, sigmoid_bf16_f32, split_widen}` (5) | [gb10/common/kda_layer_ops.cu:52][f82] | KDA op | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [1 note][t82] | not measured |
-| kda_recurrent::`kda_recurrent_decode_{bf16, bf16_rows_reg, bf16_seq_reg, bf16_seq_reg_snap, bf16_smem, bf16_smem_rows}` (6) | [gb10/common/kda_recurrent.cu:144][f83] | KDA op | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [2 notes][t83] | not measured |
+| kda_gates_w8a8::`kda_gates_w8a8_k128` | [gb10/common/kda_gates_w8a8.cu:180][f81] | KDA op | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
+| kda_gates_w8a8::`kda_gates_w8a8_k128_rows` | [gb10/common/kda_gates_w8a8.cu:187][f81] | KDA op | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | [41%][m81.kda_gates_w8a8_k128_rows] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k) |
+| kda_layer_ops::`kda_{fill_f32, sigmoid_bf16_f32, split_widen}` (3) | [gb10/common/kda_layer_ops.cu:91][f82] | KDA op | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
+| kda_layer_ops::`kda_o_norm_gated_bf16` | [gb10/common/kda_layer_ops.cu:52][f82] | KDA op | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | — | [1%][m82.kda_o_norm_gated_bf16] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k) |
+| kda_layer_ops::`kda_pack_qkv_bf16` | [gb10/common/kda_layer_ops.cu:136][f82] | KDA op | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [1 note][t82] | [4%][m82.kda_pack_qkv_bf16] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
+| kda_recurrent::`kda_recurrent_decode_{bf16, bf16_rows_reg, bf16_seq_reg, bf16_smem, bf16_smem_rows}` (5) | [gb10/common/kda_recurrent.cu:144][f83] | KDA op | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [2 notes][t83] | not measured |
+| kda_recurrent::`kda_recurrent_decode_bf16_seq_reg_snap` | [gb10/common/kda_recurrent.cu:512][f83] | KDA op | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [1 note][t83] | [112–115%][m83.kda_recurrent_decode_bf16_seq_reg_snap] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k) |
 | kda_decode::`k3_kda_recurrent_step_f32` | [gb10/kimi-k3/bf16/kda_decode.cu:60][f283] | KDA op | b200 b300 gb10 | Kimi-K3 (1 ckpts) | [1 note][t283] | not measured |
 
-Also launched here: [Causal conv1d](#causal-conv1d-short-convolution-of-gdn-kda-mamba2): `causal_conv1d_update_l2norm`, `causal_conv1d_update_l2norm_rows`, `causal_conv1d_update_prefill`, `causal_conv1d_{update_l2norm_tokens, update_l2norm_tokens_parts, window_advance, window_advance_parts, window_advance_to}` (5), `k3_kda_conv_update_f32`; [Normalization](#normalization-rmsnorm-layernorm-l2-gated-norms): `l2_norm_bf16`, `l2_norm_bf16`, `l2_norm_bf16`, `l2_norm_bf16`, `l2_norm_bf16`, `l2_norm_bf16`; [Projection GEMM/GEMV — BF16/F32](#projection-gemm-gemv-bf16-f32): `dense_gemm_bf16`, `dense_gemv_bf16`, `dense_gemv_bf16_batchm`, `dense_gemv_bf16_batchm_wide`, `dense_gemm_bf16`.
+Also launched here: [Causal conv1d](#causal-conv1d-short-convolution-of-gdn-kda-mamba2): `causal_conv1d_update_l2norm`, `causal_conv1d_update_l2norm_rows`, `causal_conv1d_update_prefill`, `causal_conv1d_update_l2norm_tokens`, `causal_conv1d_{update_l2norm_tokens_parts, window_advance, window_advance_parts}` (3), `causal_conv1d_window_advance_to`, `k3_kda_conv_update_f32`; [Normalization](#normalization-rmsnorm-layernorm-l2-gated-norms): `l2_norm_bf16`, `l2_norm_bf16`, `l2_norm_bf16`, `l2_norm_bf16`, `l2_norm_bf16`, `l2_norm_bf16`; [Projection GEMM/GEMV — BF16/F32](#projection-gemm-gemv-bf16-f32): `dense_gemm_bf16`, `dense_gemv_bf16`, `dense_gemv_bf16_batchm`, `dense_gemv_bf16_batchm_wide`, `dense_gemm_bf16`.
 
 ### Mamba2 (selective state-space scan)
 
@@ -661,7 +672,9 @@ Also launched here: [Activations and elementwise](#activations-and-elementwise-s
 | causal_conv1d::`causal_conv1d_update_l2norm_rows` | [gb10/common/causal_conv1d.cu:355][f14] | causal conv1d | b200 b300 gb10 hop strix hip | GLM-5.3 (1 ckpts) | [1 note][t14] | not measured |
 | causal_conv1d::`causal_conv1d_update_prefill` | [gb10/common/causal_conv1d.cu:184][f14] | causal conv1d | b200 b300 gb10 hop strix hip | GLM-5.3, Nemotron-H, Qwen-GDN, Qwen-GDN-MoE, Qwen3.8-FN (18 ckpts) | [2 notes][t14] | not measured |
 | causal_conv1d::`causal_conv1d_update_prefill_tp` | [gb10/common/causal_conv1d.cu:561][f14] | causal conv1d | b200 b300 gb10 hop strix hip | Nemotron-H, Qwen-GDN, Qwen-GDN-MoE, Qwen3.8-FN (17 ckpts) | [3 notes][t14] | [94–96%][m14.causal_conv1d_update_prefill_tp] (prefill 32k (cold, 32772 tok)) |
-| kda_conv_tokens::`causal_conv1d_{update_l2norm_tokens, update_l2norm_tokens_parts, window_advance, window_advance_parts, window_advance_to}` (5) | [gb10/common/kda_conv_tokens.cu:23][f79] | causal conv1d | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
+| kda_conv_tokens::`causal_conv1d_update_l2norm_tokens` | [gb10/common/kda_conv_tokens.cu:23][f79] | causal conv1d | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | [23%][m79.causal_conv1d_update_l2norm_tokens] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
+| kda_conv_tokens::`causal_conv1d_{update_l2norm_tokens_parts, window_advance, window_advance_parts}` (3) | [gb10/common/kda_conv_tokens.cu:54][f79] | causal conv1d | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
+| kda_conv_tokens::`causal_conv1d_window_advance_to` | [gb10/common/kda_conv_tokens.cu:78][f79] | causal conv1d | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | [11%][m79.causal_conv1d_window_advance_to] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
 | kda_decode::`k3_kda_conv_update_f32` | [gb10/kimi-k3/bf16/kda_decode.cu:21][f283] | causal conv1d | b200 b300 gb10 | Kimi-K3 (1 ckpts) | [1 note][t283] | not measured |
 | causal_conv1d_update_l2norm::`causal_conv1d_update_l2norm` | [metal/common/causal_conv1d_update_l2norm.metal:41][f353] | causal conv1d | metal | Qwen-GDN (7 ckpts) | [1 note][t353] | not measured |
 
@@ -673,9 +686,12 @@ Also launched here: [Activations and elementwise](#activations-and-elementwise-s
 |---|---|---|---|---|---|---|
 | moe_shared_expert_fused::`moe_expert_{gate_up_shared, silu_down_shared}` (2) | [b300/common/moe_shared_expert_fused.cu:48][f3] | expert GEMM/GEMV | b300 | Kimi-K3 (1 ckpts) | [2 notes][t3] | not measured |
 | gemm::`dense_gemm_bf16_router` | [gb10/common/dense_gemm_bf16.cu:204][f15] | routing / top-k | b200 b300 gb10 hop strix | DeepSeek-V4, GLM-5.3, Gemma4, Kimi-K3, Laguna, LongCat, MiniMax-M2, Mistral4, Nemotron-H, Qwen-GDN-MoE, Qwen3-VL, Qwen3.8-FN, Step-3.7 (23 ckpts) | [3 notes][t15] | [6%][m15.dense_gemm_bf16_router] (prefill 32k (cold, 32772 tok)) |
-| glm5next_ffn::`glm5next_moe_{combine, combine_indexed, combine_indexed_vec8, combine_vec8}` (4) | [gb10/common/glm5next_ffn.cu:224][f66] | dispatch / combine | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [1 note][t66] | not measured |
-| glm5next_ffn::`glm5next_router_{topk, topk_rank}` (2) | [gb10/common/glm5next_ffn.cu:111][f66] | routing / top-k | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [1 note][t66] | not measured |
-| glm5next_ffn::`glm5next_swiglu_{clamp, clamp_zero}` (2) | [gb10/common/glm5next_ffn.cu:25][f66] | expert activation | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [1 note][t66] | not measured |
+| glm5next_ffn::`glm5next_moe_combine` | [gb10/common/glm5next_ffn.cu:224][f66] | dispatch / combine | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [1 note][t66] | [1%][m66.glm5next_moe_combine] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k) |
+| glm5next_ffn::`glm5next_moe_combine_{indexed, indexed_vec8, vec8}` (3) | [gb10/common/glm5next_ffn.cu:258][f66] | dispatch / combine | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [1 note][t66] | not measured |
+| glm5next_ffn::`glm5next_router_topk` | [gb10/common/glm5next_ffn.cu:111][f66] | routing / top-k | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [1 note][t66] | not measured |
+| glm5next_ffn::`glm5next_router_topk_rank` | [gb10/common/glm5next_ffn.cu:302][f66] | routing / top-k | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [1 note][t66] | [0%][m66.glm5next_router_topk_rank] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k) |
+| glm5next_ffn::`glm5next_swiglu_clamp` | [gb10/common/glm5next_ffn.cu:25][f66] | expert activation | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [1 note][t66] | [0%][m66.glm5next_swiglu_clamp] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
+| glm5next_ffn::`glm5next_swiglu_clamp_zero` | [gb10/common/glm5next_ffn.cu:44][f66] | expert activation | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [1 note][t66] | not measured |
 | moe_bf16_grouped_gemm::`moe_bf16_grouped_gemm` | [gb10/common/moe_bf16_grouped_gemm.cu:86][f89] | expert GEMM/GEMV | b200 b300 gb10 hop | DeepSeek-V4, GLM-5.3, Gemma4, Kimi-K3, Laguna, LongCat, MiniMax-M2, Mistral4, Nemotron-H, Qwen-GDN-MoE, Qwen3-VL, Qwen3.8-FN, Step-3.7 (23 ckpts) | [2 notes][t89] | not measured |
 | moe_bf16_grouped_tc::`moe_expert_{down_act_bf16_grouped_tc, gate_up_act_bf16_grouped_tc}` (2) | [gb10/common/moe_bf16_grouped_tc.cu:42][f90] | expert GEMM/GEMV | b200 gb10 hop | DeepSeek-V4, GLM-5.3, Gemma4, Kimi-K3, Laguna, LongCat, MiniMax-M2, Mistral4, Nemotron-H, Qwen-GDN-MoE, Qwen3-VL, Qwen3.8-FN, Step-3.7 (23 ckpts) | — | not measured |
 | moe_decode_atomic_c4::`moe_decode_atomic_c4_finalize` | [gb10/common/moe_decode_atomic_c4.cu:183][f91] | dispatch / combine | b200 b300 gb10 hop | DeepSeek-V4, GLM-5.3, Gemma4, Kimi-K3, Laguna, LongCat, MiniMax-M2, Mistral4, Nemotron-H, Qwen-GDN-MoE, Qwen3-VL, Qwen3.8-FN, Step-3.7 (23 ckpts) | [2 notes][t91] | not measured |
@@ -740,7 +756,7 @@ Also launched here: [Activations and elementwise](#activations-and-elementwise-s
 | nemotron_moe_prefill::`nemotron_moe_topk_sigmoid_batched` | [gb10/common/nemotron_moe_prefill.cu:53][f138] | routing / top-k | b200 b300 gb10 hop strix hip | Nemotron-H (3 ckpts) | [1 note][t138] | not measured |
 | nemotron_moe_prefill::`nemotron_moe_weighted_sum_prefill` | [gb10/common/nemotron_moe_prefill.cu:444][f138] | dispatch / combine | b200 b300 gb10 hop strix hip | Nemotron-H (3 ckpts) | — | not measured |
 | relu2::`moe_weighted_sum_scale` | [gb10/common/relu_squared.cu:57][f183] | dispatch / combine | b200 b300 gb10 hop strix hip | Nemotron-H (3 ckpts) | [1 note][t183] | not measured |
-| w4a16_gemv::`glm5next_moe_row_union` | [gb10/common/w4a16_gemv.cu:2209][f209] | dispatch / combine | b200 b300 gb10 hop strix hip | GLM-5.3 (1 ckpts) | [2 notes][t209] | not measured |
+| w4a16_gemv::`glm5next_moe_row_union` | [gb10/common/w4a16_gemv.cu:2209][f209] | dispatch / combine | b200 b300 gb10 hop strix hip | GLM-5.3 (1 ckpts) | [2 notes][t209] | [0%][m209.glm5next_moe_row_union] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
 | kquant_moe::`kquant_mmvq_{q2_k_experts_w2, q2_k_experts_w8, q2_k_groups_w, q2_k_pair_w, q3_k_experts_w2, q3_k_experts_w8}` (6) | [gb10/deepseek-v4-flash/nvfp4/kquant_moe.cu:321][f243] | expert GEMM/GEMV | b200 gb10 hop | DeepSeek-V4 (2 ckpts) | [7 notes][t243] | not measured |
 | moe_silu_mul::`moe_silu_mul` | [gb10/deepseek-v4-flash/nvfp4/moe_silu_mul.cu:40][f250] | expert activation | b200 gb10 hop | DeepSeek-V4, LongCat (3 ckpts) | [1 note][t250] | not measured |
 | moe_v41::`moe_v41_{accumulate, finish, gather_rows, rank_combine, scatter_add, slot_table_set, sum_rows, swiglu}` (8) | [gb10/deepseek-v4-flash/nvfp4/moe_v41.cu:16][f251] | dispatch / combine | b200 gb10 hop | DeepSeek-V4 (2 ckpts) | [1 note][t251] | not measured |
@@ -765,7 +781,7 @@ Also launched here: [Activations and elementwise](#activations-and-elementwise-s
 | moe_fp8_grouped_gemm::`moe_fp8_grouped_gemm` | [strix-hip/common/moe_fp8_grouped_gemm.cu:249][f390] | expert GEMM/GEMV | hip | Qwen-GDN-MoE (6 ckpts) | [2 notes][t390] | not measured |
 | moe_w4a16::`moe_{fp8_grouped_gemm_ptrtable_t, w4a16_fused_gate_up_t, w4a16_fused_gate_up_t_k64, w4a16_grouped_gemm_ptrtable, w4a16_grouped_gemm_ptrtable_t, w4a16_grouped_gemm_ptrtable_t_k64}` (6) | [strix-hip/qwen3.6-27b/nvfp4/moe_w4a16_grouped_gemm.cu:61][f393] | expert GEMM/GEMV | hip | Qwen-GDN-MoE (6 ckpts) | [4 notes][t393] | not measured |
 
-Also launched here: [Activations and elementwise](#activations-and-elementwise-silu-gelu-relu-residual-gates-scale): `relu_squared_inplace`, `bf16_residual_add`, `gelu_mul`, `gelu`; [Normalization](#normalization-rmsnorm-layernorm-l2-gated-norms): `rms_norm`, `rms_norm_residual`, `rms_{norm, norm_residual}` (2), `rms_{norm, norm_residual}` (2), `rms_{norm, norm_residual}` (2), `rms_{norm, norm_residual}` (2), `rms_{norm, norm_residual}` (2); [Projection GEMM/GEMV — BF16/F32](#projection-gemm-gemv-bf16-f32): `dense_gemm_bf16`, `dense_gemm_bf16_f32out`, `dense_gemm_bf16_pipelined`, `dense_gemm_f32in_f32out`, `dense_gemv_bf16`, `dense_gemv_bf16_fp32out`, `dense_gemv_bf16_batchm`, `dense_gemv_bf16_batchm_{fp32out, wide, wide_fp32out}` (3), `dense_gemm_{bf16, bf16_f32out, bf16_pipelined}` (3), `dense_gemm_f32in_f32out`; [Projection GEMM/GEMV — FP8](#projection-gemm-gemv-fp8-w8a16-w8a8-block-scaled): `fp8_gemm_t_blockscaled`, `w8a16_gemm`, `w8a16_gemm_pipelined`, `w8a16_gemv`, `fp8_gemm_t`, `fp8_gemm_{t, t_m128_mfast}` (2), `fp8_gemm_t`, `fp8_gemm_t`, `w8a16_gemv`, `w8a16_gemm`, `fp8_gemm_t`, `fp8_gemm_t`; [Projection GEMM/GEMV — NVFP4 W4A16](#projection-gemm-gemv-nvfp4-w4a16): `w4a16_{gemm, gemm_t}` (2), `w4a16_{gemv, gemv_batch2, gemv_batch3}` (3), `w4a16_gemv_sw`, `w4a16_gemv_sw_{moe, moe_batchm_m10, moe_batchm_m11, moe_batchm_m12, moe_batchm_m13, moe_batchm_m14, moe_batchm_m15, moe_batchm_m2, moe_batchm_m3, moe_batchm_m4, moe_batchm_m5, moe_batchm_m6, moe_batchm_m7, moe_batchm_m9}` (14), `w4a16_{gemm, gemm_t, gemm_t_m128}` (3), `w4a16_{gemm, gemm_t, gemm_t_m128}` (3), `w4a16_{gemm, gemm_t}` (2), `w4a16_gemm_t_m128`, `w4a16_{gemm, gemm_t_m128}` (2), `w4a16_gemm_t`, `w4a16_{gemm, gemm_t, gemm_t_m128}` (3), `w4a16_{gemm, gemm_t, gemm_t_m128}` (3); [Projection GEMM/GEMV — W4A4](#projection-gemm-gemv-w4a4-fp4-activations): `w4a4_gemv_{mx16, mx32, mx8}` (3), `w4a4_{gemv_mx16_moe_union_sweep, gemv_mx16_moe_union_sweep_k64, gemv_mx16_moe_union_sweep_sl, gemv_mx8_moe_slots, gemv_mx8_moe_slots_k64, gemv_mx8_moe_slots_sweep, gemv_mx8_moe_slots_sweep_k64, gemv_mx8_moe_union_sweep, gemv_mx8_moe_union_sweep_k64, gemv_mx8_moe_union_sweep_sl, quant_rows_static, quant_rows_static_k64}` (12), `w4a4_grouped_{gu_m128, gu_m128_r, gu_m32, gu_m64, mx_m128, mx_m128_k64, mx_m128_k64_n, mx_m128_k64_r, mx_m128_n, mx_m128_r, mx_m32, mx_m32_k64, mx_m64, mx_m64_k64, one_group, tiles}` (16), `w4a4_gemm_mfast`; [Projection GEMM/GEMV — integer / K-quant](#projection-gemm-gemv-integer-k-quant-q2-0-q2-k-q6-k-int8-mlx-int8): `kquant_mmvq_q2_k_w`, `kquant_mmvq_q3_k_w`, `metrale_q2_k_mmq128_nc`, `metrale_q2_k_mmq128_wc`, `metrale_q3_k_mmq128_nc`, `metrale_q3_k_mmq128_wc`; [Quantization and format conversion](#quantization-and-format-conversion): `nvfp4_tc_lean_repack`, `silu_mul_quant_fp8`, `quantize_bf16_to_nvfp4`, `kquant_q8_1_rows_bf16`, `kquant_swiglu_q8_1_rows_bf16`, `metrale_q8_1_quantize_d2s6_bf16`, `metrale_q8_1_quantize_d4_bf16`, `bf16_to_fp8`, `predequant_nvfp4_to_fp8`, `bf16_to_fp8`, `predequant_nvfp4_to_fp8`, `bf16_to_fp8`, `predequant_nvfp4_to_fp8`, `bf16_to_fp8`, `predequant_nvfp4_to_fp8`, `bf16_to_fp8`, `predequant_nvfp4_to_fp8`, `bf16_to_fp8`, `predequant_nvfp4_to_fp8`; [Sparse / compressed attention](#sparse-compressed-attention-dsa-csa-hca-qsa): `attn_v41_act_quant_fp8`.
+Also launched here: [Activations and elementwise](#activations-and-elementwise-silu-gelu-relu-residual-gates-scale): `relu_squared_inplace`, `bf16_residual_add`, `gelu_mul`, `gelu`; [Normalization](#normalization-rmsnorm-layernorm-l2-gated-norms): `rms_norm`, `rms_norm_residual`, `rms_{norm, norm_residual}` (2), `rms_{norm, norm_residual}` (2), `rms_{norm, norm_residual}` (2), `rms_{norm, norm_residual}` (2), `rms_{norm, norm_residual}` (2); [Projection GEMM/GEMV — BF16/F32](#projection-gemm-gemv-bf16-f32): `dense_gemm_bf16`, `dense_gemm_bf16_f32out`, `dense_gemm_bf16_pipelined`, `dense_gemm_f32in_f32out`, `dense_gemv_bf16`, `dense_gemv_bf16_fp32out`, `dense_gemv_bf16_batchm`, `dense_gemv_bf16_batchm_{fp32out, wide, wide_fp32out}` (3), `dense_gemm_{bf16, bf16_f32out, bf16_pipelined}` (3), `dense_gemm_f32in_f32out`; [Projection GEMM/GEMV — FP8](#projection-gemm-gemv-fp8-w8a16-w8a8-block-scaled): `fp8_gemm_t_blockscaled`, `w8a16_gemm`, `w8a16_gemm_pipelined`, `w8a16_gemv`, `fp8_gemm_t`, `fp8_gemm_{t, t_m128_mfast}` (2), `fp8_gemm_t`, `fp8_gemm_t`, `w8a16_gemv`, `w8a16_gemm`, `fp8_gemm_t`, `fp8_gemm_t`; [Projection GEMM/GEMV — NVFP4 W4A16](#projection-gemm-gemv-nvfp4-w4a16): `w4a16_{gemm, gemm_t}` (2), `w4a16_{gemv, gemv_batch2, gemv_batch3}` (3), `w4a16_gemv_sw`, `w4a16_gemv_sw_moe`, `w4a16_gemv_sw_moe_batchm_{m10, m11, m12, m13, m14, m15, m2, m3, m4, m5, m6, m7, m9}` (13), `w4a16_{gemm, gemm_t, gemm_t_m128}` (3), `w4a16_{gemm, gemm_t, gemm_t_m128}` (3), `w4a16_{gemm, gemm_t}` (2), `w4a16_gemm_t_m128`, `w4a16_{gemm, gemm_t_m128}` (2), `w4a16_gemm_t`, `w4a16_{gemm, gemm_t, gemm_t_m128}` (3), `w4a16_{gemm, gemm_t, gemm_t_m128}` (3); [Projection GEMM/GEMV — W4A4](#projection-gemm-gemv-w4a4-fp4-activations): `w4a4_gemv_{mx16, mx32}` (2), `w4a4_gemv_mx8`, `w4a4_{gemv_mx16_moe_union_sweep, gemv_mx16_moe_union_sweep_k64, gemv_mx16_moe_union_sweep_sl, gemv_mx8_moe_slots, gemv_mx8_moe_slots_k64, gemv_mx8_moe_slots_sweep, gemv_mx8_moe_slots_sweep_k64, gemv_mx8_moe_union_sweep, gemv_mx8_moe_union_sweep_k64, gemv_mx8_moe_union_sweep_sl, quant_rows_static_k64}` (11), `w4a4_quant_rows_static`, `w4a4_grouped_{gu_m128, gu_m128_r, gu_m32, gu_m64, mx_m128, mx_m128_k64, mx_m128_k64_n, mx_m128_k64_r, mx_m128_n, mx_m128_r, mx_m32, mx_m32_k64, mx_m64, mx_m64_k64, one_group, tiles}` (16), `w4a4_gemm_mfast`; [Projection GEMM/GEMV — integer / K-quant](#projection-gemm-gemv-integer-k-quant-q2-0-q2-k-q6-k-int8-mlx-int8): `kquant_mmvq_q2_k_w`, `kquant_mmvq_q3_k_w`, `metrale_q2_k_mmq128_nc`, `metrale_q2_k_mmq128_wc`, `metrale_q3_k_mmq128_nc`, `metrale_q3_k_mmq128_wc`; [Quantization and format conversion](#quantization-and-format-conversion): `nvfp4_tc_lean_repack`, `silu_mul_quant_fp8`, `quantize_bf16_to_nvfp4`, `kquant_q8_1_rows_bf16`, `kquant_swiglu_q8_1_rows_bf16`, `metrale_q8_1_quantize_d2s6_bf16`, `metrale_q8_1_quantize_d4_bf16`, `bf16_to_fp8`, `predequant_nvfp4_to_fp8`, `bf16_to_fp8`, `predequant_nvfp4_to_fp8`, `bf16_to_fp8`, `predequant_nvfp4_to_fp8`, `bf16_to_fp8`, `predequant_nvfp4_to_fp8`, `bf16_to_fp8`, `predequant_nvfp4_to_fp8`, `bf16_to_fp8`, `predequant_nvfp4_to_fp8`; [Sparse / compressed attention](#sparse-compressed-attention-dsa-csa-hca-qsa): `attn_v41_act_quant_fp8`.
 
 ### Dense FFN (gate/up/down projections of non-MoE layers)
 
@@ -787,12 +803,14 @@ Also launched here: [Activations and elementwise](#activations-and-elementwise-s
 | gemm_splitk::`dense_gemm_splitk_{partial, reduce}` (2) | [gb10/common/dense_gemm_splitk.cu:27][f16] | BF16/F32 GEMM/GEMV | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [1 note][t16] | not measured |
 | gemm_tc::`dense_gemm_{tc, tc_scaled_acc}` (2) | [gb10/common/dense_gemm_tc.cu:17][f17] | BF16/F32 GEMM/GEMV | b200 b300 gb10 hop strix | all 14 decoder families (30 ckpts) | [2 notes][t17] | not measured |
 | dense_gemm_tc_f32out::`dense_{gemm_tc_f32out, gemv_bf16_tc16_f32out, gemv_bf16_tc32_f32out, gemv_bf16_tc8_f32out}` (4) | [gb10/common/dense_gemm_tc_f32out.cu:28][f18] | BF16/F32 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
-| gemv::`dense_gemv_bf16` | [gb10/common/dense_gemv_bf16.cu:33][f19] | BF16/F32 GEMM/GEMV | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [3 notes][t19] | [94–100%][m19.dense_gemv_bf16] (decode C=1 (R=4, MTP k=3)) |
+| gemv::`dense_gemv_bf16` | [gb10/common/dense_gemv_bf16.cu:33][f19] | BF16/F32 GEMM/GEMV | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [3 notes][t19] | [91–100%][m19.dense_gemv_bf16] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
 | gemv::`dense_gemv_bf16_fp32out` | [gb10/common/dense_gemv_bf16.cu:120][f19] | BF16/F32 GEMM/GEMV | b200 b300 gb10 hop strix hip | GLM-5.3 (1 ckpts) | [3 notes][t19] | not measured |
 | dense_gemv_bf16_batch2::`dense_gemv_bf16_batch2` | [gb10/common/dense_gemv_bf16_batch2.cu:32][f20] | BF16/F32 GEMM/GEMV | b200 b300 gb10 hop | Qwen-GDN, Qwen-GDN-MoE, Qwen3.8-FN (14 ckpts) | [1 note][t20] | not measured |
 | dense_gemv_bf16_batchm::`dense_gemv_bf16_batchm` | [gb10/common/dense_gemv_bf16_batchm.cu:229][f21] | BF16/F32 GEMM/GEMV | b200 b300 gb10 hop | all 14 decoder families (30 ckpts) | [2 notes][t21] | [16–92%][m21.dense_gemv_bf16_batchm] (decode C=16 (R=32, MTP k=1)) |
 | dense_gemv_bf16_batchm::`dense_gemv_bf16_batchm_{fp32out, wide, wide_fp32out}` (3) | [gb10/common/dense_gemv_bf16_batchm.cu:245][f21] | BF16/F32 GEMM/GEMV | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [2 notes][t21] | not measured |
-| dense_gemv_bf16_batchm_few::`dense_gemv_bf16_batchm_{few, few_fp32out, few_fp32out_pair}` (3) | [gb10/common/dense_gemv_bf16_batchm_few.cu:183][f22] | BF16/F32 GEMM/GEMV | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
+| dense_gemv_bf16_batchm_few::`dense_gemv_bf16_batchm_few` | [gb10/common/dense_gemv_bf16_batchm_few.cu:183][f22] | BF16/F32 GEMM/GEMV | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
+| dense_gemv_bf16_batchm_few::`dense_gemv_bf16_batchm_few_fp32out` | [gb10/common/dense_gemv_bf16_batchm_few.cu:195][f22] | BF16/F32 GEMM/GEMV | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | [46–47%][m22.dense_gemv_bf16_batchm_few_fp32out] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
+| dense_gemv_bf16_batchm_few::`dense_gemv_bf16_batchm_few_fp32out_pair` | [gb10/common/dense_gemv_bf16_batchm_few.cu:213][f22] | BF16/F32 GEMM/GEMV | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | [85–86%][m22.dense_gemv_bf16_batchm_few_fp32out_pair] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
 | dense_gemv_bf16_tc::`dense_gemv_bf16_tc16` | [gb10/common/dense_gemv_bf16_tc.cu:47][f23] | BF16/F32 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | [4 notes][t23] · [#1][pr1] | [86–95%][m23.dense_gemv_bf16_tc16] (decode C=16 (R=32, MTP k=1)) |
 | dense_gemv_bf16_tc::`dense_gemv_bf16_{tc32, tc8}` (2) | [gb10/common/dense_gemv_bf16_tc.cu:46][f23] | BF16/F32 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | [4 notes][t23] · [#1][pr1] | not measured |
 | dense_gemm_m16_bf16::`dense_gemm_m16_{bf16, bf16_n64}` (2) | [hopper/common/dense_gemm_m16_bf16.cu:339][f327] | BF16/F32 GEMM/GEMV | hop | DeepSeek-V4, Nemotron-H, Qwen-GDN, Qwen-GDN-MoE (18 ckpts) | [2 notes][t327] | not measured |
@@ -809,7 +827,7 @@ Also launched here: [Activations and elementwise](#activations-and-elementwise-s
 | Kernel (module::function) | File | Kind | HW | LLMs | Trade-offs · PRs | % of floor |
 |---|---|---|---|---|---|---|
 | w8a16_gemv_batch4::`w8a16_gemv_{batch16, batch16_strided, batch4, batch4_strided}` (4) | [b300/common/w8a16_gemv_batch4.cu:213][f4] | FP8 GEMM/GEMV | b300 | Kimi-K3 (1 ckpts) | [1 note][t4] | not measured |
-| gemv_fp8w::`dense_gemv_fp8w` | [gb10/common/dense_gemv_fp8w.cu:131][f24] | FP8 GEMM/GEMV | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [1 note][t24] | not measured |
+| gemv_fp8w::`dense_gemv_fp8w` | [gb10/common/dense_gemv_fp8w.cu:131][f24] | FP8 GEMM/GEMV | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [1 note][t24] | [98–99%][m24.dense_gemv_fp8w] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k) |
 | dense_gemv_fp8w_batch2::`dense_gemv_fp8w_batch2` | [gb10/common/dense_gemv_fp8w_batch2.cu:74][f25] | FP8 GEMM/GEMV | b200 b300 gb10 hop | all 14 decoder families (30 ckpts) | [1 note][t25] | not measured |
 | fp8_gemm_blockscaled_pipe::`fp8_gemm_blockscaled_pipe_128x64` | [gb10/common/fp8_gemm_blockscaled_pipe.cu:63][f40] | FP8 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
 | fp8_gemm_t_blockscaled::`fp8_gemm_t_blockscaled` | [gb10/common/fp8_gemm_t_blockscaled.cu:113][f41] | FP8 GEMM/GEMV | b200 b300 gb10 hop strix | all 14 decoder families (30 ckpts) | [3 notes][t41] | [14–49%][m41.fp8_gemm_t_blockscaled] (prefill 32k (cold, 32772 tok)) |
@@ -826,7 +844,9 @@ Also launched here: [Activations and elementwise](#activations-and-elementwise-s
 | w8a16_gemv_batch4::`w8a16_gemv_{batch16, batch16_strided, batch4, batch4_strided}` (4) | [gb10/common/w8a16_gemv_batch4.cu:234][f227] | FP8 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | [2 notes][t227] | not measured |
 | w8a16_gemv_fused::`w8a16_gemv_{dual, silu_input}` (2) | [gb10/common/w8a16_gemv_fused.cu:123][f228] | FP8 GEMM/GEMV | b200 b300 gb10 | DeepSeek-V4, GLM-5.3, Gemma4, Kimi-K3, Laguna, LongCat, MiniMax-M2, Mistral4, Nemotron-H, Qwen-GDN, Qwen-GDN-MoE, Qwen3.8-FN, Step-3.7 (29 ckpts) | [1 note][t228] | not measured |
 | w8a16_tc_rows::`w8a16_tc_rows_{16, 32, 64, 64c}` (4) | [gb10/common/w8a16_tc_rows.cu:38][f229] | FP8 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | [1 note][t229] | not measured |
-| w8a8_gemv::`w8a8_gemv_{blk128_mb16, blk128_mb1_ku8, blk128_mb2, blk128_mb4, blk128_mb8, rowscale_mb16, rowscale_mb1_ku8, rowscale_mb1_ku8_split4, rowscale_mb2, rowscale_mb4, rowscale_mb8}` (11) | [gb10/common/w8a8_gemv.cu:39][f231] | FP8 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
+| w8a8_gemv::`w8a8_gemv_{blk128_mb16, blk128_mb1_ku8, blk128_mb2, blk128_mb4, blk128_mb8, rowscale_mb16, rowscale_mb2, rowscale_mb4, rowscale_mb8}` (9) | [gb10/common/w8a8_gemv.cu:40][f231] | FP8 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
+| w8a8_gemv::`w8a8_gemv_rowscale_mb1_ku8` | [gb10/common/w8a8_gemv.cu:39][f231] | FP8 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | [85–93%][m231.w8a8_gemv_rowscale_mb1_ku8] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
+| w8a8_gemv::`w8a8_gemv_rowscale_mb1_ku8_split4` | [gb10/common/w8a8_gemv.cu:54][f231] | FP8 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | [84–85%][m231.w8a8_gemv_rowscale_mb1_ku8_split4] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
 | fp8_block_gemm::`fp8_block_{gemm_bf16, gemv_bf16}` (2) | [gb10/deepseek-v4-flash/nvfp4/fp8_block_gemm.cu:44][f239] | FP8 GEMM/GEMV | b200 gb10 hop | DeepSeek-V4 (2 ckpts) | — | not measured |
 | w4a16::`fp8_{fp8_gemm_t, fp8_gemm_t_m128, gemm_t, gemm_t_m128}` (4) | [gb10/deepseek-v4-flash/nvfp4/w4a16_gemm.cu:382][f259] | FP8 GEMM/GEMV | b200 gb10 hop | DeepSeek-V4, Gemma4, Laguna, LongCat, MiniMax-M2, Mistral4, Nemotron-H, Qwen-GDN, Qwen-GDN-MoE, Qwen3-VL, Step-3.7 (27 ckpts) | [1 note][t259] | not measured |
 | w4a16_v2::`w4a16_gemm_t_m128_v2` | [gb10/minimax-m2-229b/nvfp4/w4a16_gemm_v2.cu:72][f287] | FP8 GEMM/GEMV | gb10 | MiniMax-M2, Step-3.7 (2 ckpts) | [1 note][t287] | not measured |
@@ -853,12 +873,14 @@ Also launched here: [Activations and elementwise](#activations-and-elementwise-s
 |---|---|---|---|---|---|---|
 | w4a16::`w4a16_{gemm, gemm_t}` (2) | [gb10/common/w4a16_gemm.cu:87][f208] | NVFP4 W4A16 GEMM/GEMV | b200 b300 gb10 | GLM-5.3, Kimi-K3 (2 ckpts) | [1 note][t208] | not measured |
 | w4a16_gemv::`w4a16_{gemv, gemv_batch16, gemv_batch2, gemv_batch3, gemv_batch32, gemv_batch8, gemv_batch8_rt2, gemv_dual_batch2, gemv_dual_batch3, gemv_logits, gemv_qg, gemv_qg_batch2, gemv_qg_batch3}` (13) | [gb10/common/w4a16_gemv.cu:168][f209] | NVFP4 W4A16 GEMM/GEMV | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [6 notes][t209] | not measured |
-| w4a16_gemv::`w4a16_gemv_{batch4, batch5, batch6, batch7, sw_moe, sw_moe_batchm_m10, sw_moe_batchm_m11, sw_moe_batchm_m12, sw_moe_batchm_m13, sw_moe_batchm_m14, sw_moe_batchm_m15, sw_moe_batchm_m2, sw_moe_batchm_m3, sw_moe_batchm_m4, sw_moe_batchm_m5, sw_moe_batchm_m6, sw_moe_batchm_m7, sw_moe_batchm_m9}` (18) | [gb10/common/w4a16_gemv.cu:301][f209] | NVFP4 W4A16 GEMM/GEMV | b200 b300 gb10 hop strix hip | GLM-5.3 (1 ckpts) | [2 notes][t209] | not measured |
+| w4a16_gemv::`w4a16_gemv_{batch4, batch5, batch6, batch7, sw_moe_batchm_m10, sw_moe_batchm_m11, sw_moe_batchm_m12, sw_moe_batchm_m13, sw_moe_batchm_m14, sw_moe_batchm_m15, sw_moe_batchm_m2, sw_moe_batchm_m3, sw_moe_batchm_m4, sw_moe_batchm_m5, sw_moe_batchm_m6, sw_moe_batchm_m7, sw_moe_batchm_m9}` (17) | [gb10/common/w4a16_gemv.cu:721][f209] | NVFP4 W4A16 GEMM/GEMV | b200 b300 gb10 hop strix hip | GLM-5.3 (1 ckpts) | [2 notes][t209] | not measured |
 | w4a16_gemv::`w4a16_gemv_qkvz` | [gb10/common/w4a16_gemv.cu:1558][f209] | NVFP4 W4A16 GEMM/GEMV | b200 b300 gb10 hop strix hip | Qwen-GDN, Qwen-GDN-MoE, Qwen3.8-FN (14 ckpts) | [1 note][t209] | not measured |
 | w4a16_gemv::`w4a16_gemv_sw` | [gb10/common/w4a16_gemv.cu:234][f209] | NVFP4 W4A16 GEMM/GEMV | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [1 note][t209] | [96–99%][m209.w4a16_gemv_sw] (decode C=1 (R=4, MTP k=3)) |
+| w4a16_gemv::`w4a16_gemv_sw_moe` | [gb10/common/w4a16_gemv.cu:301][f209] | NVFP4 W4A16 GEMM/GEMV | b200 b300 gb10 hop strix hip | GLM-5.3 (1 ckpts) | [1 note][t209] | [79%][m209.w4a16_gemv_sw_moe] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
 | w4a16_gemv_fused::`w4a16_gemv_{dual, dual_sw}` (2) | [gb10/common/w4a16_gemv_fused.cu:144][f210] | NVFP4 W4A16 GEMM/GEMV | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [1 note][t210] | not measured |
 | w4a16_gemv_fused::`w4a16_gemv_silu_{input, input_sw}` (2) | [gb10/common/w4a16_gemv_fused.cu:209][f210] | NVFP4 W4A16 GEMM/GEMV | b200 b300 gb10 hop strix hip | DeepSeek-V4, GLM-5.3, Gemma4, Kimi-K3, Laguna, LongCat, MiniMax-M2, Mistral4, Nemotron-H, Qwen-GDN, Qwen-GDN-MoE, Qwen3.8-FN, Step-3.7 (29 ckpts) | [2 notes][t210] | not measured |
-| w4a16_gemv_pipe::`w4a16_gemv_pipe_{m1, m2}` (2) | [gb10/common/w4a16_gemv_pipe.cu:316][f211] | NVFP4 W4A16 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
+| w4a16_gemv_pipe::`w4a16_gemv_pipe_m1` | [gb10/common/w4a16_gemv_pipe.cu:316][f211] | NVFP4 W4A16 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
+| w4a16_gemv_pipe::`w4a16_gemv_pipe_m2` | [gb10/common/w4a16_gemv_pipe.cu:317][f211] | NVFP4 W4A16 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | [4–90%][m211.w4a16_gemv_pipe_m2] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
 | w4a16_gemv_seg::`w4a16_gemv_seg_{m2, m3, m4, r1, r2, r4}` (6) | [gb10/common/w4a16_gemv_seg.cu:305][f212] | NVFP4 W4A16 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
 | w4a16_gemv_tc::`w4a16_gemv_tc16` | [gb10/common/w4a16_gemv_tc.cu:256][f213] | NVFP4 W4A16 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | [4 notes][t213] · [#1][pr1] | [86–92%][m213.w4a16_gemv_tc16] (decode C=16 (R=32, MTP k=1)) |
 | w4a16_gemv_tc::`w4a16_gemv_tc8` | [gb10/common/w4a16_gemv_tc.cu:255][f213] | NVFP4 W4A16 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | [4 notes][t213] · [#1][pr1] | [59–90%][m213.w4a16_gemv_tc8] (decode C=1 (R=4, MTP k=3)) |
@@ -883,8 +905,10 @@ Also launched here: [Activations and elementwise](#activations-and-elementwise-s
 | Kernel (module::function) | File | Kind | HW | LLMs | Trade-offs · PRs | % of floor |
 |---|---|---|---|---|---|---|
 | l2_warm::`l2_warm_ldcg` | [gb10/common/l2_warm.cu:18][f84] | L2 warm of the next projections' weights | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
-| w4a4_gemv_mx::`w4a4_{gemv_mx16, gemv_mx16_nt2, gemv_mx16_ps, gemv_mx32, gemv_mx32_nt4, gemv_mx32_ps, gemv_mx64, gemv_mx64_nt2, gemv_mx8, quant_rows}` (10) | [gb10/common/w4a4_gemv_mx.cu:226][f217] | W4A4 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | [23 notes][t217] · [#1][pr1] [#14][pr14] [#18][pr18] | not measured |
-| w4a4_gemv_mx_moe::`w4a4_{gemv_mx16_moe_union_sweep, gemv_mx16_moe_union_sweep_k64, gemv_mx16_moe_union_sweep_sl, gemv_mx8_moe_slots, gemv_mx8_moe_slots_k64, gemv_mx8_moe_slots_sweep, gemv_mx8_moe_slots_sweep_k64, gemv_mx8_moe_union_sweep, gemv_mx8_moe_union_sweep_k64, gemv_mx8_moe_union_sweep_sl, quant_rows_static, quant_rows_static_k64}` (12) | [gb10/common/w4a4_gemv_mx_moe.cu:51][f218] | W4A4 GEMM/GEMV | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
+| w4a4_gemv_mx::`w4a4_{gemv_mx16, gemv_mx16_nt2, gemv_mx16_ps, gemv_mx32, gemv_mx32_nt4, gemv_mx32_ps, gemv_mx64, gemv_mx64_nt2, quant_rows}` (9) | [gb10/common/w4a4_gemv_mx.cu:227][f217] | W4A4 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | [23 notes][t217] · [#1][pr1] [#14][pr14] [#18][pr18] | not measured |
+| w4a4_gemv_mx::`w4a4_gemv_mx8` | [gb10/common/w4a4_gemv_mx.cu:226][f217] | W4A4 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | [13 notes][t217] · [#1][pr1] [#14][pr14] [#18][pr18] | [72–73%][m217.w4a4_gemv_mx8] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
+| w4a4_gemv_mx_moe::`w4a4_{gemv_mx16_moe_union_sweep, gemv_mx16_moe_union_sweep_k64, gemv_mx16_moe_union_sweep_sl, gemv_mx8_moe_slots, gemv_mx8_moe_slots_k64, gemv_mx8_moe_slots_sweep, gemv_mx8_moe_slots_sweep_k64, gemv_mx8_moe_union_sweep, gemv_mx8_moe_union_sweep_k64, gemv_mx8_moe_union_sweep_sl, quant_rows_static_k64}` (11) | [gb10/common/w4a4_gemv_mx_moe.cu:59][f218] | W4A4 GEMM/GEMV | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
+| w4a4_gemv_mx_moe::`w4a4_quant_rows_static` | [gb10/common/w4a4_gemv_mx_moe.cu:51][f218] | W4A4 GEMM/GEMV | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | [2%][m218.w4a4_quant_rows_static] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
 | w4a4_grouped_mx::`w4a4_grouped_{gu_m128, gu_m128_r, gu_m32, gu_m64, mx_m128, mx_m128_k64, mx_m128_k64_n, mx_m128_k64_r, mx_m128_n, mx_m128_r, mx_m32, mx_m32_k64, mx_m64, mx_m64_k64, one_group, tiles}` (16) | [gb10/common/w4a4_grouped_mx.cu:51][f219] | W4A4 GEMM/GEMV | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
 | w4a4::`w4a4_{gemm, gemm_mfast}` (2) | [gb10/nemotron-labs-3-puzzle-75b-a9b/nvfp4/w4a4_gemm.cu:115][f299] | W4A4 GEMM/GEMV | gb10 | Nemotron-H (3 ckpts) | [1 note][t299] | not measured |
 | nvfp4_mmq::`metrale_nvfp4_{gemm_pipe, mmq128_wc, mmq16_nc, mmq16_wc, mmq32_wc, mmq64_nc, mmq64_wc}` (7) | [gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu:72][f309] | W4A4 GEMM/GEMV | gb10 hop | Qwen-GDN (7 ckpts) | [3 notes][t309] | not measured |
@@ -1038,7 +1062,8 @@ Also launched here: [Activations and elementwise](#activations-and-elementwise-s
 |---|---|---|---|---|---|---|
 | embed_from_argmax::`batched_embed`, `embed_from_argmax` | [gb10/common/embed_from_argmax.cu:17][f39] | embedding / LM head | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [1 note][t39] | not measured |
 | embed_from_argmax::`batched_embed_fp8` | [gb10/common/embed_from_argmax.cu:110][f39] | embedding / LM head | b200 b300 gb10 hop strix hip | LongCat (1 ckpts) | [2 notes][t39] | not measured |
-| screen_head::`screen_head_{exact_id, local, quant_int8, rescore, resolve, scan}` (6) | [gb10/common/screen_head.cu:116][f196] | screened LM head (INT8 screen, exact rescore) | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
+| screen_head::`screen_head_{exact_id, local, quant_int8, rescore, resolve}` (5) | [gb10/common/screen_head.cu:116][f196] | screened LM head (INT8 screen, exact rescore) | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
+| screen_head::`screen_head_scan` | [gb10/common/screen_head.cu:176][f196] | screened LM head (INT8 screen, exact rescore) | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | [93–94%][m196.screen_head_scan] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k) |
 | token_overlay::`embed_overlay_routed_bf16`, `embed_rowdiff_bf16`, `lmhead_overlay_routed_bf16`, `lmhead_overlay_routed_f32` | [gb10/common/token_overlay.cu:20][f202] | embedding / LM head | b200 b300 gb10 hop | all 14 decoder families (30 ckpts) | [2 notes][t202] | not measured |
 | embed_scale::`bf16_scale_inplace` | [gb10/gemma-4-26b-a4b/nvfp4/embed_scale.cu:12][f261] | embedding / LM head | gb10 | Gemma4 (2 ckpts) | — | not measured |
 | logit_softcap::`logit_softcap_bf16` | [gb10/gemma-4-26b-a4b/nvfp4/logit_softcap.cu:12][f264] | embedding / LM head | gb10 | Gemma4 (2 ckpts) | [1 note][t264] | not measured |
@@ -1078,9 +1103,10 @@ Also launched here: [Activations and elementwise](#activations-and-elementwise-s
 
 | Kernel (module::function) | File | Kind | HW | LLMs | Trade-offs · PRs | % of floor |
 |---|---|---|---|---|---|---|
-| glm5next_hc_post_sum::`glm5next_hc_post_rank_{sum, sum_vec8}` (2) | [gb10/common/glm5next_hc_post_sum.cu:31][f67] | hyper-connection mix | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
+| glm5next_hc_post_sum::`glm5next_hc_post_rank_sum` | [gb10/common/glm5next_hc_post_sum.cu:31][f67] | hyper-connection mix | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | [53–60%][m67.glm5next_hc_post_rank_sum] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k) |
+| glm5next_hc_post_sum::`glm5next_hc_post_rank_sum_vec8` | [gb10/common/glm5next_hc_post_sum.cu:110][f67] | hyper-connection mix | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
 | glm5next_mhc::`glm5next_hc_{expand, finish, head, mix, mix_bf16, mix_bf16_rows, post, pre}` (8) | [gb10/common/glm5next_mhc.cu:65][f68] | hyper-connection mix | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [4 notes][t68] | not measured |
-| glm5next_mhc_c1::`glm5next_hc_pre_norm_c1` | [gb10/common/glm5next_mhc_c1.cu:86][f69] | hyper-connection mix | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
+| glm5next_mhc_c1::`glm5next_hc_pre_norm_c1` | [gb10/common/glm5next_mhc_c1.cu:86][f69] | hyper-connection mix | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | [36%][m69.glm5next_hc_pre_norm_c1] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k) |
 | glm5next_mhc_fused::`glm5next_hc_pre_{norm, norm_pf64, norm_rows, norm_sk64}` (4) | [gb10/common/glm5next_mhc_fused.cu:169][f70] | hyper-connection mix | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
 | glm5next_mhc_post_fold::`glm5next_hc_post_pre_norm` | [gb10/common/glm5next_mhc_post_fold.cu:151][f71] | hyper-connection mix | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
 | glm5next_mhc_tile::`glm5next_hc_pre_norm_tile4` | [gb10/common/glm5next_mhc_tile.cu:231][f72] | hyper-connection mix | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
@@ -1233,12 +1259,12 @@ Entry points whose every engine call site belongs to one component.
 | Kernel (module::function) | File | Kind | HW | LLMs | Trade-offs · PRs | % of floor |
 |---|---|---|---|---|---|---|
 | dsa_indexer::`dsa_{compact_pools, expand_selection, index_scores, indexer_store, kpool_compress, mla_masked_attn, topk_pools, topk_to_mask, write_geom}` (9) | [b300/common/dsa_indexer.cu:87][f2] | DSA indexer / sparse MLA | b300 | none — its callers' targets compile another copy | [1 note][t2] | not measured |
-| dense_gemv_bf16_batchm_few::`dense_gemv_bf16_batchm_few_fp32out_pair` | [gb10/common/dense_gemv_bf16_batchm_few.cu:213][f22] | BF16/F32 GEMM/GEMV | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
+| dense_gemv_bf16_batchm_few::`dense_gemv_bf16_batchm_few_fp32out_pair` | [gb10/common/dense_gemv_bf16_batchm_few.cu:213][f22] | BF16/F32 GEMM/GEMV | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | [85–86%][m22.dense_gemv_bf16_batchm_few_fp32out_pair] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
 | dsa_index_scores_pipe::`dsa_{index_scores_mma_pipe, pool_prep_bf16, select_fused_pipe}` (3) | [gb10/common/dsa_index_scores_pipe.cu:44][f30] | DSA indexer / sparse MLA | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
 | dsa_indexer::`dsa_{compact_pools, expand_selection, index_scores, indexer_store, kpool_compress, mla_masked_attn, topk_pools, topk_to_mask, write_geom}` (9) | [gb10/common/dsa_indexer.cu:43][f31] | DSA indexer / sparse MLA | b200 gb10 hop | GLM-5.3 (1 ckpts) | [5 notes][t31] | not measured |
 | dsa_indexer_fp8::`dsa_{indexer_store_fp8, kpool_compress_fp8, pool_scores_rows_fp8}` (3) | [gb10/common/dsa_indexer_fp8.cu:120][f32] | DSA indexer / sparse MLA | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
 | dsa_indexer_rows::`dsa_{expand_selection_rows, index_scores_mma, index_scores_tiled, indexer_store_rows, pool_scores_rows, topk_pools_radix, topk_pools_rows, write_geom_rows}` (8) | [gb10/common/dsa_indexer_rows.cu:34][f33] | DSA indexer / sparse MLA | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
-| dsa_scores_heads_window::`dsa_index_scores_heads_window` | [gb10/common/dsa_scores_heads_window.cu:29][f34] | DSA indexer / sparse MLA | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
+| dsa_scores_heads_window::`dsa_index_scores_heads_window` | [gb10/common/dsa_scores_heads_window.cu:29][f34] | DSA indexer / sparse MLA | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | [52%][m34.dsa_index_scores_heads_window] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k) |
 | dsa_scores_warp::`dsa_{index_scores_heads_paged, index_scores_warp, index_scores_warp_paged, pool_keys_store_rows}` (4) | [gb10/common/dsa_scores_warp.cu:123][f35] | DSA indexer / sparse MLA | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
 | dsa_sel_fold::`dsa_{expand_selection_folded, sel_fold}` (2) | [gb10/common/dsa_sel_fold.cu:25][f36] | DSA indexer / sparse MLA | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
 | dsa_topk_mc::`dsa_topk_mc_{collect, pass}` (2) | [gb10/common/dsa_topk_mc.cu:145][f37] | DSA indexer / sparse MLA | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
@@ -1246,7 +1272,8 @@ Entry points whose every engine call site belongs to one component.
 | attn_v41_kv::`attn_v41_{index_score_packed, kv_pack_fp4, kv_pack_fp8, ring_put_row, sparse_attn_packed}` (5) | [gb10/deepseek-v4-flash/nvfp4/attn_v41_kv.cu:35][f236] | CSA/HCA compressed attention | b200 gb10 hop | DeepSeek-V4 (2 ckpts) | [3 notes][t236] | not measured |
 | kquant_moe::`kquant_mmvq_q2_k_{groups_w, pair_w}` (2) | [gb10/deepseek-v4-flash/nvfp4/kquant_moe.cu:321][f243] | expert GEMM/GEMV | b200 gb10 hop | DeepSeek-V4 (2 ckpts) | [5 notes][t243] | not measured |
 | glm5next_dsa_mla_decode::`glm5next_dsa_mla_decode_fp8` | [gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_decode.cu:96][f276] | DSA indexer / sparse MLA | gb10 | GLM-5.3 (1 ckpts) | [1 note][t276] | not measured |
-| glm5next_dsa_mla_decode_hb::`glm5next_dsa_mla_{decode_hb_fp8, decode_hb_fp8_phi, merge}` (3) | [gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_decode_hb.cu:177][f277] | DSA indexer / sparse MLA | gb10 | GLM-5.3 (1 ckpts) | — | not measured |
+| glm5next_dsa_mla_decode_hb::`glm5next_dsa_mla_decode_hb_fp8` | [gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_decode_hb.cu:177][f277] | DSA indexer / sparse MLA | gb10 | GLM-5.3 (1 ckpts) | — | [14–17%][m277.glm5next_dsa_mla_decode_hb_fp8] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k) |
+| glm5next_dsa_mla_decode_hb::`glm5next_dsa_mla_{decode_hb_fp8_phi, merge}` (2) | [gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_decode_hb.cu:186][f277] | DSA indexer / sparse MLA | gb10 | GLM-5.3 (1 ckpts) | — | not measured |
 | glm5next_dsa_mla_prefill_pipe::`glm5next_dsa_mla_prefill_pipe_phi` | [gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_prefill_pipe.cu:75][f278] | DSA indexer / sparse MLA | gb10 | GLM-5.3 (1 ckpts) | — | not measured |
 | glm5next_dsa_mla_prefill_tc::`glm5next_dsa_mla_prefill_tc_{phi, phi_nanor}` (2) | [gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_prefill_tc.cu:325][f279] | DSA indexer / sparse MLA | gb10 | GLM-5.3 (1 ckpts) | — | not measured |
 | glm5next_mla_latent_write::`glm5next_mla_latent_write_fp8` | [gb10/glm-5.3-flash/nvfp4/glm5next_mla_latent_write.cu:30][f280] | MLA decode/prefill | gb10 | GLM-5.3 (1 ckpts) | [1 note][t280] | not measured |
@@ -1324,11 +1351,17 @@ Entry points whose every engine call site belongs to one component.
 | kda_chunk16::`kda_chunk16_{prepare, scan}` (2) | [gb10/common/kda_chunk16.cu:44][f76] | KDA op | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
 | kda_chunk64::`kda_chunk64_scan` | [gb10/common/kda_chunk64.cu:129][f77] | KDA op | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
 | kda_chunk64_prepare::`kda_chunk64_{prepare, prepare_conv, prepare_conv_graw, prepare_graw}` (4) | [gb10/common/kda_chunk64_prepare.cu:356][f78] | KDA op | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
-| kda_conv_tokens::`causal_conv1d_{update_l2norm_tokens, update_l2norm_tokens_parts, window_advance, window_advance_parts, window_advance_to}` (5) | [gb10/common/kda_conv_tokens.cu:23][f79] | causal conv1d | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
+| kda_conv_tokens::`causal_conv1d_update_l2norm_tokens` | [gb10/common/kda_conv_tokens.cu:23][f79] | causal conv1d | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | [23%][m79.causal_conv1d_update_l2norm_tokens] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
+| kda_conv_tokens::`causal_conv1d_{update_l2norm_tokens_parts, window_advance, window_advance_parts}` (3) | [gb10/common/kda_conv_tokens.cu:54][f79] | causal conv1d | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
+| kda_conv_tokens::`causal_conv1d_window_advance_to` | [gb10/common/kda_conv_tokens.cu:78][f79] | causal conv1d | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | [11%][m79.causal_conv1d_window_advance_to] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
 | kda_gate::`kda_gate_bf16` | [gb10/common/kda_gate.cu:72][f80] | KDA op | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
-| kda_gates_w8a8::`kda_gates_w8a8_{k128, k128_rows}` (2) | [gb10/common/kda_gates_w8a8.cu:180][f81] | KDA op | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
-| kda_layer_ops::`kda_{fill_f32, o_norm_gated_bf16, pack_qkv_bf16, sigmoid_bf16_f32, split_widen}` (5) | [gb10/common/kda_layer_ops.cu:52][f82] | KDA op | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [1 note][t82] | not measured |
-| kda_recurrent::`kda_recurrent_decode_{bf16, bf16_rows_reg, bf16_seq_reg, bf16_seq_reg_snap, bf16_smem, bf16_smem_rows}` (6) | [gb10/common/kda_recurrent.cu:144][f83] | KDA op | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [2 notes][t83] | not measured |
+| kda_gates_w8a8::`kda_gates_w8a8_k128` | [gb10/common/kda_gates_w8a8.cu:180][f81] | KDA op | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
+| kda_gates_w8a8::`kda_gates_w8a8_k128_rows` | [gb10/common/kda_gates_w8a8.cu:187][f81] | KDA op | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | [41%][m81.kda_gates_w8a8_k128_rows] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k) |
+| kda_layer_ops::`kda_{fill_f32, sigmoid_bf16_f32, split_widen}` (3) | [gb10/common/kda_layer_ops.cu:91][f82] | KDA op | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
+| kda_layer_ops::`kda_o_norm_gated_bf16` | [gb10/common/kda_layer_ops.cu:52][f82] | KDA op | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | — | [1%][m82.kda_o_norm_gated_bf16] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k) |
+| kda_layer_ops::`kda_pack_qkv_bf16` | [gb10/common/kda_layer_ops.cu:136][f82] | KDA op | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [1 note][t82] | [4%][m82.kda_pack_qkv_bf16] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
+| kda_recurrent::`kda_recurrent_decode_{bf16, bf16_rows_reg, bf16_seq_reg, bf16_smem, bf16_smem_rows}` (5) | [gb10/common/kda_recurrent.cu:144][f83] | KDA op | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [2 notes][t83] | not measured |
+| kda_recurrent::`kda_recurrent_decode_bf16_seq_reg_snap` | [gb10/common/kda_recurrent.cu:512][f83] | KDA op | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [1 note][t83] | [112–115%][m83.kda_recurrent_decode_bf16_seq_reg_snap] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k) |
 
 ### Unique to Mamba2 (selective state-space scan)
 
@@ -1357,9 +1390,12 @@ Entry points whose every engine call site belongs to one component.
 | moe_shared_expert_fused::`moe_expert_{gate_up_shared, silu_down_shared}` (2) | [b300/common/moe_shared_expert_fused.cu:48][f3] | expert GEMM/GEMV | b300 | Kimi-K3 (1 ckpts) | [2 notes][t3] | not measured |
 | gemm::`dense_gemm_bf16_router` | [gb10/common/dense_gemm_bf16.cu:204][f15] | routing / top-k | b200 b300 gb10 hop strix | DeepSeek-V4, GLM-5.3, Gemma4, Kimi-K3, Laguna, LongCat, MiniMax-M2, Mistral4, Nemotron-H, Qwen-GDN-MoE, Qwen3-VL, Qwen3.8-FN, Step-3.7 (23 ckpts) | [3 notes][t15] | [6%][m15.dense_gemm_bf16_router] (prefill 32k (cold, 32772 tok)) |
 | gemm::`dense_gemm_f32in_f32out` | [gb10/common/dense_gemm_bf16.cu:131][f15] | BF16/F32 GEMM/GEMV | b200 b300 gb10 hop strix | DeepSeek-V4, GLM-5.3, Gemma4, Kimi-K3, Laguna, LongCat, MiniMax-M2, Mistral4, Nemotron-H, Qwen-GDN-MoE, Qwen3-VL, Qwen3.8-FN, Step-3.7 (23 ckpts) | — | not measured |
-| glm5next_ffn::`glm5next_moe_{combine, combine_indexed, combine_indexed_vec8, combine_vec8}` (4) | [gb10/common/glm5next_ffn.cu:224][f66] | dispatch / combine | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [1 note][t66] | not measured |
-| glm5next_ffn::`glm5next_router_{topk, topk_rank}` (2) | [gb10/common/glm5next_ffn.cu:111][f66] | routing / top-k | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [1 note][t66] | not measured |
-| glm5next_ffn::`glm5next_swiglu_{clamp, clamp_zero}` (2) | [gb10/common/glm5next_ffn.cu:25][f66] | expert activation | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [1 note][t66] | not measured |
+| glm5next_ffn::`glm5next_moe_combine` | [gb10/common/glm5next_ffn.cu:224][f66] | dispatch / combine | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [1 note][t66] | [1%][m66.glm5next_moe_combine] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k) |
+| glm5next_ffn::`glm5next_moe_combine_{indexed, indexed_vec8, vec8}` (3) | [gb10/common/glm5next_ffn.cu:258][f66] | dispatch / combine | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [1 note][t66] | not measured |
+| glm5next_ffn::`glm5next_router_topk` | [gb10/common/glm5next_ffn.cu:111][f66] | routing / top-k | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [1 note][t66] | not measured |
+| glm5next_ffn::`glm5next_router_topk_rank` | [gb10/common/glm5next_ffn.cu:302][f66] | routing / top-k | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [1 note][t66] | [0%][m66.glm5next_router_topk_rank] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k) |
+| glm5next_ffn::`glm5next_swiglu_clamp` | [gb10/common/glm5next_ffn.cu:25][f66] | expert activation | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [1 note][t66] | [0%][m66.glm5next_swiglu_clamp] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
+| glm5next_ffn::`glm5next_swiglu_clamp_zero` | [gb10/common/glm5next_ffn.cu:44][f66] | expert activation | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [1 note][t66] | not measured |
 | moe_bf16_grouped_gemm::`moe_bf16_grouped_gemm` | [gb10/common/moe_bf16_grouped_gemm.cu:86][f89] | expert GEMM/GEMV | b200 b300 gb10 hop | DeepSeek-V4, GLM-5.3, Gemma4, Kimi-K3, Laguna, LongCat, MiniMax-M2, Mistral4, Nemotron-H, Qwen-GDN-MoE, Qwen3-VL, Qwen3.8-FN, Step-3.7 (23 ckpts) | [2 notes][t89] | not measured |
 | moe_bf16_grouped_tc::`moe_expert_{down_act_bf16_grouped_tc, gate_up_act_bf16_grouped_tc}` (2) | [gb10/common/moe_bf16_grouped_tc.cu:42][f90] | expert GEMM/GEMV | b200 gb10 hop | DeepSeek-V4, GLM-5.3, Gemma4, Kimi-K3, Laguna, LongCat, MiniMax-M2, Mistral4, Nemotron-H, Qwen-GDN-MoE, Qwen3-VL, Qwen3.8-FN, Step-3.7 (23 ckpts) | — | not measured |
 | moe_decode_atomic_c4::`moe_decode_atomic_c4_finalize` | [gb10/common/moe_decode_atomic_c4.cu:183][f91] | dispatch / combine | b200 b300 gb10 hop | DeepSeek-V4, GLM-5.3, Gemma4, Kimi-K3, Laguna, LongCat, MiniMax-M2, Mistral4, Nemotron-H, Qwen-GDN-MoE, Qwen3-VL, Qwen3.8-FN, Step-3.7 (23 ckpts) | [2 notes][t91] | not measured |
@@ -1424,9 +1460,11 @@ Entry points whose every engine call site belongs to one component.
 | nemotron_moe_prefill::`nemotron_moe_weighted_sum_prefill` | [gb10/common/nemotron_moe_prefill.cu:444][f138] | dispatch / combine | b200 b300 gb10 hop strix hip | Nemotron-H (3 ckpts) | — | not measured |
 | relu2::`moe_weighted_sum_scale` | [gb10/common/relu_squared.cu:57][f183] | dispatch / combine | b200 b300 gb10 hop strix hip | Nemotron-H (3 ckpts) | [1 note][t183] | not measured |
 | relu2::`relu_squared_inplace` | [gb10/common/relu_squared.cu:26][f183] | activation / gate / residual | b200 b300 gb10 hop strix hip | Nemotron-H (3 ckpts) | — | not measured |
-| w4a16_gemv::`glm5next_moe_row_union` | [gb10/common/w4a16_gemv.cu:2209][f209] | dispatch / combine | b200 b300 gb10 hop strix hip | GLM-5.3 (1 ckpts) | [2 notes][t209] | not measured |
-| w4a16_gemv::`w4a16_gemv_sw_{moe, moe_batchm_m10, moe_batchm_m11, moe_batchm_m12, moe_batchm_m13, moe_batchm_m14, moe_batchm_m15, moe_batchm_m2, moe_batchm_m3, moe_batchm_m4, moe_batchm_m5, moe_batchm_m6, moe_batchm_m7, moe_batchm_m9}` (14) | [gb10/common/w4a16_gemv.cu:301][f209] | NVFP4 W4A16 GEMM/GEMV | b200 b300 gb10 hop strix hip | GLM-5.3 (1 ckpts) | [1 note][t209] | not measured |
-| w4a4_gemv_mx_moe::`w4a4_{gemv_mx16_moe_union_sweep, gemv_mx16_moe_union_sweep_k64, gemv_mx16_moe_union_sweep_sl, gemv_mx8_moe_slots, gemv_mx8_moe_slots_k64, gemv_mx8_moe_slots_sweep, gemv_mx8_moe_slots_sweep_k64, gemv_mx8_moe_union_sweep, gemv_mx8_moe_union_sweep_k64, gemv_mx8_moe_union_sweep_sl, quant_rows_static, quant_rows_static_k64}` (12) | [gb10/common/w4a4_gemv_mx_moe.cu:51][f218] | W4A4 GEMM/GEMV | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
+| w4a16_gemv::`glm5next_moe_row_union` | [gb10/common/w4a16_gemv.cu:2209][f209] | dispatch / combine | b200 b300 gb10 hop strix hip | GLM-5.3 (1 ckpts) | [2 notes][t209] | [0%][m209.glm5next_moe_row_union] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
+| w4a16_gemv::`w4a16_gemv_sw_moe` | [gb10/common/w4a16_gemv.cu:301][f209] | NVFP4 W4A16 GEMM/GEMV | b200 b300 gb10 hop strix hip | GLM-5.3 (1 ckpts) | [1 note][t209] | [79%][m209.w4a16_gemv_sw_moe] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
+| w4a16_gemv::`w4a16_gemv_sw_moe_batchm_{m10, m11, m12, m13, m14, m15, m2, m3, m4, m5, m6, m7, m9}` (13) | [gb10/common/w4a16_gemv.cu:2426][f209] | NVFP4 W4A16 GEMM/GEMV | b200 b300 gb10 hop strix hip | GLM-5.3 (1 ckpts) | [1 note][t209] | not measured |
+| w4a4_gemv_mx_moe::`w4a4_{gemv_mx16_moe_union_sweep, gemv_mx16_moe_union_sweep_k64, gemv_mx16_moe_union_sweep_sl, gemv_mx8_moe_slots, gemv_mx8_moe_slots_k64, gemv_mx8_moe_slots_sweep, gemv_mx8_moe_slots_sweep_k64, gemv_mx8_moe_union_sweep, gemv_mx8_moe_union_sweep_k64, gemv_mx8_moe_union_sweep_sl, quant_rows_static_k64}` (11) | [gb10/common/w4a4_gemv_mx_moe.cu:59][f218] | W4A4 GEMM/GEMV | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
+| w4a4_gemv_mx_moe::`w4a4_quant_rows_static` | [gb10/common/w4a4_gemv_mx_moe.cu:51][f218] | W4A4 GEMM/GEMV | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | [2%][m218.w4a4_quant_rows_static] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
 | w4a4_grouped_mx::`w4a4_grouped_{gu_m128, gu_m128_r, gu_m32, gu_m64, mx_m128, mx_m128_k64, mx_m128_k64_n, mx_m128_k64_r, mx_m128_n, mx_m128_r, mx_m32, mx_m32_k64, mx_m64, mx_m64_k64, one_group, tiles}` (16) | [gb10/common/w4a4_grouped_mx.cu:51][f219] | W4A4 GEMM/GEMV | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
 | kquant_moe::`kquant_mmvq_{q2_k_experts_w2, q2_k_experts_w8, q3_k_experts_w2, q3_k_experts_w8}` (4) | [gb10/deepseek-v4-flash/nvfp4/kquant_moe.cu:397][f243] | expert GEMM/GEMV | b200 gb10 hop | DeepSeek-V4 (2 ckpts) | [6 notes][t243] | not measured |
 | kquant_moe::`kquant_mmvq_q3_k_w`, `metrale_q3_k_mmq128_nc`, `metrale_q3_k_mmq128_wc` | [gb10/deepseek-v4-flash/nvfp4/kquant_moe.cu:78][f243] | integer / K-quant GEMM/GEMV | b200 gb10 hop | DeepSeek-V4 (2 ckpts) | [4 notes][t243] | not measured |
@@ -1484,7 +1522,7 @@ Entry points whose every engine call site belongs to one component.
 |---|---|---|---|---|---|---|
 | gemm_tc::`dense_gemm_tc_scaled_acc` | [gb10/common/dense_gemm_tc.cu:29][f17] | BF16/F32 GEMM/GEMV | b200 b300 gb10 hop strix | all 14 decoder families (30 ckpts) | [2 notes][t17] | not measured |
 | dense_gemm_tc_f32out::`dense_{gemm_tc_f32out, gemv_bf16_tc16_f32out, gemv_bf16_tc32_f32out, gemv_bf16_tc8_f32out}` (4) | [gb10/common/dense_gemm_tc_f32out.cu:28][f18] | BF16/F32 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
-| dense_gemv_bf16_batchm_few::`dense_gemv_bf16_batchm_few_fp32out` | [gb10/common/dense_gemv_bf16_batchm_few.cu:195][f22] | BF16/F32 GEMM/GEMV | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
+| dense_gemv_bf16_batchm_few::`dense_gemv_bf16_batchm_few_fp32out` | [gb10/common/dense_gemv_bf16_batchm_few.cu:195][f22] | BF16/F32 GEMM/GEMV | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | [46–47%][m22.dense_gemv_bf16_batchm_few_fp32out] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
 | dense_gemv_bf16_tc::`dense_gemv_bf16_tc16` | [gb10/common/dense_gemv_bf16_tc.cu:47][f23] | BF16/F32 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | [4 notes][t23] · [#1][pr1] | [86–95%][m23.dense_gemv_bf16_tc16] (decode C=16 (R=32, MTP k=1)) |
 | dense_gemv_bf16_tc::`dense_gemv_bf16_{tc32, tc8}` (2) | [gb10/common/dense_gemv_bf16_tc.cu:46][f23] | BF16/F32 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | [4 notes][t23] · [#1][pr1] | not measured |
 | dense_gemm_m16_bf16::`dense_gemm_m16_{bf16, bf16_n64}` (2) | [hopper/common/dense_gemm_m16_bf16.cu:339][f327] | BF16/F32 GEMM/GEMV | hop | DeepSeek-V4, Nemotron-H, Qwen-GDN, Qwen-GDN-MoE (18 ckpts) | [2 notes][t327] | not measured |
@@ -1500,7 +1538,9 @@ Entry points whose every engine call site belongs to one component.
 | w4a16_fp8_ldmab::`fp8_fp8_gemm_ldmab` | [gb10/common/w4a16_fp8_ldmab.cu:65][f207] | FP8 GEMM/GEMV | b200 b300 gb10 hop | all 14 decoder families (30 ckpts) | [2 notes][t207] | [11–43%][m207.fp8_fp8_gemm_ldmab] (prefill 32k (cold, 32772 tok)) |
 | w8a16_gemm_pipe128::`w8a16_gemm_pipe128` | [gb10/common/w8a16_gemm_pipe128.cu:58][f221] | FP8 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
 | w8a16_tc_rows::`w8a16_tc_rows_{16, 32, 64, 64c}` (4) | [gb10/common/w8a16_tc_rows.cu:38][f229] | FP8 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | [1 note][t229] | not measured |
-| w8a8_gemv::`w8a8_gemv_{blk128_mb16, blk128_mb1_ku8, blk128_mb2, blk128_mb4, blk128_mb8, rowscale_mb16, rowscale_mb1_ku8, rowscale_mb1_ku8_split4, rowscale_mb2, rowscale_mb4, rowscale_mb8}` (11) | [gb10/common/w8a8_gemv.cu:39][f231] | FP8 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
+| w8a8_gemv::`w8a8_gemv_{blk128_mb16, blk128_mb1_ku8, blk128_mb2, blk128_mb4, blk128_mb8, rowscale_mb16, rowscale_mb2, rowscale_mb4, rowscale_mb8}` (9) | [gb10/common/w8a8_gemv.cu:40][f231] | FP8 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
+| w8a8_gemv::`w8a8_gemv_rowscale_mb1_ku8` | [gb10/common/w8a8_gemv.cu:39][f231] | FP8 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | [85–93%][m231.w8a8_gemv_rowscale_mb1_ku8] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
+| w8a8_gemv::`w8a8_gemv_rowscale_mb1_ku8_split4` | [gb10/common/w8a8_gemv.cu:54][f231] | FP8 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | [84–85%][m231.w8a8_gemv_rowscale_mb1_ku8_split4] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
 | fp8_block_gemm::`fp8_block_{gemm_bf16, gemv_bf16}` (2) | [gb10/deepseek-v4-flash/nvfp4/fp8_block_gemm.cu:44][f239] | FP8 GEMM/GEMV | b200 gb10 hop | DeepSeek-V4 (2 ckpts) | — | not measured |
 | w4a16_v2::`w4a16_gemm_t_m128_v2` | [gb10/minimax-m2-229b/nvfp4/w4a16_gemm_v2.cu:72][f287] | FP8 GEMM/GEMV | gb10 | MiniMax-M2, Step-3.7 (2 ckpts) | [1 note][t287] | not measured |
 | w4a16_v3::`w4a16_gemm_t_m128_v3` | [gb10/minimax-m2-229b/nvfp4/w4a16_gemm_v3.cu:73][f288] | FP8 GEMM/GEMV | gb10 | MiniMax-M2, Step-3.7 (2 ckpts) | [1 note][t288] | not measured |
@@ -1514,7 +1554,8 @@ Entry points whose every engine call site belongs to one component.
 |---|---|---|---|---|---|---|
 | w4a16_gemv::`w4a16_gemv_{batch4, batch5, batch6, batch7}` (4) | [gb10/common/w4a16_gemv.cu:721][f209] | NVFP4 W4A16 GEMM/GEMV | b200 b300 gb10 hop strix hip | GLM-5.3 (1 ckpts) | [2 notes][t209] | not measured |
 | w4a16_gemv::`w4a16_gemv_{batch8, batch8_rt2, logits}` (3) | [gb10/common/w4a16_gemv.cu:364][f209] | NVFP4 W4A16 GEMM/GEMV | b200 b300 gb10 hop strix hip | all 14 decoder families (30 ckpts) | [4 notes][t209] | not measured |
-| w4a16_gemv_pipe::`w4a16_gemv_pipe_{m1, m2}` (2) | [gb10/common/w4a16_gemv_pipe.cu:316][f211] | NVFP4 W4A16 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
+| w4a16_gemv_pipe::`w4a16_gemv_pipe_m1` | [gb10/common/w4a16_gemv_pipe.cu:316][f211] | NVFP4 W4A16 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
+| w4a16_gemv_pipe::`w4a16_gemv_pipe_m2` | [gb10/common/w4a16_gemv_pipe.cu:317][f211] | NVFP4 W4A16 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | [4–90%][m211.w4a16_gemv_pipe_m2] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k) |
 | w4a16_gemv_seg::`w4a16_gemv_seg_{m2, m3, m4, r1, r2, r4}` (6) | [gb10/common/w4a16_gemv_seg.cu:305][f212] | NVFP4 W4A16 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
 | w4a16_gemv_tc::`w4a16_gemv_tc16` | [gb10/common/w4a16_gemv_tc.cu:256][f213] | NVFP4 W4A16 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | [4 notes][t213] · [#1][pr1] | [86–92%][m213.w4a16_gemv_tc16] (decode C=16 (R=32, MTP k=1)) |
 | w4a16_gemv_tc::`w4a16_gemv_tc8` | [gb10/common/w4a16_gemv_tc.cu:255][f213] | NVFP4 W4A16 GEMM/GEMV | b200 gb10 hop | all 14 decoder families (30 ckpts) | [4 notes][t213] · [#1][pr1] | [59–90%][m213.w4a16_gemv_tc8] (decode C=1 (R=4, MTP k=3)) |
@@ -1598,7 +1639,8 @@ Entry points whose every engine call site belongs to one component.
 
 | Kernel (module::function) | File | Kind | HW | LLMs | Trade-offs · PRs | % of floor |
 |---|---|---|---|---|---|---|
-| screen_head::`screen_head_{exact_id, local, quant_int8, rescore, resolve, scan}` (6) | [gb10/common/screen_head.cu:116][f196] | screened LM head (INT8 screen, exact rescore) | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
+| screen_head::`screen_head_{exact_id, local, quant_int8, rescore, resolve}` (5) | [gb10/common/screen_head.cu:116][f196] | screened LM head (INT8 screen, exact rescore) | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | not measured |
+| screen_head::`screen_head_scan` | [gb10/common/screen_head.cu:176][f196] | screened LM head (INT8 screen, exact rescore) | b200 gb10 hop | all 14 decoder families (30 ckpts) | — | [93–94%][m196.screen_head_scan] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k) |
 | token_overlay::`embed_overlay_routed_bf16`, `embed_rowdiff_bf16`, `lmhead_overlay_routed_bf16`, `lmhead_overlay_routed_f32` | [gb10/common/token_overlay.cu:20][f202] | embedding / LM head | b200 b300 gb10 hop | all 14 decoder families (30 ckpts) | [2 notes][t202] | not measured |
 | kquant_moe::`kquant_mmvq_q6_k_w` | [gb10/deepseek-v4-flash/nvfp4/kquant_moe.cu:356][f243] | integer / K-quant GEMM/GEMV | b200 gb10 hop | DeepSeek-V4 (2 ckpts) | [4 notes][t243] | not measured |
 | logit_softcap::`logit_softcap_bf16` | [gb10/gemma-4-26b-a4b/nvfp4/logit_softcap.cu:12][f264] | embedding / LM head | gb10 | Gemma4 (2 ckpts) | [1 note][t264] | not measured |
@@ -1637,9 +1679,10 @@ Entry points whose every engine call site belongs to one component.
 
 | Kernel (module::function) | File | Kind | HW | LLMs | Trade-offs · PRs | % of floor |
 |---|---|---|---|---|---|---|
-| glm5next_hc_post_sum::`glm5next_hc_post_rank_{sum, sum_vec8}` (2) | [gb10/common/glm5next_hc_post_sum.cu:31][f67] | hyper-connection mix | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
+| glm5next_hc_post_sum::`glm5next_hc_post_rank_sum` | [gb10/common/glm5next_hc_post_sum.cu:31][f67] | hyper-connection mix | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | [53–60%][m67.glm5next_hc_post_rank_sum] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k) |
+| glm5next_hc_post_sum::`glm5next_hc_post_rank_sum_vec8` | [gb10/common/glm5next_hc_post_sum.cu:110][f67] | hyper-connection mix | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
 | glm5next_mhc::`glm5next_hc_{expand, finish, head, mix, mix_bf16, mix_bf16_rows, post, pre}` (8) | [gb10/common/glm5next_mhc.cu:65][f68] | hyper-connection mix | b200 b300 gb10 hop | GLM-5.3 (1 ckpts) | [4 notes][t68] | not measured |
-| glm5next_mhc_c1::`glm5next_hc_pre_norm_c1` | [gb10/common/glm5next_mhc_c1.cu:86][f69] | hyper-connection mix | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
+| glm5next_mhc_c1::`glm5next_hc_pre_norm_c1` | [gb10/common/glm5next_mhc_c1.cu:86][f69] | hyper-connection mix | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | [36%][m69.glm5next_hc_pre_norm_c1] (decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k) |
 | glm5next_mhc_fused::`glm5next_hc_pre_{norm, norm_pf64, norm_rows, norm_sk64}` (4) | [gb10/common/glm5next_mhc_fused.cu:169][f70] | hyper-connection mix | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
 | glm5next_mhc_post_fold::`glm5next_hc_post_pre_norm` | [gb10/common/glm5next_mhc_post_fold.cu:151][f71] | hyper-connection mix | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
 | glm5next_mhc_tile::`glm5next_hc_pre_norm_tile4` | [gb10/common/glm5next_mhc_tile.cu:231][f72] | hyper-connection mix | b200 gb10 hop | GLM-5.3 (1 ckpts) | — | not measured |
@@ -1836,7 +1879,7 @@ No engine call site names these entry points: they are reached only from tests o
 
 ## Measurements
 
-199 rows over 61 entry points; every row, with its shape, time, floor, source and notes, is in [`docs/kernel-perf/MEASUREMENTS.md`](docs/kernel-perf/MEASUREMENTS.md). Per regime (median over the regime's rows, unweighted):
+259 rows over 85 entry points; every row, with its shape, time, floor, source and notes, is in [`docs/kernel-perf/MEASUREMENTS.md`](docs/kernel-perf/MEASUREMENTS.md). Per regime (median over the regime's rows, unweighted):
 
 | Hardware | Model | Regime | Rows | Entry points | Median % of floor |
 |---|---|---|---|---|---|
@@ -1844,6 +1887,8 @@ No engine call site names these entry points: they are reached only from tests o
 | gb10 | Qwen/Qwen3.6-35B-A3B-FP8 | decode C=16 (R=32, MTP k=1) | 15 | 10 | 73% |
 | gb10 | Qwen/Qwen3.6-35B-A3B-FP8 | prefill 32k (cold, 32772 tok) | 33 | 24 | 25% |
 | gb10 | Qwen/Qwen3.6-35B-A3B-FP8 | prefill 4k (cold, 4549 tok) | 35 | 27 | 33% |
+| gb10 | nvidia/GLM-5.3-Flash-NVFP4 | decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k | 30 | 24 | 53% |
+| gb10 | nvidia/GLM-5.3-Flash-NVFP4 | decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k | 30 | 24 | 58% |
 | gb10 | unsloth/Qwen3.8-27B-NVFP4 | decode C=1 (R=4, MTP k=3) | 19 | 10 | 89% |
 | gb10 | unsloth/Qwen3.8-27B-NVFP4 | decode C=16 (R=32, MTP k=1) | 20 | 13 | 68% |
 | gb10 | unsloth/Qwen3.8-27B-NVFP4 | prefill 32k (cold, 32772 tok) | 26 | 20 | 29% |
@@ -2249,29 +2294,38 @@ No engine call site names these entry points: they are reached only from tests o
 [m191.l2_norm_bf16]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-rms-norm-cu-l2-norm-bf16
 [m321.w4a16_gemm_t]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-qwen3-6-35b-a3b-nvfp4-w4a16-gemm-cu-w4a16-gemm-t
 [m209.w4a16_gemv_sw]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-w4a16-gemv-cu-w4a16-gemv-sw
+[m217.w4a4_gemv_mx8]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-w4a4-gemv-mx-cu-w4a4-gemv-mx8
 [m46.gdn_carry_conv]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-gated-delta-rule-carry-cu-gdn-carry-conv
 [m8.attn_prefill_64]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-attn-prefill-cu-attn-prefill-64
 [m15.dense_gemm_bf16]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-dense-gemm-bf16-cu-dense-gemm-bf16
 [m19.dense_gemv_bf16]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-dense-gemv-bf16-cu-dense-gemv-bf16
 [m213.w4a16_gemv_tc8]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-w4a16-gemv-tc-cu-w4a16-gemv-tc8
+[m24.dense_gemv_fp8w]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-dense-gemv-fp8w-cu-dense-gemv-fp8w
 [m200.deinterleave_qg]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-ssm-preprocess-cu-deinterleave-qg
 [m213.w4a16_gemv_tc16]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-w4a16-gemv-tc-cu-w4a16-gemv-tc16
 [m313.fp8_gemm_t_m128]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-qwen3-6-27b-nvfp4-w4a16-gemm-cu-fp8-gemm-t-m128
 [m313.w4a16_gemm_t_p3]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-qwen3-6-27b-nvfp4-w4a16-gemm-cu-w4a16-gemm-t-p3
+[m196.screen_head_scan]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-screen-head-cu-screen-head-scan
+[m82.kda_pack_qkv_bf16]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-kda-layer-ops-cu-kda-pack-qkv-bf16
 [m106.moe_batched_blend]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-moe-permute-cu-moe-batched-blend
 [m140.paged_decode_attn]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-paged-decode-attn-cu-paged-decode-attn
 [m189.bf16_residual_add]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-residual-add-cu-bf16-residual-add
 [m191.rms_norm_residual]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-rms-norm-cu-rms-norm-residual
+[m209.w4a16_gemv_sw_moe]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-w4a16-gemv-cu-w4a16-gemv-sw-moe
 [m225.w8a16_gemm_t_m128]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-w8a16-gemm-t-m128-cu-w8a16-gemm-t-m128
 [m313.w4a16_gemm_t_m128]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-qwen3-6-27b-nvfp4-w4a16-gemm-cu-w4a16-gemm-t-m128
 [m46.gdn_carry_wy2_lazy]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-gated-delta-rule-carry-cu-gdn-carry-wy2-lazy
 [m125.silu_mul_quant_fp8]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-moe-silu-mul-cu-silu-mul-quant-fp8
 [m207.fp8_fp8_gemm_ldmab]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-w4a16-fp8-ldmab-cu-fp8-fp8-gemm-ldmab
+[m211.w4a16_gemv_pipe_m2]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-w4a16-gemv-pipe-cu-w4a16-gemv-pipe-m2
 [m23.dense_gemv_bf16_tc16]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-dense-gemv-bf16-tc-cu-dense-gemv-bf16-tc16
 [m50.gated_delta_rule_wy2]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-gated-delta-rule-wy-cu-gated-delta-rule-wy2
 [m57.gated_delta_rule_wy4]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-gated-delta-rule-wy4-cu-gated-delta-rule-wy4
+[m66.glm5next_moe_combine]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-glm5next-ffn-cu-glm5next-moe-combine
 [m97.moe_fp8_grouped_sort]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-moe-fp8-grouped-sort-cu-moe-fp8-grouped-sort
 [m222.w8a16_gemm_pipelined]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-w8a16-gemm-pipelined-cu-w8a16-gemm-pipelined
+[m66.glm5next_swiglu_clamp]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-glm5next-ffn-cu-glm5next-swiglu-clamp
+[m82.kda_o_norm_gated_bf16]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-kda-layer-ops-cu-kda-o-norm-gated-bf16
 [m127.moe_topk_softmax_rows]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-moe-topk-cu-moe-topk-softmax-rows
 [m148.paged_decode_attn_fp8]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-paged-decode-attn-fp8-cu-paged-decode-attn-fp8
 [m15.dense_gemm_bf16_router]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-dense-gemm-bf16-cu-dense-gemm-bf16-router
@@ -2280,31 +2334,46 @@ No engine call site names these entry points: they are reached only from tests o
 [m21.dense_gemv_bf16_batchm]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-dense-gemv-bf16-batchm-cu-dense-gemv-bf16-batchm
 [m41.fp8_gemm_t_blockscaled]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-fp8-gemm-t-blockscaled-cu-fp8-gemm-t-blockscaled
 [m191.gated_rms_norm_prefill]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-rms-norm-cu-gated-rms-norm-prefill
+[m209.glm5next_moe_row_union]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-w4a16-gemv-cu-glm5next-moe-row-union
+[m218.w4a4_quant_rows_static]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-w4a4-gemv-mx-moe-cu-w4a4-quant-rows-static
 [m309.metrale_nvfp4_mmq32_nc]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-qwen3-6-27b-nvfp4-nvfp4-mmq-cu-metrale-nvfp4-mmq32-nc
+[m69.glm5next_hc_pre_norm_c1]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-glm5next-mhc-c1-cu-glm5next-hc-pre-norm-c1
 [m106.moe_build_tile_worklist]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-moe-permute-cu-moe-build-tile-worklist
 [m309.metrale_nvfp4_mmq128_nc]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-qwen3-6-27b-nvfp4-nvfp4-mmq-cu-metrale-nvfp4-mmq128-nc
 [m313.w4a16_gemm_t_k64_n64_p3]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-qwen3-6-27b-nvfp4-w4a16-gemm-cu-w4a16-gemm-t-k64-n64-p3
+[m81.kda_gates_w8a8_k128_rows]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-kda-gates-w8a8-cu-kda-gates-w8a8-k128-rows
 [m223.w8a16_gemm_pipelined_m32]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-w8a16-gemm-pipelined-m32-cu-w8a16-gemm-pipelined-m32
 [m309.metrale_nvfp4_scale_bf16]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-qwen3-6-27b-nvfp4-nvfp4-mmq-cu-metrale-nvfp4-scale-bf16
+[m66.glm5next_router_topk_rank]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-glm5next-ffn-cu-glm5next-router-topk-rank
+[m67.glm5next_hc_post_rank_sum]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-glm5next-hc-post-sum-cu-glm5next-hc-post-rank-sum
 [m134.moe_w8a8_grouped_gemm_pm4]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-moe-w8a8-grouped-gemm-cu-moe-w8a8-grouped-gemm-pm4
 [m174.per_token_group_quant_fp8]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-per-token-group-quant-fp8-cu-per-token-group-quant-fp8
 [m14.causal_conv1d_update_l2norm]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-causal-conv1d-cu-causal-conv1d-update-l2norm
+[m231.w8a8_gemv_rowscale_mb1_ku8]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-w8a8-gemv-cu-w8a8-gemv-rowscale-mb1-ku8
 [m200.deinterleave_qg_split_qnorm]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-ssm-preprocess-cu-deinterleave-qg-split-qnorm
 [m200.dense_gemm_ba_gates_prefill]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-ssm-preprocess-cu-dense-gemm-ba-gates-prefill
 [m309.metrale_nvfp4_quantize_bf16]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-qwen3-6-27b-nvfp4-nvfp4-mmq-cu-metrale-nvfp4-quantize-bf16
 [m47.gated_delta_rule_chunk_fwd_o]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-gated-delta-rule-fla-cu-gated-delta-rule-chunk-fwd-o
 [m106.moe_unpermute_reduce_indexed]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-moe-permute-cu-moe-unpermute-reduce-indexed
 [m309.metrale_nvfp4_silu_mul_quant]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-qwen3-6-27b-nvfp4-nvfp4-mmq-cu-metrale-nvfp4-silu-mul-quant
+[m34.dsa_index_scores_heads_window]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-dsa-scores-heads-window-cu-dsa-index-scores-heads-window
 [m47.gated_delta_rule_recompute_wu]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-gated-delta-rule-fla-cu-gated-delta-rule-recompute-wu
 [m117.moe_expert_gate_up_shared_fp8]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-moe-shared-expert-fused-fp8-cu-moe-expert-gate-up-shared-fp8
 [m14.causal_conv1d_update_prefill_tp]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-causal-conv1d-cu-causal-conv1d-update-prefill-tp
 [m195.rope_forward_mrope_interleaved]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-rope-mrope-interleaved-cu-rope-forward-mrope-interleaved
+[m277.glm5next_dsa_mla_decode_hb_fp8]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-glm-5-3-flash-nvfp4-glm5next-dsa-mla-decode-hb-cu-glm5next-dsa-mla-decode-hb-fp8
+[m79.causal_conv1d_window_advance_to]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-kda-conv-tokens-cu-causal-conv1d-window-advance-to
 [m122.moe_expert_down_act_fp8_grouped]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-moe-shared-expert-fused-fp8-grouped-cu-moe-expert-down-act-fp8-grouped
 [m64.gdn_verify_fused_conv_kn_batched]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-gdn-verify-fused-conv-kn-cu-gdn-verify-fused-conv-kn-batched
 [m52.gated_delta_rule_wy2_resident_f16]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-gated-delta-rule-wy2-resident-f16-cu-gated-delta-rule-wy2-resident-f16
+[m22.dense_gemv_bf16_batchm_few_fp32out]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-dense-gemv-bf16-batchm-few-cu-dense-gemv-bf16-batchm-few-fp32out
+[m231.w8a8_gemv_rowscale_mb1_ku8_split4]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-w8a8-gemv-cu-w8a8-gemv-rowscale-mb1-ku8-split4
+[m79.causal_conv1d_update_l2norm_tokens]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-kda-conv-tokens-cu-causal-conv1d-update-l2norm-tokens
 [m95.moe_weighted_sum_blend_fp8_grouped]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-moe-fp8-grouped-blend-cu-moe-weighted-sum-blend-fp8-grouped
 [m122.moe_expert_gate_up_act_fp8_grouped]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-moe-shared-expert-fused-fp8-grouped-cu-moe-expert-gate-up-act-fp8-grouped
 [m47.gated_delta_rule_chunk_delta_h_vfused]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-gated-delta-rule-fla-cu-gated-delta-rule-chunk-delta-h-vfused
+[m83.kda_recurrent_decode_bf16_seq_reg_snap]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-kda-recurrent-cu-kda-recurrent-decode-bf16-seq-reg-snap
+[m22.dense_gemv_bf16_batchm_few_fp32out_pair]: docs/kernel-perf/MEASUREMENTS.md#m-kernels-gb10-common-dense-gemv-bf16-batchm-few-cu-dense-gemv-bf16-batchm-few-fp32out-pair
 [pr1]: https://github.com/Metrale/metrale-inference/pull/1
 [pr4]: https://github.com/Metrale/metrale-inference/pull/4
 [pr14]: https://github.com/Metrale/metrale-inference/pull/14
