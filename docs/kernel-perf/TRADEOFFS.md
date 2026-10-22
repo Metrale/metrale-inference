@@ -1294,12 +1294,17 @@ Known trade-offs, limits and dated measurements per kernel source, curated in [`
 
 ### [kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu](../../kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu)
 
-- *whole file*: Numerics follow the CPU reference: f32 math, bf16 storage and the reference quantisers' rounding (e4m3 RNE saturating at +-448, e2m1 ties to even); a reordered reduction or fused rounding changes results against that reference. — source: kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu:7; kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu:74
+- *whole file*: Numerics follow the CPU reference: f32 math, bf16 storage and the reference quantisers' rounding (e4m3 RNE saturating at +-448, e2m1 ties to even); a reordered reduction or fused rounding changes results against that reference. — source: kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu:7; kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41_common.cuh:59
 - *attn_v41_gemv_f32_staged*: Replaces the 16x16-tile attn_v41_gemm_f32 at m=1 (32 blocks, 144 us) with one output per block and the strict k chain in the tiled kernel's order, so bits match; the compressor product later rewritten via smem products went 95 to 64 us (2026-09). — source: docs/perf/DS41_DECODE_RETUNE_2026-09.md (phase 3 L3, L6)
-- *attn_v41_gemv_f32_staged*: Same products and k order as attn_v41_gemm_f32 (bit-equal under --fmad=false) but one output per block with thread 0 summing staged products. Measured 2026-09-19 with nsys on GB10: 144 us a launch for a 10 MB weight in attn_v41_gemm_f32, 67 us in this form. — source: kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu:227
-- *attn_v41_index_score*: At ihd 128 a thread keeps its key row in registers (16 uint4) with the same products, order and roundings as the generic loop and no load on the add chain; the generic loop measured 122 us a launch (nsys, GB10, 2026-09-19). — source: kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu:318
-- *attn_v41_sparse_attn*: 64 blocks on 48 SMs. Splitting each (token, head) across gridDim.z blocks that each recompute scores and softmax and write their own hd slice keeps the bytes identical: split 2 gave +5.4%/+5.0% tok/s, split 4 was worse (2026-09, phase 6). — source: docs/perf/DS41_DECODE_RETUNE_2026-09.md (phase 6 M4a)
-- *attn_v41_sparse_attn*: METRALE_DS41_SPARSE_SPLIT (1 to 8, default 2) splits hd across blocks that each recompute the scores and softmax, so bytes are identical for any split; split 2 measured +5.4% / +5.0% decode tok/s, split 4 was lower. Scores live in shared memory, topk &lt;= 2048. — source: kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu:384; docs/perf/DS41_DECODE_RETUNE_2026-09.md:475
+- *attn_v41_gemv_f32_staged*: Same products and k order as attn_v41_gemm_f32 (bit-equal under --fmad=false) but one output per block with thread 0 summing staged products. Measured 2026-09-19 with nsys on GB10: 144 us a launch for a 10 MB weight in attn_v41_gemm_f32, 67 us in this form. — source: kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu:163
+
+<a id="to-kernels-gb10-deepseek-v4-flash-nvfp4-attn-v41-kv-cu"></a>
+
+### [kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41_kv.cu](../../kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41_kv.cu)
+
+- *attn_v41_index_score_packed*: At ihd 128 a thread keeps its key row in registers (16 uint4) with the same products, order and roundings as the generic loop and no load on the add chain; the generic loop measured 122 us a launch (nsys, GB10, 2026-09-19). — source: kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41_kv.cu:136
+- *attn_v41_sparse_attn_packed*: 64 blocks on 48 SMs. Splitting each (token, head) across gridDim.z blocks that each recompute scores and softmax and write their own hd slice keeps the bytes identical: split 2 gave +5.4%/+5.0% tok/s, split 4 was worse (2026-09, phase 6). — source: docs/perf/DS41_DECODE_RETUNE_2026-09.md (phase 6 M4a)
+- *attn_v41_sparse_attn_packed*: METRALE_DS41_SPARSE_SPLIT (1 to 8, default 2) splits hd across blocks that each recompute the scores and softmax, so bytes are identical for any split; split 2 measured +5.4% / +5.0% decode tok/s, split 4 was lower. Scores live in shared memory, topk &lt;= 2048. — source: kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41_kv.cu:175; docs/perf/DS41_DECODE_RETUNE_2026-09.md:475
 
 <a id="to-kernels-gb10-deepseek-v4-flash-nvfp4-csa-compress-cu"></a>
 

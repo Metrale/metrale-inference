@@ -26,7 +26,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-causal-conv1d-cu-causal-conv1d-update-l2norm"></a>
 
-### `causal_conv1d_update_l2norm` — [kernels/gb10/common/causal_conv1d.cu](../../kernels/gb10/common/causal_conv1d.cu#L412)
+### `causal_conv1d_update_l2norm` — [kernels/gb10/common/causal_conv1d.cu](../../kernels/gb10/common/causal_conv1d.cu#L329)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|
@@ -35,7 +35,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-causal-conv1d-cu-causal-conv1d-update-prefill-tp"></a>
 
-### `causal_conv1d_update_prefill_tp` — [kernels/gb10/common/causal_conv1d.cu](../../kernels/gb10/common/causal_conv1d.cu#L642)
+### `causal_conv1d_update_prefill_tp` — [kernels/gb10/common/causal_conv1d.cu](../../kernels/gb10/common/causal_conv1d.cu#L561)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|
@@ -96,7 +96,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-dense-gemv-bf16-tc-cu-dense-gemv-bf16-tc16"></a>
 
-### `dense_gemv_bf16_tc16` — [kernels/gb10/common/dense_gemv_bf16_tc.cu](../../kernels/gb10/common/dense_gemv_bf16_tc.cu#L251)
+### `dense_gemv_bf16_tc16` — [kernels/gb10/common/dense_gemv_bf16_tc.cu](../../kernels/gb10/common/dense_gemv_bf16_tc.cu#L47)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|
@@ -466,7 +466,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-w4a16-gemv-cu-w4a16-gemv-sw"></a>
 
-### `w4a16_gemv_sw` — [kernels/gb10/common/w4a16_gemv.cu](../../kernels/gb10/common/w4a16_gemv.cu#L233)
+### `w4a16_gemv_sw` — [kernels/gb10/common/w4a16_gemv.cu](../../kernels/gb10/common/w4a16_gemv.cu#L234)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |
 |---|---|---|---|---|---|---|---|
