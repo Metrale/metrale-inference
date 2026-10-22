@@ -15,7 +15,9 @@
 //!   hybrid-pattern letters); 2026-10-08: `S` a sparse-attention layer (GLM-5 DSA); whitespace
 //!   is ignored.
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 

@@ -9,7 +9,9 @@
 //! - Edge formats carry activation scales only (`token`, `tensor`, `g<n>`); `channel` and
 //!   `block` are weight layouts, refused on an edge by the circuit loader.
 
-use std::fmt;
+use crate::prelude::*;
+
+use core::fmt;
 
 /// 2026-09-28: How the scales of an 8-bit float tensor are shared.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

@@ -9,6 +9,24 @@
 //! - Pure: no GPU, no file I/O, no environment, no clock and no randomness. Callers read the
 //!   TOMLs and pass their text in ([`load`]).
 //! - A plan is deterministic, and its digest is recorded beside the closure hash.
+//! - 2026-10-22: `no_std` + `alloc`, no `unsafe`; builds for both wasm32 targets (NSCC). Every
+//!   file a caller reads arrives through a port ([`venn::Repo`], [`hardware::KernelTree`]),
+//!   implemented by a host (`metrale-io-host-std`'s `FsRepo`) or a test.
+
+#![cfg_attr(not(test), no_std)]
+#![forbid(unsafe_code)]
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_lossless,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss
+)]
+
+extern crate alloc;
+
+mod prelude;
+
+use crate::prelude::*;
 
 pub mod checkpoint;
 pub mod circuit_toml;
@@ -26,6 +44,7 @@ pub mod ir;
 pub mod kv;
 pub mod memory;
 pub mod model_buffer;
+mod num;
 pub mod pipeline;
 pub mod planner;
 pub mod precision;
@@ -142,7 +161,7 @@ pub fn load(instance: &Instance, src: Sources<'_>) -> Result<Loaded, LoadError> 
             if plan.checkpoint != instance.checkpoint {
                 return Err(mismatch(plan.checkpoint));
             }
-            let policy = metrale_config::WeightQuantPolicy::new(
+            let policy = metrale_precision::WeightQuantPolicy::new(
                 precision_policy::tier_named(tier)?,
                 &plan.plan,
                 precision_policy::caps_named(caps)?,

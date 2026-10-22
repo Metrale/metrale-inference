@@ -5,7 +5,9 @@
 //! Owner: metrale-circuit (hardware).
 //! Invariants: see [`super`]; an unknown key, op, role, mode, format or kind is an error.
 
-use std::collections::BTreeSet;
+use crate::prelude::*;
+
+use alloc::collections::BTreeSet;
 
 use serde::Deserialize;
 

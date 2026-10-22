@@ -13,7 +13,9 @@
 //!   of its devices claims the instruction, or keeps it while a device lacks it, is an error
 //!   ([`check_build`]), never resolved in either's favour.
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use super::HwError;
 use super::class::ClassInfo;

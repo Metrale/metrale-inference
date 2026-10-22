@@ -6,7 +6,9 @@
 //! Owner: metrale-circuit.
 //! Invariants: every line is at most the given width; long fact lists wrap between facts.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use super::glyphs::Set;
 use super::{Document, Line, Style, clip};

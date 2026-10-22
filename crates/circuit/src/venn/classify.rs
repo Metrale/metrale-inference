@@ -14,7 +14,9 @@
 //!   with a model before a bare point, manifest order); every other candidate whose class is an
 //!   opportunity is kept as a secondary finding.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use super::families::{Extract, Families, Family, How, OpSpec, ParamKind, Values};
 use super::{Class, Compared, Diff, Finding, Subject, VennError};
@@ -140,7 +142,7 @@ pub fn neighbours_hold(s: &OpSpec, c: &Circuit, n: &Node) -> bool {
 }
 
 /// 2026-09-29: `op` is in `set`, by base name (`linear`) or qualified name (`linear:q`).
-fn names(set: &std::collections::BTreeSet<String>, op: &OpKind) -> bool {
+fn names(set: &alloc::collections::BTreeSet<String>, op: &OpKind) -> bool {
     set.contains(op.base_name()) || set.contains(&op.name())
 }
 
@@ -239,7 +241,7 @@ fn finding(
     };
     let best = used
         .iter()
-        .filter(|u| std::ptr::eq(u.family, f) && u.node.op.base_name() == n.op.base_name())
+        .filter(|u| core::ptr::eq(u.family, f) && u.node.op.base_name() == n.op.base_name())
         .map(|u| {
             let mut d = diffs(f, &point, &u.point);
             d.extend(diffs(f, &runtime, &u.runtime));
@@ -344,7 +346,7 @@ pub fn classify_node(
     let mut all = Vec::new();
     let mut fams_for: Vec<&Family> = candidates(fams, target.circuit, n, rows);
     if let Some(f) = planned
-        && !fams_for.iter().any(|g| std::ptr::eq(*g, f))
+        && !fams_for.iter().any(|g| core::ptr::eq(*g, f))
     {
         fams_for.push(f);
     }

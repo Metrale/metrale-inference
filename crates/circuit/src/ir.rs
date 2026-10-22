@@ -14,7 +14,9 @@
 //! - An edge's fused or materialised state belongs to a plan (`FusionPlan::edge_states`),
 //!   not to the circuit, because one circuit has one plan per mode and row count.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use crate::dims::DimExpr;
 use crate::format::Format;

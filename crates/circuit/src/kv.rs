@@ -11,7 +11,9 @@
 //!   (`KvCodecSpec::data_bytes` + `side_bytes`); nothing here restates a codec's width.
 //! - A missing or unknown `kv_cache_dtype` is an error, never a default.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use metrale_kv_codec::{KvCodecId, KvPair, spec};
 

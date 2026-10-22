@@ -14,9 +14,11 @@
 //! - Precision comes from config.json's own `quantization_config` when it has one, else from
 //!   the sidecar `hf_quant_config.json` (the serve rule, `merge_sidecar_quant_config`).
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
 
-use metrale_config::DeclaredPrecisionPlan;
+use alloc::collections::BTreeMap;
+
+use metrale_precision::DeclaredPrecisionPlan;
 use serde_json::Value;
 
 use crate::circuit_toml::CircuitError;
@@ -237,8 +239,11 @@ pub fn resolve_checkpoint(
             circuit
         }
         ServePrecision::Policy { tier, caps, engine } => {
-            let policy =
-                metrale_config::WeightQuantPolicy::new(tier_named(tier)?, &plan, caps_named(caps)?);
+            let policy = metrale_precision::WeightQuantPolicy::new(
+                tier_named(tier)?,
+                &plan,
+                caps_named(caps)?,
+            );
             instantiate(
                 text,
                 &BLOCKS,

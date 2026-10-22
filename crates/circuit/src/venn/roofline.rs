@@ -22,7 +22,9 @@
 //! - Not counted: launch overhead, conv windows, KV writes beyond their input edges. A dim an op
 //!   needs that the circuit lacks is an error, never a guess.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use super::families::Roofline;
 use crate::format::Format;
@@ -122,7 +124,7 @@ pub fn node_cost(
         }
         OpKind::ExpertGateUp | OpKind::ExpertDown => {
             let (e, top) = (dim("experts")?, dim("top_k")?);
-            let distinct = e * (1.0 - (1.0 - top / e).powf(t));
+            let distinct = e * (1.0 - libm::pow(1.0 - top / e, t));
             bytes += distinct * weight_bytes(n, out, k)?;
             flops = 2.0 * t * top * k * out;
         }
@@ -131,7 +133,7 @@ pub fn node_cost(
             let pair = kv::kv_pair(settings).map_err(CostError::KvDtype)?;
             let ctx = r.context_tokens as f64;
             let (kvh, hd, qh) = (dim("kv_heads")?, dim("head_dim")?, dim("q_heads")?);
-            let per_side = (kvh * hd) as u64;
+            let per_side = crate::num::sat_u64(kvh * hd);
             let token = kv::token_bytes(pair, per_side).ok_or_else(|| {
                 CostError::KvDtype(format!("{pair} KV of {per_side} values per side overflows"))
             })?;
@@ -348,11 +350,11 @@ fn weight_bytes(n: &Node, out: f64, k: f64) -> Result<f64, CostError> {
     let Some(w) = n.weight else {
         return Ok(0.0);
     };
-    w.weight_bytes(out as u64, k as u64)
+    w.weight_bytes(crate::num::sat_u64(out), crate::num::sat_u64(k))
         .map(|b| b as f64)
         .ok_or_else(|| CostError::Edge {
             node: n.id.clone(),
             edge: "<weight>".into(),
-            rows: out as u64,
+            rows: crate::num::sat_u64(out),
         })
 }

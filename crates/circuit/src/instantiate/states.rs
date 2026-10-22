@@ -7,7 +7,9 @@
 //! Invariants: see [`crate::state`]; a recurrent state names its verify intermediates, a KV
 //! side names none, and a cache is touched by no layer node.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use crate::circuit_toml::{CircuitError, StateFile};
 use crate::dims::DimExpr;

@@ -19,7 +19,9 @@
 //!   BF16, an E4M3 weight widened exactly is the precision it widens to; which unit and atom
 //!   carry the multiply is the compute unit's (`venn::compute`).
 
-use std::fmt;
+use crate::prelude::*;
+
+use core::fmt;
 
 use metrale_kv_codec::KvPair;
 
@@ -206,11 +208,11 @@ pub struct NodePipeline {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Stated {
     /// 2026-10-02: Stated steps.
-    pub steps: std::collections::BTreeSet<StepKind>,
+    pub steps: alloc::collections::BTreeSet<StepKind>,
     /// 2026-10-02: Indices of inputs read in a stated hand-off format.
-    pub inputs: std::collections::BTreeSet<usize>,
+    pub inputs: alloc::collections::BTreeSet<usize>,
     /// 2026-10-02: Indices of outputs handed on in a stated format.
-    pub outputs: std::collections::BTreeSet<usize>,
+    pub outputs: alloc::collections::BTreeSet<usize>,
 }
 
 impl NodePipeline {

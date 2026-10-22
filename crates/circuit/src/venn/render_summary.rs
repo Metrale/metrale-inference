@@ -7,8 +7,10 @@
 //! Owner: metrale-circuit (venn).
 //! Invariants: aggregation keys are ordered maps, so the sections are deterministic.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write as _;
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
+use core::fmt::Write as _;
 
 use super::families::ParamKind;
 use super::report::VennReport;
@@ -75,7 +77,7 @@ pub(super) fn summary(r: &VennReport, s: &mut String) {
                     .or_default()
                     .add(&row.site, row.share, t.run);
             }
-            for f in std::iter::once(p).chain(&row.also) {
+            for f in core::iter::once(p).chain(&row.also) {
                 if matches!(
                     f.class,
                     Class::PolicyVariant | Class::ParameterizationOpportunity

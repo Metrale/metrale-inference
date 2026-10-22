@@ -15,6 +15,8 @@
 //!   stated format; there is no implicit default.
 //! - The first matching entry wins, in file order.
 
+use crate::prelude::*;
+
 use serde::Deserialize;
 
 use crate::format::{Format, FormatError};

@@ -12,7 +12,9 @@
 //! - An expression keeps its source text, so a plan renders the shape the template wrote.
 //! - Evaluation names every unknown dim and refuses overflow; it never substitutes a value.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 /// 2026-09-28: A parsed dimension expression.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,7 +91,7 @@ impl DimExpr {
     pub fn names(&self) -> impl Iterator<Item = &str> {
         self.terms.iter().flatten().flat_map(|f| match f {
             Factor::Name(n) => vec![n.as_str()],
-            Factor::CeilDiv(n, by) => std::iter::once(n.as_str())
+            Factor::CeilDiv(n, by) => core::iter::once(n.as_str())
                 .chain(by.iter().filter_map(|d| match d {
                     Divisor::Dim(d) => Some(d.as_str()),
                     Divisor::Lit(_) => None,

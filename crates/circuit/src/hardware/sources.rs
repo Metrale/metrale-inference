@@ -12,7 +12,9 @@
 //! - A class with no target for the model resolves its common layer only (`target = None`),
 //!   and the report says so: its model-specific kernels are absent, not assumed.
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use crate::venn::repo::Repo;
 
@@ -41,17 +43,28 @@ pub struct ClassSources {
     pub expected_absent: BTreeMap<String, BTreeMap<String, String>>,
 }
 
-/// 2026-09-30: A repository that can also resolve a class's kernel sources.
+/// 2026-09-30: A repository that can also resolve a class's kernel sources. 2026-10-22: A host
+/// fails with [`ErrorCode::KernelTreeResolve`](metrale_error::ErrorCode::KernelTreeResolve),
+/// whose text is the host's reason verbatim (the hardware reports quote it).
 pub trait KernelTree: Repo {
     /// 2026-09-30: The sources `class` compiles for `model`/`quant`, or its common layer when it
     /// has no such target.
-    fn class_sources(&self, class: &str, model: &str, quant: &str) -> Result<ClassSources, String>;
+    fn class_sources(
+        &self,
+        class: &str,
+        model: &str,
+        quant: &str,
+    ) -> metrale_error::Result<ClassSources>;
 
     /// 2026-09-30: The kernel model directory that serves the checkpoint whose `config.json`
     /// is `config_json`, named by `refs`: the engine's own resolution (its config parse, which
     /// may rewrite `model_type`, then MODEL.toml `[[model_types]]` and `match_names`), or
     /// `None` when no target claims it.
-    fn kernel_target(&self, config_json: &str, refs: &[&str]) -> Result<Option<String>, String>;
+    fn kernel_target(
+        &self,
+        config_json: &str,
+        refs: &[&str],
+    ) -> metrale_error::Result<Option<String>>;
 
     /// 2026-09-30: This tree as a plain [`Repo`].
     fn as_repo(&self) -> &dyn Repo;

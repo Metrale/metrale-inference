@@ -227,5 +227,9 @@ error_registry! {
         /// 2026-10-22: A circuit source (a repository file or listing) its host could not
         /// supply: (repo-relative path, reason).
         CircuitSource = 0x0710 => "{}: {}",
+        /// 2026-10-22: A kernel-tree resolution (a class's sources, a checkpoint's kernel
+        /// target) its host could not complete: (the host's reason, verbatim, since reports
+        /// quote it).
+        KernelTreeResolve = 0x0711 => "{}",
     }
 }

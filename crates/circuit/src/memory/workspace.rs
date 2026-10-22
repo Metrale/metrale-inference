@@ -11,7 +11,9 @@
 //!   and `sm_count` (the device's); any other name is an error, never 0. The term is the largest
 //!   value over the family's nodes.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use super::MemoryError;
 use crate::fuser::FusionPlan;

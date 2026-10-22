@@ -7,8 +7,10 @@
 //! Invariants: deterministic text (fixed decimals, sorted maps); every number names its basis in
 //! the report's inputs table.
 
-use std::collections::BTreeMap;
-use std::fmt::Write as _;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
+use core::fmt::Write as _;
 
 use super::HwReport;
 use super::gaps::GapTable;
@@ -313,7 +315,7 @@ fn memory(s: &mut String, r: &HwReport) {
 /// 2026-09-30: What would hold `need` bytes: tensor parallelism over this device, or the
 /// registry devices whose usable memory holds it.
 fn advice(r: &HwReport, need: f64, usable: f64) -> String {
-    let tp = (need / usable).ceil() as u64;
+    let tp = crate::num::sat_u64(libm::ceil(need / usable));
     let fits: Vec<&str> = r
         .others
         .iter()

@@ -10,7 +10,9 @@
 //! - Every in-plan edge appears exactly once: as a fused edge of the group it lives in, as a
 //!   written output of the group that stores it, or as a plan input.
 
-use std::fmt::Write as _;
+use crate::prelude::*;
+
+use core::fmt::Write as _;
 
 use crate::fuser::{EdgeState, FusionPlan, Group, Policy};
 use crate::ir::{Circuit, NodeIdx};

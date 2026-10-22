@@ -332,14 +332,17 @@ pub fn tree() -> Tree {
 }
 
 impl Repo for Tree {
-    fn read(&self, rel: &str) -> Result<String, String> {
-        self.files
-            .get(rel)
-            .cloned()
-            .ok_or_else(|| format!("{rel}: not in the fixture"))
+    fn read(&self, rel: &str) -> metrale_error::Result<String> {
+        self.files.get(rel).cloned().ok_or_else(|| {
+            metrale_error::error!(
+                metrale_error::ErrorCode::CircuitSource,
+                rel.to_string(),
+                "not in the fixture"
+            )
+        })
     }
 
-    fn list(&self, rel: &str) -> Result<Vec<String>, String> {
+    fn list(&self, rel: &str) -> metrale_error::Result<Vec<String>> {
         Ok(self
             .files
             .keys()
@@ -355,7 +358,7 @@ impl KernelTree for Tree {
         class: &str,
         _model: &str,
         _quant: &str,
-    ) -> Result<ClassSources, String> {
+    ) -> metrale_error::Result<ClassSources> {
         let path = "kernels/base/common/m.cu".to_string();
         Ok(ClassSources {
             class: class.to_string(),
@@ -372,7 +375,11 @@ impl KernelTree for Tree {
         })
     }
 
-    fn kernel_target(&self, _config: &str, _refs: &[&str]) -> Result<Option<String>, String> {
+    fn kernel_target(
+        &self,
+        _config: &str,
+        _refs: &[&str],
+    ) -> metrale_error::Result<Option<String>> {
         Ok(Some("toy".into()))
     }
 

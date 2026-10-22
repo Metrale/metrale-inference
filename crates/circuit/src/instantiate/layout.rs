@@ -9,7 +9,9 @@
 //! Invariants: see [`crate::circuit_toml`]; every layout block named anywhere must exist, every
 //! block the circuit file defines must be used, and the first failure is returned.
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use crate::circuit_toml::{CircuitError, CircuitFile, LayoutRule, when_holds};
 use crate::ir::{ArchShape, LayerKind, Section};

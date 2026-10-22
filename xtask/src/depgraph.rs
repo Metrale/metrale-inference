@@ -99,6 +99,8 @@ pub const PURE_ALLOWLIST: &[&str] = &[
     "serde_core",
     "serde_derive",
     "serde_json",
+    // 2026-10-22: toml's span wrapper; no_std + alloc without `std`.
+    "serde_spanned",
     "sha2",
     // 2026-10-22: ML-DSA SHAKE XOF; no_std.
     "shake",
@@ -116,8 +118,19 @@ pub const PURE_ALLOWLIST: &[&str] = &[
     "syn",
     "thiserror",
     "thiserror-impl",
+    // 2026-10-22: toml 1.x is no_std + alloc without `std` (metrale-circuit parses the
+    // circuit, rules and precision TOMLs it is handed); its own I/O helpers are behind `std`.
+    "toml",
+    // 2026-10-22: toml's datetime values; no_std without `std`.
+    "toml_datetime",
+    // 2026-10-22: toml's parser; no_std + alloc without `std`.
+    "toml_parser",
+    // 2026-10-22: toml's writer (`toml::to_string`); no_std + alloc without `std`.
+    "toml_writer",
     "typenum",
     "unicode-ident",
+    // 2026-10-22: the parser combinators under toml_parser; no_std + alloc.
+    "winnow",
     "zerocopy",
     "zerocopy-derive",
     // 2026-10-22: secure memory wiping (der, ed25519-dalek, the blueprint signer); no_std.
@@ -171,7 +184,6 @@ pub const PURE_DENYLIST: &[&str] = &[
     "std",
     "tokio",
     "tokio-util",
-    "toml",
     "tower",
     "tracing",
     "tracing-subscriber",

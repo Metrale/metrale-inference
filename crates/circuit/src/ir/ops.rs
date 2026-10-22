@@ -6,6 +6,8 @@
 //! Owner: metrale-circuit.
 //! Invariants: see [`crate::ir`]; [`OpKind`] is closed.
 
+use crate::prelude::*;
+
 use crate::format::Format;
 
 use super::LinearRole;

@@ -8,6 +8,8 @@
 //! - Every kind has one spelling ([`StateKind::parse`] of [`StateKind::name`] is the kind) and
 //!   one lifetime ([`Lifetime::of_kind`]); a spelling outside the list is refused by the loader.
 
+use crate::prelude::*;
+
 #[cfg(doc)]
 use super::{Holding, StatePlan};
 

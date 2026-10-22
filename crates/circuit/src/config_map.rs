@@ -19,7 +19,9 @@
 //!   only this arch's layer code decides (a lever of its own kernels), with the line that sets
 //!   it; a checkpoint planned at its declared formats takes these values (`derive_policy`).
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use serde::Deserialize;
 

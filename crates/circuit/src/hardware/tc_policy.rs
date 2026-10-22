@@ -17,7 +17,9 @@
 //!   lists the op, the mode, the row count and every kernel of the group. A covered node in a
 //!   placeholder group (no kernel of the class covers the op) is a gap, listed, never a pass.
 
-use std::collections::BTreeSet;
+use crate::prelude::*;
+
+use alloc::collections::BTreeSet;
 
 use crate::format::Format;
 use crate::fuser::FusionPlan;
@@ -329,7 +331,7 @@ pub fn enforce(
         return Ok(None);
     };
     let mut total = TcAudit::default();
-    let arms = std::iter::once(planned).chain(planned.routes.iter().map(|rp| &rp.planned));
+    let arms = core::iter::once(planned).chain(planned.routes.iter().map(|rp| &rp.planned));
     for p in arms {
         let a = audit(c, &p.plan, &r.families, policy, super::plan::NOVEL_EMITTER)
             .map_err(super::HwError::Plan)?;

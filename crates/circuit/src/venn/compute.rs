@@ -13,7 +13,9 @@
 //! - A kernel's unit is its `kernel_compute` entry, else its family's. A family whose points
 //!   state different units names every kernel's unit, so no kernel's unit is inferred.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use crate::rules::KernelId;
 

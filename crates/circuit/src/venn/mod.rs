@@ -22,6 +22,8 @@
 //! - A compared node whose plan kernel belongs to no family, and a parameter a node cannot
 //!   supply, are typed errors: the report is never built from a guess.
 
+use crate::prelude::*;
+
 pub mod checkpoint;
 pub mod classify;
 mod cli_args;
@@ -35,7 +37,7 @@ pub mod repo;
 pub mod report;
 pub mod roofline;
 
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
 
 use crate::fuser::FusionPlan;
 use crate::ir::Circuit;

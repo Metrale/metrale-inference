@@ -7,7 +7,9 @@
 //! Invariants: the text is a pure function of the report; numbers print at fixed precision, so
 //! a regenerated report is byte-identical and `--check` can compare it.
 
-use std::fmt::Write as _;
+use crate::prelude::*;
+
+use core::fmt::Write as _;
 
 use super::families::{EvidenceSource, ParamKind};
 use super::report::{Row, VennReport};

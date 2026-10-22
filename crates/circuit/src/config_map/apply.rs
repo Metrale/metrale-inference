@@ -5,7 +5,9 @@
 //! Owner: metrale-circuit.
 //! Invariants: see [`crate::config_map`]; the first failure is returned.
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
@@ -108,6 +110,16 @@ fn uint(key: &str, v: &Value) -> Result<u64, ConfigMapError> {
     })
 }
 
+/// 2026-10-22: [`uint`] as an index; refused where it exceeds this target's `usize` (BU64).
+fn index(key: &str, v: &Value) -> Result<usize, ConfigMapError> {
+    usize::try_from(uint(key, v)?).map_err(|_| {
+        ConfigMapError::Json(format!(
+            "`{key}` = {} exceeds this target's index range",
+            json(v)
+        ))
+    })
+}
+
 fn layers<'a>(
     map: &ConfigMap,
     fields: &BTreeMap<&'a str, &'a Value>,
@@ -118,7 +130,7 @@ fn layers<'a>(
         .get_key_value(l.count.as_str())
         .ok_or_else(|| missing(map, &l.count))?;
     consumed.insert(count_key);
-    let count = uint(&l.count, count_v)? as usize;
+    let count = index(&l.count, count_v)?;
     let kind = |name: &str, key: &str| {
         LayerKind::parse(name).ok_or_else(|| {
             ConfigMapError::Schema(format!("`{key}` maps to unknown layer kind `{name}`"))
@@ -148,7 +160,7 @@ fn layers<'a>(
                 let tail = fields
                     .get(tail_key.as_str())
                     .ok_or_else(|| missing(map, tail_key))
-                    .and_then(|t| uint(tail_key, t))? as usize;
+                    .and_then(|t| index(tail_key, t))?;
                 if names.len() != count + tail {
                     return Err(ConfigMapError::Refused {
                         key: key.to_string(),
@@ -278,7 +290,7 @@ fn dims<'a>(
                 let end = fields
                     .get(end_key.as_str())
                     .ok_or_else(|| missing(map, end_key))
-                    .and_then(|v| uint(end_key, v))? as usize;
+                    .and_then(|v| index(end_key, v))?;
                 let run = entries.get(at..end).filter(|r| !r.is_empty());
                 if !run.is_some_and(|r| r.iter().all(|e| e.as_u64() == Some(fi.value))) {
                     return Err(ConfigMapError::Refused {

@@ -11,7 +11,9 @@
 //! Invariants: see [`crate::circuit_toml`]; every check there is enforced here, in file
 //! order, and the first failure is returned.
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use crate::circuit_toml::{
     BlockFile, CircuitError, CircuitFile, NodeFile, layout_rule, parse_file, when_holds,

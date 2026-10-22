@@ -12,6 +12,8 @@
 //!   does, through at most [`DEPTH`] nested invocations.
 
 /// 2026-10-22: How deep one invocation may nest macro calls before expansion stops.
+use crate::prelude::*;
+
 const DEPTH: usize = 4;
 
 struct Macro {

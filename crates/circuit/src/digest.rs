@@ -16,7 +16,9 @@
 //! - The rule set is attested by `rules_digest` and by the closure hash, which covers
 //!   FUSIONS.toml as a config.
 
-use std::fmt::Write as _;
+use crate::prelude::*;
+
+use core::fmt::Write as _;
 
 use sha2::{Digest, Sha256};
 

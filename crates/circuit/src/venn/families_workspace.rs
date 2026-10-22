@@ -12,6 +12,8 @@
 //! - `arena = true` marks scratch the legacy buffer arena already holds
 //!   (`gpu-runtime/src/buffers.rs`), so a budget over that arena does not count it twice.
 
+use crate::prelude::*;
+
 use serde::Deserialize;
 
 use super::Workspace;

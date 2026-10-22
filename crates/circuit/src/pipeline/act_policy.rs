@@ -2,7 +2,7 @@
 
 //! 2026-10-02: The `act` requirement of a projection under the policy's
 //! `activation_quantization` (the `--activation-quantization` grammar,
-//! `metrale_config::ActivationQuantization`): a fixed format for the projection's family at the
+//! `metrale_precision::ActivationQuantization`): a fixed format for the projection's family at the
 //! plan's row count, the input as instantiated (`declared`), or, under `adaptive` (today's
 //! routing, which the rules encode), what the plan's rule states it quantizes to.
 //!
@@ -14,7 +14,9 @@
 //! - Roles outside the flag's families (the MTP `fc`, the Mamba2 projections) follow the
 //!   adaptive rule: the flag does not route them.
 
-use metrale_config::{ActQuantFormat, ActivationQuantization, ProjFamily};
+use crate::prelude::*;
+
+use metrale_precision::{ActQuantFormat, ActivationQuantization, ProjFamily};
 
 use crate::format::{Format, Scale};
 use crate::ir::{LinearRole, OpKind};
@@ -80,7 +82,7 @@ fn fixed(rung: ActQuantFormat, edge: Format, weight: Format) -> Format {
 /// 2026-10-02: The activation format projection `op` must multiply at, `rows` rows, reading
 /// `edge`, the rule stating `stated` (if anything), with a `weight` weight.
 pub(super) fn required_act(
-    settings: &std::collections::BTreeMap<String, String>,
+    settings: &alloc::collections::BTreeMap<String, String>,
     op: &OpKind,
     rows: u64,
     (edge, stated, weight): (Format, Option<Format>, Format),

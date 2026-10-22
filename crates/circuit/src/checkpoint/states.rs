@@ -11,7 +11,9 @@
 //!   but cannot be read, or whose layers hold recurrent state in more than one block, is an
 //!   error.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use super::{ARCHES, BLOCKS, config_maps};
 use crate::circuit_toml::{CircuitError, parse_file};

@@ -15,7 +15,9 @@
 //! - `recipe` precision is the instance's own (the golden plans' formats); `declared` is the
 //!   checkpoint's declared formats. Neither is chosen silently: the report prints which.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use super::HwError;
 use super::class::ClassInfo;
@@ -104,7 +106,7 @@ impl CircuitSource for InstancesSource<'_> {
         let text = self
             .repo
             .read("kernels/circuits/INSTANCES.toml")
-            .map_err(HwError::Model)?;
+            .map_err(|e| HwError::Model(e.to_string()))?;
         let all = parse_instances(&text).map_err(|e| HwError::Model(e.to_string()))?;
         let inst = resolve(&all, spec.checkpoint).map_err(|e| HwError::Model(e.to_string()))?;
         let (inst, precision) = match (spec.precision, &inst.precision) {

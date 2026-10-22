@@ -13,7 +13,9 @@
 //!   node index; a node with no outputs (the KV write) orders before later readers of its
 //!   inputs.
 
-use std::collections::{BTreeSet, VecDeque};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeSet, VecDeque};
 
 use crate::ir::{Circuit, Node, NodeIdx, OpKind};
 use crate::rules::{PatternOp, Rule};

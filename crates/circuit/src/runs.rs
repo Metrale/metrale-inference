@@ -16,7 +16,9 @@
 //! - A per-run rule applies to a table only when every run matches one of its selectors; the
 //!   first matching selector, in file order, gives the run's launches.
 
-use std::fmt;
+use crate::prelude::*;
+
+use core::fmt;
 
 use crate::rules::KernelId;
 

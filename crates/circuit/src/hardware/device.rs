@@ -12,7 +12,9 @@
 //! - A peak the device lacks (`fp4_block_scale` on Hopper, `0.0` in the research file) is
 //!   `None` here, and `native_mma` must agree with the dense peaks.
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 

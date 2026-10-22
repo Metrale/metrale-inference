@@ -13,7 +13,9 @@
 //! - Not counted: activations and workspaces, conv windows, the CUDA context, and launch
 //!   overhead. The fit check says so beside its table.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use super::device::Device;
 use super::exec::fp4_fallback;
@@ -161,7 +163,7 @@ pub fn footprint(c: &Circuit, settings: &BTreeMap<String, String>) -> Result<Foo
             OpKind::PagedAttention => {
                 // 2026-10-18: One token of both sides, from each side's codec spec.
                 let kv = crate::kv::kv_pair(settings)?;
-                let per_side = (dim("kv_heads")? * dim("head_dim")?) as u64;
+                let per_side = crate::num::sat_u64(dim("kv_heads")? * dim("head_dim")?);
                 let token = crate::kv::token_bytes(kv, per_side)
                     .ok_or_else(|| format!("{kv} KV of {per_side} values per side overflows"))?;
                 kv_per_token += token as f64;

@@ -17,7 +17,9 @@
 //! - The plan is a pure function of its inputs; [`FusionPlan::digest`] changes exactly when
 //!   what the plan runs changes (see [`crate::digest`]).
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use crate::format::Format;
 use crate::ir::{Circuit, EdgeIdx, NodeIdx, Section};

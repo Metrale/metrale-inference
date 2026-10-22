@@ -17,7 +17,9 @@
 //! - On the class a model's golden plans were written for, with its own kernel target, the
 //!   plan equals the golden plan (crates/server/src/cli/circuit_hw_tests.rs holds it).
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use super::avail::{Availability, availability, check_build, kernel_status, without_fp4_kernel};
 use super::class::{ClassInfo, ClassRules, chain, class_families, class_rules, planning_chain};
@@ -197,7 +199,7 @@ pub fn resolve(
     let rules = class_rules(repo, &device.class)?;
     let sources = tree
         .class_sources(&device.class, &model.kernel_model, &model.kernel_quant)
-        .map_err(HwError::Class)?;
+        .map_err(|e| HwError::Class(e.to_string()))?;
     let rule_list: &[Rule] = match &rules {
         ClassRules::Rules { rules, .. } => rules,
         ClassRules::None => &[],

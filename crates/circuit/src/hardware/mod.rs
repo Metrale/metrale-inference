@@ -19,6 +19,8 @@
 //! - Deterministic: the same inputs render the same report bytes (the `--check` tests rely on
 //!   it).
 
+use crate::prelude::*;
+
 pub mod avail;
 mod avail_paste;
 pub mod class;
@@ -46,7 +48,7 @@ mod runtime_tests;
 #[cfg(test)]
 mod test_fixture;
 
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
 
 use crate::fuser::Policy;
 use crate::render::Header;

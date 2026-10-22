@@ -9,7 +9,9 @@
 //! - A `kernel_compute` key is one of the family's kernels, and differs from the family's unit
 //!   unless the family's points run on different units, in which case every kernel is named.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use serde::Deserialize;
 

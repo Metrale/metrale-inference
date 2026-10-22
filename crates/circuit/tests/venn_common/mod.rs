@@ -21,21 +21,29 @@ pub const DENSE: &str = "qwen3.8/qwen3.8-27b-nvfp4-unsloth";
 pub const REPORT: &str = "kernels/circuits/venn/nemotron-3.5-lightning-vs-qwen3.6-35b-a3b.md";
 pub const MANIFEST: &str = "kernels/gb10/common/KERNEL_FAMILIES.toml";
 
+fn source(rel: &str, e: std::io::Error) -> metrale_error::Error {
+    metrale_error::error!(
+        metrale_error::ErrorCode::CircuitSource,
+        rel.to_string(),
+        e.to_string()
+    )
+}
+
 /// 2026-09-29: The checked-out tree, as the CLI's file-system repo reads it.
 pub struct Tree;
 
 impl Repo for Tree {
-    fn read(&self, rel: &str) -> Result<String, String> {
-        std::fs::read_to_string(common::root().join(rel)).map_err(|e| format!("{rel}: {e}"))
+    fn read(&self, rel: &str) -> metrale_error::Result<String> {
+        std::fs::read_to_string(common::root().join(rel)).map_err(|e| source(rel, e))
     }
 
-    fn list(&self, rel: &str) -> Result<Vec<String>, String> {
+    fn list(&self, rel: &str) -> metrale_error::Result<Vec<String>> {
         let root = common::root();
         let mut out = Vec::new();
         let mut stack = vec![root.join(rel)];
         while let Some(dir) = stack.pop() {
             for entry in std::fs::read_dir(&dir)
-                .map_err(|e| e.to_string())?
+                .map_err(|e| source(rel, e))?
                 .flatten()
             {
                 let path = entry.path();

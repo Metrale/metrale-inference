@@ -32,6 +32,7 @@ members = [
     "crates/abstract-io",
     "crates/io-hosts/mem",
     "crates/io-hosts/std",
+    "crates/io-hosts/fs-repo",
     "crates/settings",
     "crates/serve-identity",
     "crates/kv-codec",
@@ -141,6 +142,8 @@ ml-dsa = { version = "=0.1.1", default-features = false }
 # model reads; `tokenizer::tests::qwen_dense_parity` pins today's rendering and fails on 2.24.
 # Raising it is a prompt-content change that needs its own certification, not a version bump
 # (Dependabot ignores it in .github/dependabot.yml).
+# 2026-10-22: no_std float functions (metrale-circuit's roofline `pow`).
+libm = { version = "0.2", default-features = false }
 minijinja = { version = "=2.21.0", default-features = false }
 objc2 = { version = "0.6", default-features = false }
 # 2026-10-22: The canonical, deterministic `.kbp` body encoding (serde, no_std).
@@ -200,6 +203,7 @@ metrale-gpu-sys = { path = "crates/gpu-sys", version = "1.0.0-beta-preview", def
 metrale-grammar = { path = "crates/grammar", version = "1.0.0-beta-preview", default-features = false }
 metrale-host-probe = { path = "crates/host-probe", version = "1.0.0-beta-preview", default-features = false }
 metrale-io-host-mem = { path = "crates/io-hosts/mem", version = "1.0.0-beta-preview", default-features = false }
+metrale-io-host-fs-repo = { path = "crates/io-hosts/fs-repo", version = "1.0.0-beta-preview", default-features = false }
 metrale-io-host-std = { path = "crates/io-hosts/std", version = "1.0.0-beta-preview", default-features = false }
 metrale-kernel-root = { path = "crates/kernel-root", version = "1.0.0-beta-preview", default-features = false }
 metrale-kernel-tree = { path = "crates/kernel-tree", version = "1.0.0-beta-preview", default-features = false }

@@ -5,6 +5,8 @@
 //! Owner: metrale-circuit.
 //! Invariants: every label is built from the glyph set, so the ASCII render stays 7-bit.
 
+use crate::prelude::*;
+
 use super::COMPACT_BELOW;
 use super::Style;
 use super::glyphs::Set;

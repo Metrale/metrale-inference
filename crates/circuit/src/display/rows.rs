@@ -10,7 +10,9 @@
 //! - A frame covers a contiguous run of rows all of whose nodes belong to one group; a group
 //!   whose rows are not contiguous gets one frame per run.
 
-use std::collections::VecDeque;
+use crate::prelude::*;
+
+use alloc::collections::VecDeque;
 
 use crate::fuser::FusionPlan;
 use crate::ir::{Circuit, LinearRole, NodeIdx, OpKind};

@@ -73,3 +73,4 @@
 0x0702 WeightQuantTierInvalid
 0x0703 ActQuantInvalid
 0x0710 CircuitSource
+0x0711 KernelTreeResolve

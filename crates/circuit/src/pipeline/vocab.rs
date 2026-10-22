@@ -11,6 +11,8 @@
 //! - Projections (a linear of any role, the LM head, the router and both expert projections)
 //!   share one shape; the routed gate/up projection adds the row gather by expert id.
 
+use crate::prelude::*;
+
 use super::{Num, StepKind, Value};
 use crate::format::Format;
 use crate::ir::{LinearRole, OpKind};

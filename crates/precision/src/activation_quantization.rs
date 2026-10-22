@@ -342,7 +342,10 @@ impl ActivationQuantization {
             let fam = ProjFamily::parse(fam.trim())
                 .map_err(|e| bad(format!("--activation-quantization {s:?}: {e}")))?;
             let ladder = Ladder::parse(ladder).map_err(|e| {
-                bad(format!("--activation-quantization {s:?}, {}: {e}", fam.name()))
+                bad(format!(
+                    "--activation-quantization {s:?}, {}: {e}",
+                    fam.name()
+                ))
             })?;
             ensure!(
                 families.insert(fam, ladder).is_none(),

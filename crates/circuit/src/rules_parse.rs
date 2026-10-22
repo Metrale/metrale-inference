@@ -6,7 +6,9 @@
 //! Owner: metrale-circuit.
 //! Invariants: those of `rules.rs`.
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 

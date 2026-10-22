@@ -13,10 +13,12 @@
 //! - A module the plan does not cover is 16-bit (`LayerPrecision::UNQUANTIZED`); an expert
 //!   projection is covered by its fused-experts module's declaration (2026-10-02).
 
-use std::cell::RefCell;
+use crate::prelude::*;
 
-use metrale_config::DeclaredPrecisionPlan;
-use metrale_config::precision_plan::{Granularity, NumKind, Operand};
+use core::cell::RefCell;
+
+use metrale_precision::DeclaredPrecisionPlan;
+use metrale_precision::precision_plan::{Granularity, NumKind, Operand};
 
 use crate::format::{Format, Scale};
 use crate::precision::{EdgePrecision, LinearFormats};

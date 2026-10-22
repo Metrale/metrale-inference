@@ -14,7 +14,9 @@
 //! - A checkpoint the model axis refuses is refused here with its reason, never planned from a
 //!   guess.
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use super::HwError;
 use super::model::{CircuitSource, InstancesSource, ModelSpec, ModelUnderPlan, PrecisionChoice};

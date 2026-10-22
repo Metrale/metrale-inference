@@ -17,7 +17,9 @@
 //!   (no checkpoint ships its own; Qwen's circuit binds the runtime copy as `mtp.lm_head`), so it
 //!   stores nothing either.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use super::MemoryError;
 use super::copies::CopyRule;
@@ -90,7 +92,7 @@ pub fn node_weights(
     let declared_of: BTreeMap<&str, &Node> =
         declared.nodes.iter().map(|n| (n.id.as_str(), n)).collect();
     let mut out = Vec::new();
-    let mut bound: std::collections::BTreeSet<&[String]> = std::collections::BTreeSet::new();
+    let mut bound: alloc::collections::BTreeSet<&[String]> = alloc::collections::BTreeSet::new();
     for (i, n) in served.nodes.iter().enumerate() {
         if n.op == OpKind::Embed {
             if secs[i] != Section::Main {

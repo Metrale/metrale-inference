@@ -4,7 +4,7 @@
 //! tensor activations, NVFP4 W4A4 and W4A16, 16-bit when undeclared, and a refusal for a
 //! format the circuit has none for.
 
-use metrale_config::DeclaredPrecisionPlan;
+use metrale_precision::DeclaredPrecisionPlan;
 
 use super::DeclaredPrecision;
 use crate::format::{Format, Scale};

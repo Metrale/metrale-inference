@@ -15,9 +15,11 @@
 //!   `nvfp4` every quantized module runs NVFP4 weights and 16-bit activations.
 //! - An unquantized module is BF16 weights and activations.
 
-use metrale_config::precision_plan::{Granularity, Operand};
-use metrale_config::weight_quantization::{ActFormat, KernelCaps};
-use metrale_config::{
+use crate::prelude::*;
+
+use metrale_precision::precision_plan::{Granularity, Operand};
+use metrale_precision::weight_quantization::{ActFormat, KernelCaps};
+use metrale_precision::{
     DeclaredPrecisionPlan, W4a4Downcast, WeightQuantPolicy, WeightQuantTier, WeightQuantization,
 };
 use serde::Deserialize;

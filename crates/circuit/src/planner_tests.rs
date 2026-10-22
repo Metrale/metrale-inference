@@ -79,10 +79,10 @@ fn random_circuit(rng: &mut Lcg, nodes: usize) -> String {
         "[[block.b.node]]\nid = \"n0\"\nop = \"embed\"\nout = [{ edge = \"e0\", format = \"bf16\", shape = \"n x w\" }]\n",
     );
     for j in 1..=nodes {
-        let a = rng.next(j as u64) as usize;
+        let a = usize::try_from(rng.next(j as u64)).unwrap();
         let mut ins = vec![a];
         if j > 1 && rng.next(2) == 0 {
-            let b = rng.next(j as u64) as usize;
+            let b = usize::try_from(rng.next(j as u64)).unwrap();
             if b != a {
                 ins.push(b);
             }
@@ -118,7 +118,7 @@ fn live_edges_never_share_bytes_over_random_dags() {
     };
     let mut fused_seen = 0;
     for case in 0..200 {
-        let nodes = 2 + rng.next(40) as usize;
+        let nodes = 2 + usize::try_from(rng.next(40)).unwrap();
         let text = random_circuit(&mut rng, nodes);
         let c = crate::instantiate(&text, &[], &shape, &table)
             .unwrap_or_else(|e| panic!("case {case}: {e}"));

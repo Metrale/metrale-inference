@@ -14,7 +14,9 @@
 //! - A keyed format must be given ([`crate::state::StateInputs::formats`]); a missing key is
 //!   an error, as in [`crate::state::StatePlan`].
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use crate::state::{StateDecl, StateDtype, StateError, StateFormat, StateKind};
 

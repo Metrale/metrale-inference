@@ -19,7 +19,9 @@
 //!   or (2026-10-22) whose spec of a non-linear op states a neighbour constraint that holds
 //!   there, else the first in manifest order.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use super::require::{Need, required};
 use super::{Mismatch, NodePipeline, PipelineError, Stated, differences};

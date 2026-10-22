@@ -9,7 +9,9 @@
 //! - Loading is fail-fast: the first unknown op, dangling or duplicate edge, format no
 //!   consumer accepts, or template/layout mismatch is returned as a [`CircuitError`].
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use serde::Deserialize;
 
@@ -181,7 +183,7 @@ pub(crate) struct CircuitFile {
     /// 2026-09-30: The blocks the circuit file itself defines (not its libraries'); only these
     /// must all be used.
     #[serde(skip)]
-    pub local_blocks: std::collections::BTreeSet<String>,
+    pub local_blocks: alloc::collections::BTreeSet<String>,
 }
 
 #[derive(Deserialize)]

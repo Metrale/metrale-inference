@@ -3,7 +3,6 @@
 # This list may only shrink: `cargo xtask depgraph` refuses a new offender, a grown count and a
 # stale entry, and asks for an entry to be tightened when its count falls.
 metrale-circuit->metrale-closure
-metrale-circuit->toml
 metrale-circuit->unicode-width
 metrale-config->anyhow
 metrale-config->regex

@@ -14,7 +14,9 @@
 //! - A node's bytes are one unit of its state ([`StatePlan`] at one slot), so a program's bytes
 //!   are what one sequence's copies move.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use crate::ir::{Circuit, Section};
 use crate::state::{Holding, StateDtype, StateError, StateInputs, StateKind, StatePlan};

@@ -12,6 +12,8 @@
 //! - The inverse queries assume the footprint never shrinks as sequences or tokens grow, and
 //!   they check the answer: the bound they return fits, the next value does not (or is the cap).
 
+use crate::prelude::*;
+
 use serde::Deserialize;
 
 /// 2026-10-02: What the driver holds beyond the allocation ledger, for one device class.
@@ -82,7 +84,7 @@ impl DriverTerms {
 
 /// 2026-10-02: The util budget: `device_bytes x util`, as the engine computes it (truncated).
 pub fn util_budget(device_bytes: u64, util: f64) -> u64 {
-    (device_bytes as f64 * util) as u64
+    crate::num::sat_u64(device_bytes as f64 * util)
 }
 
 /// 2026-10-02: The largest `x` in `lo..=hi` with `fits(x)`, by bisection; `None` when `lo` does

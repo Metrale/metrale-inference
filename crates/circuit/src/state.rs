@@ -20,7 +20,9 @@
 //! - 2026-10-18: A KV state in a codec pair is sized from that codec's spec, its side picked by the
 //!   state's local id (`k`, `v`) ([`StateDecl::unit_bytes`]).
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use metrale_kv_codec::KvPair;
 

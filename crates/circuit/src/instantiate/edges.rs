@@ -6,7 +6,9 @@
 //! Owner: metrale-circuit.
 //! Invariants: see [`crate::circuit_toml`].
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use super::{Builder, dup};
 use crate::circuit_toml::{CircuitError, NodeFile, split_shape};

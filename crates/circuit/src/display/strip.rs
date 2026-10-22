@@ -7,6 +7,8 @@
 //! Owner: metrale-circuit.
 //! Invariants: the strip wraps at a multiple of 8 layers so the ruler stays aligned.
 
+use crate::prelude::*;
+
 use super::glyphs::Set;
 use super::{Document, Line, Style, clip};
 use crate::ir::{Circuit, LayerKind, OpKind};

@@ -8,7 +8,9 @@
 //! Invariants: see [`super`]. Two layers share a diagram only when every node, rule and kernel
 //! of their plans match.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use super::draw::Pen;
 use super::glyphs::Set;

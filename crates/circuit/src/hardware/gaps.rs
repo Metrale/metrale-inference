@@ -16,7 +16,9 @@
 //!   families manifest records for the engine's code (`[[legacy_path]]`), each costed as the
 //!   time the loop adds over one multi-row launch; the step estimate includes that time.
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use super::HwError;
 use super::estimate::activation_of;

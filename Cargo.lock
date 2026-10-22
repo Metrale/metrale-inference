@@ -1684,6 +1684,7 @@ dependencies = [
  "metrale-gpu-runtime",
  "metrale-grammar",
  "metrale-host-probe",
+ "metrale-io-host-fs-repo",
  "metrale-io-host-mem",
  "metrale-io-host-std",
  "metrale-kernel-root",
@@ -1816,10 +1817,13 @@ dependencies = [
 name = "metrale-circuit"
 version = "1.0.0-beta-preview"
 dependencies = [
+ "libm",
  "metrale-closure",
  "metrale-config",
+ "metrale-error",
  "metrale-kernel-root",
  "metrale-kv-codec",
+ "metrale-precision",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -1983,6 +1987,15 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+]
+
+[[package]]
+name = "metrale-io-host-fs-repo"
+version = "1.0.0-beta-preview"
+dependencies = [
+ "metrale-circuit",
+ "metrale-error",
+ "tempfile",
 ]
 
 [[package]]

@@ -7,7 +7,9 @@
 //! Invariants: see [`super`]; every check runs at load, in file order, and the first failure is
 //! returned.
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 

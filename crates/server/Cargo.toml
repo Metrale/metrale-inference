@@ -65,6 +65,8 @@ metrale-model-engine = { workspace = true }
 metrale-model-layers = { workspace = true }
 metrale-model-weights = { workspace = true }
 metrale-io-host-std = { workspace = true }
+# 2026-10-22: The file-system host of the circuit source port (`met circuit venn|hw|memory`).
+metrale-io-host-fs-repo = { workspace = true }
 metrale-sampling = { workspace = true }
 metrale-settings = { workspace = true }
 metrale-speculative = { workspace = true }

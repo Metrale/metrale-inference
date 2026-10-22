@@ -24,7 +24,9 @@
 //! - The most specific declaration wins: a kernel's, then the node's point's, then the family's.
 //!   Two kernels of one group that declare different pipelines for a node are an error.
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use super::vocab::{parse_step, parse_value, step_name, steps_for_base};
 use super::{NodePipeline, Step, StepKind};

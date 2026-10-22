@@ -11,7 +11,9 @@
 //! - Rule ids are unique; `rows` is a non-empty inclusive range; `modes` is non-empty.
 //! - Every rule cites the dispatch site that makes today's choice (`cite`).
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use crate::format::Format;
 use crate::ir::{LayerKind, LinearRole, OpKind};
@@ -69,8 +71,8 @@ pub struct KernelId {
     pub func: String,
 }
 
-impl std::fmt::Display for KernelId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for KernelId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}::{}", self.module, self.func)
     }
 }

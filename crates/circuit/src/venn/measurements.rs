@@ -7,7 +7,9 @@
 //! Owner: metrale-circuit (venn).
 //! Invariants: a key names at most one row; a duplicate key is a load error.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use serde::Deserialize;
 

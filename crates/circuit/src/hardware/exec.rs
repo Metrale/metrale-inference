@@ -19,6 +19,8 @@
 //! Invariants: no silent upcast. An activation format with no native or exact path is
 //! [`Exec::NoPath`], never re-planned at a wider format.
 
+use crate::prelude::*;
+
 use super::device::{Device, MmaKind};
 use super::estimate::activation_of;
 use crate::format::Format;

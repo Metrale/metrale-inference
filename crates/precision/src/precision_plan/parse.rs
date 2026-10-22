@@ -98,9 +98,9 @@ fn str_list(v: &Value, key: &str) -> Result<Vec<String>> {
         Some(Value::Array(a)) => a
             .iter()
             .map(|e| {
-                e.as_str().map(str::to_string).within(|| {
-                    format!("quantization_config.{key}: entry {e} is not a string")
-                })
+                e.as_str()
+                    .map(str::to_string)
+                    .within(|| format!("quantization_config.{key}: entry {e} is not a string"))
             })
             .collect(),
         Some(other) => bail!("quantization_config.{key} must be a list, got {other}"),
@@ -271,7 +271,9 @@ fn scale_encoding(spec: &Value) -> Result<()> {
     match str_field(spec, "weight_scale_encoding")? {
         None => Ok(()),
         Some(e) if e == CSF_ENCODING_NAME => Ok(()),
-        Some(e) => bail!("weight_scale_encoding {e:?} is not supported (only {CSF_ENCODING_NAME:?})"),
+        Some(e) => {
+            bail!("weight_scale_encoding {e:?} is not supported (only {CSF_ENCODING_NAME:?})")
+        }
     }
 }
 

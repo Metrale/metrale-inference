@@ -8,8 +8,10 @@
 //! Invariants:
 //! - A report or plan with no applicable route renders exactly as it did before routes existed.
 
-use std::collections::BTreeSet;
-use std::fmt::Write as _;
+use crate::prelude::*;
+
+use alloc::collections::BTreeSet;
+use core::fmt::Write as _;
 
 use super::gaps::{GapTable, gap_table};
 use super::plan::Resolved;
