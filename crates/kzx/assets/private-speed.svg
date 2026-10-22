@@ -1,0 +1,116 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='900' height='430' viewBox='0 0 900 430' font-family='ui-sans-serif,system-ui,-apple-system,Segoe UI,Helvetica,Arial,sans-serif'>
+<text x='60' y='24' font-size='16' text-anchor='start' font-weight='bold' fill='#8b949e'>kzx vs general compressors, Metrale GB10 kernel set</text>
+<text x='60' y='42' font-size='12' text-anchor='start' font-weight='normal' fill='#8b949e'>Throughput in MB/s (raw bytes per second, log scale), single thread, higher is better</text>
+<text x='60' y='70' font-size='12' text-anchor='start' font-weight='bold' fill='#8b949e'>compress</text>
+<line x1='60' y1='300.0' x2='440.0' y2='300.0' stroke='#8b949e' stroke-opacity='0.25'/>
+<text x='54' y='304.0' font-size='10' text-anchor='end' font-weight='normal' fill='#8b949e'>0.1</text>
+<line x1='60' y1='226.7' x2='440.0' y2='226.7' stroke='#8b949e' stroke-opacity='0.25'/>
+<text x='54' y='230.66666666666669' font-size='10' text-anchor='end' font-weight='normal' fill='#8b949e'>1</text>
+<line x1='60' y1='153.3' x2='440.0' y2='153.3' stroke='#8b949e' stroke-opacity='0.25'/>
+<text x='54' y='157.33333333333334' font-size='10' text-anchor='end' font-weight='normal' fill='#8b949e'>10</text>
+<line x1='60' y1='80.0' x2='440.0' y2='80.0' stroke='#8b949e' stroke-opacity='0.25'/>
+<text x='54' y='84.0' font-size='10' text-anchor='end' font-weight='normal' fill='#8b949e'>100</text>
+<rect x='70.0' y='158.7' width='7.7' height='141.3' rx='2' fill='#e4572e'/>
+<text x='73.85714285714286' y='155.6896375187798' font-size='9' text-anchor='middle' font-weight='bold' fill='#e4572e'>8.5</text>
+<rect x='80.7' y='139.4' width='7.7' height='160.6' rx='2' fill='#8da0b3'/>
+<rect x='91.4' y='126.6' width='7.7' height='173.4' rx='2' fill='#a3b1c2'/>
+<rect x='102.1' y='195.6' width='7.7' height='104.4' rx='2' fill='#b9c3cf'/>
+<rect x='112.9' y='210.3' width='7.7' height='89.7' rx='2' fill='#7f93a6'/>
+<rect x='123.6' y='210.6' width='7.7' height='89.4' rx='2' fill='#97a8b9'/>
+<rect x='134.3' y='227.7' width='7.7' height='72.3' rx='2' fill='#aebbc8'/>
+<text x='107.5' y='316' font-size='11' text-anchor='middle' font-weight='bold' fill='#8b949e'>PTX</text>
+<rect x='165.0' y='208.5' width='7.7' height='91.5' rx='2' fill='#e4572e'/>
+<text x='168.85714285714286' y='205.51796755034934' font-size='9' text-anchor='middle' font-weight='bold' fill='#e4572e'>1.8</text>
+<rect x='175.7' y='178.5' width='7.7' height='121.5' rx='2' fill='#8da0b3'/>
+<rect x='186.4' y='118.9' width='7.7' height='181.1' rx='2' fill='#a3b1c2'/>
+<rect x='197.1' y='181.1' width='7.7' height='118.9' rx='2' fill='#b9c3cf'/>
+<rect x='207.9' y='187.8' width='7.7' height='112.2' rx='2' fill='#7f93a6'/>
+<rect x='218.6' y='186.4' width='7.7' height='113.6' rx='2' fill='#97a8b9'/>
+<rect x='229.3' y='230.1' width='7.7' height='69.9' rx='2' fill='#aebbc8'/>
+<text x='202.5' y='316' font-size='11' text-anchor='middle' font-weight='bold' fill='#8b949e'>cubin (SASS ELF)</text>
+<rect x='260.0' y='215.1' width='7.7' height='84.9' rx='2' fill='#e4572e'/>
+<text x='263.85714285714283' y='212.11983700349012' font-size='9' text-anchor='middle' font-weight='bold' fill='#e4572e'>1.4</text>
+<rect x='270.7' y='113.0' width='7.7' height='187.0' rx='2' fill='#8da0b3'/>
+<rect x='281.4' y='127.4' width='7.7' height='172.6' rx='2' fill='#a3b1c2'/>
+<rect x='292.1' y='181.3' width='7.7' height='118.7' rx='2' fill='#b9c3cf'/>
+<rect x='302.9' y='190.4' width='7.7' height='109.6' rx='2' fill='#7f93a6'/>
+<rect x='313.6' y='182.9' width='7.7' height='117.1' rx='2' fill='#97a8b9'/>
+<rect x='324.3' y='217.3' width='7.7' height='82.7' rx='2' fill='#aebbc8'/>
+<text x='297.5' y='316' font-size='11' text-anchor='middle' font-weight='bold' fill='#8b949e'>postcard body</text>
+<rect x='355.0' y='163.9' width='7.7' height='136.1' rx='2' fill='#e4572e'/>
+<text x='358.85714285714283' y='160.92859525102799' font-size='9' text-anchor='middle' font-weight='bold' fill='#e4572e'>7.2</text>
+<rect x='365.7' y='138.6' width='7.7' height='161.4' rx='2' fill='#8da0b3'/>
+<rect x='376.4' y='127.0' width='7.7' height='173.0' rx='2' fill='#a3b1c2'/>
+<rect x='387.1' y='198.4' width='7.7' height='101.6' rx='2' fill='#b9c3cf'/>
+<rect x='397.9' y='217.0' width='7.7' height='83.0' rx='2' fill='#7f93a6'/>
+<rect x='408.6' y='210.7' width='7.7' height='89.3' rx='2' fill='#97a8b9'/>
+<rect x='419.3' y='227.1' width='7.7' height='72.9' rx='2' fill='#aebbc8'/>
+<text x='392.5' y='316' font-size='11' text-anchor='middle' font-weight='bold' fill='#8b949e'>full .kbp</text>
+<line x1='60' y1='300' x2='440.0' y2='300' stroke='#8b949e' stroke-opacity='0.6'/>
+<text x='490.0' y='70' font-size='12' text-anchor='start' font-weight='bold' fill='#8b949e'>decompress</text>
+<line x1='490.0' y1='300.0' x2='870.0' y2='300.0' stroke='#8b949e' stroke-opacity='0.25'/>
+<text x='484.0' y='304.0' font-size='10' text-anchor='end' font-weight='normal' fill='#8b949e'>1</text>
+<line x1='490.0' y1='245.0' x2='870.0' y2='245.0' stroke='#8b949e' stroke-opacity='0.25'/>
+<text x='484.0' y='249.0' font-size='10' text-anchor='end' font-weight='normal' fill='#8b949e'>10</text>
+<line x1='490.0' y1='190.0' x2='870.0' y2='190.0' stroke='#8b949e' stroke-opacity='0.25'/>
+<text x='484.0' y='194.0' font-size='10' text-anchor='end' font-weight='normal' fill='#8b949e'>100</text>
+<line x1='490.0' y1='135.0' x2='870.0' y2='135.0' stroke='#8b949e' stroke-opacity='0.25'/>
+<text x='484.0' y='139.0' font-size='10' text-anchor='end' font-weight='normal' fill='#8b949e'>1000</text>
+<line x1='490.0' y1='80.0' x2='870.0' y2='80.0' stroke='#8b949e' stroke-opacity='0.25'/>
+<text x='484.0' y='84.0' font-size='10' text-anchor='end' font-weight='normal' fill='#8b949e'>10000</text>
+<rect x='500.0' y='249.7' width='7.7' height='50.3' rx='2' fill='#e4572e'/>
+<text x='503.85714285714283' y='246.72276680530084' font-size='9' text-anchor='middle' font-weight='bold' fill='#e4572e'>8.2</text>
+<rect x='510.7' y='161.6' width='7.7' height='138.4' rx='2' fill='#8da0b3'/>
+<rect x='521.4' y='191.5' width='7.7' height='108.5' rx='2' fill='#a3b1c2'/>
+<rect x='532.1' y='136.3' width='7.7' height='163.7' rx='2' fill='#b9c3cf'/>
+<rect x='542.9' y='132.9' width='7.7' height='167.1' rx='2' fill='#7f93a6'/>
+<rect x='553.6' y='169.5' width='7.7' height='130.5' rx='2' fill='#97a8b9'/>
+<rect x='564.3' y='154.9' width='7.7' height='145.1' rx='2' fill='#aebbc8'/>
+<text x='537.5' y='316' font-size='11' text-anchor='middle' font-weight='bold' fill='#8b949e'>PTX</text>
+<rect x='595.0' y='286.6' width='7.7' height='13.4' rx='2' fill='#e4572e'/>
+<text x='598.8571428571429' y='283.6329073222538' font-size='9' text-anchor='middle' font-weight='bold' fill='#e4572e'>1.8</text>
+<rect x='605.7' y='167.8' width='7.7' height='132.2' rx='2' fill='#8da0b3'/>
+<rect x='616.4' y='198.1' width='7.7' height='101.9' rx='2' fill='#a3b1c2'/>
+<rect x='627.1' y='146.0' width='7.7' height='154.0' rx='2' fill='#b9c3cf'/>
+<rect x='637.9' y='145.3' width='7.7' height='154.7' rx='2' fill='#7f93a6'/>
+<rect x='648.6' y='172.7' width='7.7' height='127.3' rx='2' fill='#97a8b9'/>
+<rect x='659.3' y='162.6' width='7.7' height='137.4' rx='2' fill='#aebbc8'/>
+<text x='632.5' y='316' font-size='11' text-anchor='middle' font-weight='bold' fill='#8b949e'>cubin (SASS ELF)</text>
+<rect x='690.0' y='293.1' width='7.7' height='6.9' rx='2' fill='#e4572e'/>
+<text x='693.8571428571429' y='290.06277260059085' font-size='9' text-anchor='middle' font-weight='bold' fill='#e4572e'>1.3</text>
+<rect x='700.7' y='165.1' width='7.7' height='134.9' rx='2' fill='#8da0b3'/>
+<rect x='711.4' y='200.2' width='7.7' height='99.8' rx='2' fill='#a3b1c2'/>
+<rect x='722.1' y='143.6' width='7.7' height='156.4' rx='2' fill='#b9c3cf'/>
+<rect x='732.9' y='153.5' width='7.7' height='146.5' rx='2' fill='#7f93a6'/>
+<rect x='743.6' y='172.6' width='7.7' height='127.4' rx='2' fill='#97a8b9'/>
+<rect x='754.3' y='180.2' width='7.7' height='119.8' rx='2' fill='#aebbc8'/>
+<text x='727.5' y='316' font-size='11' text-anchor='middle' font-weight='bold' fill='#8b949e'>postcard body</text>
+<rect x='785.0' y='250.8' width='7.7' height='49.2' rx='2' fill='#e4572e'/>
+<text x='788.8571428571429' y='247.8187107471854' font-size='9' text-anchor='middle' font-weight='bold' fill='#e4572e'>7.8</text>
+<rect x='795.7' y='161.8' width='7.7' height='138.2' rx='2' fill='#8da0b3'/>
+<rect x='806.4' y='192.2' width='7.7' height='107.8' rx='2' fill='#a3b1c2'/>
+<rect x='817.1' y='134.7' width='7.7' height='165.3' rx='2' fill='#b9c3cf'/>
+<rect x='827.9' y='134.3' width='7.7' height='165.7' rx='2' fill='#7f93a6'/>
+<rect x='838.6' y='169.0' width='7.7' height='131.0' rx='2' fill='#97a8b9'/>
+<rect x='849.3' y='157.4' width='7.7' height='142.6' rx='2' fill='#aebbc8'/>
+<text x='822.5' y='316' font-size='11' text-anchor='middle' font-weight='bold' fill='#8b949e'>full .kbp</text>
+<line x1='490.0' y1='300' x2='870.0' y2='300' stroke='#8b949e' stroke-opacity='0.6'/>
+<rect x='60' y='327' width='12' height='12' rx='2' fill='#e4572e'/>
+<text x='76' y='337' font-size='11' text-anchor='start' font-weight='normal' fill='#8b949e'>kzx</text>
+<rect x='119' y='327' width='12' height='12' rx='2' fill='#8da0b3'/>
+<text x='135' y='337' font-size='11' text-anchor='start' font-weight='normal' fill='#8b949e'>deflate-9</text>
+<rect x='220' y='327' width='12' height='12' rx='2' fill='#a3b1c2'/>
+<text x='236' y='337' font-size='11' text-anchor='start' font-weight='normal' fill='#8b949e'>bzip2-9</text>
+<rect x='307' y='327' width='12' height='12' rx='2' fill='#b9c3cf'/>
+<text x='323' y='337' font-size='11' text-anchor='start' font-weight='normal' fill='#8b949e'>zstd-19-long</text>
+<rect x='429' y='327' width='12' height='12' rx='2' fill='#7f93a6'/>
+<text x='445' y='337' font-size='11' text-anchor='start' font-weight='normal' fill='#8b949e'>zstd-22-ultra-long27</text>
+<rect x='607' y='327' width='12' height='12' rx='2' fill='#97a8b9'/>
+<text x='623' y='337' font-size='11' text-anchor='start' font-weight='normal' fill='#8b949e'>xz-9e</text>
+<rect x='680' y='327' width='12' height='12' rx='2' fill='#aebbc8'/>
+<text x='696' y='337' font-size='11' text-anchor='start' font-weight='normal' fill='#8b949e'>brotli-11</text>
+<text x='60' y='362' font-size='10' text-anchor='start' font-weight='normal' fill='#8b949e'>Private corpus (aggregates only): Metrale's compiled GB10 kernel set for one large model, 254 PTX modules (71.1 MB); 250 of them</text>
+<text x='60' y='376' font-size='10' text-anchor='start' font-weight='normal' fill='#8b949e'>compiled to sm_121a cubins with ptxas 13.0 (25.7 MB); three GLM-scale postcard blueprint bodies (2.4 MB); one full and one lite .kbp</text>
+<text x='60' y='390' font-size='10' text-anchor='start' font-weight='normal' fill='#8b949e'>container (72.7 MB). Host: NVIDIA DGX Spark GB10 Grace CPU (Cortex-X925), single thread, Linux 6.17, rustc 1.93.1; zstd 1.5.5, xz</text>
+<text x='60' y='404' font-size='10' text-anchor='start' font-weight='normal' fill='#8b949e'>5.4.5, gzip 1.12, bzip2 1.0.8, Python brotli 1.2.0 (lgwin 24). Every row is a verified round trip.</text>
+</svg>

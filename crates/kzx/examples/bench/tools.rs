@@ -142,9 +142,10 @@ pub fn available() -> Vec<Tool> {
     out
 }
 
-fn run_pipe(argv: &[String], input: &Path, output: &Path) -> Option<f64> {
-    let inf = std::fs::File::open(input).ok()?;
-    let outf = std::fs::File::create(output).ok()?;
+fn run_pipe(argv: &[String], input: &Path, output: &Path) -> Result<f64, String> {
+    let inf = std::fs::File::open(input).map_err(|e| format!("open {}: {e}", input.display()))?;
+    let outf =
+        std::fs::File::create(output).map_err(|e| format!("create {}: {e}", output.display()))?;
     let t0 = Instant::now();
     let status = Command::new(&argv[0])
         .args(&argv[1..])
@@ -152,25 +153,43 @@ fn run_pipe(argv: &[String], input: &Path, output: &Path) -> Option<f64> {
         .stdout(outf)
         .stderr(Stdio::null())
         .status()
-        .ok()?;
+        .map_err(|e| format!("spawn {}: {e}", argv[0]))?;
     let secs = t0.elapsed().as_secs_f64();
-    status.success().then_some(secs)
+    if status.success() {
+        Ok(secs)
+    } else {
+        Err(format!("{} exited with {status}", argv[0]))
+    }
 }
 
-/// Run `tool` over one input written to `scratch`; `None` if it failed or did not round-trip.
-pub fn measure(tool: &Tool, data: &[u8], scratch: &Path, tag: &str) -> Option<(u64, f64, f64)> {
+/// Run `tool` over one input written to `scratch`; the error names the step that failed or
+/// reports a round-trip mismatch.
+pub fn measure(
+    tool: &Tool,
+    data: &[u8],
+    scratch: &Path,
+    tag: &str,
+) -> Result<(u64, f64, f64), String> {
     let input = scratch.join(format!("{tag}.in"));
     let packed = scratch.join(format!("{tag}.{}", tool.name));
     let back = scratch.join(format!("{tag}.{}.rt", tool.name));
-    std::fs::write(&input, data).ok()?;
+    std::fs::write(&input, data).map_err(|e| format!("write {}: {e}", input.display()))?;
     let c = run_pipe(&tool.compress, &input, &packed)?;
     let d = run_pipe(&tool.decompress, &packed, &back)?;
-    let size = std::fs::metadata(&packed).ok()?.len();
-    let rt = std::fs::read(&back).ok()?;
+    let size = std::fs::metadata(&packed).map_err(|e| e.to_string())?.len();
+    let rt = std::fs::read(&back).map_err(|e| e.to_string())?;
     let _ = std::fs::remove_file(&back);
     let _ = std::fs::remove_file(&packed);
     let _ = std::fs::remove_file(&input);
-    (rt == data).then_some((size, c, d))
+    if rt == data {
+        Ok((size, c, d))
+    } else {
+        Err(format!(
+            "round trip mismatch ({} vs {} bytes)",
+            rt.len(),
+            data.len()
+        ))
+    }
 }
 
 /// A scratch directory for the baseline files.

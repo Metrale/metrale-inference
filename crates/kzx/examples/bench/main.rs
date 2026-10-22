@@ -149,12 +149,15 @@ fn rows_for(
         let mut ok = true;
         for (i, input) in inputs.iter().enumerate() {
             match tools::measure(t, input, scratch, &format!("{class}-{mode}-{i}")) {
-                Some((size, c, d)) => {
+                Ok((size, c, d)) => {
                     p += size;
                     cs += c;
                     ds += d;
                 }
-                None => ok = false,
+                Err(why) => {
+                    eprintln!("  {class}/{mode} {} file {i}: {why}", t.name);
+                    ok = false;
+                }
             }
         }
         if ok {

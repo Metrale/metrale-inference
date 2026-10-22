@@ -33,7 +33,7 @@
 //!
 //! ```
 //! let body = b"\x01\x05hello\x02\x03abc";
-//! let kernel = b".version 9.0\n.target sm_121a\n";
+//! let kernel = b".version 9.0\n.target sm_90a\n";
 //! let packed = kzx::compress_blocks(&[&body[..], &kernel[..]]);
 //! let info = kzx::inspect(&packed).unwrap();
 //! assert_eq!(info.blocks.len(), 2);
@@ -87,6 +87,11 @@ pub use error::{Error, Result};
 pub use format::{BlockHeader, Profile, StreamInfo};
 pub use predictor::{MAX_MEM_LOG2, MIN_MEM_LOG2, memory_bytes};
 pub use sniff::sniff;
+
+/// The README's code blocks compile and run as doctests.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+pub struct ReadmeDoctests;
 
 /// Inputs shorter than this are stored, not modelled.
 const STORED_BELOW: usize = 24;

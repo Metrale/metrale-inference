@@ -1,0 +1,107 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='900' height='520' viewBox='0 0 900 520' font-family='ui-sans-serif,system-ui,-apple-system,Segoe UI,Helvetica,Arial,sans-serif'>
+<text x='70' y='24' font-size='16' text-anchor='start' font-weight='bold' fill='#8b949e'>kzx vs general compressors, Metrale GB10 kernel set</text>
+<text x='70' y='42' font-size='12' text-anchor='start' font-weight='normal' fill='#8b949e'>Compression ratio (raw bytes / compressed bytes), higher is better</text>
+<line x1='70' y1='360.0' x2='880' y2='360.0' stroke='#8b949e' stroke-opacity='0.25'/>
+<text x='62' y='364.0' font-size='11' text-anchor='end' font-weight='normal' fill='#8b949e'>0x</text>
+<line x1='70' y1='329.0' x2='880' y2='329.0' stroke='#8b949e' stroke-opacity='0.25'/>
+<text x='62' y='333.0163944584789' font-size='11' text-anchor='end' font-weight='normal' fill='#8b949e'>5x</text>
+<line x1='70' y1='298.0' x2='880' y2='298.0' stroke='#8b949e' stroke-opacity='0.25'/>
+<text x='62' y='302.0327889169577' font-size='11' text-anchor='end' font-weight='normal' fill='#8b949e'>10x</text>
+<line x1='70' y1='267.0' x2='880' y2='267.0' stroke='#8b949e' stroke-opacity='0.25'/>
+<text x='62' y='271.0491833754366' font-size='11' text-anchor='end' font-weight='normal' fill='#8b949e'>15x</text>
+<line x1='70' y1='236.1' x2='880' y2='236.1' stroke='#8b949e' stroke-opacity='0.25'/>
+<text x='62' y='240.06557783391546' font-size='11' text-anchor='end' font-weight='normal' fill='#8b949e'>20x</text>
+<line x1='70' y1='205.1' x2='880' y2='205.1' stroke='#8b949e' stroke-opacity='0.25'/>
+<text x='62' y='209.08197229239434' font-size='11' text-anchor='end' font-weight='normal' fill='#8b949e'>25x</text>
+<line x1='70' y1='174.1' x2='880' y2='174.1' stroke='#8b949e' stroke-opacity='0.25'/>
+<text x='62' y='178.09836675087317' font-size='11' text-anchor='end' font-weight='normal' fill='#8b949e'>30x</text>
+<line x1='70' y1='143.1' x2='880' y2='143.1' stroke='#8b949e' stroke-opacity='0.25'/>
+<text x='62' y='147.11476120935205' font-size='11' text-anchor='end' font-weight='normal' fill='#8b949e'>35x</text>
+<line x1='70' y1='112.1' x2='880' y2='112.1' stroke='#8b949e' stroke-opacity='0.25'/>
+<text x='62' y='116.13115566783091' font-size='11' text-anchor='end' font-weight='normal' fill='#8b949e'>40x</text>
+<line x1='70' y1='81.1' x2='880' y2='81.1' stroke='#8b949e' stroke-opacity='0.25'/>
+<text x='62' y='85.1475501263098' font-size='11' text-anchor='end' font-weight='normal' fill='#8b949e'>45x</text>
+<rect x='82.0' y='99.1' width='22.5' height='260.9' rx='2' fill='#e4572e'/>
+<text x='93.25' y='95.13043478260869' font-size='9' text-anchor='middle' font-weight='bold' fill='#e4572e'>42.1</text>
+<rect x='107.5' y='322.3' width='22.5' height='37.7' rx='2' fill='#8da0b3'/>
+<text x='118.75' y='318.3121618914045' font-size='9' text-anchor='middle' font-weight='normal' fill='#8b949e'>6.1</text>
+<rect x='133.0' y='308.3' width='22.5' height='51.7' rx='2' fill='#a3b1c2'/>
+<text x='144.25' y='304.3490902180626' font-size='9' text-anchor='middle' font-weight='normal' fill='#8b949e'>8.3</text>
+<rect x='158.5' y='285.7' width='22.5' height='74.3' rx='2' fill='#b9c3cf'/>
+<text x='169.75' y='281.70627128831893' font-size='9' text-anchor='middle' font-weight='normal' fill='#8b949e'>12.0</text>
+<rect x='184.0' y='285.0' width='22.5' height='75.0' rx='2' fill='#7f93a6'/>
+<text x='195.25' y='281.0426024576196' font-size='9' text-anchor='middle' font-weight='normal' fill='#8b949e'>12.1</text>
+<rect x='209.5' y='271.3' width='22.5' height='88.7' rx='2' fill='#97a8b9'/>
+<text x='220.75' y='267.2567570079752' font-size='9' text-anchor='middle' font-weight='normal' fill='#8b949e'>14.3</text>
+<rect x='235.0' y='274.7' width='22.5' height='85.3' rx='2' fill='#aebbc8'/>
+<text x='246.25' y='270.65565853588004' font-size='9' text-anchor='middle' font-weight='normal' fill='#8b949e'>13.8</text>
+<text x='171.25' y='378' font-size='12' text-anchor='middle' font-weight='bold' fill='#8b949e'>PTX</text>
+<text x='171.25' y='393' font-size='10' text-anchor='middle' font-weight='normal' fill='#8b949e'>solid, 1 file(s), 71.1 MB</text>
+<rect x='284.5' y='294.3' width='22.5' height='65.7' rx='2' fill='#e4572e'/>
+<text x='295.75' y='290.30732018664526' font-size='9' text-anchor='middle' font-weight='bold' fill='#e4572e'>10.6</text>
+<rect x='310.0' y='332.1' width='22.5' height='27.9' rx='2' fill='#8da0b3'/>
+<text x='321.25' y='328.1190927174068' font-size='9' text-anchor='middle' font-weight='normal' fill='#8b949e'>4.5</text>
+<rect x='335.5' y='321.7' width='22.5' height='38.3' rx='2' fill='#a3b1c2'/>
+<text x='346.75' y='317.7005455180149' font-size='9' text-anchor='middle' font-weight='normal' fill='#8b949e'>6.2</text>
+<rect x='361.0' y='311.7' width='22.5' height='48.3' rx='2' fill='#b9c3cf'/>
+<text x='372.25' y='307.74985076229996' font-size='9' text-anchor='middle' font-weight='normal' fill='#8b949e'>7.8</text>
+<rect x='386.5' y='311.6' width='22.5' height='48.4' rx='2' fill='#7f93a6'/>
+<text x='397.75' y='307.62095896324723' font-size='9' text-anchor='middle' font-weight='normal' fill='#8b949e'>7.8</text>
+<rect x='412.0' y='301.2' width='22.5' height='58.8' rx='2' fill='#97a8b9'/>
+<text x='423.25' y='297.21356586185027' font-size='9' text-anchor='middle' font-weight='normal' fill='#8b949e'>9.5</text>
+<rect x='437.5' y='304.6' width='22.5' height='55.4' rx='2' fill='#aebbc8'/>
+<text x='448.75' y='300.64035263474256' font-size='9' text-anchor='middle' font-weight='normal' fill='#8b949e'>8.9</text>
+<text x='373.75' y='378' font-size='12' text-anchor='middle' font-weight='bold' fill='#8b949e'>cubin (SASS ELF)</text>
+<text x='373.75' y='393' font-size='10' text-anchor='middle' font-weight='normal' fill='#8b949e'>solid, 1 file(s), 25.7 MB</text>
+<rect x='487.0' y='274.5' width='22.5' height='85.5' rx='2' fill='#e4572e'/>
+<text x='498.25' y='270.4902060822883' font-size='9' text-anchor='middle' font-weight='bold' fill='#e4572e'>13.8</text>
+<rect x='512.5' y='328.9' width='22.5' height='31.1' rx='2' fill='#8da0b3'/>
+<text x='523.75' y='324.94265347729004' font-size='9' text-anchor='middle' font-weight='normal' fill='#8b949e'>5.0</text>
+<rect x='538.0' y='311.9' width='22.5' height='48.1' rx='2' fill='#a3b1c2'/>
+<text x='549.25' y='307.92397862544334' font-size='9' text-anchor='middle' font-weight='normal' fill='#8b949e'>7.8</text>
+<rect x='563.5' y='303.0' width='22.5' height='57.0' rx='2' fill='#b9c3cf'/>
+<text x='574.75' y='299.0205297370318' font-size='9' text-anchor='middle' font-weight='normal' fill='#8b949e'>9.2</text>
+<rect x='589.0' y='303.0' width='22.5' height='57.0' rx='2' fill='#7f93a6'/>
+<text x='600.25' y='299.016192032256' font-size='9' text-anchor='middle' font-weight='normal' fill='#8b949e'>9.2</text>
+<rect x='614.5' y='297.0' width='22.5' height='63.0' rx='2' fill='#97a8b9'/>
+<text x='625.75' y='292.983064361211' font-size='9' text-anchor='middle' font-weight='normal' fill='#8b949e'>10.2</text>
+<rect x='640.0' y='293.1' width='22.5' height='66.9' rx='2' fill='#aebbc8'/>
+<text x='651.25' y='289.1014382589692' font-size='9' text-anchor='middle' font-weight='normal' fill='#8b949e'>10.8</text>
+<text x='576.25' y='378' font-size='12' text-anchor='middle' font-weight='bold' fill='#8b949e'>postcard body</text>
+<text x='576.25' y='393' font-size='10' text-anchor='middle' font-weight='normal' fill='#8b949e'>solid, 1 file(s), 2.4 MB</text>
+<rect x='689.5' y='120.6' width='22.5' height='239.4' rx='2' fill='#e4572e'/>
+<text x='700.75' y='116.6442111264193' font-size='9' text-anchor='middle' font-weight='bold' fill='#e4572e'>38.6</text>
+<rect x='715.0' y='322.6' width='22.5' height='37.4' rx='2' fill='#8da0b3'/>
+<text x='726.25' y='318.61766024204394' font-size='9' text-anchor='middle' font-weight='normal' fill='#8b949e'>6.0</text>
+<rect x='740.5' y='308.6' width='22.5' height='51.4' rx='2' fill='#a3b1c2'/>
+<text x='751.75' y='304.62670332371465' font-size='9' text-anchor='middle' font-weight='normal' fill='#8b949e'>8.3</text>
+<rect x='766.0' y='287.2' width='22.5' height='72.8' rx='2' fill='#b9c3cf'/>
+<text x='777.25' y='283.2083564849719' font-size='9' text-anchor='middle' font-weight='normal' fill='#8b949e'>11.7</text>
+<rect x='791.5' y='286.4' width='22.5' height='73.6' rx='2' fill='#7f93a6'/>
+<text x='802.75' y='282.448018804983' font-size='9' text-anchor='middle' font-weight='normal' fill='#8b949e'>11.9</text>
+<rect x='817.0' y='273.3' width='22.5' height='86.7' rx='2' fill='#97a8b9'/>
+<text x='828.25' y='269.2923798920531' font-size='9' text-anchor='middle' font-weight='normal' fill='#8b949e'>14.0</text>
+<rect x='842.5' y='276.5' width='22.5' height='83.5' rx='2' fill='#aebbc8'/>
+<text x='853.75' y='272.4774945417215' font-size='9' text-anchor='middle' font-weight='normal' fill='#8b949e'>13.5</text>
+<text x='778.75' y='378' font-size='12' text-anchor='middle' font-weight='bold' fill='#8b949e'>full .kbp</text>
+<text x='778.75' y='393' font-size='10' text-anchor='middle' font-weight='normal' fill='#8b949e'>sections, 2 file(s), 72.7 MB</text>
+<line x1='70' y1='360' x2='880' y2='360' stroke='#8b949e' stroke-opacity='0.6'/>
+<rect x='70' y='409' width='12' height='12' rx='2' fill='#e4572e'/>
+<text x='86' y='419' font-size='11' text-anchor='start' font-weight='normal' fill='#8b949e'>kzx</text>
+<rect x='129' y='409' width='12' height='12' rx='2' fill='#8da0b3'/>
+<text x='145' y='419' font-size='11' text-anchor='start' font-weight='normal' fill='#8b949e'>deflate-9</text>
+<rect x='230' y='409' width='12' height='12' rx='2' fill='#a3b1c2'/>
+<text x='246' y='419' font-size='11' text-anchor='start' font-weight='normal' fill='#8b949e'>bzip2-9</text>
+<rect x='317' y='409' width='12' height='12' rx='2' fill='#b9c3cf'/>
+<text x='333' y='419' font-size='11' text-anchor='start' font-weight='normal' fill='#8b949e'>zstd-19-long</text>
+<rect x='439' y='409' width='12' height='12' rx='2' fill='#7f93a6'/>
+<text x='455' y='419' font-size='11' text-anchor='start' font-weight='normal' fill='#8b949e'>zstd-22-ultra-long27</text>
+<rect x='617' y='409' width='12' height='12' rx='2' fill='#97a8b9'/>
+<text x='633' y='419' font-size='11' text-anchor='start' font-weight='normal' fill='#8b949e'>xz-9e</text>
+<rect x='690' y='409' width='12' height='12' rx='2' fill='#aebbc8'/>
+<text x='706' y='419' font-size='11' text-anchor='start' font-weight='normal' fill='#8b949e'>brotli-11</text>
+<text x='70' y='444' font-size='10' text-anchor='start' font-weight='normal' fill='#8b949e'>Private corpus (aggregates only): Metrale's compiled GB10 kernel set for one large model, 254 PTX modules (71.1 MB); 250 of them</text>
+<text x='70' y='458' font-size='10' text-anchor='start' font-weight='normal' fill='#8b949e'>compiled to sm_121a cubins with ptxas 13.0 (25.7 MB); three GLM-scale postcard blueprint bodies (2.4 MB); one full and one lite .kbp</text>
+<text x='70' y='472' font-size='10' text-anchor='start' font-weight='normal' fill='#8b949e'>container (72.7 MB). Host: NVIDIA DGX Spark GB10 Grace CPU (Cortex-X925), single thread, Linux 6.17, rustc 1.93.1; zstd 1.5.5, xz</text>
+<text x='70' y='486' font-size='10' text-anchor='start' font-weight='normal' fill='#8b949e'>5.4.5, gzip 1.12, bzip2 1.0.8, Python brotli 1.2.0 (lgwin 24). Every row is a verified round trip.</text>
+</svg>

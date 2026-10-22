@@ -142,7 +142,7 @@ length equals `raw_len` and the hash equals the pinned id, exactly as for deflat
 
 Compress **per section, and the payload as one solid block**:
 
-- The **body** is its own block (`cm-generic`, ~90 KB from ~830 KB for a GLM body). It must
+- The **body** is its own block (`cm-generic`, ~90 KB from ~830 KB for a GLM-scale body (45 layers, 843 levers, ~950 kernel entries)). It must
   stay separately addressable: the signed bytes are the raw body, and lite ↔ full conversion
   rewrites the other sections without touching it.
 - The **payload** (all inline artifacts) should be one block, not one block per artifact: the
@@ -161,7 +161,7 @@ Compress **per section, and the payload as one solid block**:
   and signature must stay readable before any decode (DESIGN.md §4, verification order), and
   the body hash must be checkable before the payload is touched.
 
-Decode time: the full GLM gb10 PTX set (254 modules, 71 MB) decodes in ~7 s single-threaded on
+Decode time: Metrale's full GB10 kernel set (254 PTX modules, 71 MB) decodes in ~7 s single-threaded on
 the GB10 Grace CPU as one solid block. If that budget tightens, cut the payload into a few
 blocks (e.g. 4 × 18 MB) and decode them on separate threads; blocks are independent, so the
 loader can parallelise without a format change, at a small ratio cost.
