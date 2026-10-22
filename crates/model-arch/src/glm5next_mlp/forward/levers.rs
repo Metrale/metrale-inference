@@ -131,7 +131,7 @@ impl MlpLevers {
         )?;
         let fork = count(
             "METRALE_GLM_SHARED_FORK",
-            k.glm_shared_fork,
+            Some(k.glm_shared_fork),
             |r| r <= SHARED_FORK_MAX_ROWS,
             &format!("1..={SHARED_FORK_MAX_ROWS}"),
         )?;

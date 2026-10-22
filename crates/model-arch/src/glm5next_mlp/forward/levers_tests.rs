@@ -201,7 +201,8 @@ fn the_widths_read_as_before_but_refuse_what_is_not_a_row_count() {
 }
 
 /// 2026-10-17: The three count levers, with the old acceptance `ok` and the field as an
-/// optional count; a padded number and `00` now read as their value.
+/// optional count; a padded number and `00` now read as their value. 2026-10-22: unset reads
+/// as the declared default (`METRALE_GLM_SHARED_FORK` 2), every other probe as before.
 #[test]
 fn the_counts_read_as_before_but_trim_their_number() {
     let floor = MIN_ROWS_FLOOR;
@@ -210,27 +211,31 @@ fn the_counts_read_as_before_but_trim_their_number() {
         fn(usize) -> bool,
         fn(&MlpLevers) -> Option<usize>,
         usize,
+        Option<usize>,
     ); 3] = [
         (
             "METRALE_GLM_DENSE_W4A4_GROUPED_MIN_ROWS",
             |r| r >= MIN_ROWS_FLOOR,
             |l| l.dense_grouped_min_rows,
             floor,
+            None,
         ),
         (
             "METRALE_GLM_SHARED_FORK",
             |r| (1..=SHARED_FORK_MAX_ROWS).contains(&r),
             |l| (l.shared_fork > 0).then_some(l.shared_fork),
             SHARED_FORK_MAX_ROWS,
+            Some(2),
         ),
         (
             "METRALE_GLM_MOE_W4A4_NC",
             |n| (1..=MAX_NC as usize).contains(&n),
             |l| l.nc.map(|n| n as usize),
             MAX_NC as usize,
+            None,
         ),
     ];
-    for (env, ok, field, top) in cases {
+    for (env, ok, field, top, unset) in cases {
         let top_s = top.to_string();
         let over = (top + 1).to_string();
         let below = (floor - 1).to_string();
@@ -247,11 +252,11 @@ fn the_counts_read_as_before_but_trim_their_number() {
             Some("garbage"),
             Some(""),
         ] {
-            assert_eq!(
-                new_at(env, probe, field),
-                old_count(probe, ok),
-                "{env}={probe:?}"
-            );
+            let want = match probe {
+                None => Some(unset),
+                Some(_) => old_count(probe, ok),
+            };
+            assert_eq!(new_at(env, probe, field), want, "{env}={probe:?}");
         }
         let padded = format!(" {top}");
         assert_eq!(
@@ -351,7 +356,8 @@ fn the_declared_defaults_are_the_old_unset_values() {
             prefill_gemm_min_rows: DEFAULT_GEMM_MIN_ROWS,
             exact_tiles: true,
             dense_grouped_min_rows: None,
-            shared_fork: 0,
+            // 2026-10-22: default 2 (`METRALE_GLM_SHARED_FORK`).
+            shared_fork: 2,
             w4a4_grouped: false,
             raster: Some(RasterGroups { gu: 0, down: 4 }),
             gu_fused: false,

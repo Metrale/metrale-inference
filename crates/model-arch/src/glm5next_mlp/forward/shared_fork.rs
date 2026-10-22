@@ -7,7 +7,8 @@
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
-//! - Unset or `0`: no side stream, no extra buffers, every launch as before.
+//! - `0` (2026-10-22: the default is 2): no side stream, no extra buffers, every launch as
+//!   before.
 //! - Under the lever the shared expert runs the same kernels on the same inputs into the same
 //!   `shared_out`, with its own gate/up/act scratch (the routed experts use the workspace's), so
 //!   every output byte is unchanged; only the order of independent launches changes.
@@ -33,7 +34,8 @@ pub(crate) struct SharedFork {
 
 impl SharedFork {
     /// 2026-10-11: The fork state for launches of up to `min(fork_rows, workspace_rows)` rows,
-    /// or `None` when `fork_rows` is 0. Refuses more than [`SHARED_FORK_MAX_ROWS`].
+    /// or `None` when `fork_rows` is 0 or (2026-10-22, reported) the backend has no side
+    /// stream. Refuses more than [`SHARED_FORK_MAX_ROWS`].
     pub(super) fn new(
         gpu: &dyn GpuBackend,
         cfg: &Glm5NextMlpConfig,
@@ -48,14 +50,26 @@ impl SharedFork {
             return Ok(None);
         }
         let rows = fork_rows.min(workspace_rows).max(1);
+        static LOGGED: std::sync::Once = std::sync::Once::new();
+        LOGGED.call_once(|| {
+            tracing::info!(
+                "GLM shared fork: MoE sites of up to {rows} rows run the shared expert on a side \
+                 stream (METRALE_GLM_SHARED_FORK={fork_rows}; 0 turns it off)"
+            )
+        });
         let inter = cfg.local_shared_intermediate.max(1);
         let bytes = rows * inter * 2;
         let side = gpu.create_stream()?;
-        ensure!(
-            side != 0,
-            "METRALE_GLM_SHARED_FORK: this backend has no side stream (create_stream gave the \
-             default stream)"
-        );
+        // 2026-10-22: Default on since today, so a backend without side streams runs the
+        // shared expert on the main stream (reported once) instead of refusing the load.
+        if side == 0 {
+            tracing::warn!(
+                "METRALE_GLM_SHARED_FORK={fork_rows}: this backend has no side stream \
+                 (create_stream gave the default stream); the shared expert stays on the main \
+                 stream"
+            );
+            return Ok(None);
+        }
         Ok(Some(Self {
             side,
             ev_fork: gpu.create_event()?,
@@ -129,8 +143,8 @@ mod tests {
     }
 
     /// 2026-10-11: 0 rows builds nothing (no stream, no allocation); more than the maximum is
-    /// refused; a backend without side streams (the mock's default stream 0) is refused rather
-    /// than forking onto the main stream.
+    /// refused; a backend without side streams (the mock's default stream 0) never forks onto
+    /// the main stream: 2026-10-22, it builds no fork (reported) instead of refusing.
     #[test]
     fn construction_refusals() {
         let gpu = MockGpuBackend::new();
@@ -141,10 +155,6 @@ mod tests {
             .unwrap()
             .to_string();
         assert!(e.contains("at most 64"), "{e}");
-        let e = SharedFork::new(&gpu, &cfg(), 16, 4)
-            .err()
-            .unwrap()
-            .to_string();
-        assert!(e.contains("no side stream"), "{e}");
+        assert!(SharedFork::new(&gpu, &cfg(), 16, 4).unwrap().is_none());
     }
 }
