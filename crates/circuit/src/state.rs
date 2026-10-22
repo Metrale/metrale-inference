@@ -35,7 +35,9 @@ mod kinds;
 pub use kinds::{Lifetime, StateKind};
 
 /// 2026-09-30: Which verify intermediate count a recurrent state keeps per verify slot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum VerifySteps {
     /// 2026-09-30: [`VerifyInputs::h_steps`] of the slot (`K - 1`: the state after the last
     /// row stays live).
@@ -56,7 +58,9 @@ impl VerifySteps {
 }
 
 /// 2026-09-30: How a node touches a state of its block (`state = { h = "update" }`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum StateAccess {
     /// 2026-09-30: Reads it (attention over the KV cache).
     Read,
@@ -79,10 +83,22 @@ impl StateAccess {
             _ => None,
         }
     }
+
+    /// 2026-10-22: The spelling [`StateAccess::parse`] reads.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Write => "write",
+            Self::Update => "update",
+            Self::Snapshot => "snapshot",
+        }
+    }
 }
 
 /// 2026-09-30: The storage element of a state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum StateDtype {
     F32,
     F16,
@@ -98,7 +114,7 @@ pub enum StateDtype {
     U64,
     /// 2026-10-18: A KV cache in a codec pair (what `{kv_cache_dtype}` names): a side's bytes come
     /// from its codec's spec ([`StateDecl::unit_bytes`]), not from a per-element size.
-    Kv(KvPair),
+    Kv(#[serde(with = "crate::kv::pair_spelling")] KvPair),
 }
 
 impl StateDtype {
@@ -147,7 +163,7 @@ impl StateDtype {
 
 /// 2026-09-30: A state's storage format: fixed by the circuit, or named by a key the plan
 /// inputs give.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum StateFormat {
     Fixed(StateDtype),
     Keyed(String),
@@ -165,7 +181,7 @@ impl StateFormat {
 }
 
 /// 2026-09-30: One declared state of one block instance.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StateDecl {
     /// 2026-09-30: `<block prefix>.<local>` (`l0.gdn.h`, `draft.attn.k`).
     pub id: String,

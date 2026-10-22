@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-22: The wire types of a blueprint body: one serve, fully stated.
+//! 2026-10-22: The types of a blueprint body: one serve, fully stated.
 //!
 //! Owner: blueprint.
-//! Invariants (the `wire-types` gate, `tests/wire_gate.rs`, scans this directory):
-//! - Only `BTreeMap`, `Vec`, `Option`, integers of fixed width, `bool`, `String` and the types
-//!   below: no `HashMap`, `usize`, `f32` or `f64`, so a value re-encodes to the same bytes.
-//! - Closed circuit enums the engine owns (`OpKind`, `Format`) travel as their canonical
-//!   spelling; the ones this crate reasons about are mirrored here and converted exhaustively
-//!   at the adapter, so a new engine variant fails the build there (TIDE).
+//! Invariants (the `wire-types` gate, `tests/wire_gate.rs`):
+//! - The circuit instance, its plans and their kernel ids are `metrale_circuit`'s own types
+//!   (SSOT): this crate defines no type that duplicates one of them, and no conversion.
+//! - The types defined here hold only `BTreeMap`, `Vec`, `Option`, integers of fixed width,
+//!   `bool`, `String` and each other: no `HashMap`, `usize`, `f32` or `f64`. The circuit's
+//!   types are ordered (`BTreeMap`, `Vec`) and float-free, and postcard writes their `usize`
+//!   indices as the same varint as a `u64`, so a value re-encodes to the same bytes on every
+//!   host (the body is re-encoded and compared on every open).
 
 mod checkpoint;
-mod circuit;
 mod kernel;
 mod plan;
 mod settings;
@@ -22,19 +23,23 @@ use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
 pub use checkpoint::{CheckpointPin, HardwareSpec, ShardDigest, Vendor, WeightsDigest};
-pub use circuit::{
-    BlockSpec, CircuitSpec, EdgeSpec, LayerKind, NodeSpec, Section, StateAccess, StateSpec,
-};
-pub use kernel::{ArtifactKind, KernelId, KernelSet, KernelSpec, KernelTarget, ModuleSpec};
-pub use plan::{EdgeStateSpec, GroupSpec, Mode, Numerics, PlanGap, PlanSpec, Repeat};
+pub use kernel::{ArtifactKind, KernelSet, KernelSpec, KernelTarget, ModuleSpec};
+pub use metrale_circuit::{Circuit, FusionPlan, KernelId, Mode};
+pub use plan::PlanGap;
 pub use settings::{
-    Fixed, FlagValue, LeverValue, PrecisionSpec, Resources, ServePolicy, ServeSettings, TemplatePin,
+    Fixed, FlagValue, LeverValue, PrecisionPin, Resources, ServePolicy, ServeSettings, TemplatePin,
 };
 
 use crate::ids::{LineageId, Sha256};
 
-/// 2026-10-22: The body schema. Bumped only with a new field, which is `serde(default)`.
-pub const BODY_SCHEMA: u32 = 1;
+/// 2026-10-22: The body schema. Bumped with every change of the body's shape; an additive
+/// field is `serde(default)`. 2: the circuit and plans became `metrale_circuit`'s own types
+/// (was: mirrored wire records), a change of shape, so a schema-1 body is refused rather than
+/// misread ([`OLDEST_BODY_SCHEMA`]); none was ever published.
+pub const BODY_SCHEMA: u32 = 2;
+
+/// 2026-10-22: The oldest body schema this reader decodes.
+pub const OLDEST_BODY_SCHEMA: u32 = 2;
 
 /// 2026-10-22: One serve, fully stated and signed.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,11 +60,11 @@ pub struct Blueprint {
     /// 2026-10-22: The hardware.
     pub hardware: HardwareSpec,
     /// 2026-10-22: The circuit instance.
-    pub circuit: CircuitSpec,
+    pub circuit: Circuit,
     /// 2026-10-22: Where the per-node formats came from.
-    pub precision: PrecisionSpec,
+    pub precision: PrecisionPin,
     /// 2026-10-22: Every `(mode, rows)` arm the instance lists that the rules fuse.
-    pub plans: Vec<PlanSpec>,
+    pub plans: Vec<FusionPlan>,
     /// 2026-10-22: The listed arms the rules do not cover. Empty for `Execution::Executor`
     /// (the builder refuses a gap there); a legacy engine runs those arms outside the plan.
     pub plan_gaps: Vec<PlanGap>,

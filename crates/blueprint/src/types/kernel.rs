@@ -8,29 +8,16 @@
 //! - A module's source (internal, inline, disk, remote) is not here: it lives in the unsigned
 //!   locator table, so a lite and a full file carry one signature.
 //! - `KernelSpec.module` indexes `KernelSet.modules`.
+//! - 2026-10-22: Kernel ids and compute units are the circuit's own types (SSOT).
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::fmt;
 
+use metrale_circuit::KernelId;
+use metrale_circuit::venn::compute::ComputeUnit;
 use serde::{Deserialize, Serialize};
 
 use crate::ids::ArtifactId;
-
-/// 2026-10-22: A kernel entry as the engine looks it up (mirror of `metrale_circuit::KernelId`).
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct KernelId {
-    /// 2026-10-22: Module, e.g. `norm`.
-    pub module: String,
-    /// 2026-10-22: Function, e.g. `rms_norm`.
-    pub func: String,
-}
-
-impl fmt::Display for KernelId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}::{}", self.module, self.func)
-    }
-}
 
 /// 2026-10-22: The compiled target (mirror of `metrale_core::target::KernelTarget`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,8 +92,9 @@ pub struct KernelSpec {
     pub module: u32,
     /// 2026-10-22: The family that declares it (`KERNEL_FAMILIES.toml`), if any.
     pub family: Option<String>,
-    /// 2026-10-22: The compute unit the family declares, e.g. `tensor_core:mma.m16n8k32`.
-    pub compute: Option<String>,
+    /// 2026-10-22: The compute unit the family declares (its tag, e.g.
+    /// `tensor_core:mma.m16n8k32`, is what the exports show).
+    pub compute: Option<ComputeUnit>,
 }
 
 impl KernelSet {

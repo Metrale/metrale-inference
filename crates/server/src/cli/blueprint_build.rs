@@ -20,10 +20,9 @@ use metrale_blueprint::frame::{KernelSource, Unsigned};
 use metrale_blueprint::recipe_view::{self, RecipeParts};
 use metrale_blueprint::types::{self as w, Blueprint};
 use metrale_blueprint::{ArtifactId, LineageId, Sha256, Sha256Stream};
-use metrale_circuit::{AvailableKernels, Instance, PrecisionSpec};
+use metrale_circuit::{AvailableKernels, FusionPlan, Instance, KernelId};
 
 use super::blueprint_args::BuildArgs;
-use super::blueprint_convert as conv;
 use crate::recipe::Recipe;
 
 /// 2026-10-22: HARDWARE.toml per class, embedded beside FUSIONS.toml so a blueprint pins the
@@ -241,7 +240,7 @@ fn target_set(inst: &Instance) -> Result<metrale_kernels::TargetPtxSet> {
 fn kernels(
     inst: &Instance,
     set: &metrale_kernels::TargetPtxSet,
-    plans: &[w::PlanSpec],
+    plans: &[FusionPlan],
 ) -> Result<w::KernelSet> {
     let mut modules: Vec<w::ModuleSpec> = set
         .modules
@@ -257,7 +256,7 @@ fn kernels(
         .collect();
     modules.sort_by(|a, b| a.name.cmp(&b.name));
     let families = super::circuit::families_for(inst)?;
-    let mut ids: Vec<w::KernelId> = plans
+    let mut ids: Vec<KernelId> = plans
         .iter()
         .flat_map(|p| p.groups.iter().flat_map(|g| g.kernels.clone()))
         .collect();
@@ -284,18 +283,14 @@ fn kernels(
                 id.func
             );
         }
-        let cid = metrale_circuit::KernelId {
-            module: id.module.clone(),
-            func: id.func.clone(),
-        };
         specs.push(w::KernelSpec {
-            module: conv::idx(i)?,
+            module: u32::try_from(i).context("a module index exceeds u32")?,
             family: families
                 .families
                 .iter()
-                .find(|f| f.kernels.contains(&cid))
+                .find(|f| f.kernels.contains(&id))
                 .map(|f| f.id.clone()),
-            compute: families.compute_of(&cid).map(|u| u.tag()),
+            compute: families.compute_of(&id).cloned(),
             id,
         });
     }
@@ -317,7 +312,7 @@ pub(crate) fn fuse_plans(
     inst: &Instance,
     loaded: &metrale_circuit::Loaded,
     avail: &AvailableKernels,
-) -> Result<(Vec<w::PlanSpec>, Vec<w::PlanGap>)> {
+) -> Result<(Vec<FusionPlan>, Vec<w::PlanGap>)> {
     let mut plans = Vec::new();
     let mut gaps = Vec::new();
     for (mode, rows) in &inst.plans {
@@ -330,9 +325,9 @@ pub(crate) fn fuse_plans(
                 *mode,
                 r,
             ) {
-                Ok(p) => plans.push(conv::plan(&p)?),
+                Ok(p) => plans.push(p),
                 Err(e) if !inst.golden => gaps.push(w::PlanGap {
-                    mode: conv::mode(*mode),
+                    mode: *mode,
                     rows: r,
                     reason: e.to_string(),
                 }),
@@ -390,16 +385,9 @@ pub(crate) fn build(args: &BuildArgs) -> Result<(Blueprint, Unsigned)> {
         },
         checkpoint: checkpoint(args, &proj.model, &inst)?,
         hardware: hardware(class, &ptx_arch, proj.world_size, args.min_visible_mib)?,
-        circuit: conv::circuit(&loaded.circuit)?,
-        precision: w::PrecisionSpec {
-            tier: match &inst.precision {
-                PrecisionSpec::Table(n) => n.clone(),
-                PrecisionSpec::Policy {
-                    checkpoint_plan,
-                    tier,
-                    ..
-                } => format!("{checkpoint_plan}:{tier}"),
-            },
+        circuit: loaded.circuit.clone(),
+        precision: w::PrecisionPin {
+            spec: inst.precision.clone(),
             table_sha256: Sha256::of(&[src.precision.as_bytes()]),
         },
         plans,

@@ -50,3 +50,44 @@ pub fn token_bytes(pair: KvPair, elements: u64) -> Option<u64> {
 #[cfg(test)]
 #[path = "kv_tests.rs"]
 mod tests;
+
+/// 2026-10-22: A [`KvPair`] serialized as its canonical `--kv-cache-dtype` spelling and read
+/// back through the registry ([`KvPair::from_str`]), so a decoded pair is always one the
+/// registry accepts.
+pub(crate) mod pair_spelling {
+    use core::str::FromStr;
+
+    use metrale_kv_codec::KvPair;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    use crate::prelude::*;
+
+    pub(crate) fn serialize<S: Serializer>(p: &KvPair, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(p.name())
+    }
+
+    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<KvPair, D::Error> {
+        let name = String::deserialize(d)?;
+        KvPair::from_str(&name).map_err(serde::de::Error::custom)
+    }
+}
+
+#[cfg(test)]
+mod pair_spelling_tests {
+    use crate::state::StateDtype;
+    use metrale_kv_codec::KvPair;
+
+    /// 2026-10-22: Every pair the registry accepts reads back as itself; an unknown spelling is
+    /// refused rather than defaulted.
+    #[test]
+    fn every_accepted_pair_round_trips_and_an_unknown_one_is_refused() {
+        for p in KvPair::all() {
+            let text = serde_json::to_string(&StateDtype::Kv(p)).unwrap();
+            assert_eq!(
+                serde_json::from_str::<StateDtype>(&text).unwrap(),
+                StateDtype::Kv(p)
+            );
+        }
+        assert!(serde_json::from_str::<StateDtype>("{\"Kv\":\"not_a_codec\"}").is_err());
+    }
+}

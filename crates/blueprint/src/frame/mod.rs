@@ -37,7 +37,7 @@ pub use locator::{InlineArtifact, KernelSource, Unsigned};
 
 use crate::codec::Codec;
 use crate::ids::{BlueprintId, Sha256};
-use crate::types::{BODY_SCHEMA, Blueprint};
+use crate::types::{BODY_SCHEMA, Blueprint, OLDEST_BODY_SCHEMA};
 
 pub(crate) fn encode<T: Serialize>(what: &'static str, v: &T) -> Result<Vec<u8>, Error> {
     postcard::to_allocvec(v)
@@ -216,10 +216,12 @@ fn decode_body(raw: &[u8]) -> Result<Blueprint, Error> {
     let schema = postcard::take_from_bytes::<u32>(raw)
         .map_err(|_| error!(ErrorCode::BlueprintDecode, "body", "no schema"))?
         .0;
-    if schema > BODY_SCHEMA {
+    if !(OLDEST_BODY_SCHEMA..=BODY_SCHEMA).contains(&schema) {
         return Err(error!(
             ErrorCode::BlueprintFormat,
-            "BODY_SCHEMA", schema, BODY_SCHEMA
+            "BODY_SCHEMA",
+            schema,
+            alloc::format!("{OLDEST_BODY_SCHEMA}..={BODY_SCHEMA}")
         ));
     }
     let bp: Blueprint = decode("body", raw)?;

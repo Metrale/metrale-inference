@@ -16,6 +16,12 @@ use metrale_blueprint_trust::{
     Anchor, KeyCert, Kid, Revoked, Scope, SignedCert, Signer, Suite, TrustAnchors, TrustPolicy,
     certify,
 };
+use metrale_circuit::Format;
+use metrale_circuit::dims::DimExpr;
+use metrale_circuit::fuser::{EdgeState, Group};
+use metrale_circuit::ir::{BlockInstance, Edge, LayerKind, LinearRole, Node, OpKind, Section};
+use metrale_circuit::rules::{Numerics, Repeat};
+use metrale_circuit::venn::compute::ComputeUnit;
 
 pub const NOW: i64 = 1_760_000_000_000;
 pub const MOD_A: &[u8] = b".version 8.8\n.visible .entry add_one(\n.param .u64 p)\n{ ret; }\n";
@@ -48,24 +54,24 @@ fn kid(module: &str, func: &str) -> KernelId {
 }
 
 pub fn blueprint() -> Blueprint {
-    let node = |id: &str, op: &str, i: Vec<u32>, o: Vec<u32>, w: Option<&str>| NodeSpec {
+    let node = |id: &str, op: OpKind, i: Vec<usize>, o: Vec<usize>, w: Option<Format>| Node {
         id: id.into(),
         local: id.rsplit('.').next().unwrap().into(),
-        op: op.into(),
+        op,
         inputs: i,
         outputs: o,
-        weight: w.map(Into::into),
+        weight: w,
         binding: vec![],
         params: BTreeMap::new(),
         layer: Some(0),
         block: "toy".into(),
         state: vec![],
     };
-    let edge = |id: &str, p: Option<u32>, c: Vec<u32>| EdgeSpec {
+    let edge = |id: &str, p: Option<usize>, c: Vec<usize>| Edge {
         id: id.into(),
-        format: "bf16".into(),
-        rows: "n".into(),
-        dim: "hidden".into(),
+        format: Format::Bf16,
+        rows: DimExpr::parse("n").unwrap(),
+        dim: DimExpr::parse("hidden").unwrap(),
         dim_value: 64,
         producer: p,
         consumers: c,
@@ -110,18 +116,17 @@ pub fn blueprint() -> Blueprint {
             min_visible_mib: 1024,
             devices: vec!["gb10".into()],
         },
-        circuit: CircuitSpec {
+        circuit: Circuit {
             arch: "toy".into(),
-            dims: [("hidden".to_string(), 64u64)].into_iter().collect(),
-            layer_kinds: vec![LayerKind::LinearAttention],
+            description: "a two-node toy".into(),
             nodes: vec![
-                node("l0.toy.add", "add", vec![0], vec![1], None),
+                node("l0.toy.add", OpKind::ResidualAdd, vec![0], vec![1], None),
                 node(
                     "l0.toy.proj",
-                    "linear:o",
+                    OpKind::Linear(LinearRole::O),
                     vec![1],
                     vec![2],
-                    Some("nvfp4/g16"),
+                    Some(Format::Nvfp4 { group: 16 }),
                 ),
             ],
             edges: vec![
@@ -129,24 +134,30 @@ pub fn blueprint() -> Blueprint {
                 edge("mid", Some(0), vec![1]),
                 edge("out", Some(1), vec![]),
             ],
-            blocks: vec![BlockSpec {
+            blocks: vec![BlockInstance {
                 template: "toy".into(),
                 layer: Some(0),
                 section: Section::Main,
                 first: 0,
                 end: 2,
+                stream_in: Some(0),
+                stream_out: Some(2),
             }],
+            layer_kinds: vec![LayerKind::LinearAttention],
+            dims: [("hidden".to_string(), 64u64)].into_iter().collect(),
             states: vec![],
         },
-        precision: PrecisionSpec {
-            tier: "toy".into(),
+        precision: PrecisionPin {
+            spec: metrale_circuit::PrecisionSpec::Table("toy".into()),
             table_sha256: Sha256::of(&[b"table"]),
         },
-        plans: vec![PlanSpec {
+        plans: vec![FusionPlan {
+            arch: "toy".into(),
             mode: Mode::Decode,
             rows: 1,
+            table: None,
             groups: vec![
-                GroupSpec {
+                Group {
                     rule: "add".into(),
                     kernels: vec![kid("add", "add_one")],
                     repeat: Repeat::Once,
@@ -154,8 +165,9 @@ pub fn blueprint() -> Blueprint {
                     emitter: "add".into(),
                     numerics: Numerics::Reference,
                     nodes: vec![0],
+                    runs: vec![],
                 },
-                GroupSpec {
+                Group {
                     rule: "proj".into(),
                     kernels: vec![kid("scale", "scale")],
                     repeat: Repeat::PerRow,
@@ -165,15 +177,16 @@ pub fn blueprint() -> Blueprint {
                         microtest: "t".into(),
                     },
                     nodes: vec![1],
+                    runs: vec![],
                 },
             ],
             edge_states: vec![
-                EdgeStateSpec::Absent,
-                EdgeStateSpec::Fused(0),
-                EdgeStateSpec::Materialized,
+                None,
+                Some(EdgeState::Fused(0)),
+                Some(EdgeState::Materialized),
             ],
-            edge_formats: vec!["bf16".into(), "bf16".into(), "bf16".into()],
-            digest: Sha256::of(&[b"plan"]),
+            edge_formats: vec![Format::Bf16, Format::Bf16, Format::Bf16],
+            digest: Sha256::of(&[b"plan"]).hex(),
         }],
         plan_gaps: vec![],
         kernels: KernelSet {
@@ -191,7 +204,7 @@ pub fn blueprint() -> Blueprint {
                     id: kid("add", "add_one"),
                     module: 0,
                     family: Some("elementwise".into()),
-                    compute: Some("memory".into()),
+                    compute: Some(ComputeUnit::Memory),
                 },
                 KernelSpec {
                     id: kid("scale", "scale"),

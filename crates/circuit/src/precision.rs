@@ -22,7 +22,7 @@ use serde::Deserialize;
 use crate::format::{Format, FormatError};
 
 /// 2026-09-28: The formats one linear module runs at.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LinearFormats {
     /// 2026-09-28: Weight format as loaded.
     pub weight: Format,

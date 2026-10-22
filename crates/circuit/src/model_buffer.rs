@@ -10,7 +10,9 @@
 //! listed here.
 
 /// 2026-09-30: A buffer the model owns that a program's output lands in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum ModelBuffer {
     /// 2026-09-30: The vocabulary logits the sampler (or the host) reads.
     Logits,

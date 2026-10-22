@@ -33,7 +33,7 @@ pub type NodeIdx = usize;
 
 /// 2026-09-28: One tensor between nodes: `rows x dim` in `format`. `rows` is an expression
 /// over `n`, the step's row count, and the arch dims (e.g. `n*top_k`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Edge {
     /// 2026-09-28: Unique id, e.g. `l3.attn.q` or `stream.4`.
     pub id: String,
@@ -57,7 +57,7 @@ pub struct Edge {
 }
 
 /// 2026-09-28: One op instance.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Node {
     /// 2026-09-28: Unique id, e.g. `l3.attn.o_proj`.
     pub id: String,
@@ -84,7 +84,9 @@ pub struct Node {
 }
 
 /// 2026-09-28: A decoder layer's kind, as `ModelConfig::layer_type` reports it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum LayerKind {
     /// 2026-09-28: A GatedDeltaNet layer. 2026-10-08: Or a KDA layer (`glm5_next`): the HF
     /// spelling is the same, and the circuit's layout picks the mixer.
@@ -142,7 +144,9 @@ pub struct ArchShape {
 }
 
 /// 2026-09-28: Which forward a block belongs to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum Section {
     /// 2026-09-28: The target model's forward.
     Main,
@@ -151,7 +155,7 @@ pub enum Section {
 }
 
 /// 2026-09-28: One instantiated block: its template and the node range it produced.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BlockInstance {
     /// 2026-09-28: Template name.
     pub template: String,
@@ -170,7 +174,7 @@ pub struct BlockInstance {
 }
 
 /// 2026-09-28: An instantiated circuit.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Circuit {
     /// 2026-09-28: The arch id of the TOML it came from (`qwen3_5`).
     pub arch: String,

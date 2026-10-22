@@ -111,7 +111,7 @@ fn golden_instances_reproduce_their_committed_plan_digests() {
         assert_eq!(plans.len(), arms.len());
         for (p, (m, r)) in plans.iter().zip(arms) {
             assert_eq!(
-                p.digest.hex(),
+                p.digest,
                 golden_digest(&inst.plan_file(m, r)),
                 "{} {} n{r}",
                 inst.recipe,

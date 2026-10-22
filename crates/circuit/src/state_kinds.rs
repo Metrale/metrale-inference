@@ -14,7 +14,9 @@ use crate::prelude::*;
 use super::{Holding, StatePlan};
 
 /// 2026-09-30: What a state is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum StateKind {
     /// 2026-09-30: A recurrent state, one unit per sequence slot (GatedDeltaNet and Mamba2
     /// `h`, their conv windows).
@@ -107,7 +109,9 @@ impl StateKind {
 }
 
 /// 2026-09-30: How long a unit of state lives (LIFECYCLE-DESIGN.md section 3.3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum Lifetime {
     /// 2026-09-30: Allocated once with the model (a KV pool; its blocks are per sequence).
     Model,

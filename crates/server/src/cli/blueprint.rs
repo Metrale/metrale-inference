@@ -16,7 +16,7 @@ use anyhow::{Context, Result};
 use metrale_abstract_io::{Clock as _, UnixMs};
 use metrale_blueprint::export::{self, ExportContext};
 use metrale_blueprint::frame::{self, Opened};
-use metrale_blueprint::types::Mode;
+use metrale_circuit::Mode;
 use metrale_blueprint::{recipe_view, resolve, transport};
 use metrale_blueprint_sign::{read_key, read_public, write_public};
 use metrale_blueprint_trust::{

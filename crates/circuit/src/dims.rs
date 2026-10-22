@@ -60,6 +60,21 @@ pub enum DimError {
     Overflow(String),
 }
 
+/// 2026-10-22: Serialized as its text (whitespace removed), the one canonical form; a decoded
+/// text is parsed again, so the terms always agree with the text.
+impl serde::Serialize for DimExpr {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.text)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for DimExpr {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(d)?;
+        DimExpr::parse(&text).map_err(serde::de::Error::custom)
+    }
+}
+
 impl DimExpr {
     /// 2026-09-28: Parse `text`. Whitespace is ignored.
     pub fn parse(text: &str) -> Result<Self, DimError> {

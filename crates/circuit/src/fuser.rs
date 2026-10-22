@@ -20,6 +20,7 @@
 use crate::prelude::*;
 
 use alloc::collections::{BTreeMap, BTreeSet};
+use serde::{Deserialize, Serialize};
 
 use crate::format::Format;
 use crate::ir::{Circuit, EdgeIdx, NodeIdx, Section};
@@ -67,7 +68,7 @@ pub struct Policy {
 }
 
 /// 2026-09-28: Whether an edge is written to memory or stays inside one kernel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum EdgeState {
     /// 2026-09-28: Written to a buffer between launches.
     Materialized,
@@ -76,7 +77,7 @@ pub enum EdgeState {
 }
 
 /// 2026-09-28: One launch group.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Group {
     /// 2026-09-28: The rule that formed it.
     pub rule: String,
@@ -116,7 +117,7 @@ impl Group {
 }
 
 /// 2026-09-28: The fused plan of one circuit for one mode and row count.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FusionPlan {
     /// 2026-09-28: The circuit's arch.
     pub arch: String,

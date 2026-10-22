@@ -13,6 +13,9 @@ description = "Metrale Engine: blueprints (.kbp): typed, content-addressed, sign
 [dependencies]
 metrale-blueprint-trust = { workspace = true }
 metrale-error = { workspace = true }
+# 2026-10-22: The circuit instance, its plans, kernel ids and compute units are the circuit's own
+# types (SSOT); no_std, so the store decodes them with this same code.
+metrale-circuit = { workspace = true }
 # 2026-10-22: The lever table types `env:` levers (RecipeView) and is digested into ServeSettings.
 metrale-settings = { workspace = true }
 # 2026-10-22: `kbp1.` transport (standard padded alphabet).

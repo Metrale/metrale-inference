@@ -14,7 +14,9 @@ use crate::prelude::*;
 use core::fmt;
 
 /// 2026-09-28: How the scales of an 8-bit float tensor are shared.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum Scale {
     /// 2026-09-28: One scale for the whole tensor.
     PerTensor,
@@ -29,7 +31,9 @@ pub enum Scale {
 }
 
 /// 2026-09-28: A tensor format.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum Format {
     /// 2026-09-28: bfloat16.
     Bf16,

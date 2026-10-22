@@ -13,7 +13,9 @@ use crate::format::Format;
 use super::LinearRole;
 
 /// 2026-09-28: The closed op vocabulary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum OpKind {
     /// 2026-09-28: Token embedding lookup; a source node.
     Embed,

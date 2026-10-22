@@ -288,6 +288,22 @@ fn a_newer_body_schema_is_refused() {
     assert_eq!(open(&w, &f).err(), Some(ErrorCode::BlueprintFormat));
 }
 
+/// 2026-10-22: A body older than [`OLDEST_BODY_SCHEMA`] (schema 1 carried the mirrored circuit
+/// records) is refused by its schema field, never decoded as the new shape.
+#[test]
+fn a_body_schema_older_than_the_reader_decodes_is_refused() {
+    let w = world();
+    let mut bp = blueprint();
+    bp.schema = metrale_blueprint::OLDEST_BODY_SCHEMA - 1;
+    let f = frame::encode_unsigned(&bp, &unsigned(&bp), &[]).unwrap();
+    let f = frame::sign(&f, &w.leaf, vec![w.cert()]).unwrap();
+    assert_eq!(open(&w, &f).err(), Some(ErrorCode::BlueprintFormat));
+    bp.schema = metrale_blueprint::OLDEST_BODY_SCHEMA;
+    let f = frame::encode_unsigned(&bp, &unsigned(&bp), &[]).unwrap();
+    let f = frame::sign(&f, &w.leaf, vec![w.cert()]).unwrap();
+    assert_eq!(open(&w, &f).err(), None);
+}
+
 #[test]
 fn a_tampered_inline_kernel_is_a_hash_mismatch() {
     let w = world();

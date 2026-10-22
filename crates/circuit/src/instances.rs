@@ -91,7 +91,7 @@ impl Instance {
 }
 
 /// 2026-09-28: An instance's source of linear formats.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PrecisionSpec {
     /// 2026-09-28: A stated table, `kernels/circuits/precision/<name>.toml`.
     Table(String),
@@ -117,6 +117,18 @@ impl PrecisionSpec {
             PrecisionSpec::Policy {
                 checkpoint_plan, ..
             } => checkpoint_plan,
+        }
+    }
+
+    /// 2026-10-22: A one-word label: the table's name, or `<plan>:<tier>` for a policy.
+    pub fn label(&self) -> String {
+        match self {
+            PrecisionSpec::Table(n) => n.clone(),
+            PrecisionSpec::Policy {
+                checkpoint_plan,
+                tier,
+                ..
+            } => format!("{checkpoint_plan}:{tier}"),
         }
     }
 }

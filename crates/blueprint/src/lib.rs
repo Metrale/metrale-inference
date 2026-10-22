@@ -15,7 +15,8 @@
 //! Invariants:
 //! - `no_std` + `alloc`, no `unsafe`, no I/O; builds for both wasm32 targets (NSCC), so the
 //!   store verifies with this same code.
-//! - Wire types stop here (TIDE): the engine's circuit types are converted at the adapter.
+//! - The circuit instance and its plans are `metrale_circuit`'s own types, serialized by their
+//!   serde derives (SSOT); this crate defines no copy of them.
 
 #![no_std]
 #![forbid(unsafe_code)]
@@ -38,4 +39,4 @@ pub mod transport;
 pub mod types;
 
 pub use ids::{ArtifactId, BlueprintId, LineageId, Sha256, Sha256Stream};
-pub use types::{BODY_SCHEMA, Blueprint};
+pub use types::{BODY_SCHEMA, Blueprint, OLDEST_BODY_SCHEMA};

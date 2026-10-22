@@ -19,7 +19,9 @@ use crate::format::Format;
 use crate::ir::{LayerKind, LinearRole, OpKind};
 
 /// 2026-09-28: Which forward a plan is for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum Mode {
     /// 2026-09-28: One sequence, one row.
     Decode,
@@ -63,7 +65,9 @@ impl Mode {
 /// 2026-09-28: A kernel entry point as the engine looks it up: the module name (the source
 /// stem after KERNEL.toml `[modules]` renames, e.g. `norm` for `rms_norm.cu`) and the
 /// function.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct KernelId {
     /// 2026-09-28: Module, e.g. `norm`.
     pub module: String,
@@ -78,7 +82,9 @@ impl core::fmt::Display for KernelId {
 }
 
 /// 2026-09-28: How a rule's output relates to the reference numerics.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum Numerics {
     /// 2026-09-28: Byte-identical to the unfused chain, proven by the named microtest.
     BitIdentical {
@@ -152,7 +158,9 @@ pub struct PatternOp {
 }
 
 /// 2026-09-28: How many times a group's kernels launch per step.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum Repeat {
     /// 2026-09-28: Once.
     Once,

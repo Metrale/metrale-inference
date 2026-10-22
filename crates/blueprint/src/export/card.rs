@@ -261,7 +261,7 @@ pub fn card(o: &Opened, ctx: &ExportContext) -> Card {
     let bp = &o.blueprint;
     let mut layer_kinds = BTreeMap::new();
     for k in &bp.circuit.layer_kinds {
-        bump(&mut layer_kinds, k.name());
+        bump(&mut layer_kinds, super::layer_kind_spelling(*k));
     }
     let mut linear_by_format = BTreeMap::new();
     for (w, a) in linear_formats(bp) {
@@ -305,7 +305,7 @@ pub fn card(o: &Opened, ctx: &ExportContext) -> Card {
             devices: bp.hardware.devices.clone(),
         },
         precision: CardPrecision {
-            tier: bp.precision.tier.clone(),
+            tier: bp.precision.spec.label(),
             table_sha256: bp.precision.table_sha256.hex(),
             linear_by_format,
             kv_cache: bp.policy.flags.get("kv_cache_dtype").map(FlagValue::render),
@@ -328,7 +328,7 @@ pub fn card(o: &Opened, ctx: &ExportContext) -> Card {
             .map(|p| CardPlan {
                 mode: String::from(p.mode.name()),
                 rows: p.rows,
-                digest: p.digest.hex(),
+                digest: p.digest.clone(),
                 groups: n(p.groups.len()),
             })
             .collect(),

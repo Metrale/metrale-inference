@@ -23,7 +23,9 @@ use core::fmt;
 use crate::rules::KernelId;
 
 /// 2026-09-30: One run of a batched verify.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct VerifyRun {
     /// 2026-09-30: Rows per sequence.
     pub k: u64,
@@ -34,7 +36,9 @@ pub struct VerifyRun {
 }
 
 /// 2026-09-30: The runs of a batched verify, in batch order.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct RowTable {
     /// 2026-09-30: The runs.
     pub runs: Vec<VerifyRun>,
@@ -164,7 +168,9 @@ impl fmt::Display for RowTable {
 const UNCARRIED: &str = "uncarried: ";
 
 /// 2026-09-30: How often a per-run launch (or copy) happens within its run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum Times {
     /// 2026-09-30: Once for the run.
     Once,
@@ -238,7 +244,7 @@ impl RunSelect {
 }
 
 /// 2026-09-30: The launches one run of a per-run group makes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RunLaunches {
     /// 2026-09-30: The run.
     pub run: VerifyRun,

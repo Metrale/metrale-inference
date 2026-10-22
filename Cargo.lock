@@ -1763,6 +1763,7 @@ dependencies = [
  "base64 0.23.1",
  "metrale-abstract-io",
  "metrale-blueprint-trust",
+ "metrale-circuit",
  "metrale-error",
  "metrale-settings",
  "miniz_oxide 0.8.9",

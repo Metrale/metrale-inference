@@ -14,6 +14,7 @@ pub mod schema;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use metrale_circuit::LayerKind;
 use serde_json::Value;
 
 use crate::types::Blueprint;
@@ -30,19 +31,29 @@ pub struct ExportContext {
     pub file_len: u64,
 }
 
+/// 2026-10-22: A layer kind as the exports spell it: the circuit's HF spelling, except
+/// `sparse_attention` for `deepseek_sparse_attention` (the store names the mechanism, not the
+/// checkpoint family).
+pub fn layer_kind_spelling(k: LayerKind) -> &'static str {
+    match k {
+        LayerKind::SparseAttention => "sparse_attention",
+        other => other.name(),
+    }
+}
+
 /// 2026-10-22: `(weight, activation)` format spellings of every weight-reading node: the
 /// weight format and the declared format of its first input.
-pub fn linear_formats(bp: &Blueprint) -> Vec<(&str, &str)> {
+pub fn linear_formats(bp: &Blueprint) -> Vec<(String, String)> {
     let c = &bp.circuit;
     c.nodes
         .iter()
         .filter_map(|n| {
-            let w = n.weight.as_deref()?;
+            let w = n.weight?.name();
             let a = n
                 .inputs
                 .first()
-                .and_then(|&e| c.edges.get(e as usize))
-                .map_or("-", |e| e.format.as_str());
+                .and_then(|&e| c.edges.get(e))
+                .map_or_else(|| String::from("-"), |e| e.format.name());
             Some((w, a))
         })
         .collect()

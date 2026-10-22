@@ -181,10 +181,11 @@ pub struct ServePolicy {
 
 /// 2026-10-22: Where the per-node formats came from.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PrecisionSpec {
-    /// 2026-10-22: The precision table or checkpoint plan name (INSTANCES.toml `precision`).
-    pub tier: String,
-    /// 2026-10-22: SHA-256 of that file's text.
+pub struct PrecisionPin {
+    /// 2026-10-22: The instance's precision source, as INSTANCES.toml states it (the
+    /// circuit's own type).
+    pub spec: metrale_circuit::PrecisionSpec,
+    /// 2026-10-22: SHA-256 of the file it reads (the table or the checkpoint plan fixture).
     pub table_sha256: Sha256,
 }
 

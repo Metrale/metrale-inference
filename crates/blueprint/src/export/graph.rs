@@ -5,7 +5,7 @@
 //!
 //! Owner: blueprint.
 //! Invariants:
-//! - The circuit records joined with one `PlanSpec` arm: only the nodes that arm runs, in
+//! - The circuit joined with one `FusionPlan` arm: only the nodes that arm runs, in
 //!   execution order (`order`), and the node-to-node edges between them, one per
 //!   (tensor, reader). Indices are the circuit's own. No coordinates: layout is the site's.
 //! - `collapsed` gives one template per block template and the per-layer layout.
@@ -16,10 +16,12 @@ use alloc::vec::Vec;
 
 use metrale_error::{Error, ErrorCode, error};
 
+use metrale_circuit::EdgeState;
+
 use super::ExportContext;
 use super::schema::json_struct;
 use crate::frame::Opened;
-use crate::types::{EdgeStateSpec, Mode};
+use crate::types::Mode;
 
 /// 2026-10-22: The graph schema id.
 pub const GRAPH_SCHEMA: &str = "kbp-graph/v1";
@@ -208,17 +210,17 @@ pub fn graph(o: &Opened, arm: (Mode, u64), ctx: &ExportContext) -> Result<Graph,
                 "--arm", "the blueprint has no such plan arm"
             )
         })?;
-    let mut per_layer: BTreeMap<u32, Vec<&str>> = BTreeMap::new();
+    let mut per_layer: BTreeMap<usize, Vec<&str>> = BTreeMap::new();
     let mut templates = BTreeMap::new();
     for b in &c.blocks {
         if let Some(l) = b.layer {
             per_layer.entry(l).or_default().push(&b.template);
         }
         templates.entry(b.template.clone()).or_insert_with(|| {
-            let ns = c.nodes.get(b.first as usize..b.end as usize).unwrap_or(&[]);
+            let ns = c.nodes.get(b.first..b.end).unwrap_or(&[]);
             GraphTemplate {
                 nodes: ns.iter().map(|n| n.local.clone()).collect(),
-                ops: ns.iter().map(|n| n.op.clone()).collect(),
+                ops: ns.iter().map(|n| n.op.name()).collect(),
             }
         });
     }
@@ -229,18 +231,18 @@ pub fn graph(o: &Opened, arm: (Mode, u64), ctx: &ExportContext) -> Result<Graph,
         .enumerate()
         .map(|(i, k)| GraphLayer {
             index: idx(i),
-            kind: String::from(k.name()),
+            kind: String::from(super::layer_kind_spelling(*k)),
             template: layout.get(i).cloned().unwrap_or_default(),
         })
         .collect();
-    let fmt = |e: u32| plan.edge_formats.get(e as usize).cloned();
+    let fmt = |e: usize| plan.edge_formats.get(e).map(|f| f.name());
     let mut nodes = Vec::new();
     let mut in_arm = BTreeMap::new();
     for (gi, g) in plan.groups.iter().enumerate() {
         let first = g.kernels.first();
         let spec = first.and_then(|k| bp.kernels.spec(k));
         for &ni in &g.nodes {
-            let n = c.nodes.get(ni as usize).ok_or_else(|| {
+            let n = c.nodes.get(ni).ok_or_else(|| {
                 error!(
                     ErrorCode::BlueprintDecode,
                     "plan", "node index out of range"
@@ -248,31 +250,31 @@ pub fn graph(o: &Opened, arm: (Mode, u64), ctx: &ExportContext) -> Result<Graph,
             })?;
             in_arm.insert(ni, ());
             nodes.push(GraphNode {
-                index: ni,
+                index: idx(ni),
                 id: n.id.clone(),
                 order: u64::try_from(nodes.len()).unwrap_or(u64::MAX),
-                layer: n.layer,
+                layer: n.layer.map(idx),
                 block: n.block.clone(),
                 kind: n
                     .layer
-                    .and_then(|l| c.layer_kinds.get(l as usize))
-                    .map(|k| String::from(k.name())),
-                op: n.op.clone(),
+                    .and_then(|l| c.layer_kinds.get(l))
+                    .map(|k| String::from(super::layer_kind_spelling(*k))),
+                op: n.op.name(),
                 precision: GraphPrecision {
-                    weight: n.weight.clone(),
+                    weight: n.weight.map(|w| w.name()),
                     activation: n.inputs.first().and_then(|&e| fmt(e)),
                     output: n.outputs.first().and_then(|&e| fmt(e)),
                 },
                 group: u64::try_from(gi).unwrap_or(u64::MAX),
                 kernel: first.map(|k| alloc::format!("{k}")),
                 family: spec.and_then(|s| s.family.clone()),
-                compute: spec.and_then(|s| s.compute.clone()),
+                compute: spec.and_then(|s| s.compute.as_ref()).map(|u| u.tag()),
                 numerics: String::from(g.numerics.class()),
                 state: n
                     .state
                     .iter()
                     .filter_map(|(si, a)| {
-                        c.states.get(*si as usize).map(|s| GraphState {
+                        c.states.get(*si).map(|s| GraphState {
                             state: s.id.clone(),
                             access: String::from(a.name()),
                         })
@@ -289,12 +291,12 @@ pub fn graph(o: &Opened, arm: (Mode, u64), ctx: &ExportContext) -> Result<Graph,
         for &to in e.consumers.iter().filter(|t| in_arm.contains_key(t)) {
             edges.push(GraphEdge {
                 id: e.id.clone(),
-                from,
-                to,
-                format: fmt(idx(ei)).unwrap_or_else(|| e.format.clone()),
-                rows: e.rows.clone(),
-                dim: e.dim.clone(),
-                fused: matches!(plan.edge_states.get(ei), Some(EdgeStateSpec::Fused(_))),
+                from: idx(from),
+                to: idx(to),
+                format: fmt(ei).unwrap_or_else(|| e.format.name()),
+                rows: String::from(e.rows.text()),
+                dim: String::from(e.dim.text()),
+                fused: matches!(plan.edge_states.get(ei), Some(Some(EdgeState::Fused(_)))),
             });
         }
     }
@@ -308,7 +310,7 @@ pub fn graph(o: &Opened, arm: (Mode, u64), ctx: &ExportContext) -> Result<Graph,
             kernels: g.kernels.iter().map(|k| alloc::format!("{k}")).collect(),
             repeat: g.repeat.name(),
             numerics: String::from(g.numerics.class()),
-            nodes: g.nodes.clone(),
+            nodes: g.nodes.iter().copied().map(idx).collect(),
         })
         .collect();
     Ok(Graph {
@@ -320,7 +322,7 @@ pub fn graph(o: &Opened, arm: (Mode, u64), ctx: &ExportContext) -> Result<Graph,
         arm: GraphArm {
             mode: String::from(plan.mode.name()),
             rows: plan.rows,
-            digest: plan.digest.hex(),
+            digest: plan.digest.clone(),
         },
         layers,
         nodes,

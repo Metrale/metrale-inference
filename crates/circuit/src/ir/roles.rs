@@ -10,7 +10,9 @@
 //! - New roles are appended, so the derived order of the existing ones does not change.
 
 /// 2026-09-28: What a linear (GEMV/GEMM) node projects. Closed, like [`OpKind`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum LinearRole {
     /// 2026-09-28: Attention Q with its output gate, interleaved per head.
     Q,
