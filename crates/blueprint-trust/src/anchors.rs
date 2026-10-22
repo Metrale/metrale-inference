@@ -5,9 +5,10 @@
 //!
 //! Owner: blueprint.
 //! Invariants:
-//! - [`ANCHORS`] is empty until the owner holds a root key ceremony (DESIGN.md §11 Q1). With no
-//!   compiled anchor, every production verification is refused (`BlueprintUntrusted`); a caller
-//!   that supplies an anchor itself runs the declared, reported mode `trust = dev-anchor`.
+//! - [`ANCHORS`] holds the production root `kbp-root-2026` (key ceremony of 2026-10-22). Its
+//!   bytes are the `met blueprint key anchor` file committed at `anchors/kbp-root-2026.anchor`
+//!   (SSOT), decoded at compile time: a file of any other shape fails the build. A caller that
+//!   supplies an anchor itself runs the declared, reported mode `trust = dev-anchor`.
 //! - [`TrustAnchors`] refuses two anchors with one kid.
 
 use alloc::string::String;
@@ -32,8 +33,65 @@ pub struct CompiledAnchor {
     pub ed25519: [u8; 32],
 }
 
-/// 2026-10-22: The compiled root keys. Empty: no production root exists yet.
-pub const ANCHORS: &[CompiledAnchor] = &[];
+/// 2026-10-22: The production root's public anchor file (postcard [`Anchor`], as written by
+/// `met blueprint key anchor`).
+pub const ROOT_2026_ANCHOR_FILE: &[u8] = include_bytes!("../anchors/kbp-root-2026.anchor");
+
+/// 2026-10-22: The compiled root keys.
+pub const ANCHORS: &[CompiledAnchor] = &[CompiledAnchor::from_anchor_file(ROOT_2026_ANCHOR_FILE)];
+
+/// 2026-10-22: One postcard varint (LEB128, at most `u32`) at the front of `b`, and the rest.
+#[allow(clippy::cast_lossless)] // 2026-10-22: `usize::from` is not callable in a const fn.
+const fn varint(b: &[u8]) -> (usize, &[u8]) {
+    let mut v = 0usize;
+    let mut i = 0;
+    while i < 5 && i < b.len() {
+        let x = b[i];
+        v |= ((x & 0x7f) as usize) << (7 * i);
+        if x & 0x80 == 0 {
+            return (v, b.split_at(i + 1).1);
+        }
+        i += 1;
+    }
+    panic!("anchor file: truncated or over-long varint");
+}
+
+impl CompiledAnchor {
+    /// 2026-10-22: Decode an anchor file at compile time: the kid (varint length + UTF-8), the
+    /// suite (its one-byte variant index), the ML-DSA key (varint length + bytes) and the 32
+    /// Ed25519 bytes, nothing after. Any other shape is a build failure; the
+    /// `compiled_anchors_equal_their_files` test checks the result against the postcard decode.
+    pub const fn from_anchor_file(file: &'static [u8]) -> Self {
+        let (kid_len, rest) = varint(file);
+        let Some((kid, rest)) = rest.split_at_checked(kid_len) else {
+            panic!("anchor file: truncated kid");
+        };
+        let Ok(kid) = core::str::from_utf8(kid) else {
+            panic!("anchor file: kid is not UTF-8");
+        };
+        let Some((&suite, rest)) = rest.split_first() else {
+            panic!("anchor file: no suite");
+        };
+        let suite = match suite {
+            0 => Suite::MlDsa65Ed25519,
+            1 => Suite::MlDsa87Ed25519,
+            _ => panic!("anchor file: unknown suite"),
+        };
+        let (mldsa_len, rest) = varint(rest);
+        let Some((mldsa, ed)) = rest.split_at_checked(mldsa_len) else {
+            panic!("anchor file: truncated ML-DSA key");
+        };
+        let (Some(ed25519), 32) = (ed.first_chunk::<32>(), ed.len()) else {
+            panic!("anchor file: the Ed25519 key is not the last 32 bytes");
+        };
+        Self {
+            kid,
+            suite,
+            mldsa,
+            ed25519: *ed25519,
+        }
+    }
+}
 
 /// 2026-10-22: The revocation serial this binary was built with; a list below it is a rollback.
 pub const REVOCATIONS_FLOOR: u64 = 0;
