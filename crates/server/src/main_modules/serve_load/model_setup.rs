@@ -468,7 +468,8 @@ pub(super) fn load_tokenizer(
         template_source(args),
         heap_trim,
         crate::tokenizer::ToolJsonStyle::from_settings(settings),
-    )?;
+    )?
+    .with_segment_memo(args.chat_surface.tokenizer_memo_mb << 20);
     Ok((tokenizer, supports_thinking))
 }
 

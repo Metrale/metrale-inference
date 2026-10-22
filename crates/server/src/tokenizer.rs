@@ -61,6 +61,8 @@ mod deepseek_v4;
 mod deepseek_v41;
 pub mod engram_vocab;
 mod heap_trim;
+mod segment_memo;
+pub use segment_memo::SegmentMemo;
 pub use heap_trim::HeapTrimPolicy;
 pub use jinja_helpers::ToolJsonStyle;
 pub(crate) mod jinja_helpers;
@@ -114,6 +116,8 @@ pub struct ChatTokenizer {
     openai_jinja_env: Option<minijinja::Environment<'static>>,
     /// 2026-10-17: Heap trim after a long encode (`--tokenizer-trim-min-tokens`).
     heap_trim: HeapTrimPolicy,
+    /// 2026-10-22: Piece memo of long encodes (`--tokenizer-memo-mb`); off until set.
+    segment_memo: SegmentMemo,
 }
 
 /// 2026-09-26: `tokenizers::DecodeStream` with its generic parameters fixed.

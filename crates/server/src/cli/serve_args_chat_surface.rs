@@ -58,4 +58,12 @@ pub struct ServeChatSurfaceArgs {
     /// whose allocator is not glibc's.
     #[arg(long, default_value_t = 0, value_name = "N")]
     pub tokenizer_trim_min_tokens: usize,
+
+    /// Memoize the token ids of long prompt pieces (the text between two special tokens) in
+    /// up to this many MiB. A tokenizer encodes each such piece on its own, so a
+    /// conversation re-sent with one more turn re-encodes only its new pieces; the ids are
+    /// exactly those of a whole encode. Only prompts of 32 KiB or more and pieces of 4 KiB or
+    /// more use it. 0 turns it off.
+    #[arg(long, default_value_t = 64, value_name = "MIB")]
+    pub tokenizer_memo_mb: usize,
 }

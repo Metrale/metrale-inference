@@ -133,7 +133,15 @@ impl ChatTokenizer {
             jinja_env,
             openai_jinja_env,
             heap_trim,
+            segment_memo: super::SegmentMemo::new(0),
         })
+    }
+
+    /// 2026-10-22: Memoize the text pieces of long encodes in at most `budget_bytes`
+    /// (`segment_memo.rs`); 0 keeps every encode whole.
+    pub fn with_segment_memo(mut self, budget_bytes: usize) -> Self {
+        self.segment_memo = super::SegmentMemo::new(budget_bytes);
+        self
     }
 
     pub(crate) fn uses_native_qwen_tool_template(&self) -> bool {
@@ -148,13 +156,7 @@ impl ChatTokenizer {
     /// 2026-10-17: The token ids of `text`, no special tokens added. When the policy's
     /// threshold is reached, the heap is trimmed after the `Encoding` is dropped (`heap_trim`).
     pub fn encode(&self, text: &str) -> Result<Vec<u32>> {
-        let ids = {
-            let encoding = self
-                .tokenizer
-                .encode(text, false)
-                .map_err(|e| anyhow::anyhow!("Tokenizer encode error: {e}"))?;
-            encoding.get_ids().to_vec()
-        };
+        let ids = self.segment_memo.encode(&self.tokenizer, text)?;
         self.heap_trim.after_encode(ids.len());
         Ok(ids)
     }
