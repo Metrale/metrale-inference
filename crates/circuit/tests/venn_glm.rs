@@ -60,13 +60,13 @@ fn kda_is_a_per_channel_policy_of_the_gated_delta_rule() {
     );
     // 2026-10-08: No KDA kernel takes more than one row, so a 16-row step is the strided GDN
     // kernel's policy variant, not a KDA kernel.
-    let wide = row(&r, Mode::MultiSeq, 16, "kda.recur")
-        .primary
-        .as_ref()
-        .expect("classified");
+    // 2026-10-22: The rows kernels (METRALE_GLM_KDA_SEQ_ROWS, family kda_recurrent_rows) take one
+    // row of each of up to 16 sequences, so a 16-row step is a KDA kernel's, unmeasured.
+    let wide = row(&r, Mode::MultiSeq, 16, "kda.recur");
+    let p = wide.primary.as_ref().expect("classified");
     assert_eq!(
-        (wide.family.as_str(), wide.class),
-        ("gdn_recurrence_strided", Class::PolicyVariant)
+        (p.family.as_str(), p.class),
+        ("kda_recurrent_rows", Class::SharedUnmeasured)
     );
     let norm = finding(row(&r, Mode::Decode, 1, "kda.out_norm"), "gated_rms_norm");
     assert_eq!(

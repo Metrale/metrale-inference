@@ -126,3 +126,7 @@ glm_router_rows = { value = "off", why = "METRALE_GLM_ROUTER_ROWS unset: crates/
 glm_router_topk_rank = { value = "off", why = "METRALE_GLM_ROUTER_TOPK_RANK unset: crates/settings/src/groups/kernels.rs:158, read at crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:32-50" }
 glm_moe_w4a4_grouped = { value = "off", why = "METRALE_GLM_MOE_W4A4_GROUPED unset: crates/settings/src/groups/kernels.rs:151; the routed W4A4 row cap stays 16 (crates/model-arch/src/weight_loader/glm5_next_load/mlp_precision.rs:43-52)" }
 glm_moe_expert_layout = { value = "ep", why = "--moe-expert-layout default ep: crates/server/src/cli/serve_args/service.rs:176" }
+glm_kda_row_reg = { value = "off", why = "METRALE_GLM_KDA_ROW_REG unset: crates/settings/src/groups/kernels.rs:130, read at crates/model-arch/src/glm5next_kda/decode.rs:148" }
+glm_kda_rows_reg = { value = "off", why = "METRALE_GLM_KDA_ROWS_REG unset: crates/settings/src/groups/kernels.rs:129, read at crates/model-arch/src/glm5next_kda/rows.rs:193-215" }
+glm_kda_seq_rows = { value = "off", why = "METRALE_GLM_KDA_SEQ_ROWS unset = KdaSeqRows::Off: crates/settings/src/groups/kernels.rs:131, crates/model-arch/src/glm5next_kda/levers.rs:89-93" }
+glm_kda_verify_tokens = { value = "off", why = "METRALE_GLM_KDA_VERIFY_TOKENS unset: crates/settings/src/groups/kernels.rs:133, read at crates/model-arch/src/glm5next_kda/decode.rs:302-306" }

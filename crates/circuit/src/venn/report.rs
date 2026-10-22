@@ -348,7 +348,11 @@ fn flags_for(
     let kind_of = |n: NodeIdx| tc.nodes[n].layer.map(|l| tc.layer_kinds[l]);
     let mut out = Vec::new();
     for l in &inp.families.legacy {
-        if l.arch != tc.arch || !l.per_sequence.contains(&run.mode) || run.rows <= l.rows_above {
+        if l.arch != tc.arch
+            || !l.per_sequence.contains(&run.mode)
+            || run.rows <= l.rows_above
+            || !l.runs_under(&inp.target.instance.policy.settings)
+        {
             continue;
         }
         let nodes: Vec<NodeIdx> = scope

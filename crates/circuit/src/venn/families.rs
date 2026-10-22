@@ -317,6 +317,16 @@ pub struct LegacyPath {
     pub holds: String,
     /// 2026-09-29: One line.
     pub note: String,
+    /// 2026-10-22: Policy settings under which the engine takes another arm and the loop does not
+    /// run (all must hold); empty is always.
+    pub unless: BTreeMap<String, String>,
+}
+
+impl LegacyPath {
+    /// 2026-10-22: Whether the loop runs under `settings`.
+    pub fn runs_under(&self, settings: &BTreeMap<String, String>) -> bool {
+        self.unless.is_empty() || self.unless.iter().any(|(k, v)| settings.get(k) != Some(v))
+    }
 }
 
 /// 2026-09-29: The roofline constants of the hardware.

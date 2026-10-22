@@ -153,6 +153,7 @@ pub fn gap_table(
                 && rows > l.rows_above
                 && Some(l.layer_kind) == kind
                 && (l.sites.is_empty() || l.sites.contains(&site))
+                && l.runs_under(settings)
         });
         let looped = matches!(g.repeat, Repeat::PerRow | Repeat::PerRowButLast) && rows > 1;
         let per_row = looped || legacy.is_some();

@@ -3547,6 +3547,157 @@ numerics = "reference"
 priority = 120
 cite = "crates/model-arch/src/glm5next_kda/rows.rs:105-135 (decode_rows_then: stateful_row per row); crates/model-arch/src/glm5next_kda/decode.rs:94-115"
 
+# 2026-10-22: The recipe arms of the KDA levers (METRALE_GLM_KDA_ROW_REG=1, _ROWS_REG=1,
+# _SEQ_ROWS=decode, _VERIFY_TOKENS=1). glm_kda_row_reg: every single-row recurrent step (the C=1
+# decode, the per-row walks of a verify above 4 rows or without the token kernels, a batched decode
+# without seq rows) on the register-resident `kda_recurrent_decode_bf16_seq_reg` at one token.
+
+[[rule]]
+id = "glm_kda_recurrence_row_reg"
+pattern = [{ op = "gdn_recurrence", input = "bf16", params = { decay = "channel" } }]
+kernels = [{ module = "kda_recurrent", func = "kda_recurrent_decode_bf16_seq_reg" }]
+repeat = "per_row"
+emitter = "kda"
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify"]
+when = { ssm_h_dtype = "f32", glm_kda_row_reg = "on" }
+numerics = "reference"
+priority = 25
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:148 (glm_kda_row_reg: recurrent_row_reg, crates/settings/src/groups/kernels.rs:130); crates/model-arch/src/glm5next_kda/seq_tokens.rs:225 (kda_recurrent_decode_bf16_seq_reg at T = 1); the per-row walks of crates/model-arch/src/glm5next_kda/decode.rs:301-330"
+
+# 2026-10-22: glm_kda_verify_tokens: a 2..=4-row verify with one snapshot per row but the last
+# (snap_tokens_apply) runs its conv and recurrence once over the rows: each conv intermediate one
+# `causal_conv1d_window_advance_to` (glm_kda_conv_snap_to, default on), the token conv, the live
+# window's advance, then `kda_recurrent_decode_bf16_seq_reg_snap` storing each state snapshot. One
+# rule per row count, as the snapshot launches are k - 1 (the pack stays `glm_kda_pack`).
+
+[[rule]]
+id = "glm_kda_conv_tokens_verify_2"
+pattern = [
+  { op = "conv1d_update", local = "short_conv" },
+  { op = "state_snapshot" },
+  { op = "l2_norm", writes = "bf16" },
+]
+kernels = [
+  { module = "kda_conv_tokens", func = "causal_conv1d_window_advance_to" },
+  { module = "kda_conv_tokens", func = "causal_conv1d_update_l2norm_tokens" },
+  { module = "kda_conv_tokens", func = "causal_conv1d_window_advance" },
+]
+repeat = "once"
+emitter = "kda"
+rows = [2, 2]
+modes = ["verify"]
+when = { glm_kda_verify_tokens = "on" }
+numerics = "reference"
+priority = 125
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:302-306 (snap_tokens: glm_kda_verify_tokens, crates/settings/src/groups/kernels.rs:133); crates/model-arch/src/glm5next_kda/seq_tokens.rs:212 (snap_tokens_apply: 2..=4 rows, k - 1 snapshots); crates/model-arch/src/glm5next_kda/seq_tokens.rs:77-146 (stateful_tokens_snap), :102 (window_advance_to per snapshot, glm_kda_conv_snap_to default on at crates/settings/src/groups/kernels.rs:124), :153-181 (conv_tokens: causal_conv1d_update_l2norm_tokens, then causal_conv1d_window_advance); crates/model-arch/src/glm5next_layer/steps/mix.rs:48-51 (a verify snapshots rows 0..k-2)"
+
+[[rule]]
+id = "glm_kda_conv_tokens_verify_3"
+pattern = [
+  { op = "conv1d_update", local = "short_conv" },
+  { op = "state_snapshot" },
+  { op = "l2_norm", writes = "bf16" },
+]
+kernels = [
+  { module = "kda_conv_tokens", func = "causal_conv1d_window_advance_to" },
+  { module = "kda_conv_tokens", func = "causal_conv1d_window_advance_to" },
+  { module = "kda_conv_tokens", func = "causal_conv1d_update_l2norm_tokens" },
+  { module = "kda_conv_tokens", func = "causal_conv1d_window_advance" },
+]
+repeat = "once"
+emitter = "kda"
+rows = [3, 3]
+modes = ["verify"]
+when = { glm_kda_verify_tokens = "on" }
+numerics = "reference"
+priority = 125
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:302-306 (snap_tokens: glm_kda_verify_tokens, crates/settings/src/groups/kernels.rs:133); crates/model-arch/src/glm5next_kda/seq_tokens.rs:212 (snap_tokens_apply: 2..=4 rows, k - 1 snapshots); crates/model-arch/src/glm5next_kda/seq_tokens.rs:77-146 (stateful_tokens_snap), :102 (window_advance_to per snapshot, glm_kda_conv_snap_to default on at crates/settings/src/groups/kernels.rs:124), :153-181 (conv_tokens: causal_conv1d_update_l2norm_tokens, then causal_conv1d_window_advance); crates/model-arch/src/glm5next_layer/steps/mix.rs:48-51 (a verify snapshots rows 0..k-2)"
+
+[[rule]]
+id = "glm_kda_conv_tokens_verify_4"
+pattern = [
+  { op = "conv1d_update", local = "short_conv" },
+  { op = "state_snapshot" },
+  { op = "l2_norm", writes = "bf16" },
+]
+kernels = [
+  { module = "kda_conv_tokens", func = "causal_conv1d_window_advance_to" },
+  { module = "kda_conv_tokens", func = "causal_conv1d_window_advance_to" },
+  { module = "kda_conv_tokens", func = "causal_conv1d_window_advance_to" },
+  { module = "kda_conv_tokens", func = "causal_conv1d_update_l2norm_tokens" },
+  { module = "kda_conv_tokens", func = "causal_conv1d_window_advance" },
+]
+repeat = "once"
+emitter = "kda"
+rows = [4, 4]
+modes = ["verify"]
+when = { glm_kda_verify_tokens = "on" }
+numerics = "reference"
+priority = 125
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:302-306 (snap_tokens: glm_kda_verify_tokens, crates/settings/src/groups/kernels.rs:133); crates/model-arch/src/glm5next_kda/seq_tokens.rs:212 (snap_tokens_apply: 2..=4 rows, k - 1 snapshots); crates/model-arch/src/glm5next_kda/seq_tokens.rs:77-146 (stateful_tokens_snap), :102 (window_advance_to per snapshot, glm_kda_conv_snap_to default on at crates/settings/src/groups/kernels.rs:124), :153-181 (conv_tokens: causal_conv1d_update_l2norm_tokens, then causal_conv1d_window_advance); crates/model-arch/src/glm5next_layer/steps/mix.rs:48-51 (a verify snapshots rows 0..k-2)"
+
+[[rule]]
+id = "glm_kda_recurrence_verify_tokens"
+pattern = [{ op = "gdn_recurrence", input = "bf16", params = { decay = "channel" } }]
+kernels = [{ module = "kda_recurrent", func = "kda_recurrent_decode_bf16_seq_reg_snap" }]
+repeat = "once"
+emitter = "kda"
+rows = [2, 4]
+modes = ["verify"]
+when = { ssm_h_dtype = "f32", glm_kda_verify_tokens = "on" }
+numerics = "reference"
+priority = 30
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:302-306 (snap_tokens: glm_kda_verify_tokens, crates/settings/src/groups/kernels.rs:133); crates/model-arch/src/glm5next_kda/seq_tokens.rs:212 (snap_tokens_apply: 2..=4 rows, k - 1 snapshots); crates/model-arch/src/glm5next_kda/seq_tokens.rs:77-146 (stateful_tokens_snap), :102 (window_advance_to per snapshot, glm_kda_conv_snap_to default on at crates/settings/src/groups/kernels.rs:124), :153-181 (conv_tokens: causal_conv1d_update_l2norm_tokens, then causal_conv1d_window_advance); crates/model-arch/src/glm5next_layer/steps/mix.rs:48-51 (a verify snapshots rows 0..k-2)"
+
+# 2026-10-22: glm_kda_seq_rows = decode: a batched decode (one row per sequence, two or more
+# sequences) steps every row in one conv and one recurrent launch per launch group of <= 16 rows
+# (`decode_seq_rows`): `causal_conv1d_update_l2norm_rows`, then `kda_recurrent_decode_bf16_rows_reg`
+# under glm_kda_rows_reg, else `kda_recurrent_decode_bf16_smem_rows`.
+
+[[rule]]
+id = "glm_kda_conv_l2_seq_rows"
+pattern = [
+  { op = "conv1d_update", local = "short_conv" },
+  { op = "state_snapshot" },
+  { op = "l2_norm", writes = "bf16" },
+]
+kernels = [{ module = "causal_conv1d", func = "causal_conv1d_update_l2norm_rows" }]
+repeat = "once"
+emitter = "kda"
+rows = [2, 16]
+modes = ["multi_seq"]
+when = { glm_kda_seq_rows = "decode" }
+numerics = "reference"
+priority = 125
+cite = "crates/model-arch/src/glm5next_kda/levers.rs:89-93 (glm_kda_seq_rows decode = KdaSeqRows::DecodeOnly, crates/settings/src/groups/kernels.rs:131); crates/model-arch/src/glm5next_kda/rows.rs:100-112 (use_rows for one row per sequence), :125-150 (one conv_rows and recurrent_rows per t_major launch); crates/model-arch/src/glm5next_kda/rows.rs:159 (conv_rows: causal_conv1d_update_l2norm_rows)"
+
+[[rule]]
+id = "glm_kda_recurrence_seq_rows_reg"
+pattern = [{ op = "gdn_recurrence", input = "bf16", params = { decay = "channel" } }]
+kernels = [{ module = "kda_recurrent", func = "kda_recurrent_decode_bf16_rows_reg" }]
+repeat = "once"
+emitter = "kda"
+rows = [2, 16]
+modes = ["multi_seq"]
+when = { ssm_h_dtype = "f32", glm_kda_seq_rows = "decode", glm_kda_rows_reg = "on" }
+numerics = "reference"
+priority = 30
+cite = "crates/model-arch/src/glm5next_kda/levers.rs:89-93 (glm_kda_seq_rows decode = KdaSeqRows::DecodeOnly, crates/settings/src/groups/kernels.rs:131); crates/model-arch/src/glm5next_kda/rows.rs:100-112 (use_rows for one row per sequence), :125-150 (one conv_rows and recurrent_rows per t_major launch); crates/model-arch/src/glm5next_kda/rows.rs:193-215 (recurrent_rows: kda_recurrent_decode_bf16_rows_reg; glm_kda_rows_reg, crates/settings/src/groups/kernels.rs:129)"
+
+[[rule]]
+id = "glm_kda_recurrence_seq_rows"
+pattern = [{ op = "gdn_recurrence", input = "bf16", params = { decay = "channel" } }]
+kernels = [{ module = "kda_recurrent", func = "kda_recurrent_decode_bf16_smem_rows" }]
+repeat = "once"
+emitter = "kda"
+rows = [2, 16]
+modes = ["multi_seq"]
+when = { ssm_h_dtype = "f32", glm_kda_seq_rows = "decode", glm_kda_rows_reg = "off" }
+numerics = "reference"
+priority = 30
+cite = "crates/model-arch/src/glm5next_kda/levers.rs:89-93 (glm_kda_seq_rows decode = KdaSeqRows::DecodeOnly, crates/settings/src/groups/kernels.rs:131); crates/model-arch/src/glm5next_kda/rows.rs:100-112 (use_rows for one row per sequence), :125-150 (one conv_rows and recurrent_rows per t_major launch); crates/model-arch/src/glm5next_kda/rows.rs:193-215 (recurrent_rows: kda_recurrent_decode_bf16_smem_rows; glm_kda_rows_reg off)"
+
 # 2026-10-22: GLM-5's routed experts at declared W4A4 (`w4a4_experts`): the rows quantized once
 # under the checkpoint's static input scale (`w4a4_quant_rows_static`), then the persistent sweep
 # `sweep_kernel` picks by rows: at one row over the row's own slots, at 2..=8 and 9..=16 rows the

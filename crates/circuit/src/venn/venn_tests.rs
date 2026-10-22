@@ -364,3 +364,26 @@ fn the_report_is_deterministic_and_ranked_by_time_then_site() {
         .unwrap();
     assert_eq!(down.count, 2);
 }
+
+// 2026-10-22: A legacy loop lifted by a lever runs unless every `unless` setting holds.
+#[test]
+fn a_legacy_loop_runs_unless_its_lever_is_stated() {
+    let mut l = super::families::LegacyPath {
+        arch: "a".into(),
+        layer_kind: crate::ir::LayerKind::LinearAttention,
+        per_sequence: vec![Mode::Verify],
+        sites: Vec::new(),
+        rows_above: 1,
+        cite: "x.rs:1".into(),
+        holds: "for".into(),
+        note: String::new(),
+        unless: BTreeMap::new(),
+    };
+    let on = BTreeMap::from([("lever".to_string(), "on".to_string())]);
+    let off = BTreeMap::from([("lever".to_string(), "off".to_string())]);
+    assert!(l.runs_under(&on), "no `unless`: always runs");
+    l.unless.insert("lever".into(), "on".into());
+    assert!(!l.runs_under(&on));
+    assert!(l.runs_under(&off));
+    assert!(l.runs_under(&BTreeMap::new()), "an unstated lever is not the lifting arm");
+}

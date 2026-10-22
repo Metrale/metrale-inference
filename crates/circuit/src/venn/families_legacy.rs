@@ -6,6 +6,8 @@
 //! Owner: metrale-circuit (venn).
 //! Invariants: see [`super`].
 
+use std::collections::BTreeMap;
+
 use serde::Deserialize;
 
 use super::{FamilyError, LegacyPath};
@@ -23,6 +25,8 @@ pub(super) struct LegacyFile {
     cite: String,
     holds: String,
     note: String,
+    #[serde(default)]
+    unless: BTreeMap<String, String>,
 }
 
 pub(super) fn legacy(l: LegacyFile) -> Result<LegacyPath, FamilyError> {
@@ -46,5 +50,6 @@ pub(super) fn legacy(l: LegacyFile) -> Result<LegacyPath, FamilyError> {
         cite: l.cite.clone(),
         holds: l.holds.clone(),
         note: l.note,
+        unless: l.unless,
     })
 }

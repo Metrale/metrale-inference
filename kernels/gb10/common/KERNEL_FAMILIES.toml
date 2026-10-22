@@ -406,6 +406,12 @@ kernels = [
   "causal_conv1d::causal_conv1d_update_l2norm_f32", "causal_conv1d::causal_conv1d_update_l2norm",
   "causal_conv1d::causal_conv1d_update_l2norm_f32_strided",
   "kda_conv_tokens::causal_conv1d_update_l2norm_tokens",
+  # 2026-10-22: The batched decode's conv, one row of each sequence per launch
+  # (METRALE_GLM_KDA_SEQ_ROWS=decode; causal_conv1d.cu:355, BF16 out), and the token conv's window
+  # steps: `_window_advance_to` writes a verify's conv intermediate (the snapshot) from the live
+  # window, `_window_advance` advances the live window after the token conv (kda_conv_tokens.cu).
+  "causal_conv1d::causal_conv1d_update_l2norm_rows",
+  "kda_conv_tokens::causal_conv1d_window_advance_to", "kda_conv_tokens::causal_conv1d_window_advance",
 ]
 rows = [1, 4096]
 # 2026-10-02: The conv output reaches the L2 norm in FP32 registers; the verify kernel
@@ -416,6 +422,7 @@ pipeline.state_snapshot = { in = ["f32"], state = "f32", out = [] }
 pipeline.l2_norm = { in = ["f32"], compute = "f32", out = ["f32"] }
 kernel_pipeline."causal_conv1d::causal_conv1d_update_l2norm".l2_norm = { in = ["f32"], compute = "f32", out = ["bf16"] }
 kernel_pipeline."kda_conv_tokens::causal_conv1d_update_l2norm_tokens".l2_norm = { in = ["f32"], compute = "f32", out = ["bf16"] }
+kernel_pipeline."causal_conv1d::causal_conv1d_update_l2norm_rows".l2_norm = { in = ["f32"], compute = "f32", out = ["bf16"] }
 op = [
   { op = "conv1d_update", feeds = ["l2_norm"] },
   { op = "state_snapshot", after = ["conv1d_update"], beside = ["l2_norm"] },
@@ -442,6 +449,14 @@ measurement = "glm-5.3-flash::causal_conv1d_update_l2norm_tokens @ decode C=1 (R
 point = {}
 rows = [2]
 measurement = "glm-5.3-flash::causal_conv1d_update_l2norm_tokens @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k"
+[[family.evidence]]
+point = {}
+rows = [2]
+measurement = "glm-5.3-flash::causal_conv1d_window_advance_to @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k"
+[[family.evidence]]
+point = {}
+rows = [2]
+measurement = "glm-5.3-flash::causal_conv1d_window_advance_to @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k"
 
 [[family]]
 id = "gdn_recurrence"
@@ -2311,6 +2326,9 @@ compute = "cuda_core"
 kernels = [
   "kda_recurrent::kda_recurrent_decode_bf16", "kda_recurrent::kda_recurrent_decode_bf16_smem",
   "kda_recurrent::kda_recurrent_decode_bf16_seq_reg_snap",
+  # 2026-10-22: The register-resident single-token step (METRALE_GLM_KDA_ROW_REG, the recipe's): T = 1
+  # of seq_reg's body, the shared-memory kernel's expressions in order (kda_recurrent.cu:447).
+  "kda_recurrent::kda_recurrent_decode_bf16_seq_reg",
 ]
 rows = [1, 4]
 pipeline.gdn_recurrence = { in = ["bf16", "f32", "f32"], state = "f32", compute = "f32", out = ["f32"] }
@@ -2333,6 +2351,31 @@ measurement = "glm-5.3-flash::kda_recurrent_decode_bf16_seq_reg_snap @ decode C=
 point = { decay = "channel" }
 rows = [2]
 measurement = "glm-5.3-flash::kda_recurrent_decode_bf16_seq_reg_snap @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈128k"
+
+# 2026-10-22: The KDA recurrence of a batched decode: one token of each of up to 16 sequences in one
+# launch (grid.z = rows), each sequence's state its own slot (METRALE_GLM_KDA_SEQ_ROWS=decode): the
+# shared-memory kernel's 1R+1W geometry (`_smem_rows`), or the register-resident one under
+# METRALE_GLM_KDA_ROWS_REG (`_rows_reg`); per row the one-token kernel's expressions in order
+# (kda_recurrent.cu:279, :333).
+[[family]]
+id = "kda_recurrent_rows"
+description = "KDA gated delta rule with per-channel decay, one token of each of up to 16 sequences per launch"
+compute = "cuda_core"
+kernels = [
+  "kda_recurrent::kda_recurrent_decode_bf16_smem_rows", "kda_recurrent::kda_recurrent_decode_bf16_rows_reg",
+]
+rows = [1, 16]
+pipeline.gdn_recurrence = { in = ["bf16", "f32", "f32"], state = "f32", compute = "f32", out = ["f32"] }
+op = [{ op = "gdn_recurrence" }]
+[[family.param]]
+name = "decay"
+kind = "policy"
+from = { gdn_recurrence = "param:decay" }
+absent = "head"
+[[family.point]]
+values = { decay = "channel" }
+how = "instantiation"
+files = ["kernels/gb10/common/kda_recurrent.cu"]
 
 # 2026-10-08: The KDA output norm: RMSNorm over each head of the FP32 core, times the BF16 weight,
 # times sigmoid of the BF16 gate, BF16 out (kda_layer_ops.cu:40-63). One block per (row, head).
@@ -2721,6 +2764,8 @@ rows_above = 1
 cite = "crates/model-arch/src/glm5next_kda/rows.rs:134"
 holds = "return self.decode_rows_then(gpu, hidden, &states, ws, stream, after_row);"
 note = "KDA batched decode: conv and recurrence one row per launch unless METRALE_GLM_KDA_SEQ_ROWS (2026-10-09: the rows kernels, one launch per 16 rows)"
+# 2026-10-22: The recipe's METRALE_GLM_KDA_SEQ_ROWS=decode takes decode_seq_rows (rows.rs:100-112).
+unless = { glm_kda_seq_rows = "decode" }
 
 [[legacy_path]]
 arch = "glm5_next"
@@ -2744,6 +2789,9 @@ rows_above = 1
 cite = "crates/model-arch/src/glm5next_kda/decode.rs:451"
 holds = "for row in 0..k {"
 note = "KDA verify: conv and recurrence one row per launch (stateful_row); 2026-10-09: without per-row snapshots, one conv and one recurrent launch under METRALE_GLM_KDA_SEQ_TOKENS"
+# 2026-10-22: The recipe's METRALE_GLM_KDA_VERIFY_TOKENS=1 takes stateful_tokens_snap at 2..=4 rows
+# (decode.rs:302-306); above 4 the rules' per-row groups cost the walk.
+unless = { glm_kda_verify_tokens = "on" }
 
 [[legacy_path]]
 arch = "glm5_next"
