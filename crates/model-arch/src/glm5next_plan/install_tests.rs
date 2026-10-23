@@ -13,16 +13,19 @@ use metrale_circuit::{AvailableKernels, Mode};
 
 use super::*;
 use crate::glm5next_plan::compile_moe;
-use crate::glm5next_plan::fixture::{plan, ranks};
-use crate::glm5next_plan::fixture_site::{OUT, STREAM, X, site, weights};
+use crate::glm5next_plan::fixture::{plan, ranks, worlds};
+use crate::glm5next_plan::fixture_site::{OUT, STREAM, X, site, site_at, weights};
 
 /// 2026-10-23: Every rank's live policy under the served recipe's levers is the instance's: the
 /// instance states the recipe, so the installed plan is the one the reports describe.
 #[test]
 fn the_served_levers_fuse_under_the_instance_policy() {
     let (_, _, policy) = ranks();
-    for rank in 0..3 {
-        let s = site(rank);
+    for (world, rank) in worlds()
+        .into_iter()
+        .flat_map(|w| (0..w).map(move |r| (w, r)))
+    {
+        let s = site_at(rank, world);
         assert!(unmodelled(&s.k).is_empty(), "{:?}", unmodelled(&s.k));
         let live = live_policy(&policy, &s.k, &s.cfg).unwrap();
         assert_eq!(live.settings, policy.settings, "rank {rank}");

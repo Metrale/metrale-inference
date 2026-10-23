@@ -26,7 +26,9 @@ use crate::glm5next_kda::{
     Glm5NextKdaWorkspace, KdaSeqState,
 };
 use crate::glm5next_layer::GlmLevers;
-use crate::glm5next_plan::fixture::{RUNS, model_config, plan, ranks, served_levers};
+use crate::glm5next_plan::fixture::{
+    RUNS, model_config_at, plan, ranks, ranks_at, served_levers, served_world, worlds,
+};
 use crate::glm5next_plan::fixture_site::{SMS, STREAM, gate};
 use crate::glm5next_plan::{compile_kda, kda};
 use crate::glm5next_w4a16_plan::W4a16Step;
@@ -62,6 +64,18 @@ fn kda_layers(c: &Circuit) -> Vec<usize> {
     v
 }
 
+/// 2026-10-23: Rank `rank` of `world`'s KDA value heads as the loader divides them
+/// (`shard_heads_for_tp` under its support at the served W4A16 channel unit).
+fn engine_heads(rank: usize, world: usize) -> usize {
+    let mut c = model_config_at(rank, world);
+    let unit = crate::glm5next_w4a16_dense::kda_channel_unit();
+    c.shard_heads_for_tp(metrale_config::TpSupport::Uneven {
+        linear_channel_unit: unit,
+    })
+    .unwrap();
+    c.linear_num_value_heads
+}
+
 struct Mixer<'a> {
     gpu: &'a RecordingGpu,
     layer: Glm5NextKdaLayer,
@@ -75,12 +89,12 @@ struct Mixer<'a> {
 /// are process-wide and keyed by address, so every mixer of a process allocates on one device.
 fn mixer(
     gpu: &RecordingGpu,
-    rank: usize,
+    (rank, world): (usize, usize),
     idx: usize,
     heads: usize,
     levers: GlmLevers,
 ) -> Mixer<'_> {
-    let mut cfg = Glm5NextKdaConfig::from_model_config(&model_config(rank));
+    let mut cfg = Glm5NextKdaConfig::from_model_config(&model_config_at(rank, world));
     cfg.heads = heads;
     let w = || DenseWeight {
         weight: gpu.alloc(64).unwrap(),
@@ -204,10 +218,13 @@ fn kernels(ops: &[Op]) -> Vec<&str> {
 #[test]
 fn every_kda_mixer_launches_what_decode_k_launches() {
     in_w4a16_process("every_kda_mixer_launches_what_decode_k_launches", || {
-        let (c, rules, policy) = ranks();
         let gpu = RecordingGpu::new(SMS);
         let mut mixers = 0;
-        for rank in 0..3 {
+        for (world, rank) in worlds()
+            .into_iter()
+            .flat_map(|w| (0..w).map(move |r| (w, r)))
+        {
+            let (c, rules, policy) = ranks_at(world).unwrap();
             let layers = kda_layers(&c[rank]);
             assert!(
                 layers.len() > 30,
@@ -215,10 +232,14 @@ fn every_kda_mixer_launches_what_decode_k_launches() {
                 layers.len()
             );
             let heads = c[rank].dims["lin_v_heads"] as usize;
-            assert_eq!(heads, [22, 22, 20][rank], "the w4a16 head split");
+            assert_eq!(
+                heads,
+                engine_heads(rank, world),
+                "world {world} rank {rank}: the head split"
+            );
             let built: Vec<Mixer> = layers
                 .iter()
-                .map(|&l| mixer(&gpu, rank, l, heads, served_levers()))
+                .map(|&l| mixer(&gpu, (rank, world), l, heads, served_levers()))
                 .collect();
             for (mode, rows) in RUNS {
                 let p = plan(&c, &rules, &policy, rank, mode, rows);
@@ -290,7 +311,7 @@ fn a_changed_plan_field_turns_the_gate_red() {
         let l = kda_layers(&c[0])[0];
         let heads = c[0].dims["lin_v_heads"] as usize;
         let gpu = RecordingGpu::new(SMS);
-        let m = mixer(&gpu, 0, l, heads, served_levers());
+        let m = mixer(&gpu, (0, served_world()), l, heads, served_levers());
         for (mode, rows) in RUNS {
             let p = plan(&c, &rules, &policy, 0, mode, rows);
             let rows = rows as usize;

@@ -139,6 +139,10 @@ pub fn load_served(
     let from_checkpoint = sources::checkpoint_shape(config_json, config.vocab_size as u64)?;
     served.shape = sources::served_shape(&instance.shape, &from_checkpoint)?;
     let src = sources::sources(&served)?;
+    // 2026-10-23: The deployment of this serve's device count, derived from the circuit's spec
+    // for any N (`metrale_circuit::deploy`); refused naming the part that cannot split.
+    let world = u64::try_from(config.tp_world_size.max(1))?;
+    let served = metrale_circuit::deploy::deployed(&served, src, world)?;
     Ok(match &served.precision {
         // 2026-09-28: The served model's own policy: its parsed quantization_config under
         // the published tier and kernel capabilities, with the instance's engine formats.

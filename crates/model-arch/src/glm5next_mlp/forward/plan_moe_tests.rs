@@ -14,8 +14,8 @@ use metrale_gpu_runtime::gpu::recording::Op;
 
 use super::*;
 use crate::glm5next_plan::compile_moe;
-use crate::glm5next_plan::fixture::{RUNS, moe_layers, plan, ranks};
-use crate::glm5next_plan::fixture_site::{OUT, STREAM, Site, X, gate, site, weights};
+use crate::glm5next_plan::fixture::{RUNS, moe_layers, plan, ranks, ranks_at, worlds};
+use crate::glm5next_plan::fixture_site::{OUT, STREAM, Site, X, gate, site, site_at, weights};
 
 fn legacy(s: &Site, w: &Glm5NextMoeWeights, rows: usize) -> Vec<Op> {
     super::super::forward_moe(&s.gpu, &s.k, &s.cfg, w, X, OUT, rows, &s.ws, true, STREAM).unwrap();
@@ -34,10 +34,14 @@ fn planned(s: &Site, w: &Glm5NextMoeWeights, steps: MoeSteps<KernelId>) -> Vec<O
 /// trivially equal: each holds the site's whole launch sequence, which the counts pin.
 #[test]
 fn every_plan_executed_moe_site_launches_what_the_legacy_site_launches() {
-    let (c, rules, policy) = ranks();
-    let mut sites = 0;
-    for rank in 0..3 {
-        let s = site(rank);
+    let (mut sites, mut want_sites) = (0, 0);
+    for (world, rank) in worlds()
+        .into_iter()
+        .flat_map(|w| (0..w).map(move |r| (w, r)))
+    {
+        let (c, rules, policy) = ranks_at(world).unwrap();
+        let s = site_at(rank, world);
+        want_sites += 2 * 42;
         for (mode, rows) in RUNS {
             let p = plan(&c, &rules, &policy, rank, mode, rows);
             for l in moe_layers(&c[rank]) {
@@ -65,7 +69,8 @@ fn every_plan_executed_moe_site_launches_what_the_legacy_site_launches() {
             }
         }
     }
-    assert_eq!(sites, 3 * 2 * 42);
+    assert_eq!(sites, want_sites);
+    assert!(sites > 3 * 2 * 42, "more than the served world's sites");
 }
 
 fn one_site(rank: usize, mode: Mode, rows: u64) -> (Site, Glm5NextMoeWeights, MoeSteps<KernelId>) {

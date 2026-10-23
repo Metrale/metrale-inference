@@ -181,3 +181,26 @@ fn duplicate_ids_bad_toml_and_bad_schema_are_refused() {
         Err(RuleError::Parse(_))
     ));
 }
+
+/// 2026-10-23: `ranks` loads on a collective element as a group-size predicate, and is refused on
+/// any other op (PCND: never read as "any size") and when malformed.
+#[test]
+fn ranks_loads_on_a_collective_only() {
+    let collective = OK.replace(
+        r#"  { op = "residual_add", local = "add", keep = true },
+  { op = "rms_norm", local = "post_norm" },"#,
+        r#"  { op = "all_reduce", ranks = { min = 3 } },"#,
+    );
+    let r = &parse_rules(&collective).unwrap()[0];
+    let p = r.pattern[0].ranks.expect("the predicate loads");
+    assert!(p.holds(3) && p.holds(8) && !p.holds(2));
+    let on_norm = OK.replace(
+        r#"{ op = "rms_norm", local = "post_norm" }"#,
+        r#"{ op = "rms_norm", local = "post_norm", ranks = { max = 2 } }"#,
+    );
+    let e = parse_rules(&on_norm).expect_err("ranks on a norm");
+    assert!(e.to_string().contains("`ranks` on `rms_norm`, which is no collective"), "{e}");
+    let empty = collective.replace("ranks = { min = 3 }", "ranks = {}");
+    let e = parse_rules(&empty).expect_err("a predicate with no test");
+    assert!(e.to_string().contains("ranks: states no test"), "{e}");
+}

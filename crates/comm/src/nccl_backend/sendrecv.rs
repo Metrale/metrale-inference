@@ -32,7 +32,7 @@ use metrale_gpu_sys::nccl::{self, NcclComm, NcclDataType, NcclResult};
 
 use crate::PeerPartials;
 
-use super::ar_path::{ArPath, ar_path};
+use crate::ar_path::{ArPath, ar_path};
 use super::{
     ALL_REDUCE_DTYPE_BYTES, NcclBackend, cuLaunchKernel, cuMemAlloc_v2, cuMemFree_v2,
     ensure_payload_fits,

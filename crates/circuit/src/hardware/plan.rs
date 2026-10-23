@@ -302,6 +302,7 @@ fn placeholder(op: &crate::ir::OpKind, input: Option<crate::format::Format>) -> 
             holds: None,
             steps: BTreeMap::new(),
             params: BTreeMap::new(),
+            ranks: None,
         }],
         kernels: Vec::new(),
         repeat: Repeat::Once,

@@ -27,20 +27,44 @@ pub(crate) fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// 2026-10-23: Each rank's circuit and the rules of the served instance.
-pub(crate) fn ranks() -> (
+/// 2026-10-23: The rank counts the gates cover (the owner's bound).
+pub(crate) const MAX_WORLD: usize = 8;
+
+/// 2026-10-23: Each rank's circuit, the rules and the policy of the served instance.
+pub(crate) type Ranks = (
     Vec<Circuit>,
     Vec<metrale_circuit::Rule>,
     metrale_circuit::Policy,
-) {
+);
+
+/// 2026-10-23: The served recipe's device count (its `[instance.parallel]`).
+pub(crate) fn served_world() -> usize {
     let inst = sources::instance(RECIPE).unwrap();
-    let loaded = metrale_circuit::load(&inst, sources::sources(&inst).unwrap()).unwrap();
-    assert_eq!(
-        loaded.ranks.len(),
-        3,
-        "the served instance plans three ranks"
-    );
-    (loaded.ranks, loaded.rules, inst.policy)
+    inst.parallel
+        .expect("the served recipe is multi-device")
+        .ranks as usize
+}
+
+/// 2026-10-23: The served instance over `world` devices, its deployment derived as the serve
+/// derives it (`metrale_circuit::deploy::deployed`), or the refusal naming the part that cannot
+/// split.
+pub(crate) fn ranks_at(world: usize) -> Result<Ranks, metrale_error::Error> {
+    let inst = sources::instance(RECIPE).unwrap();
+    let src = sources::sources(&inst).unwrap();
+    let inst = metrale_circuit::deploy::deployed(&inst, src, u64::try_from(world).unwrap())?;
+    let loaded = metrale_circuit::load(&inst, src).unwrap();
+    assert_eq!(loaded.ranks.len(), if world == 1 { 0 } else { world });
+    Ok((loaded.ranks, loaded.rules, inst.policy))
+}
+
+/// 2026-10-23: The tensor-parallel worlds (2..=[`MAX_WORLD`]) the served instance admits.
+pub(crate) fn worlds() -> Vec<usize> {
+    (2..=MAX_WORLD).filter(|&w| ranks_at(w).is_ok()).collect()
+}
+
+/// 2026-10-23: Each rank's circuit and the rules of the served instance at its device count.
+pub(crate) fn ranks() -> Ranks {
+    ranks_at(served_world()).unwrap()
 }
 
 /// 2026-10-23: Rank `rank`'s plan at `mode` and `rows`, with every kernel a rule names available.
@@ -147,17 +171,17 @@ pub(crate) fn served_levers() -> GlmLevers {
     GlmLevers::from_settings(&served_settings()).unwrap()
 }
 
-/// 2026-10-23: Rank `rank`'s MLP config under the recipe's `tensor_parallel: 3`, `ep_size: 1`,
+/// 2026-10-23: Rank `rank`'s MLP config over `world` ranks under the recipe's `ep_size: 1`,
 /// `moe_expert_layout: tp`.
-pub(crate) fn mlp_config(rank: usize) -> Glm5NextMlpConfig {
-    Glm5NextMlpConfig::from_config(&model_config(rank)).unwrap()
+pub(crate) fn mlp_config_at(rank: usize, world: usize) -> Glm5NextMlpConfig {
+    Glm5NextMlpConfig::from_config(&model_config_at(rank, world)).unwrap()
 }
 
-/// 2026-10-23: Rank `rank`'s model config under the recipe's parallel layout.
-pub(crate) fn model_config(rank: usize) -> metrale_config::ModelConfig {
+/// 2026-10-23: Rank `rank`'s model config over `world` ranks under the recipe's parallel layout.
+pub(crate) fn model_config_at(rank: usize, world: usize) -> metrale_config::ModelConfig {
     let json = std::fs::read_to_string(root().join(CONFIG)).unwrap();
     let mut c = metrale_config::parse_config(&json).unwrap();
-    c.tp_world_size = 3;
+    c.tp_world_size = world;
     c.tp_rank = rank;
     c.ep_world_size = 1;
     c.moe_expert_layout = metrale_config::MoeExpertLayout::Tp;

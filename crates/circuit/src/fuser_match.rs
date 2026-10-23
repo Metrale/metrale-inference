@@ -36,6 +36,16 @@ pub(crate) fn fits(c: &Circuit, p: &PatternOp, n: &Node) -> bool {
         && p.layer_kind
             .is_none_or(|k| n.layer.is_some_and(|i| c.layer_kinds[i] == k))
         && p.params.iter().all(|(k, v)| n.params.get(k) == Some(v))
+        && p.ranks
+            .is_none_or(|r| group_size(n).is_some_and(|g| r.holds(g)))
+}
+
+/// 2026-10-23: The size of a collective's communicator group (its `group` param, the ranks
+/// comma-separated, as `instantiate::shard` writes it on every collective it derives).
+fn group_size(n: &Node) -> Option<u64> {
+    n.params
+        .get("group")
+        .and_then(|g| u64::try_from(g.split(',').count()).ok())
 }
 
 /// 2026-09-30: A node that reads a quantized activation (an `act_quant` output) matches only

@@ -12,7 +12,7 @@ use metrale_config::{ActivationQuantization, Nvfp4Act, ProjFamily};
 use metrale_gpu_runtime::gpu::DevicePtr;
 use metrale_gpu_runtime::gpu::recording::{Op, RecordingGpu, stream_graph};
 
-use super::fixture::{mlp_config, served_levers};
+use super::fixture::{mlp_config_at, served_levers, served_world};
 use crate::glm5next_mlp::forward::Glm5NextMlpWorkspace;
 use crate::glm5next_mlp::precision::{GroupPrecision, MlpGroup};
 use crate::glm5next_mlp::weights::{
@@ -42,9 +42,14 @@ pub(crate) struct Site {
 }
 
 pub(crate) fn site(rank: usize) -> Site {
+    site_at(rank, served_world())
+}
+
+/// 2026-10-23: Rank `rank` of `world`'s site.
+pub(crate) fn site_at(rank: usize, world: usize) -> Site {
     let gpu = RecordingGpu::new(SMS);
     let k = Glm5NextMlpKernels::resolve(&gpu, served_levers()).unwrap();
-    let cfg = mlp_config(rank);
+    let cfg = mlp_config_at(rank, world);
     let ws = Glm5NextMlpWorkspace::new(&gpu, &cfg, 16, &k.levers.mlp).unwrap();
     gpu.take();
     Site { gpu, k, cfg, ws }

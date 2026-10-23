@@ -38,8 +38,11 @@ fn the_fixture_plans_are_the_reported_ones() {
 /// row over 16 blocks; compact scales everywhere; the shared expert is the one legacy site.
 #[test]
 fn every_moe_site_compiles_into_the_served_steps() {
-    let (c, rules, policy) = ranks();
-    for rank in 0..3 {
+    for (world, rank) in worlds()
+        .into_iter()
+        .flat_map(|w| (0..w).map(move |r| (w, r)))
+    {
+        let (c, rules, policy) = ranks_at(world).unwrap();
         let layers = moe_layers(&c[rank]);
         assert_eq!(
             layers.len(),
@@ -56,9 +59,18 @@ fn every_moe_site_compiles_into_the_served_steps() {
                     ["moe [shared_gate_up,shared_clamp,shared_act,shared_down]"]
                 );
                 let s = site.steps;
-                let k64 = rank < 2;
-                assert_eq!(s.moe_inter, if k64 { 704 } else { 640 });
-                assert_eq!(s.down.k_store, if k64 { 768 } else { 640 }, "rank {rank}");
+                let slice = mlp_config_at(rank, world).moe_intermediate;
+                let k64 = !slice.is_multiple_of(128);
+                if world == served_world() {
+                    assert_eq!(slice, [704, 704, 640][rank], "the served split");
+                }
+                assert_eq!(s.moe_inter, slice, "world {world} rank {rank}");
+                let stored = if k64 {
+                    slice.next_multiple_of(128)
+                } else {
+                    slice
+                };
+                assert_eq!(s.down.k_store, stored, "world {world} rank {rank}");
                 assert_eq!(s.down.quant.func.ends_with("_k64"), k64, "rank {rank}");
                 assert_eq!(s.gate_up.k_store, 4096);
                 assert_eq!(s.blend.blocks_per_row, 16);

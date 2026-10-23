@@ -32,6 +32,7 @@ pub mod checkpoint;
 pub mod circuit_toml;
 pub mod config_map;
 pub mod declared_precision;
+pub mod deploy;
 pub mod digest;
 pub mod dims;
 pub mod fidelity;

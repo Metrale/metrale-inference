@@ -2,7 +2,7 @@
 # recipe: qwen3.6/qwen3.6-35b-a3b-nvfp4-declared
 # checkpoint: nvidia/Qwen3.6-35B-A3B-NVFP4
 # target: gb10/qwen3.6-35b-a3b/nvfp4
-# settings: activation_quantization=adaptive decode_split_silu=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=nvfp4 rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
+# settings: activation_quantization=adaptive decode_split_silu=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=nvfp4 rms_norm_act_quant=off row_tiers=canonical screen_head=on ssm_ba_gates_hopper=on ssm_batched_recurrent=on ssm_h_dtype=f32 w4a16_tc=on
 # opt-in levers: none
 digest: 11ed1c0fe14e0bd476bfce036f79234c98eedeb62e0d5bf585ac8abe711d00d3
 groups: 495  launches: 693  edges: 460 fused, 614 materialized
@@ -1574,7 +1574,7 @@ g0494 head [argmax] (host) reference rule=argmax_host writes={token:i32}
 # recipe: qwen3.6/qwen3.6-35b-a3b-nvfp4-declared
 # checkpoint: nvidia/Qwen3.6-35B-A3B-NVFP4
 # target: gb10/qwen3.6-35b-a3b/nvfp4
-# settings: activation_quantization=adaptive decode_split_silu=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=nvfp4 rms_norm_act_quant=off row_tiers=canonical ssm_ba_gates_hopper=on ssm_batched_recurrent=off ssm_h_dtype=f32 w4a16_tc=on
+# settings: activation_quantization=adaptive decode_split_silu=on gemv_sw=on kv_cache_dtype=bf16 lm_head_dtype=nvfp4 rms_norm_act_quant=off row_tiers=canonical screen_head=on ssm_ba_gates_hopper=on ssm_batched_recurrent=off ssm_h_dtype=f32 w4a16_tc=on
 # opt-in levers: none
 digest: 768a69e3d844008fc6bf53c43ee608300982594e964228cfbee89ada2860c8b6
 groups: 495  launches: 15933  edges: 460 fused, 614 materialized

@@ -232,18 +232,22 @@ measurement = "qwen3.8-27b::residual_add_rms_norm @ decode C=1 (R=4, MTP k=3)"
 [[family]]
 id = "residual_add"
 description = "BF16 residual add"
-explain.about = '''Elementwise residual add of a branch output $s$ into the residual stream $h$, in place, one thread per element over all $m \times d$ elements of the launch. bf16_residual_add adds through FP32 registers; bf16_add_inplace uses the native BF16 add.'''
-explain.numerics = '''Both kernels produce the correctly rounded BF16 sum: bf16_residual_add widens both operands exactly to FP32, adds (exactly representable for all but extreme exponent gaps, where the result still rounds to the same BF16 value) and rounds once to BF16 (RNE); bf16_add_inplace uses the hardware BF16 add with round-to-nearest-even.'''
+explain.about = '''Elementwise residual add of a branch output $s$ into the residual stream $h$, in place, one thread per element over all $m \times d$ elements of the launch. bf16_residual_add adds through FP32 registers; bf16_add_inplace uses the native BF16 add. The same in-place add is the reduce step of the all-reduce at exactly two tensor-parallel ranks: after the partner exchange each rank adds the partner's BF16 partial $p^{(1-r)}$ into its own $p^{(r)}$, so both hold the sum (its all-gather, zero-padded slices summed into the whole row, is the same add).'''
+explain.numerics = '''Both kernels produce the correctly rounded BF16 sum: bf16_residual_add widens both operands exactly to FP32, adds (exactly representable for all but extreme exponent gaps, where the result still rounds to the same BF16 value) and rounds once to BF16 (RNE); bf16_add_inplace uses the hardware BF16 add with round-to-nearest-even. As the 2-rank all-reduce's sum the add is commutative, so both ranks write the same bytes; against the one-shot rank sum (`tp_rank_sum`) it differs only in the sign of $(-0) + (-0)$.'''
 explain.math = [
   '''h_i \leftarrow \mathrm{rn}_{\mathrm{bf16}}\bigl(h_i + s_i\bigr), \qquad i = 1,\dots,m\,d''',
 ]
 compute = "memory"
 # 2026-10-08: `bf16_add_inplace` (bf16_add.cu) is the in-place twin the GLM-5 MTP block's plain
-# residual adds with (glm5next_layer/steps.rs:183-206).
+# residual adds with (glm5next_layer/steps.rs:183-206). 2026-10-23: And the 2-rank all-reduce's sum
+# (`tp_all_reduce_2rank`, `tp_all_gather_as_sum_2rank`; crates/comm/src/nccl_backend/sendrecv.rs:
+# 285-365 after the partner exchange, `ArPath::TwoRank` at crates/comm/src/ar_path.rs:32-45).
 kernels = ["residual_add::bf16_residual_add", "bf16_add::bf16_add_inplace"]
 rows = [1, 65536]
 pipeline.residual_add = { in = ["bf16", "bf16"], compute = "f32", out = ["bf16"] }
-op = [{ op = "residual_add" }]
+pipeline.all_reduce = { in = ["bf16"], reduce = "bf16", out = ["bf16"] }
+pipeline.all_gather = { in = ["bf16"], move = "bf16", out = ["bf16"] }
+op = [{ op = "residual_add" }, { op = "all_reduce" }, { op = "all_gather" }]
 [[family.point]]
 values = {}
 how = "instantiation"
