@@ -28,6 +28,12 @@ pub mod device;
 pub mod estimate;
 pub mod exec;
 pub mod gaps;
+pub mod headroom;
+mod headroom_model;
+mod headroom_render;
+pub mod headroom_sites;
+mod headroom_svg;
+pub mod headroom_trace;
 pub mod model;
 pub mod model_checkpoint;
 pub mod plan;
@@ -42,6 +48,8 @@ mod tc_policy_render;
 mod fp4_costing_tests;
 #[cfg(test)]
 mod hardware_tests;
+#[cfg(test)]
+mod headroom_tests;
 #[cfg(test)]
 #[path = "runtime_tests.rs"]
 mod runtime_tests;
@@ -59,6 +67,8 @@ use crate::venn::roofline::CostError;
 pub use device::{Device, Registry, parse_devices};
 pub use model::{CircuitSource, InstancesSource, ModelSpec, ModelUnderPlan, PrecisionChoice};
 pub use model_checkpoint::CheckpointSource;
+pub use headroom_render::render_headroom;
+pub use headroom_svg::{Ceilings, roofline_svg, waterfall_svg};
 pub use render::render_report;
 pub use render_matrix::{PortList, port_lists, summary_row};
 pub use render_routes::plan_text;
@@ -341,4 +351,31 @@ pub fn build_report(
             .collect(),
         command,
     })
+}
+
+/// 2026-10-22: The headroom of `model` on `device_id` for the step that runs `runs`
+/// ([`headroom::headroom`]), each run planned as [`plan_one`] plans it.
+pub fn build_headroom(
+    registry: &Registry,
+    device_id: &str,
+    tree: &dyn KernelTree,
+    model: &ModelUnderPlan,
+    runs: &[crate::venn::Run],
+    inputs: &headroom::Inputs<'_>,
+) -> Result<headroom::Headroom, headroom::HeadroomError> {
+    let resolved = plan::resolve(registry, device_id, tree, model)?;
+    let (policy, _) = model::policy_on_class(
+        &model.policy,
+        model.settings_class.as_deref(),
+        &resolved.chain[0],
+    )?;
+    let planned = runs
+        .iter()
+        .map(|&run| {
+            let p = plan::fuse_on(&resolved, &model.circuit, &policy, run)?;
+            tc_policy::enforce(&resolved, &model.circuit, &p)?;
+            Ok(p)
+        })
+        .collect::<Result<Vec<_>, HwError>>()?;
+    headroom::headroom(&resolved, &model.circuit, &policy.settings, &planned, inputs)
 }

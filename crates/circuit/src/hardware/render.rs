@@ -399,19 +399,7 @@ fn plan_sites(s: &mut String, t: &GapTable, r: &HwReport) {
     );
     let mut sites: BTreeMap<(String, String, String), usize> = BTreeMap::new();
     for g in &p.groups {
-        let first = &c.nodes[g.nodes[0]];
-        let locals: Vec<&str> = g.nodes.iter().map(|&n| c.nodes[n].local.as_str()).collect();
-        let what = if g.kernels.is_empty() {
-            format!("({})", g.emitter)
-        } else {
-            let k: Vec<String> = g.kernels.iter().map(|k| k.to_string()).collect();
-            k.join(" + ")
-        };
-        let key = (
-            format!("{} [{}]", first.block, locals.join(",")),
-            what,
-            g.rule.clone(),
-        );
+        let key = (group_site(c, g), group_kernels(g), g.rule.clone());
         *sites.entry(key).or_insert(0) += 1;
     }
     for (rule, why) in &t.planned.refused {
@@ -422,6 +410,24 @@ fn plan_sites(s: &mut String, t: &GapTable, r: &HwReport) {
         let _ = writeln!(s, "| {site} | {what} | {rule} | {n} |");
     }
     let _ = writeln!(s);
+}
+
+/// 2026-10-22: A group's site as the plan tables name it: its first node's block and every
+/// member's local id, `kda [q,k,v]` (one name for a template group across its layers).
+pub(crate) fn group_site(c: &crate::ir::Circuit, g: &crate::fuser::Group) -> String {
+    let locals: Vec<&str> = g.nodes.iter().map(|&n| c.nodes[n].local.as_str()).collect();
+    format!("{} [{}]", c.nodes[g.nodes[0]].block, locals.join(","))
+}
+
+/// 2026-10-22: What a group launches, as the plan tables name it: its kernels joined by ` + `,
+/// or `(emitter)` for a group that launches none.
+pub(crate) fn group_kernels(g: &crate::fuser::Group) -> String {
+    if g.kernels.is_empty() {
+        format!("({})", g.emitter)
+    } else {
+        let k: Vec<String> = g.kernels.iter().map(|k| k.to_string()).collect();
+        k.join(" + ")
+    }
 }
 
 fn gap_rows(s: &mut String, t: &GapTable, projection: &str) {

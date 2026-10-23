@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="viz" viewBox="0 0 960 600" width="960" height="600" role="img" aria-label="Roofline: recipe glm-5.3/glm-5.3-flash-nvfp4-tp3-512k on gb10">
+<title>Roofline: recipe glm-5.3/glm-5.3-flash-nvfp4-tp3-512k on gb10</title>
+<desc>Arithmetic intensity (FLOP/byte) against throughput (TFLOP/s), log-log. Filled: measured; hollow: unmeasured projection at the floor; the faint line joins a measured site to its floor.</desc>
+<style>
+.viz text{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:12px}
+.viz .t{font-size:15px;font-weight:600}
+.viz .g{stroke-width:1}.viz .c{stroke-width:2;fill:none;stroke-dasharray:6 4}
+.viz .m{stroke-width:2}.viz .p{stroke-width:2}.viz .d{stroke-width:2;opacity:.45}
+.viz .bg{fill:#fcfcfb}.viz text{fill:#52514e}.viz .t{fill:#0b0b0b}.viz .g{stroke:#e4e3df}.viz .c{stroke:#52514e}.viz .m{fill:#2a78d6;stroke:#fcfcfb}.viz .p{fill:#fcfcfb;stroke:#eb6834}.viz .d{stroke:#2a78d6}.viz .b1{fill:#2a78d6}.viz .b2{fill:#eb6834}.viz .b3{fill:#1baf7a}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .viz .bg{fill:#1a1a19}:root:not([data-theme="light"]) .viz text{fill:#c3c2b7}:root:not([data-theme="light"]) .viz .t{fill:#f0efec}:root:not([data-theme="light"]) .viz .g{stroke:#3a3936}:root:not([data-theme="light"]) .viz .c{stroke:#c3c2b7}:root:not([data-theme="light"]) .viz .m{fill:#3987e5;stroke:#1a1a19}:root:not([data-theme="light"]) .viz .p{fill:#1a1a19;stroke:#d95926}:root:not([data-theme="light"]) .viz .d{stroke:#3987e5}:root:not([data-theme="light"]) .viz .b1{fill:#3987e5}:root:not([data-theme="light"]) .viz .b2{fill:#d95926}:root:not([data-theme="light"]) .viz .b3{fill:#199e70}}
+[data-theme="dark"] .viz .bg{fill:#1a1a19}[data-theme="dark"] .viz text{fill:#c3c2b7}[data-theme="dark"] .viz .t{fill:#f0efec}[data-theme="dark"] .viz .g{stroke:#3a3936}[data-theme="dark"] .viz .c{stroke:#c3c2b7}[data-theme="dark"] .viz .m{fill:#3987e5;stroke:#1a1a19}[data-theme="dark"] .viz .p{fill:#1a1a19;stroke:#d95926}[data-theme="dark"] .viz .d{stroke:#3987e5}[data-theme="dark"] .viz .b1{fill:#3987e5}[data-theme="dark"] .viz .b2{fill:#d95926}[data-theme="dark"] .viz .b3{fill:#199e70}
+</style>
+<rect class="bg" width="960" height="600"/>
+<text class="t" x="80" y="28">Roofline · recipe glm-5.3/glm-5.3-flash-nvfp4-tp3-512k on gb10 · verify n=2 + draft n=1</text>
+<line class="g" x1="80.0" y1="56" x2="80.0" y2="516.0"/><text x="80.0" y="534.0" text-anchor="middle">0.1</text>
+<line class="g" x1="216.0" y1="56" x2="216.0" y2="516.0"/><text x="216.0" y="534.0" text-anchor="middle">1</text>
+<line class="g" x1="352.0" y1="56" x2="352.0" y2="516.0"/><text x="352.0" y="534.0" text-anchor="middle">10</text>
+<line class="g" x1="488.0" y1="56" x2="488.0" y2="516.0"/><text x="488.0" y="534.0" text-anchor="middle">100</text>
+<line class="g" x1="624.0" y1="56" x2="624.0" y2="516.0"/><text x="624.0" y="534.0" text-anchor="middle">1000</text>
+<line class="g" x1="760.0" y1="56" x2="760.0" y2="516.0"/><text x="760.0" y="534.0" text-anchor="middle">10000</text>
+<line class="g" x1="80" y1="516.0" x2="760.0" y2="516.0"/><text x="72.0" y="520.0" text-anchor="end">0.01</text>
+<line class="g" x1="80" y1="424.0" x2="760.0" y2="424.0"/><text x="72.0" y="428.0" text-anchor="end">0.1</text>
+<line class="g" x1="80" y1="332.0" x2="760.0" y2="332.0"/><text x="72.0" y="336.0" text-anchor="end">1</text>
+<line class="g" x1="80" y1="240.0" x2="760.0" y2="240.0"/><text x="72.0" y="244.0" text-anchor="end">10</text>
+<line class="g" x1="80" y1="148.0" x2="760.0" y2="148.0"/><text x="72.0" y="152.0" text-anchor="end">100</text>
+<line class="g" x1="80" y1="56.0" x2="760.0" y2="56.0"/><text x="72.0" y="60.0" text-anchor="end">1000</text>
+<text x="420.0" y="556.0" text-anchor="middle">arithmetic intensity (FLOP/byte)</text>
+<text transform="translate(22 286.0) rotate(-90)" text-anchor="middle">throughput (TFLOP/s)</text>
+<polyline class="c" points="80.0,479.5 664.1,84.4 760.0,84.4"><title>NVFP4 ceiling 490.8 TFLOP/s; DRAM 249 GB/s; ridge 1971 FLOP/byte</title></polyline><text x="766.0" y="88.4">NVFP4 490.8 TFLOP/s</text>
+<polyline class="c" points="80.0,479.5 622.7,112.4 760.0,112.4"><title>FP8 ceiling 243.6 TFLOP/s; DRAM 249 GB/s; ridge 978 FLOP/byte</title></polyline><text x="766.0" y="116.4">FP8 243.6 TFLOP/s</text>
+<polyline class="c" points="80.0,479.5 582.7,139.5 760.0,139.5"><title>BF16 ceiling 123.7 TFLOP/s; DRAM 249 GB/s; ridge 497 FLOP/byte</title></polyline><text x="766.0" y="143.5">BF16 123.7 TFLOP/s</text>
+<text x="144.9" y="427.7" transform="rotate(-38 144.9 427.7)">DRAM 249 GB/s</text>
+<line class="d" x1="297.8" y1="363.2" x2="297.8" y2="332.2"/><circle class="m" cx="297.8" cy="363.2" r="5"><title>verify n=2 · dsa [o] · measured 0.458 TFLOP/s, 46.0% of floor · AI 3.99 FLOP/byte · floor 1021.31 us (memory)</title></circle>
+<line class="d" x1="291.7" y1="341.1" x2="291.7" y2="336.4"/><circle class="m" cx="291.7" cy="341.1" r="5"><title>verify n=2 · moe [xn_quant,experts_gate_up] · measured 0.795 TFLOP/s, 88.7% of floor · AI 3.60 FLOP/byte · floor 8645.32 us (memory)</title></circle>
+<line class="d" x1="256.4" y1="407.6" x2="256.4" y2="360.2"/><circle class="m" cx="256.4" cy="407.6" r="5"><title>verify n=2 · moe [gate,top_k] · measured 0.151 TFLOP/s, 30.5% of floor · AI 1.98 FLOP/byte · floor 401.52 us (memory)</title></circle>
+<line class="d" x1="331.2" y1="398.1" x2="331.2" y2="309.6"/><circle class="m" cx="331.2" cy="398.1" r="5"><title>verify n=2 · moe [shared_gate_up,shared_clamp,shared_act,shared_down] · measured 0.191 TFLOP/s, 10.9% of floor · AI 7.03 FLOP/byte · floor 906.11 us (memory)</title></circle>
+<line class="d" x1="331.2" y1="335.1" x2="331.2" y2="309.6"/><circle class="m" cx="331.2" cy="335.1" r="5"><title>verify n=2 · kda [out_norm,o] · measured 0.924 TFLOP/s, 52.8% of floor · AI 7.03 FLOP/byte · floor 895.85 us (memory)</title></circle>
+<line class="d" x1="297.7" y1="366.7" x2="297.7" y2="332.3"/><circle class="m" cx="297.7" cy="366.7" r="5"><title>verify n=2 · dsa [q_b] · measured 0.420 TFLOP/s, 42.3% of floor · AI 3.99 FLOP/byte · floor 383.56 us (memory)</title></circle>
+<line class="d" x1="331.5" y1="313.7" x2="331.5" y2="309.4"/><circle class="m" cx="331.5" cy="313.7" r="5"><title>verify n=2 · kda [q,k,v,f_a,b,g_a] · measured 1.579 TFLOP/s, 89.8% of floor · AI 7.06 FLOP/byte · floor 2763.41 us (memory)</title></circle>
+<line class="d" x1="216.0" y1="419.2" x2="216.0" y2="387.6"/><circle class="m" cx="216.0" cy="419.2" r="5"><title>draft n=1 · mtp_dsa [o] · measured 0.113 TFLOP/s, 45.3% of floor · AI 1.00 FLOP/byte · floor 185.37 us (memory)</title></circle>
+<line class="d" x1="295.0" y1="372.9" x2="295.0" y2="334.1"/><circle class="m" cx="295.0" cy="372.9" r="5"><title>verify n=2 · kda [fa_quant,f_b,gates,ga_quant,g_b] · measured 0.360 TFLOP/s, 37.9% of floor · AI 3.81 FLOP/byte · floor 103.37 us (memory)</title></circle>
+<line class="d" x1="297.5" y1="344.1" x2="297.5" y2="332.4"/><circle class="m" cx="297.5" cy="344.1" r="5"><title>verify n=2 · dsa [q_a,kv_a] · measured 0.739 TFLOP/s, 74.7% of floor · AI 3.97 FLOP/byte · floor 373.12 us (memory)</title></circle>
+<line class="d" x1="451.1" y1="380.7" x2="451.1" y2="353.8"/><circle class="m" cx="451.1" cy="380.7" r="5"><title>verify n=2 · dsa [select] · measured 0.295 TFLOP/s, 51.0% of floor · AI 53.53 FLOP/byte · floor 128.13 us (launch)</title></circle>
+<line class="d" x1="256.8" y1="367.3" x2="256.8" y2="359.9"/><circle class="m" cx="256.8" cy="367.3" r="5"><title>verify n=2 · dsa [idx_q] · measured 0.413 TFLOP/s, 83.1% of floor · AI 2.00 FLOP/byte · floor 556.87 us (memory)</title></circle>
+<line class="d" x1="213.7" y1="398.7" x2="213.7" y2="389.1"/><circle class="m" cx="213.7" cy="398.7" r="5"><title>verify n=2 · kda [recur] · measured 0.188 TFLOP/s, 78.6% of floor · AI 0.96 FLOP/byte · floor 409.15 us (memory)</title></circle>
+<line class="d" x1="291.4" y1="337.4" x2="291.4" y2="336.6"/><circle class="m" cx="291.4" cy="337.4" r="5"><title>verify n=2 · moe [eact_quant,experts_down] · measured 0.873 TFLOP/s, 97.9% of floor · AI 3.58 FLOP/byte · floor 4344.78 us (memory)</title></circle>
+<line class="d" x1="216.0" y1="417.5" x2="216.0" y2="387.6"/><circle class="m" cx="216.0" cy="417.5" r="5"><title>draft n=1 · mtp_dsa [q_b] · measured 0.118 TFLOP/s, 47.3% of floor · AI 1.00 FLOP/byte · floor 69.54 us (memory)</title></circle>
+<line class="d" x1="216.0" y1="393.0" x2="216.0" y2="387.6"/><circle class="m" cx="216.0" cy="393.0" r="5"><title>draft n=1 · mtp_in [fc] · measured 0.217 TFLOP/s, 87.3% of floor · AI 1.00 FLOP/byte · floor 269.61 us (memory)</title></circle>
+<line class="d" x1="215.5" y1="458.4" x2="215.5" y2="387.9"/><circle class="m" cx="215.5" cy="458.4" r="5"><title>draft n=1 · mtp_dsa [idx_k] · measured 0.042 TFLOP/s, 17.1% of floor · AI 0.99 FLOP/byte · floor 4.25 us (memory)</title></circle>
+<line class="d" x1="215.9" y1="399.6" x2="215.9" y2="387.6"/><circle class="m" cx="215.9" cy="399.6" r="5"><title>draft n=1 · mtp_moe [shared_gate_up] · measured 0.184 TFLOP/s, 74.1% of floor · AI 1.00 FLOP/byte · floor 50.58 us (memory)</title></circle>
+<line class="d" x1="215.9" y1="415.0" x2="215.9" y2="387.6"/><circle class="m" cx="215.9" cy="415.0" r="5"><title>draft n=1 · mtp_dsa [kv_a] · measured 0.125 TFLOP/s, 50.4% of floor · AI 1.00 FLOP/byte · floor 16.88 us (memory)</title></circle>
+<line class="d" x1="215.9" y1="403.0" x2="215.9" y2="387.6"/><circle class="m" cx="215.9" cy="403.0" r="5"><title>draft n=1 · mtp_moe [shared_down] · measured 0.169 TFLOP/s, 68.1% of floor · AI 1.00 FLOP/byte · floor 25.31 us (memory)</title></circle>
+<line class="d" x1="215.9" y1="392.1" x2="215.9" y2="387.6"/><circle class="m" cx="215.9" cy="392.1" r="5"><title>draft n=1 · mtp_dsa [q_a] · measured 0.222 TFLOP/s, 89.3% of floor · AI 1.00 FLOP/byte · floor 50.58 us (memory)</title></circle>
+<line class="d" x1="415.2" y1="349.5" x2="415.2" y2="252.8"/><circle class="m" cx="415.2" cy="349.5" r="5"><title>draft n=1 · mtp_dsa [select] · measured 0.645 TFLOP/s, 8.9% of floor · AI 29.15 FLOP/byte · floor 0.46 us (memory)</title></circle>
+<line class="d" x1="215.9" y1="390.8" x2="215.9" y2="387.6"/><circle class="m" cx="215.9" cy="390.8" r="5"><title>draft n=1 · mtp_dsa [idx_q] · measured 0.230 TFLOP/s, 92.4% of floor · AI 1.00 FLOP/byte · floor 50.58 us (memory)</title></circle>
+<line class="d" x1="215.8" y1="445.8" x2="215.8" y2="387.7"/><circle class="m" cx="215.8" cy="445.8" r="5"><title>draft n=1 · mtp_moe [gate] · measured 0.058 TFLOP/s, 23.4% of floor · AI 1.00 FLOP/byte · floor 9.51 us (memory)</title></circle>
+<circle class="p" cx="256.9" cy="359.9" r="4"><title>verify n=2 · head [lm_head] · unmeasured: projection at the floor · AI 2.00 FLOP/byte · floor 1700.09 us (memory)</title></circle>
+<circle class="p" cx="216.0" cy="387.6" r="4"><title>draft n=1 · mtp_out [lm_head] · unmeasured: projection at the floor · AI 1.00 FLOP/byte · floor 1699.65 us (memory)</title></circle>
+<line class="d" x1="371.0" y1="255.0" x2="371.0" y2="282.7"/><circle class="m" cx="371.0" cy="255.0" r="5"><title>verify n=2 · dsa [attend] · measured 6.863 TFLOP/s, 199.8% of floor · AI 13.79 FLOP/byte · floor 548.95 us (memory)</title></circle>
+<circle class="p" cx="216.0" cy="387.6" r="4"><title>draft n=1 · mtp_moe [experts_gate_up] · unmeasured: projection at the floor · AI 1.00 FLOP/byte · floor 370.70 us (memory)</title></circle>
+<circle class="p" cx="331.7" cy="309.3" r="4"><title>verify n=2 · mlp [gate_up] · unmeasured: projection at the floor · AI 7.10 FLOP/byte · floor 227.85 us (memory)</title></circle>
+<circle class="p" cx="215.9" cy="387.6" r="4"><title>draft n=1 · mtp_moe [experts_down] · unmeasured: projection at the floor · AI 1.00 FLOP/byte · floor 185.60 us (memory)</title></circle>
+<circle class="p" cx="246.8" cy="366.7" r="4"><title>verify n=2 · moe [mix,pre,post_norm] · unmeasured: projection at the floor · AI 1.68 FLOP/byte · floor 157.55 us (memory)</title></circle>
+<circle class="p" cx="246.8" cy="366.7" r="4"><title>verify n=2 · kda [mix,pre,input_norm] · unmeasured: projection at the floor · AI 1.68 FLOP/byte · floor 127.54 us (memory)</title></circle>
+<circle class="p" cx="331.7" cy="309.3" r="4"><title>verify n=2 · mlp [down] · unmeasured: projection at the floor · AI 7.10 FLOP/byte · floor 113.95 us (memory)</title></circle>
+<line class="d" x1="330.2" y1="264.4" x2="330.2" y2="310.3"/><circle class="m" cx="330.2" cy="264.4" r="5"><title>draft n=1 · mtp_dsa [attend] · measured 5.424 TFLOP/s, 315.2% of floor · AI 6.91 FLOP/byte · floor 49.81 us (memory)</title></circle>
+<circle class="p" cx="256.0" cy="360.5" r="4"><title>verify n=2 · dsa [idx_gate] · unmeasured: projection at the floor · AI 1.97 FLOP/byte · floor 47.07 us (memory)</title></circle>
+<circle class="p" cx="246.8" cy="366.7" r="4"><title>verify n=2 · dsa [mix,pre,input_norm] · unmeasured: projection at the floor · AI 1.68 FLOP/byte · floor 41.26 us (memory)</title></circle>
+<circle class="p" cx="295.1" cy="350.5" r="4"><title>verify n=2 · dsa [idx_k] · unmeasured: projection at the floor · AI 3.82 FLOP/byte · floor 36.61 us (launch)</title></circle>
+<circle class="p" cx="253.3" cy="378.1" r="4"><title>verify n=2 · dsa [idx_w] · unmeasured: projection at the floor · AI 1.88 FLOP/byte · floor 18.30 us (launch)</title></circle>
+<circle class="p" cx="246.8" cy="366.7" r="4"><title>verify n=2 · mlp [mix,pre,post_norm] · unmeasured: projection at the floor · AI 1.68 FLOP/byte · floor 11.25 us (memory)</title></circle>
+<circle class="p" cx="215.5" cy="387.9" r="4"><title>draft n=1 · mtp_dsa [idx_gate] · unmeasured: projection at the floor · AI 0.99 FLOP/byte · floor 4.25 us (memory)</title></circle>
+<circle class="p" cx="214.2" cy="388.8" r="4"><title>draft n=1 · mtp_dsa [idx_w] · unmeasured: projection at the floor · AI 0.97 FLOP/byte · floor 1.09 us (memory)</title></circle>
+<text x="305.8" y="367.2">dsa [o]</text>
+<text x="299.7" y="345.1">moe [xn_quant,experts_gate_up]</text>
+<text x="264.4" y="411.6">moe [gate,top_k]</text>
+<text x="339.2" y="402.1">moe [shared_gate_up,shared_clamp,shared_act,shared_down]</text>
+<text x="339.2" y="339.1">kda [out_norm,o]</text>
+<circle class="m" cx="86.0" cy="584.0" r="5"/><text x="96.0" y="588.0">measured</text><circle class="p" cx="186.0" cy="584.0" r="4"/><text x="196.0" y="588.0">unmeasured (projection at floor)</text><text x="420.0" y="588.0">43 site(s) with no FLOPs not drawn</text>
+</svg>
