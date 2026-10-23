@@ -14,6 +14,13 @@ metrale-error = { workspace = true }
 # 2026-10-22: sqrt/ln/exp/lgamma (no_std has no f64 math).
 libm = { workspace = true }
 
+# 2026-10-22: Optional, no_std: `Serialize` on `mbb::Interval` for the headroom reports.
+serde = { workspace = true, features = ["derive"], optional = true }
+
+[features]
+# 2026-10-22: Derive `serde::Serialize` on the record types callers export (headroom JSON).
+serde = ["dep:serde"]
+
 [lints]
 workspace = true
 
