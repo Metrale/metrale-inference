@@ -30,6 +30,7 @@ pub(crate) fn fits(c: &Circuit, p: &PatternOp, n: &Node) -> bool {
         _ => p.op == n.op,
     };
     op && p.local.as_deref().is_none_or(|l| l == n.local)
+        && p.block.as_deref().is_none_or(|b| b == n.block)
         && p.weight.is_none_or(|w| n.weight == Some(w))
         && reads_quantized_as(c, p, n)
         && p.layer_kind

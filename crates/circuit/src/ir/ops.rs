@@ -72,6 +72,15 @@ pub enum OpKind {
     Blend,
     /// 2026-09-28: Cross-rank reduction of an expert-parallel FFN output.
     EpReduce,
+    /// 2026-10-23: The sum of the group's partials on every rank of the group (`params.group`),
+    /// derived where a partial meets a consumer not linear in it ([`crate::parallel`]).
+    AllReduce,
+    /// 2026-10-23: The group's slices concatenated on every rank of the group, derived where a
+    /// sliced edge meets a consumer that needs it whole.
+    AllGather,
+    /// 2026-10-23: The group's first rank's tensor sent to every rank (`params.root`), derived
+    /// at the boundary of a part placed on fewer ranks than N.
+    Broadcast,
     /// 2026-09-28: The model's final RMSNorm.
     FinalNorm,
     /// 2026-09-28: Vocabulary projection.
@@ -129,7 +138,7 @@ pub enum OpKind {
     EngramGate,
 }
 
-pub(super) const PLAIN_OPS: [(OpKind, &str); 42] = [
+pub(super) const PLAIN_OPS: [(OpKind, &str); 45] = [
     (OpKind::Embed, "embed"),
     (OpKind::RmsNorm, "rms_norm"),
     (OpKind::GatedRmsNorm, "gated_rms_norm"),
@@ -155,6 +164,9 @@ pub(super) const PLAIN_OPS: [(OpKind, &str); 42] = [
     (OpKind::ExpertDown, "expert_down"),
     (OpKind::Blend, "blend"),
     (OpKind::EpReduce, "ep_reduce"),
+    (OpKind::AllReduce, "all_reduce"),
+    (OpKind::AllGather, "all_gather"),
+    (OpKind::Broadcast, "broadcast"),
     (OpKind::FinalNorm, "final_norm"),
     (OpKind::LmHead, "lm_head"),
     (OpKind::Argmax, "argmax"),

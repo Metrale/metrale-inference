@@ -2266,9 +2266,14 @@ pipeline.hc_expand = { in = ["bf16"], move = "bf16", out = ["f32"] }
 # run the site's RMSNorm on the collapsed BF16 row (rms_norm_vanilla's expressions,
 # glm5next_mhc_fused.cu), so the family implements a norm whose input hc_pre produces.
 pipeline.rms_norm = { in = ["bf16"], compute = "f32", out = ["bf16"] }
+# 2026-10-23: glm5next_hc_post_rank_sum sums the ranks' partials in rank order in FP32 and rounds the
+# sum to BF16 (bf16_add_rank_sum's arithmetic) before the post-mix: a TP rank's `all_reduce` node
+# fused ahead of `hc_post` (FUSIONS.toml glm_ar_fused_post).
+pipeline.all_reduce = { in = ["bf16"], reduce = "f32", out = ["bf16"] }
 op = [
   { op = "linear", roles = ["hc_mix"] }, { op = "hc_pre" }, { op = "hc_post" },
   { op = "hc_contract" }, { op = "hc_expand" }, { op = "rms_norm", after = ["hc_pre"] },
+  { op = "all_reduce" },
 ]
 [[family.point]]
 values = {}
@@ -2857,3 +2862,92 @@ unless = { glm_dsa_verify_rows = "on" }
 point = { shared_gate = "none" }
 rows = [2]
 measurement = "glm-5.3-flash::glm5next_moe_combine @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k · rows=2 top_k=8 H=4096"
+
+# 2026-10-23 (P0-prereq): TP collectives and the GLM-5.3 MTP draft head (FUSIONS.toml, the rules of
+# the same date). The NCCL exchange itself is the library's (a rule's `comm`), not a family point.
+
+# 2026-10-23: The one-shot all-reduce's sum: each element of the ranks' partials added in rank order
+# into an FP32 accumulator from +0, rounded once to BF16 (crates/comm/src/nccl_backend/sendrecv.rs:
+# 178-221 launches it after the exchange).
+[[family]]
+id = "tp_rank_sum"
+description = "Rank-order FP32 sum of the TP ranks' BF16 partials after the one-shot exchange"
+compute = "memory"
+kernels = ["bf16_add::bf16_add_rank_sum"]
+rows = [1, 65536]
+pipeline.all_reduce = { in = ["bf16"], reduce = "f32", out = ["bf16"] }
+pipeline.all_gather = { in = ["bf16"], move = "bf16", out = ["bf16"] }
+op = [{ op = "all_reduce" }, { op = "all_gather" }]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = ["kernels/gb10/common/bf16_add.cu"]
+
+# 2026-10-23: The MTP head's eh_proj input written as two halves in place (embed_half,
+# hidden_half), so the concat launches nothing.
+[[family]]
+id = "concat_in_place"
+description = "A feature-dim concat the producers write in place (no kernel)"
+compute = "memory"
+emitters = ["glm_mtp_halves"]
+rows = [1, 65536]
+pipeline.concat = { in = ["bf16", "bf16"], move = "bf16", out = ["bf16"] }
+op = [{ op = "concat" }]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = ["crates/model-arch/src/glm5next_mtp_head/hidden_half.rs"]
+
+# 2026-10-23: The screened K=2 verify head of a vocab-sharded LM head: an INT8 screen of this rank's
+# rows, an exact BF16 rescore of the rows a rigorous bound cannot rule out, a 16-byte best-key
+# exchange and the largest key kept. Its argmaxes equal the full BF16 head's (screen_head.cu
+# header), which is the pipeline it declares.
+[[family]]
+id = "screen_head"
+description = "Screened vocab-sharded LM head: INT8 scan, exact rescore, cross-rank best key"
+compute = "cuda_core"
+kernels = ["screen_head::screen_head_scan", "screen_head::screen_head_rescore", "screen_head::screen_head_resolve"]
+rows = [2, 2]
+pipeline.lm_head = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["bf16"] }
+pipeline.all_gather = { in = ["bf16"], move = "bf16", out = ["bf16"] }
+pipeline.argmax = { in = ["bf16"], compare = "bf16", out = ["i32"] }
+op = [{ op = "lm_head" }, { op = "all_gather" }, { op = "argmax" }]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = ["kernels/gb10/common/screen_head.cu"]
+
+# 2026-10-23: The GLM-5.3 MTP draft head's LM head: an FP8 E4M3 copy of the rank's vocab shard with
+# one F32 scale a row, the BF16 row times the decoded weights summed in FP32 and scaled
+# (dense_gemv_fp8w.cu:3-4), then the shard argmax's lanes packed and the global id picked after the
+# exchange (glm5next_mtp_xchg.cu).
+[[family]]
+id = "glm_mtp_head"
+description = "GLM-5.3 MTP draft LM head: FP8 vocab-shard GEMV and the cross-rank argmax exchange"
+compute = "cuda_core"
+kernels = ["gemv_fp8w::dense_gemv_fp8w", "glm5next_mtp_xchg::glm5next_mtp_xchg_pack", "glm5next_mtp_xchg::glm5next_mtp_xchg_pick"]
+rows = [1, 1]
+pipeline.lm_head = { in = ["bf16"], act = "bf16", weight = "fp8/channel->f32", mma = "bf16*f32", accumulate = "f32", scale = "f32", out = ["bf16"] }
+pipeline.all_gather = { in = ["bf16"], move = "bf16", out = ["bf16"] }
+pipeline.argmax = { in = ["bf16"], compare = "bf16", out = ["i32"] }
+op = [{ op = "lm_head" }, { op = "all_gather" }, { op = "argmax" }]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = ["kernels/gb10/common/dense_gemv_fp8w.cu", "kernels/gb10/common/glm5next_mtp_xchg.cu"]
+
+# 2026-10-23: The MTP layer's routed experts at W4A16: one launch per projection over the top-k
+# slots, the NVFP4 weights decoded to BF16 against the BF16 row, FP32 sums (w4a16_gemv.cu).
+[[family]]
+id = "w4a16_sw_moe"
+description = "W4A16 slot GEMV over a row's top-k routed experts (the GLM-5.3 MTP layer)"
+compute = "cuda_core"
+kernels = ["w4a16_gemv::w4a16_gemv_sw_moe"]
+rows = [1, 1]
+pipeline.expert_gate_up = { in = ["bf16", "i32"], gather = "bf16", act = "bf16", weight = "nvfp4/g16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "f32", out = ["bf16"] }
+pipeline.expert_down = { in = ["bf16", "i32"], act = "bf16", weight = "nvfp4/g16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "f32", out = ["bf16"] }
+op = [{ op = "expert_gate_up", weight = ["nvfp4/g16"] }, { op = "expert_down", weight = ["nvfp4/g16"] }]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = ["kernels/gb10/common/w4a16_gemv.cu"]

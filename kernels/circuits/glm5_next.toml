@@ -38,8 +38,82 @@ dims = [
 ]
 prologue = ["embed"]
 epilogue = ["head"]
-draft = ["mtp_in", "mtp_dsa", "mtp_moe", "mtp_out"]
+draft = ["glm_mtp_in", "mtp_dsa", "mtp_moe", "glm_mtp_out"]
 draft_when = "mtp"
+
+# 2026-10-23: How each dim may split over ranks (crates/circuit/src/parallel.rs). A deployment
+# (kernels/circuits/INSTANCES.toml `[instance.parallel]`) states N and each part's degree; every
+# rank's circuit is this circuit at its slice, its collectives derived. Dims not listed (the
+# router width, mHC, the indexer, the MLA latent ranks) are replicated. `degree.max` is the unit
+# count unless a kernel caps it.
+[parallel.lin_k_heads]
+unit = 2
+pad = false
+remainder = "front"
+scope = "every"
+degree = { min = 1, max = 32 }
+why = "KDA heads in pairs: crates/config/src/tp_split.rs:217-235 (split_grouped in linear_head_unit(128, 256) = 2 heads), the unit crates/model-arch/src/glm5next_w4a16_dense.rs:59,75 (W4A16_K_UNIT 256 under --dense-quantization w4a16), checked at crates/model-arch/src/glm5next_kda/tp.rs:177"
+
+[parallel.lin_v_heads]
+unit = 2
+pad = false
+remainder = "front"
+scope = "every"
+degree = { min = 1, max = 32 }
+tie = "lin_k_heads"
+why = "the KDA value heads split with their key heads: crates/config/src/tp_split.rs:228-232 (split_grouped, one value head per key head)"
+
+[parallel.q_heads]
+unit = 1
+pad = false
+remainder = "front"
+scope = "every"
+degree = { min = 1, max = 64 }
+why = "DSA heads one by one: crates/config/src/tp_split.rs:218-226 (split_grouped over num_key_value_heads 64, outer unit 1), checked at crates/model-arch/src/glm5next_dsa/tp.rs:116"
+
+[parallel.moe_inter]
+unit = 64
+pad = true
+remainder = "front"
+scope = "every"
+degree = { min = 1, max = 32 }
+why = "every routed expert sliced in 64-column units, padded first: crates/model-arch/src/glm5next_mlp/expert_tp.rs:42,84-92 (expert_slice; the rank holds s.len, crates/model-arch/src/glm5next_mlp/config.rs:91-94) under --moe-expert-layout tp"
+
+[parallel.shared_inter]
+unit = 256
+pad = false
+remainder = "front"
+scope = "every"
+degree = { min = 1, max = 8 }
+why = "the shared expert in the dense tier's unit: crates/model-arch/src/glm5next_mlp/config.rs:97-107 (shared_split_unit = W4A16_K_UNIT 256, crates/model-arch/src/glm5next_fp8_dense.rs:140-149)"
+
+[parallel.inter]
+unit = 8
+pad = false
+remainder = "front"
+scope = "every"
+degree = { min = 1, max = 1536 }
+why = "the dense FFN in BF16_GEMM_K_ALIGN units: crates/model-arch/src/glm5next_mlp/config.rs:97-103, crates/model-arch/src/glm5next_mlp/mod.rs:92"
+
+# 2026-10-23: The main head and (with the screen) the draft head sweep the same vocab shard; the
+# draft head's exchange caps its world at head_xchg::MAX_RANKS (4).
+[parallel.vocab]
+unit = 64
+pad = true
+remainder = "front"
+scope = "every"
+degree = { min = 1, max = 4 }
+why = "the vocab-sharded LM head: crates/model-engine/src/model/lm_head_vocab_tp.rs:68,84-85 (tp_split of the vocab padded to LMHEAD_VOCAB_SPLIT_ALIGN 64); the draft head sweeps the screen's shard, crates/model-arch/src/glm5next_mtp_head/init.rs:130-133, its exchange capped at crates/model-arch/src/glm5next_mtp_head/head_xchg.rs:20"
+
+# 2026-10-23: Only the MTP eh_proj output (edge `h0`, marked) splits along hidden: each rank
+# computes its 64-row units and one exchange assembles the row (METRALE_GLM_MTP_EH_TP).
+[parallel.hidden]
+unit = 64
+pad = false
+remainder = "front"
+scope = "marked"
+degree = { min = 1, max = 64 }
+why = "eh_proj output rows in EH_SHARD_ROWS 64 units, the first ranks one unit more: crates/model-arch/src/glm5next_mtp_head/init.rs:38-61 (eh_shard)"
 
 [layout]
 kind = "list"
@@ -126,18 +200,18 @@ out = [{ edge = "token", format = "i32", shape = "n x 1" }]
 
 # 2026-10-08: MTP input: the embedding of the last token and the target's final-normed hidden
 # row, each normalised, concatenated (embedding first) and projected (`eh_proj`).
-[block.mtp_in]
+[block.glm_mtp_in]
 stream_in = "hidden"
 stream_out = "h0"
 outputs = [{ edge = "e", buffer = "draft_embed" }]
 
-[[block.mtp_in.node]]
+[[block.glm_mtp_in.node]]
 id = "embed"
 op = "embed"
 out = [{ edge = "e", format = "bf16", shape = "n x hidden" }]
 binding = ["model.language_model.embed_tokens"]
 
-[[block.mtp_in.node]]
+[[block.glm_mtp_in.node]]
 id = "embed_norm"
 op = "rms_norm"
 in = ["e"]
@@ -145,7 +219,7 @@ out = [{ edge = "en", format = "bf16", shape = "n x hidden" }]
 binding = ["{L}.enorm"]
 params = { weight_form = "plain" }
 
-[[block.mtp_in.node]]
+[[block.glm_mtp_in.node]]
 id = "hidden_norm"
 op = "rms_norm"
 in = ["hidden"]
@@ -153,25 +227,25 @@ out = [{ edge = "hn", format = "bf16", shape = "n x hidden" }]
 binding = ["{L}.hnorm"]
 params = { weight_form = "plain" }
 
-[[block.mtp_in.node]]
+[[block.glm_mtp_in.node]]
 id = "concat"
 op = "concat"
 in = ["en", "hn"]
 out = [{ edge = "cat", format = "bf16", shape = "n x hidden*2" }]
 
-[[block.mtp_in.node]]
+[[block.glm_mtp_in.node]]
 id = "fc"
 op = "linear"
 role = "mtp_fc"
 in = ["cat"]
-out = [{ edge = "h0", format = "bf16", shape = "n x hidden" }]
+out = [{ edge = "h0", format = "bf16", shape = "n x hidden", split = "hidden" }]
 binding = ["{L}.eh_proj"]
 
-[block.mtp_out]
+[block.glm_mtp_out]
 stream_in = "x"
 outputs = [{ edge = "logits", buffer = "logits" }, { edge = "token", buffer = "tokens" }]
 
-[[block.mtp_out.node]]
+[[block.glm_mtp_out.node]]
 id = "final_norm"
 op = "final_norm"
 in = ["x"]
@@ -179,14 +253,14 @@ out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
 binding = ["{L}.shared_head.norm"]
 params = { weight_form = "plain" }
 
-[[block.mtp_out.node]]
+[[block.glm_mtp_out.node]]
 id = "lm_head"
 op = "lm_head"
 in = ["xn"]
 out = [{ edge = "logits", format = "bf16", shape = "n x vocab" }]
 binding = ["lm_head"]
 
-[[block.mtp_out.node]]
+[[block.glm_mtp_out.node]]
 id = "argmax"
 op = "argmax"
 in = ["logits"]

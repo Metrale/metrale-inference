@@ -209,6 +209,11 @@ impl Builder<'_> {
             state: Vec::new(),
         });
         self.quantized.insert(key, q);
+        if let Some(p) = &mut self.par
+            && let Some(s) = p.shards.get(&x).cloned()
+        {
+            p.shards.insert(q, s);
+        }
         q
     }
 

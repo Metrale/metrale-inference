@@ -103,7 +103,8 @@ pub fn steps_of(op: &OpKind) -> &'static [StepKind] {
         OpKind::StateSnapshot => &[StepKind::State],
         OpKind::TopK => &[StepKind::Score],
         OpKind::Blend => &[StepKind::Scatter, StepKind::Combine],
-        OpKind::EpReduce => &[StepKind::Reduce],
+        OpKind::EpReduce | OpKind::AllReduce => &[StepKind::Reduce],
+        OpKind::AllGather | OpKind::Broadcast => &[StepKind::Move],
         OpKind::Argmax => &[StepKind::Compare],
     }
 }

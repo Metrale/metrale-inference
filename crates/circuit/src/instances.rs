@@ -27,6 +27,20 @@ use crate::ir::{ArchShape, LayerKind};
 use crate::precision::LinearFormats;
 use crate::rules::Mode;
 
+/// 2026-10-23: A multi-device deployment: N (the device count, the recipe's `--tp-size`) and the
+/// degree each part of the circuit's `[parallel]` spec runs at ([`crate::parallel::place`] checks
+/// them against the spec: every part stated, each within its bounds and N).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Deployment {
+    /// 2026-10-23: N.
+    pub ranks: u64,
+    /// 2026-10-23: Part to its degree.
+    pub degree: BTreeMap<String, u64>,
+    /// 2026-10-23: Where the recipe sets them (file:line), so the deployment is checkable.
+    pub why: String,
+}
+
 /// 2026-09-28: One recipe's circuit instance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Instance {
@@ -55,6 +69,9 @@ pub struct Instance {
     /// 2026-09-30: The batched-verify row tables that have a plan. An instance with none is
     /// not served a batched verify by the executor: each sequence verifies alone.
     pub verify_batch: Vec<crate::runs::RowTable>,
+    /// 2026-10-23: The deployment the recipe serves over several devices (`[instance.parallel]`);
+    /// `None` for one device.
+    pub parallel: Option<Deployment>,
 }
 
 impl Instance {
@@ -172,6 +189,8 @@ struct InstanceFile {
     plans: BTreeMap<String, Vec<u64>>,
     #[serde(default)]
     verify_batch: Vec<String>,
+    /// 2026-10-23: Absent for a single-device serve.
+    parallel: Option<Deployment>,
 }
 
 #[derive(Deserialize)]
@@ -299,6 +318,14 @@ pub fn parse_instances(text: &str) -> Result<Vec<Instance>, InstanceError> {
                 }
             }
         };
+        if let Some(p) = &f.parallel
+            && p.ranks < 2
+        {
+            return Err(field(format!(
+                "parallel: {} ranks (a multi-device deployment has at least 2)",
+                p.ranks
+            )));
+        }
         out.push(Instance {
             recipe: f.recipe.clone(),
             checkpoint: f.checkpoint,
@@ -317,6 +344,7 @@ pub fn parse_instances(text: &str) -> Result<Vec<Instance>, InstanceError> {
             },
             plans,
             verify_batch,
+            parallel: f.parallel.clone(),
         });
     }
     Ok(out)

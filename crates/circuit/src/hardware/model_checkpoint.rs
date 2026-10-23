@@ -141,6 +141,8 @@ impl CircuitSource for CheckpointSource<'_> {
             kernel_model,
             kernel_quant: KERNEL_QUANT.into(),
             circuit: rc.circuit,
+            ranks: Vec::new(),
+            layout: None,
             policy,
             precision: format!(
                 "declared by the checkpoint (arch `{}`, model_type `{}`; kernel target {})",

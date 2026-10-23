@@ -38,6 +38,7 @@ pub mod headroom_trace;
 pub mod model;
 pub mod model_checkpoint;
 pub mod plan;
+pub mod ranks;
 mod render;
 mod render_matrix;
 mod render_routes;
@@ -154,6 +155,8 @@ pub struct HwReport {
     pub tensor_core: Vec<tc_policy::TcAudit>,
     /// 2026-09-30: The runtime routes that apply to those runs, estimated.
     pub routes: Vec<render_routes::RouteRow>,
+    /// 2026-10-23: Each TP rank's plans ([`ranks::plan_ranks`]); empty for a single-rank model.
+    pub ranks: Vec<ranks::RankPlans>,
     /// 2026-09-30: Prefill estimates: (tokens, microseconds).
     pub prefill: Vec<(u64, f64)>,
     /// 2026-09-30: Weights, KV and state.
@@ -294,6 +297,7 @@ pub fn build_report(
         )?);
     }
     let routes = render_routes::route_rows(&resolved, c, &policy, &model.label, &tables)?;
+    let ranks = ranks::plan_ranks(&resolved, &model.ranks, &policy)?;
     let rf = |n| resolved.roofline_of(n);
     let prefill = PREFILL_TOKENS
         .iter()
@@ -341,6 +345,7 @@ pub fn build_report(
         tables,
         tensor_core,
         routes,
+        ranks,
         prefill,
         footprint,
         weight_floor,

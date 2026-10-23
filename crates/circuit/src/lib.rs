@@ -34,6 +34,7 @@ pub mod config_map;
 pub mod declared_precision;
 pub mod digest;
 pub mod dims;
+pub mod fidelity;
 pub mod display;
 pub mod format;
 pub mod fuser;
@@ -55,6 +56,8 @@ pub mod runs;
 pub mod runtime;
 pub mod state;
 pub mod state_ops;
+pub mod parallel;
+pub mod parallel_cost;
 pub mod venn;
 
 #[cfg(test)]
@@ -69,8 +72,8 @@ pub use format::{Format, Scale};
 pub use fuser::{
     AvailableKernels, EdgeState, FuseError, FusionPlan, Group, Policy, fuse, fuse_table,
 };
-pub use instances::{Instance, InstanceError, PrecisionSpec, parse_instances};
-pub use instantiate::instantiate;
+pub use instances::{Deployment, Instance, InstanceError, PrecisionSpec, parse_instances};
+pub use instantiate::{instantiate, instantiate_rank, parallel_spec};
 pub use ir::{ArchShape, Circuit, LayerKind, LinearRole, OpKind, Section};
 pub use precision::{EdgePrecision, LinearFormats, PrecisionError, PrecisionTable};
 pub use rules::{KernelId, Mode, Numerics, Rule, RuleError, parse_rules};
@@ -138,6 +141,11 @@ pub struct Loaded {
     pub runtime: Vec<RuntimeRoute>,
     /// 2026-09-28: SHA-256 of the FUSIONS.toml text ([`digest::rules_digest`]).
     pub rules_digest: String,
+    /// 2026-10-23: The deployment's layout ([`parallel::place`]); `None` on one device.
+    pub layout: Option<parallel::Layout>,
+    /// 2026-10-23: Each rank's circuit, rank order ([`instantiate::instantiate_rank`]); empty on
+    /// one device.
+    pub ranks: Vec<Circuit>,
 }
 
 /// 2026-09-28: Parse and instantiate `instance` from `src`, with the precision its spec names.
@@ -185,11 +193,42 @@ pub fn load_with(
 ) -> Result<Loaded, LoadError> {
     let circuit = instantiate(src.circuit, src.blocks, &instance.shape, precision)?;
     let RuleSet { rules, runtime } = parse_rule_set(src.rules)?;
+    let (layout, ranks) = match &instance.parallel {
+        None => (None, Vec::new()),
+        Some(d) => {
+            let spec = instantiate::parallel_spec(src.circuit, src.blocks)?;
+            let layout = parallel::place(
+                &spec,
+                &instance.shape.dims,
+                d.ranks,
+                &d.degree,
+                parallel::Chosen::Instance,
+            )
+            .map_err(|e| circuit_toml::CircuitError::Parallel(e.to_string()))?;
+            let ranks = (0..d.ranks)
+                .map(|rank| {
+                    instantiate::instantiate_rank(
+                        src.circuit,
+                        src.blocks,
+                        &instance.shape,
+                        precision,
+                        parallel::RankOf {
+                            layout: &layout,
+                            rank,
+                        },
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            (Some(layout), ranks)
+        }
+    };
     Ok(Loaded {
         circuit,
         rules,
         runtime,
         rules_digest: digest::rules_digest(src.rules),
+        layout,
+        ranks,
     })
 }
 

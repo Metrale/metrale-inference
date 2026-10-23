@@ -421,3 +421,51 @@ fn a_pattern_param_matches_only_nodes_that_state_it() {
     let p = plan(&plain, &r, &policy(), 1);
     assert_eq!(rule_of_node(&plain, &p, "l0.ffn.act"), "act");
 }
+
+/// 2026-10-23: The toy circuit with `inter` set, as a TP rank's slice sets it.
+fn circuit_at_inter(inter: u64) -> Circuit {
+    let mut shape = crate::test_toy::shape(1);
+    shape.dims.insert("inter".into(), inter);
+    let table = crate::precision::PrecisionTable::parse(crate::test_toy::PRECISION).unwrap();
+    crate::instantiate(crate::test_toy::CIRCUIT, &[], &shape, &table).unwrap()
+}
+
+const K64: &str = "numerics = \"reference\"\ndims = { inter = { mod = 128, rem = 64 } }";
+
+/// 2026-10-23: A dim predicate picks the twin at the shape it names and only there: 192 % 128 is
+/// 64, so the `_k64`-style rule takes `act -> down`; at 128 or 256 the plain rule does.
+#[test]
+fn a_dim_predicate_selects_by_the_circuits_shape() {
+    let set = rules(
+        &(fused_with("act_down_k64", ACT_DOWN, 101, (1, 128), K64)
+            + &fused("act_down_plain", ACT_DOWN, 100)),
+    );
+    for (inter, want) in [(192, "act_down_k64"), (128, "act_down_plain"), (256, "act_down_plain")] {
+        let c = circuit_at_inter(inter);
+        let p = plan(&c, &set, &policy(), 1);
+        assert_eq!(rule_of_node(&c, &p, "l0.ffn.act"), want, "inter {inter}");
+    }
+}
+
+/// 2026-10-23: A predicate over a dim the circuit lacks refuses the plan, naming rule and dim; it
+/// is never read as "does not apply".
+#[test]
+fn a_predicate_over_an_undefined_dim_is_refused() {
+    let set = rules(&fused_with(
+        "act_down_experts",
+        ACT_DOWN,
+        101,
+        (1, 128),
+        "numerics = \"reference\"\ndims = { experts = { eq = 8 } }",
+    ));
+    let c = circuit(1);
+    let e = fuse(&c, &set, &AvailableKernels::all_named_by(&set), &policy(), Mode::Decode, 1)
+        .unwrap_err();
+    assert_eq!(
+        e,
+        FuseError::DimMissing {
+            rule: "act_down_experts".into(),
+            dim: "experts".into(),
+        }
+    );
+}

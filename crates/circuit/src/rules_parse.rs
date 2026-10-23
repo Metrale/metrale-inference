@@ -33,6 +33,8 @@ struct RuleFile {
     kernels: Vec<KernelFile>,
     repeat: String,
     copies: Option<String>,
+    #[serde(default)]
+    comm: Vec<CommFile>,
     emitter: String,
     rows: [u64; 2],
     modes: Vec<String>,
@@ -40,6 +42,8 @@ struct RuleFile {
     requires: Vec<String>,
     #[serde(default)]
     when: BTreeMap<String, String>,
+    #[serde(default)]
+    dims: BTreeMap<String, super::dims::DimPredFile>,
     numerics: String,
     microtest: Option<String>,
     lever: Option<String>,
@@ -71,6 +75,14 @@ struct LaunchFile {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct CommFile {
+    api: String,
+    kernel: String,
+    at: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct KernelFile {
     module: String,
     func: String,
@@ -86,6 +98,7 @@ struct PatternFile {
     layer_kind: Option<String>,
     format: Option<String>,
     local: Option<String>,
+    block: Option<String>,
     weight: Option<String>,
     input: Option<String>,
     writes: Option<String>,
@@ -138,7 +151,8 @@ pub(crate) fn parse_file(
     Ok((out, file.runtime))
 }
 
-fn rule(r: RuleFile) -> Result<Rule, RuleError> {
+fn rule(mut r: RuleFile) -> Result<Rule, RuleError> {
+    let dims_file = core::mem::take(&mut r.dims);
     let shape = |detail: &str| RuleError::Shape {
         rule: r.id.clone(),
         detail: detail.to_string(),
@@ -201,6 +215,31 @@ fn rule(r: RuleFile) -> Result<Rule, RuleError> {
         return Err(shape("the first pattern element cannot be a sibling"));
     }
     let numerics = numerics(&r)?;
+    let mut comm = Vec::with_capacity(r.comm.len());
+    for c in &r.comm {
+        let api = super::CommApi::parse(&c.api).ok_or_else(|| {
+            shape(&format!(
+                "unknown comm api `{}` (exchange | all_reduce_ring | broadcast)",
+                c.api
+            ))
+        })?;
+        if c.kernel.trim().is_empty() {
+            return Err(shape("a comm launch names no kernel"));
+        }
+        if c.at > r.kernels.len() as u64 {
+            return Err(shape(&format!(
+                "comm launch at {} but the rule has {} kernels",
+                c.at,
+                r.kernels.len()
+            )));
+        }
+        comm.push(super::CommLaunch {
+            api,
+            kernel: c.kernel.clone(),
+            at: c.at,
+        });
+    }
+    let dims = super::dims::parse(dims_file).map_err(|d| shape(&d))?;
     let mut pattern = Vec::with_capacity(r.pattern.len());
     for p in &r.pattern {
         pattern.push(pattern_op(&r.id, p)?);
@@ -210,11 +249,13 @@ fn rule(r: RuleFile) -> Result<Rule, RuleError> {
         kernels,
         repeat,
         copies,
+        comm,
         emitter: r.emitter,
         rows: (r.rows[0], r.rows[1]),
         modes,
         requires: r.requires.into_iter().collect(),
         when: r.when,
+        dims,
         numerics,
         priority: r.priority,
         cite: r.cite,
@@ -359,6 +400,7 @@ fn pattern_op(rule: &str, p: &PatternFile) -> Result<PatternOp, RuleError> {
         roles,
         layer_kind,
         local: p.local.clone(),
+        block: p.block.clone(),
         weight: fmt(&p.weight)?,
         input: fmt(&p.input)?,
         writes: fmt(&p.writes)?,

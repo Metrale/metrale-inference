@@ -72,6 +72,10 @@ pub struct ModelUnderPlan {
     pub kernel_quant: String,
     /// 2026-09-30: The circuit.
     pub circuit: Circuit,
+    /// 2026-10-23: Each rank's circuit, rank order ([`crate::parallel`]); empty on one device.
+    pub ranks: Vec<Circuit>,
+    /// 2026-10-23: The deployment's layout; `None` on one device.
+    pub layout: Option<crate::parallel::Layout>,
     /// 2026-09-30: Policy as the model's source states it.
     pub policy: Policy,
     /// 2026-09-30: Plan header lines (`target` is re-spelled per class).
@@ -164,6 +168,8 @@ pub fn model_of(
         kernel_model: model.to_string(),
         kernel_quant: quant.to_string(),
         circuit: loaded.circuit,
+        ranks: loaded.ranks,
+        layout: loaded.layout,
         policy: inst.policy.clone(),
         header: crate::header(inst),
         precision,
