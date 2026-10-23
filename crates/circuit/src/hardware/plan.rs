@@ -28,7 +28,7 @@ use super::estimate::{DeviceRoofline, device_roofline};
 use super::exec::{Exec, fp4_fallback, node_exec};
 use super::sources::{ClassSources, KernelTree};
 use super::{HwError, ModelUnderPlan};
-use crate::fuser::{FuseError, FusionPlan, fuse};
+use crate::fuser::{FuseError, FusionPlan, Match, fuse_seeded};
 use crate::ir::{Circuit, NodeIdx};
 use crate::rules::{KernelId, Mode, Numerics, PatternOp, Repeat, Rule};
 use crate::runtime::RuntimeRoute;
@@ -329,13 +329,13 @@ pub fn fuse_on(
     policy: &crate::fuser::Policy,
     run: Run,
 ) -> Result<Planned, HwError> {
-    let mut primary = fuse_arm(r, circuit, policy, run)?;
+    let mut primary = fuse_arm(r, circuit, policy, run, &[])?;
     for route in r
         .route_list()
         .iter()
         .filter(|x| x.applies(policy, run.mode, run.rows))
     {
-        let planned = fuse_arm(r, circuit, &route.policy(policy), run)?;
+        let planned = fuse_arm(r, circuit, &route.policy(policy), run, &[])?;
         if planned.plan.digest != primary.plan.digest {
             primary.routes.push(RoutePlan {
                 route: route.clone(),
@@ -346,22 +346,36 @@ pub fn fuse_on(
     Ok(primary)
 }
 
+/// 2026-10-23: The primary arm of [`fuse_on`] with `seed`'s groups formed first
+/// ([`crate::fuser::fuse_seeded`]); no runtime route is planned. A seed whose rule this arm
+/// refuses is an error, never dropped.
+pub fn fuse_primary_seeded(
+    r: &Resolved,
+    circuit: &Circuit,
+    policy: &crate::fuser::Policy,
+    run: Run,
+    seed: &[Match],
+) -> Result<Planned, HwError> {
+    fuse_arm(r, circuit, policy, run, seed)
+}
+
 fn fuse_arm(
     r: &Resolved,
     circuit: &Circuit,
     policy: &crate::fuser::Policy,
     run: Run,
+    seed: &[Match],
 ) -> Result<Planned, HwError> {
     let mut rules: Vec<Rule> = r.rule_list().to_vec();
     let mut refused = Vec::new();
     loop {
-        match fuse(
+        match fuse_seeded(
             circuit,
             &rules,
             &r.availability.kernels,
             policy,
-            run.mode,
-            run.rows,
+            (run.mode, run.rows),
+            seed,
         ) {
             Ok(plan) => {
                 let pipelines = match crate::pipeline::check_plan(

@@ -262,12 +262,18 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
     // 2026-10-17: Each report's graph label, from the settings the engine loads with (until now
     // the tool's own environment was read at report time).
     let label = |eager: bool| if eager { "eager" } else { "graphed" };
+    // 2026-10-23: The instance is the one deployed at this serve's tensor-parallel degree.
+    let engine_tp_ranks = u64::try_from(args.serve.tp_size)?;
     let Some(engine) = load_engine(args.serve, &settings)? else {
         bail!("this rank is an expert-parallel worker; run the diff on the head");
     };
     let model = engine.model.as_ref();
     model.bind_gpu_to_thread()?;
-    let instance = sources::instance_for(&checkpoint, &circuit_target(&engine.ptx_set.target)?)?;
+    let instance = sources::instance_for(
+        &checkpoint,
+        &circuit_target(&engine.ptx_set.target)?,
+        engine_tp_ranks,
+    )?;
     let modules = metrale_model_layers::circuit_exec::TargetModules(engine.ptx_set.modules.clone());
     let circuit = |fusions| ForwardSelect::Circuit {
         instance: Box::new(instance.clone()),

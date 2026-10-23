@@ -36,6 +36,7 @@ mod fuser_match;
 
 pub use fuser_edges::group_io;
 use fuser_edges::{check_reads, edge_states, stored_formats};
+pub use fuser_match::{Match, match_instances};
 
 pub(crate) use fuser_match::fits as pattern_fits;
 
@@ -220,6 +221,9 @@ pub enum FuseError {
     /// 2026-09-30: A `verify_batch` plan without a row table, or a table in another mode.
     #[error("{0}")]
     RowTable(String),
+    /// 2026-10-23: A seed [`fuse_seeded`] cannot place.
+    #[error("seed: {0}")]
+    Seed(String),
 }
 
 /// 2026-09-28: The section a mode runs.
@@ -240,12 +244,28 @@ pub fn fuse(
     mode: Mode,
     rows: u64,
 ) -> Result<FusionPlan, FuseError> {
+    fuse_seeded(circuit, rules, available, policy, (mode, rows), &[])
+}
+
+/// 2026-10-23: [`fuse`] with `seed`'s groups formed first: each seed claims its nodes before
+/// the greedy runs, and the greedy then continues as it always does over the nodes left free.
+/// The critical-pair report resolves an overlap of two matches both ways with it
+/// ([`crate::critical`]). A seed whose rule does not apply here, or whose nodes are out of the
+/// section or claimed twice, is [`FuseError::Seed`].
+pub fn fuse_seeded(
+    circuit: &Circuit,
+    rules: &[Rule],
+    available: &AvailableKernels,
+    policy: &Policy,
+    (mode, rows): (Mode, u64),
+    seed: &[Match],
+) -> Result<FusionPlan, FuseError> {
     if mode == Mode::VerifyBatch {
         return Err(FuseError::RowTable(
             "a verify_batch plan is fused for a row table (`fuse_table`)".into(),
         ));
     }
-    fuse_inner(circuit, rules, available, policy, (mode, rows, None))
+    fuse_inner(circuit, rules, available, policy, (mode, rows, None), seed)
 }
 
 /// 2026-09-30: Fuse `circuit` for a batched verify of `table`.
@@ -263,6 +283,7 @@ pub fn fuse_table(
         available,
         policy,
         (Mode::VerifyBatch, rows, Some(table)),
+        &[],
     )
 }
 
@@ -272,16 +293,12 @@ fn fuse_inner(
     available: &AvailableKernels,
     policy: &Policy,
     (mode, rows, table): (Mode, u64, Option<&crate::runs::RowTable>),
+    seed: &[Match],
 ) -> Result<FusionPlan, FuseError> {
     if rows == 0 {
         return Err(FuseError::ZeroRows);
     }
-    let section = section_of(mode);
-    let block_of = block_index(circuit);
-    let in_scope: Vec<bool> = block_of
-        .iter()
-        .map(|&b| circuit.blocks[b].section == section)
-        .collect();
+    let (in_scope, block_of) = fuser_match::scope_of(circuit, mode);
     if !in_scope.iter().any(|&s| s) {
         return Err(FuseError::EmptySection(mode.name()));
     }
@@ -311,19 +328,26 @@ fn fuse_inner(
             });
         }
     }
-    let mut order: Vec<&Rule> = rules
-        .iter()
-        .filter(|r| applies(r, available, policy, mode, rows))
-        .filter(|r| crate::rules::dims::all_hold(&r.dims, &circuit.dims) == Ok(true))
-        .filter(|r| {
-            r.runs.is_empty()
-                || table.is_some_and(|t| crate::runs::resolve_runs(t, &r.runs).is_some())
-        })
-        .collect();
-    order.sort_by(|a, b| b.priority.cmp(&a.priority).then_with(|| a.id.cmp(&b.id)));
+    let order = fuser_match::applicable_order(circuit, rules, available, policy, (mode, rows, table));
 
     let mut owner: Vec<Option<usize>> = vec![None; circuit.nodes.len()];
     let mut found: Vec<(&Rule, Vec<NodeIdx>)> = Vec::new();
+    for s in seed {
+        let rule = order
+            .iter()
+            .find(|r| r.id == s.rule)
+            .ok_or_else(|| FuseError::Seed(format!("rule `{}` does not apply", s.rule)))?;
+        if let Some(&n) = s.nodes.iter().find(|&&n| !in_scope[n] || owner[n].is_some()) {
+            return Err(FuseError::Seed(format!(
+                "node `{}` of seed `{}` is outside the section or already claimed",
+                circuit.nodes[n].id, s.rule
+            )));
+        }
+        for &n in &s.nodes {
+            owner[n] = Some(found.len());
+        }
+        found.push((rule, s.nodes.clone()));
+    }
     for rule in order {
         for s in 0..circuit.nodes.len() {
             if !in_scope[s] || owner[s].is_some() {

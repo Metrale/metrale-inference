@@ -17,8 +17,50 @@ use crate::prelude::*;
 
 use alloc::collections::{BTreeSet, VecDeque};
 
+use super::{AvailableKernels, Policy, applies, block_index, section_of};
 use crate::ir::{Circuit, Node, NodeIdx, OpKind};
-use crate::rules::{PatternOp, Rule};
+use crate::rules::{Mode, PatternOp, Rule};
+
+/// 2026-10-23: One place a rule matches: its id and the chain it forms, in pattern order.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Match {
+    /// 2026-10-23: Rule id.
+    pub rule: String,
+    /// 2026-10-23: Member nodes, in pattern order.
+    pub nodes: Vec<NodeIdx>,
+}
+
+/// 2026-10-23: Every match of every rule that may form a group of this plan, each formed over a
+/// circuit with no node claimed yet: the matches the greedy chooses among, in its own order
+/// (rule priority, then start node). The matcher is the fuser's own ([`Matcher::chain_at`]).
+pub fn match_instances(
+    circuit: &Circuit,
+    rules: &[Rule],
+    available: &AvailableKernels,
+    policy: &Policy,
+    (mode, rows): (Mode, u64),
+) -> Vec<Match> {
+    let (in_scope, block_of) = scope_of(circuit, mode);
+    let m = Matcher {
+        circuit,
+        in_scope: &in_scope,
+        block_of: &block_of,
+    };
+    let free = vec![None; circuit.nodes.len()];
+    let mut out = Vec::new();
+    for rule in applicable_order(circuit, rules, available, policy, (mode, rows, None)) {
+        for s in (0..circuit.nodes.len()).filter(|&s| in_scope[s]) {
+            if let Some(nodes) = m.chain_at(rule, s, &free) {
+                out.push(Match {
+                    rule: rule.id.clone(),
+                    nodes,
+                });
+            }
+        }
+    }
+    out
+}
+
 
 /// 2026-10-01: Node `n` of `c` fits pattern element `p`: op (any listed linear role), local id,
 /// weight format, quantized input format and layer kind. The fuser matches chains with it, and
@@ -63,6 +105,39 @@ fn reads_quantized_as(c: &Circuit, p: &PatternOp, n: &Node) -> bool {
         (Some(r), Some(w)) => r == w,
         _ => false,
     }
+}
+
+/// 2026-10-23: Whether each node is in `mode`'s section, and each node's block.
+pub(super) fn scope_of(circuit: &Circuit, mode: Mode) -> (Vec<bool>, Vec<usize>) {
+    let section = section_of(mode);
+    let block_of = block_index(circuit);
+    let in_scope = block_of
+        .iter()
+        .map(|&b| circuit.blocks[b].section == section)
+        .collect();
+    (in_scope, block_of)
+}
+
+/// 2026-10-23: The rules that may form a group of this plan, in the order the greedy tries
+/// them: priority, highest first, then id.
+pub(super) fn applicable_order<'a>(
+    circuit: &Circuit,
+    rules: &'a [Rule],
+    available: &AvailableKernels,
+    policy: &Policy,
+    (mode, rows, table): (Mode, u64, Option<&crate::runs::RowTable>),
+) -> Vec<&'a Rule> {
+    let mut order: Vec<&Rule> = rules
+        .iter()
+        .filter(|r| applies(r, available, policy, mode, rows))
+        .filter(|r| crate::rules::dims::all_hold(&r.dims, &circuit.dims) == Ok(true))
+        .filter(|r| {
+            r.runs.is_empty()
+                || table.is_some_and(|t| crate::runs::resolve_runs(t, &r.runs).is_some())
+        })
+        .collect();
+    order.sort_by(|a, b| b.priority.cmp(&a.priority).then_with(|| a.id.cmp(&b.id)));
+    order
 }
 
 pub(super) struct Matcher<'a> {
