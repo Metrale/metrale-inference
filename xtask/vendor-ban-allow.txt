@@ -89,7 +89,7 @@ crates/gpu-examples/examples/glm5next_dsa_paged_parity.rs 3
 crates/gpu-examples/examples/glm5next_dsa_prefill_tc_nanor_gate.rs 3
 crates/gpu-examples/examples/glm5next_dsa_proj_tier_bench.rs 3
 crates/gpu-examples/examples/glm5next_dsa_rows_microtest.rs 3
-crates/gpu-examples/examples/glm5next_dsa_scores_mma_bench.rs 3
+crates/gpu-examples/examples/glm5next_dsa_scores_mma_bench/main.rs 3
 crates/gpu-examples/examples/glm5next_dsa_scores_pipe_gate.rs 3
 crates/gpu-examples/examples/glm5next_dsa_scores_tiled_bench.rs 3
 crates/gpu-examples/examples/glm5next_dsa_select_fused_gate/host.rs 1
@@ -97,7 +97,7 @@ crates/gpu-examples/examples/glm5next_dsa_select_fused_gate/main.rs 3
 crates/gpu-examples/examples/glm5next_dsa_sp_select_gate.rs 3
 crates/gpu-examples/examples/glm5next_expert_tp_bench/main.rs 3
 crates/gpu-examples/examples/glm5next_fp8_wide_bench.rs 3
-crates/gpu-examples/examples/glm5next_hc_fused_gate.rs 3
+crates/gpu-examples/examples/glm5next_hc_fused_gate/main.rs 3
 crates/gpu-examples/examples/glm5next_hc_post_fold_gate.rs 3
 crates/gpu-examples/examples/glm5next_hc_post_gate.rs 3
 crates/gpu-examples/examples/glm5next_hc_post_pre_tok_bench.rs 3
