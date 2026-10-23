@@ -60,6 +60,18 @@ bf16_tflops = 123.7
 fp8_tflops = 243.6
 nvfp4_tflops = 490.8
 context_tokens = 4096
+# 2026-10-22: The energy roofline (DESIGN-kernel-energy.md §3.3): dynamic GPU-rail energy per DRAM
+# byte and per FLOP of each class, and the static (context up, no work) rail power. Energy is
+# additive, so a kernel's floor is bytes x dram_pj_per_byte + flops x <class>_pj_per_flop
+# (scripts/lib/kernel_perf_energy.py re-derives pct_of_energy_floor from these). Seeded from the
+# 2026-10-22 probe: PRELIMINARY (n = 3, one box, synthetic kernels). dram_pj_per_byte is the mean
+# of the stream loop's 21.6-24.8 pJ/B. The per-MMA classes (bf16_mma_pj_per_flop,
+# fp8_mma_pj_per_flop, nvfp4_mma_pj_per_flop) are optional keys left absent: not measured yet.
+dram_pj_per_byte = 23.2
+cuda_core_fp32_pj_per_flop = 1.7
+static_w = 12.5
+energy_label = "preliminary"
+energy_source = "probe kenergy_probe.cu sha256 1b74b8af..., spark-28c2, driver 580.159.03, n=3 synthetic (stream_read 1 GiB, fma_burn FP32), NVML GPU-rail counter, 2026-10-22"
 
 # 2026-09-29: Host-side groups, embedding, norms, residuals, elementwise.
 

@@ -17,7 +17,7 @@ use super::ComputeUnit;
 use super::compute_file::ComputeFile;
 use super::{
     Discover, Evidence, EvidenceSource, Extract, Families, Family, FamilyError, How, OpSpec, Param,
-    ParamKind, Point, Roofline, Values,
+    ParamKind, Point, Values,
 };
 use crate::format::Format;
 use crate::ir::{LinearRole, OpKind};
@@ -28,20 +28,10 @@ use crate::rules::KernelId;
 struct File {
     schema: u32,
     hardware: String,
-    roofline: RooflineFile,
+    roofline: super::roofline_file::RooflineFile,
     family: Vec<FamilyFile>,
     #[serde(default)]
     legacy_path: Vec<super::legacy_file::LegacyFile>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RooflineFile {
-    dram_gbps: f64,
-    bf16_tflops: f64,
-    fp8_tflops: f64,
-    nvfp4_tflops: f64,
-    context_tokens: u64,
 }
 
 #[derive(Deserialize)]
@@ -151,20 +141,7 @@ pub(super) fn parse(text: &str) -> Result<Families, FamilyError> {
             file.schema
         )));
     }
-    let r = &file.roofline;
-    let positive = [r.dram_gbps, r.bf16_tflops, r.fp8_tflops, r.nvfp4_tflops];
-    if positive.iter().any(|v| !v.is_finite() || *v <= 0.0) || r.context_tokens == 0 {
-        return Err(FamilyError::Parse(
-            "every [roofline] value must be positive".into(),
-        ));
-    }
-    let roofline = Roofline {
-        dram_gbps: r.dram_gbps,
-        bf16_tflops: r.bf16_tflops,
-        fp8_tflops: r.fp8_tflops,
-        nvfp4_tflops: r.nvfp4_tflops,
-        context_tokens: r.context_tokens,
-    };
+    let (roofline, energy) = super::roofline_file::roofline(file.roofline)?;
     let mut ids = BTreeSet::new();
     let mut owners: BTreeMap<String, String> = BTreeMap::new();
     let mut families = Vec::with_capacity(file.family.len());
@@ -199,6 +176,7 @@ pub(super) fn parse(text: &str) -> Result<Families, FamilyError> {
     Ok(Families {
         hardware: file.hardware,
         roofline,
+        energy,
         families,
         legacy,
     })
