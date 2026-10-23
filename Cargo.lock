@@ -1815,6 +1815,7 @@ dependencies = [
  "metrale-model-weights",
  "metrale-sampling",
  "metrale-scheduler",
+ "metrale-seal",
  "metrale-serve-identity",
  "metrale-settings",
  "metrale-speculative",

@@ -416,4 +416,4 @@ pub(crate) fn build(args: &BuildArgs) -> Result<(Blueprint, Unsigned)> {
 
 #[cfg(test)]
 #[path = "blueprint_tests.rs"]
-mod blueprint_tests;
+pub(crate) mod blueprint_tests;

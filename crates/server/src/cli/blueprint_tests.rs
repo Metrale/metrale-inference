@@ -143,13 +143,23 @@ fn keys() -> (Signer, Signer, TrustAnchors) {
     (root, leaf, anchors)
 }
 
-/// 2026-10-22: The GLM recipe end to end on the kernels this binary embeds. The recipe's chat
-/// template lives on the measuring box, so the test serves a copy of the recipe whose template
-/// is a temp file; everything else is the recipe as committed.
-#[test]
-fn the_glm_recipe_builds_signs_verifies_and_round_trips() {
-    let dir = tempfile::tempdir().unwrap();
-    let tpl = dir.path().join("t.jinja");
+/// 2026-10-22: The GLM recipe built and signed on the kernels this binary embeds. The recipe's
+/// chat template lives on the measuring box, so this serves a copy of the recipe whose template
+/// is a temp file under `dir`; everything else is the recipe as committed.
+pub(crate) struct Glm {
+    pub args: super::super::blueprint_args::BuildArgs,
+    pub recipe_path: PathBuf,
+    pub bp: metrale_blueprint::Blueprint,
+    pub unsigned: frame::Unsigned,
+    pub lite: Vec<u8>,
+    pub root: Signer,
+    pub leaf: Signer,
+    pub anchors: TrustAnchors,
+    pub cert: metrale_blueprint_trust::SignedCert,
+}
+
+pub(crate) fn glm(dir: &Path) -> Glm {
+    let tpl = dir.join("t.jinja");
     std::fs::write(&tpl, "{{ messages }}").unwrap();
     let text =
         std::fs::read_to_string(repo().join("recipes/glm-5.3/glm-5.3-flash-nvfp4-tp3-512k.yaml"))
@@ -158,7 +168,7 @@ fn the_glm_recipe_builds_signs_verifies_and_round_trips() {
         "/home/claude/glm-bench/glm53-chat-template.jinja",
         tpl.to_str().unwrap(),
     );
-    let fam = dir.path().join("glm-5.3");
+    let fam = dir.join("glm-5.3");
     std::fs::create_dir(&fam).unwrap();
     let recipe_path = fam.join("glm-5.3-flash-nvfp4-tp3-512k.yaml");
     std::fs::write(&recipe_path, &text).unwrap();
@@ -171,25 +181,11 @@ fn the_glm_recipe_builds_signs_verifies_and_round_trips() {
         blueprint_revision: 1,
         min_visible_mib: 98304,
         out: super::super::blueprint_args::OutArgs {
-            output: dir.path().join("x.kbp"),
+            output: dir.join("x.kbp"),
             text: false,
         },
     };
     let (bp, unsigned) = build(&args).unwrap();
-    assert!(
-        bp.kernels.modules.len() > 100,
-        "{} modules",
-        bp.kernels.modules.len()
-    );
-    assert!(!bp.kernels.specs.is_empty());
-    assert!(bp.policy.chat_template.is_some());
-    let a = frame::encode_unsigned(&bp, &unsigned, &[]).unwrap();
-    assert_eq!(
-        a,
-        frame::encode_unsigned(&build(&args).unwrap().0, &unsigned, &[]).unwrap(),
-        "deterministic build"
-    );
-
     let (root, leaf, anchors) = keys();
     let cert = certify(
         &root,
@@ -203,7 +199,48 @@ fn the_glm_recipe_builds_signs_verifies_and_round_trips() {
         },
     )
     .unwrap();
-    let lite = frame::sign(&a, &leaf, vec![cert], DECODE_MEMORY).unwrap();
+    let a = frame::encode_unsigned(&bp, &unsigned, &[]).unwrap();
+    let lite = frame::sign(&a, &leaf, vec![cert.clone()], DECODE_MEMORY).unwrap();
+    Glm {
+        args,
+        recipe_path,
+        bp,
+        unsigned,
+        lite,
+        root,
+        leaf,
+        anchors,
+        cert,
+    }
+}
+
+/// 2026-10-22: The GLM recipe end to end: builds deterministically, signs, verifies, resolves
+/// its embedded kernels and converts lite ↔ full with one id.
+#[test]
+fn the_glm_recipe_builds_signs_verifies_and_round_trips() {
+    let dir = tempfile::tempdir().unwrap();
+    let Glm {
+        args,
+        recipe_path,
+        bp,
+        unsigned,
+        lite,
+        anchors,
+        ..
+    } = glm(dir.path());
+    assert!(
+        bp.kernels.modules.len() > 100,
+        "{} modules",
+        bp.kernels.modules.len()
+    );
+    assert!(!bp.kernels.specs.is_empty());
+    assert!(bp.policy.chat_template.is_some());
+    let a = frame::encode_unsigned(&bp, &unsigned, &[]).unwrap();
+    assert_eq!(
+        a,
+        frame::encode_unsigned(&build(&args).unwrap().0, &unsigned, &[]).unwrap(),
+        "deterministic build"
+    );
     let revoked = Revoked::embedded().unwrap();
     let policy = TrustPolicy {
         anchors: &anchors,

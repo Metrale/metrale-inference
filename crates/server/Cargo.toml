@@ -41,6 +41,8 @@ metrale-abstract-io = { workspace = true }
 metrale-blueprint = { workspace = true }
 metrale-blueprint-sign = { workspace = true }
 metrale-blueprint-trust = { workspace = true }
+# 2026-10-22: `met blueprint seal`: the run's randomness (SealRandom) and the recipient key type.
+metrale-seal = { workspace = true }
 metrale-cache = { workspace = true }
 metrale-comm = { workspace = true }
 metrale-config = { workspace = true }

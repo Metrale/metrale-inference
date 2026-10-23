@@ -10,6 +10,7 @@
 //! - A dev anchor is announced on stderr as the declared mode `trust = dev-anchor`.
 //! - Keys come from files only (metrale-blueprint-sign).
 
+use std::io::Write;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -29,17 +30,18 @@ use super::blueprint_args::{
     BlueprintAction, BlueprintArgs, ExportArgs, KeyAction, OutArgs, TrustArgs,
 };
 use super::blueprint_build as build;
+use super::blueprint_seal as seal_cli;
 
 /// 2026-10-22: This host's kzx decode model-memory budget (kzx DESIGN.md §4.2: about 1 GiB on a
 /// server). The core takes it as a parameter and has no default (PCND).
 pub(crate) const DECODE_MEMORY: DecodeMemory = DecodeMemory(1 << 30);
 
-fn now() -> UnixMs {
+pub(crate) fn now() -> UnixMs {
     metrale_io_host_std::SystemClock::new().now_unix_ms()
 }
 
 /// 2026-10-22: A blueprint file, binary or `kbp1.` text.
-fn read_kbp(path: &Path) -> Result<Vec<u8>> {
+pub(crate) fn read_kbp(path: &Path) -> Result<Vec<u8>> {
     let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     if bytes.starts_with(transport::PREFIX.as_bytes()) {
         return Ok(transport::from_text(std::str::from_utf8(&bytes)?)?);
@@ -48,6 +50,11 @@ fn read_kbp(path: &Path) -> Result<Vec<u8>> {
 }
 
 fn write_kbp(out: &OutArgs, file: &[u8]) -> Result<()> {
+    write_kbp_to(out, file, &mut std::io::stderr())
+}
+
+/// 2026-10-22: [`write_kbp`], reporting to `log`.
+pub(crate) fn write_kbp_to(out: &OutArgs, file: &[u8], log: &mut impl Write) -> Result<()> {
     let bytes = if out.text {
         let mut t = transport::to_text(file);
         t.push('\n');
@@ -57,20 +64,26 @@ fn write_kbp(out: &OutArgs, file: &[u8]) -> Result<()> {
     };
     std::fs::write(&out.output, &bytes)
         .with_context(|| format!("writing {}", out.output.display()))?;
-    eprintln!("wrote {} ({} bytes)", out.output.display(), bytes.len());
+    writeln!(
+        log,
+        "wrote {} ({} bytes)",
+        out.output.display(),
+        bytes.len()
+    )?;
     Ok(())
 }
 
-/// 2026-10-22: The anchors and revocation state `t` names.
-fn trust(t: &TrustArgs) -> Result<(TrustAnchors, Revoked)> {
+/// 2026-10-22: The anchors and revocation state `t` names; a dev anchor is announced on `log`.
+fn trust(t: &TrustArgs, log: &mut impl Write) -> Result<(TrustAnchors, Revoked)> {
     let anchors = match &t.trust_anchor {
         Some(p) => {
             let a: Anchor = read_public(p)?;
-            eprintln!(
+            writeln!(
+                log,
                 "trust = dev-anchor: {} from {} (declared mode; not a compiled anchor)",
                 a.kid,
                 p.display()
-            );
+            )?;
             TrustAnchors::new(vec![a])?
         }
         None => TrustAnchors::compiled()?,
@@ -89,19 +102,32 @@ fn trust(t: &TrustArgs) -> Result<(TrustAnchors, Revoked)> {
     Ok((anchors, revoked))
 }
 
-fn open_with(path: &Path, t: &TrustArgs) -> Result<(Vec<u8>, Opened, TrustAnchors, Revoked)> {
+/// 2026-10-22: A verified file with the trust state that verified it.
+pub(crate) type OpenedFile = (Vec<u8>, Opened, TrustAnchors, Revoked);
+
+fn open_with(path: &Path, t: &TrustArgs) -> Result<OpenedFile> {
+    open_at(path, t, now(), &mut std::io::stderr())
+}
+
+/// 2026-10-22: Read and verify `path` under `t` at `now`, announcing a dev anchor on `log`.
+pub(crate) fn open_at(
+    path: &Path,
+    t: &TrustArgs,
+    now: UnixMs,
+    log: &mut impl Write,
+) -> Result<OpenedFile> {
     let file = read_kbp(path)?;
-    let (anchors, revoked) = trust(t)?;
+    let (anchors, revoked) = trust(t, log)?;
     let policy = TrustPolicy {
         anchors: &anchors,
         revoked: &revoked,
-        now: now(),
+        now,
     };
     let opened = frame::open(&file, &policy, DECODE_MEMORY)?;
     Ok((file, opened, anchors, revoked))
 }
 
-fn internal_of(o: &Opened) -> Result<impl Fn(&str) -> Option<&'static [u8]>> {
+pub(crate) fn internal_of(o: &Opened) -> Result<impl Fn(&str) -> Option<&'static [u8]>> {
     let modules = build::embedded(&o.blueprint.kernels.target)?;
     Ok(move |name: &str| modules.iter().find(|(n, _)| *n == name).map(|(_, b)| *b))
 }
@@ -153,6 +179,7 @@ fn summary(o: &Opened, file_len: usize) -> String {
         bp.settings.passthrough.len(),
         bp.policy.flags.len(),
     );
+    s += &seal_cli::sealed_summary(o);
     if !bp.plan_gaps.is_empty() {
         s += &format!(
             "  gaps      {} (listed arms the rules do not cover)\n",
@@ -264,6 +291,15 @@ fn key_cmd(k: KeyAction) -> Result<()> {
             };
             write_public(&output, &certify(&read_key(&root)?, &cert)?)?;
         }
+        KeyAction::GenRecipient { out, public } => seal_cli::gen_recipient_cmd(
+            &metrale_io_host_std::OsEntropy,
+            &out,
+            &public,
+            &mut std::io::stdout(),
+        )?,
+        KeyAction::RecipientFingerprint { public } => {
+            seal_cli::recipient_fingerprint_cmd(&public, &mut std::io::stdout())?
+        }
         KeyAction::Revoke {
             root,
             serial,
@@ -324,17 +360,49 @@ pub(crate) fn dispatch(args: BlueprintArgs) -> Result<()> {
             &out,
             &metrale_blueprint_sign::sign_kbp(&read_kbp(&input)?, &key, &cert, DECODE_MEMORY)?,
         ),
-        BlueprintAction::Verify { input, trust } => {
+        BlueprintAction::Verify {
+            input,
+            trust,
+            sealed,
+        } => {
             let (file, o, _, _) = open_with(&input, &trust)?;
-            let internal = internal_of(&o)?;
-            let modules = resolve::resolve_modules(&o, internal)?;
+            let line = seal_cli::verify_sealed(&o, &sealed)?;
             print!("{}", summary(&o, file.len()));
-            println!(
-                "verified: header, body hash, chain, ML-DSA + Ed25519, decode, {} kernel modules by hash",
-                modules.len()
-            );
+            if o.sealed.is_some() {
+                println!(
+                    "verified: header, body hash, chain, ML-DSA + Ed25519, decode, sealed manifest signature and binding"
+                );
+                println!("{line}");
+            } else {
+                let modules = resolve::resolve_modules(&o, internal_of(&o)?)?;
+                println!(
+                    "verified: header, body hash, chain, ML-DSA + Ed25519, decode, {} kernel modules by hash",
+                    modules.len()
+                );
+            }
             Ok(())
         }
+        BlueprintAction::Seal(a) => seal_cli::seal_cmd(
+            &a,
+            &metrale_io_host_std::OsEntropy,
+            now(),
+            &mut std::io::stdout(),
+        ),
+        BlueprintAction::Open {
+            input,
+            trust,
+            recipient_key,
+            ciphertexts,
+            out_dir,
+        } => seal_cli::open_cmd(
+            &input,
+            &trust,
+            &recipient_key,
+            ciphertexts.as_deref(),
+            &out_dir,
+            now(),
+            &mut std::io::stdout(),
+        ),
         BlueprintAction::Show {
             input,
             trust,
@@ -365,9 +433,18 @@ pub(crate) fn dispatch(args: BlueprintArgs) -> Result<()> {
             println!("# argv: {}", argv.join(" "));
             Ok(())
         }
-        BlueprintAction::Lite { input, trust, out } => {
+        BlueprintAction::Lite {
+            input,
+            trust,
+            remote_base,
+            out,
+        } => {
             let (file, o, anchors, revoked) = open_with(&input, &trust)?;
-            let (u, p) = resolve::lite(&o);
+            let (u, p) = if o.sealed.is_some() {
+                seal_cli::sealed_form(&o, remote_base.as_deref(), None, false)?
+            } else {
+                seal_cli::plain_form(&o, remote_base.as_deref(), None, false)?
+            };
             let policy = TrustPolicy {
                 anchors: &anchors,
                 revoked: &revoked,
@@ -378,9 +455,18 @@ pub(crate) fn dispatch(args: BlueprintArgs) -> Result<()> {
                 &frame::rewrite(&file, &policy, DECODE_MEMORY, &u, &p)?,
             )
         }
-        BlueprintAction::Full { input, trust, out } => {
+        BlueprintAction::Full {
+            input,
+            trust,
+            ciphertexts,
+            out,
+        } => {
             let (file, o, anchors, revoked) = open_with(&input, &trust)?;
-            let (u, p) = resolve::full(&o, internal_of(&o)?)?;
+            let (u, p) = if o.sealed.is_some() {
+                seal_cli::sealed_form(&o, None, ciphertexts.as_deref(), true)?
+            } else {
+                seal_cli::plain_form(&o, None, ciphertexts.as_deref(), true)?
+            };
             let policy = TrustPolicy {
                 anchors: &anchors,
                 revoked: &revoked,

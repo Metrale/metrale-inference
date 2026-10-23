@@ -39,6 +39,7 @@ pub mod bench_spec_cost;
 pub(crate) mod blueprint;
 pub mod blueprint_args;
 mod blueprint_build;
+mod blueprint_seal;
 pub(crate) mod circuit;
 mod circuit_diff;
 pub(crate) mod circuit_hw;

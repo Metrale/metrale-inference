@@ -29,6 +29,52 @@ pub struct TrustArgs {
     pub revocations: Option<PathBuf>,
 }
 
+/// 2026-10-22: How a sealed file's modules are reached. Without `--recipient-key` a sealed
+/// file is checked by ciphertext hash only, and that is reported.
+#[derive(clap::Args, Debug, Clone)]
+pub struct SealedArgs {
+    /// A recipient key file (`kbp-recipient-key v1`, mode 600): unwrap the content key and
+    /// decrypt and check every sealed module.
+    #[arg(long)]
+    pub recipient_key: Option<PathBuf>,
+    /// A directory of ciphertexts named by their SHA-256 hex (a local copy of the
+    /// content-addressed store), for sealed modules whose source is remote.
+    #[arg(long)]
+    pub ciphertexts: Option<PathBuf>,
+}
+
+/// 2026-10-22: `met blueprint seal` inputs.
+#[derive(clap::Args, Debug)]
+pub struct SealArgs {
+    /// The plain, signed blueprint (lite or full).
+    pub input: PathBuf,
+    #[command(flatten)]
+    pub trust: TrustArgs,
+    /// A recipient public key file (`kbp-recipient-public v1`); repeat for several keys of
+    /// one customer. There is no escrow recipient.
+    #[arg(long, required = true)]
+    pub recipient_public: Vec<PathBuf>,
+    /// The customer id; only its opaque tag `sha256("kbp-customer\0" || lv(id))` is written.
+    #[arg(long)]
+    pub customer_id: String,
+    /// The signing key file for the sealed manifest (`kbp-key v1`, scope blueprints; mode 600).
+    #[arg(long)]
+    pub key: PathBuf,
+    /// The signing key's certificate.
+    #[arg(long)]
+    pub cert: PathBuf,
+    /// Seal for the public content-addressed store under this base (ciphertexts at
+    /// `<base>/<ct_sha256>`) and write a sealed lite file; without it the ciphertexts are inline
+    /// (a single-file sealed full).
+    #[arg(long, requires = "ciphertext_dir")]
+    pub remote_base: Option<String>,
+    /// Where the ciphertexts of `--remote-base` are written, one file per hash (must not exist).
+    #[arg(long, requires = "remote_base")]
+    pub ciphertext_dir: Option<PathBuf>,
+    #[command(flatten)]
+    pub out: OutArgs,
+}
+
 /// 2026-10-22: Where a converted file goes.
 #[derive(clap::Args, Debug, Clone)]
 pub struct OutArgs {
@@ -93,12 +139,35 @@ pub enum BlueprintAction {
         out: OutArgs,
     },
     /// Verify a blueprint: header, body hash, certificate chain, both signatures, decode, and
-    /// every kernel's bytes against its pinned hash.
+    /// every kernel's bytes against its pinned hash (for a sealed file: the sealed signature,
+    /// every ciphertext's hash, and with `--recipient-key` every decrypted module).
     Verify {
         /// The blueprint (binary or `kbp1.` text).
         input: PathBuf,
         #[command(flatten)]
         trust: TrustArgs,
+        #[command(flatten)]
+        sealed: SealedArgs,
+    },
+    /// Seal a signed blueprint for its recipients: a fresh content key per run, every module
+    /// compressed then encrypted, the key wrapped to each recipient, the sealed manifest signed.
+    /// One process; the content key never leaves it.
+    Seal(Box<SealArgs>),
+    /// Verify a sealed blueprint and write its decrypted modules into a new directory.
+    Open {
+        /// The sealed blueprint.
+        input: PathBuf,
+        #[command(flatten)]
+        trust: TrustArgs,
+        /// The recipient key file (`kbp-recipient-key v1`, mode 600).
+        #[arg(long)]
+        recipient_key: PathBuf,
+        /// Local ciphertexts by hash, for remote sealed modules.
+        #[arg(long)]
+        ciphertexts: Option<PathBuf>,
+        /// The directory to create for the modules (must not exist).
+        #[arg(long)]
+        out_dir: PathBuf,
     },
     /// Verify, then print a blueprint.
     Show {
@@ -117,27 +186,36 @@ pub enum BlueprintAction {
         #[command(flatten)]
         trust: TrustArgs,
     },
-    /// Rewrite as lite: no payload, every module `internal`. Body and signature unchanged.
+    /// Rewrite as lite: no payload, every module `internal` (a sealed module `remote` under
+    /// `--remote-base`, required for a sealed file). Body and signatures unchanged.
     Lite {
         /// The blueprint.
         input: PathBuf,
         #[command(flatten)]
         trust: TrustArgs,
+        /// The content-addressed store base of a sealed file's ciphertexts.
+        #[arg(long)]
+        remote_base: Option<String>,
         #[command(flatten)]
         out: OutArgs,
     },
-    /// Rewrite as full: every module inline. Body and signature unchanged.
+    /// Rewrite as full: every module inline (a sealed module's ciphertext, never its
+    /// plaintext). Body and signatures unchanged.
     Full {
         /// The blueprint.
         input: PathBuf,
         #[command(flatten)]
         trust: TrustArgs,
+        /// Local ciphertexts by hash, for remote sealed modules.
+        #[arg(long)]
+        ciphertexts: Option<PathBuf>,
         #[command(flatten)]
         out: OutArgs,
     },
     /// Export the store's card or graph JSON, or a JSON Schema.
     Export(Box<ExportArgs>),
-    /// Key ceremony helpers for dev anchors: derive an anchor, certify a key, sign revocations.
+    /// Key helpers: dev-anchor ceremony (anchor, certify, revoke) and sealed-kernel recipient
+    /// keys (gen-recipient, recipient-fingerprint).
     #[command(subcommand)]
     Key(KeyAction),
 }
@@ -203,6 +281,21 @@ pub enum KeyAction {
         /// Output path.
         #[arg(short = 'o', long)]
         output: PathBuf,
+    },
+    /// Generate a sealed-kernel recipient key on this machine: a new mode-600 key file and its
+    /// public half to send to the sealer. The seed is the only copy.
+    GenRecipient {
+        /// The key file to create (must not exist).
+        #[arg(long)]
+        out: PathBuf,
+        /// The public key file to create (must not exist).
+        #[arg(long)]
+        public: PathBuf,
+    },
+    /// Print the fingerprint of a recipient public key file.
+    RecipientFingerprint {
+        /// The public key file (`kbp-recipient-public v1`).
+        public: PathBuf,
     },
     /// Sign a revocation list with a root key.
     Revoke {
