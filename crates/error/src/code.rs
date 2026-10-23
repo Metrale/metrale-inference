@@ -294,6 +294,9 @@ error_registry! {
         /// 2026-10-23: The inventory script built the inventory but reported a problem other than
         /// an unclassified kernel: (script, `kind: text`). Not fatal; the inventory is kept.
         KgInventoryProblem = 0x080B => "{} reports an inventory problem: {}",
+        /// 2026-10-23: A whole LKB file its own reader refuses (fatal; every node of it would be
+        /// missing): (path, the reader's error).
+        KgLkbFileRejected = 0x080C => "{} is refused as a whole by its reader: {}",
         /// 2026-10-23: A config field missing or invalid; there is no default: (field, reason).
         KgConfig = 0x0810 => "kg config {}: {}",
         /// 2026-10-23: A source its host could not read or stat: (path, reason).

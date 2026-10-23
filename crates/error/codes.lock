@@ -95,6 +95,7 @@
 0x0809 KgForwardLink
 0x080a KgInventoryRefused
 0x080b KgInventoryProblem
+0x080c KgLkbFileRejected
 0x0810 KgConfig
 0x0811 KgSource
 0x0812 KgValidatorRejected

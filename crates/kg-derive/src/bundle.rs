@@ -394,6 +394,7 @@ pub const FATAL: &[ErrorCode] = &[
     ErrorCode::KgIdCollision,
     ErrorCode::KgBadLedgerRow,
     ErrorCode::KgTooManyLabels,
+    ErrorCode::KgLkbFileRejected,
 ];
 
 impl Bundle {

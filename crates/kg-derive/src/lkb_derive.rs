@@ -147,8 +147,13 @@ fn need<'a>(src: &'a SourceSet, p: &str) -> Result<&'a str> {
     })
 }
 
-fn bad(b: &mut Builder, path: &str, why: String) {
-    b.error(&error!(ErrorCode::KgBadRow, path.to_string(), why), path);
+/// 2026-10-23: A whole LKB file its own reader refuses (e.g. a schema field this build's
+/// metrale-circuit does not know): fatal, since every node of the file would be missing.
+fn rejected(b: &mut Builder, path: &str, why: String) {
+    b.error(
+        &error!(ErrorCode::KgLkbFileRejected, path.to_string(), why),
+        path,
+    );
 }
 
 /// 2026-10-23: Derive the LKB nodes and edges into `b`.
@@ -188,14 +193,14 @@ pub fn derive(b: &mut Builder, cfg: &LkbSources, src: &SourceSet, facts: &LkbFac
             }
             families(b, &fp, ftext, &f, &inv);
         }
-        Err(e) => bad(b, &fp, format!("{e}")),
+        Err(e) => rejected(b, &fp, format!("{e}")),
     }
 
     let rp = cfg.path(&cfg.fusions);
     let rtext = need(src, &rp)?;
     match metrale_circuit::runtime::parse_rule_set(rtext) {
         Ok(set) => rules(b, &rp, rtext, &set.rules, &set.runtime, &emitters),
-        Err(e) => bad(b, &rp, format!("{e}")),
+        Err(e) => rejected(b, &rp, format!("{e}")),
     }
 
     let hp = cfg.path(&cfg.handwritten);
@@ -216,7 +221,7 @@ pub fn derive(b: &mut Builder, cfg: &LkbSources, src: &SourceSet, facts: &LkbFac
             }
             instances(b, &ip, itext, &all);
         }
-        Err(e) => bad(b, &ip, format!("{e}")),
+        Err(e) => rejected(b, &ip, format!("{e}")),
     }
 
     let [cdir, pdir, hdir] = cfg.dirs();
@@ -262,7 +267,7 @@ pub fn derive(b: &mut Builder, cfg: &LkbSources, src: &SourceSet, facts: &LkbFac
     let mtext = need(src, &mp)?;
     match metrale_circuit::venn::parse_measurement_rows(mtext) {
         Ok(rows) => measurements(b, &mp, mtext, &rows, &arch_of),
-        Err(e) => bad(b, &mp, e),
+        Err(e) => rejected(b, &mp, e),
     }
     Ok(())
 }
