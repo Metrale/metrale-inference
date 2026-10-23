@@ -29,7 +29,9 @@ use crate::glm5next_plan::compile_dsa;
 use crate::glm5next_plan::dsa::DsaSite;
 use crate::glm5next_plan::dsa_fixture::*;
 use crate::glm5next_plan::dsa_sabotage::sabotaged;
-use crate::glm5next_plan::fixture::{plan, ranks, served_levers, served_settings};
+use crate::glm5next_plan::fixture::{
+    plan, ranks, ranks_at, served_levers, served_settings, served_world, worlds,
+};
 use crate::glm5next_plan::fixture_site::{SMS, gate};
 use metrale_model_layers::circuit_exec::family::PlanGroup;
 
@@ -38,7 +40,7 @@ const TESTS: &str = "glm5next_plan::dsa_mtp_tests";
 
 /// 2026-10-23: The draft head's DSA layer of rank `rank` as `load_glm5next_mtp_module` builds
 /// it, its stack, and a rig over the drafter's KV pool whose passes run at half its row space.
-fn drafter(gpu: &RecordingGpu, rank: usize) -> (Stack, Glm5NextDsaLayer, Rig) {
+fn drafter(gpu: &RecordingGpu, rank: usize, world: usize) -> (Stack, Glm5NextDsaLayer, Rig) {
     let levers = served_levers();
     assert!(
         !levers.dense.mtp_drafter_tiers,
@@ -46,7 +48,7 @@ fn drafter(gpu: &RecordingGpu, rank: usize) -> (Stack, Glm5NextDsaLayer, Rig) {
     );
     let s = served_settings();
     let mtp = MtpLevers::from_settings(&s).unwrap();
-    let mut st = stack(gpu, rank, levers);
+    let mut st = stack(gpu, rank, world, levers);
     st.cfg = drafter_dsa_config(&st.config, mtp.context_cap).unwrap();
     st.format = IndexerRowFormat::drafter(
         s.kernels.glm_dsa_pool_keys,
@@ -78,10 +80,14 @@ fn the_draft_head_dsa_mixer_launches_what_decode_k_launches() {
         TESTS,
         "the_draft_head_dsa_mixer_launches_what_decode_k_launches",
         || {
-            let (c, rules, policy) = ranks();
             let gpu = RecordingGpu::new(SMS);
-            for rank in 0..3 {
-                let (_st, dl, mut r) = drafter(&gpu, rank);
+            let mut runs = 0;
+            for (world, rank) in worlds()
+                .into_iter()
+                .flat_map(|w| (0..w).map(move |r| (w, r)))
+            {
+                let (c, rules, policy) = ranks_at(world).unwrap();
+                let (_st, dl, mut r) = drafter(&gpu, rank, world);
                 let plans = [plan(&c, &rules, &policy, rank, Mode::Draft, 1)];
                 let (inst, sites) = installed_at(&gpu, &c[rank], &plans, &policy, &dl, mtp(&dl))
                     .unwrap_or_else(|e| panic!("rank {rank}: {e:#}"));
@@ -120,8 +126,12 @@ fn the_draft_head_dsa_mixer_launches_what_decode_k_launches() {
                     .filter(|k| want.contains(k))
                     .collect();
                 assert_eq!(mine, want, "rank {rank}: the plan's own launches");
+                runs += 1;
             }
-            println!("3 draft-head DSA mixer runs gated, 15 sites installed");
+            println!(
+                "{runs} draft-head DSA mixer runs gated, {} sites installed",
+                5 * runs
+            );
         },
     );
 }
@@ -136,7 +146,7 @@ fn a_changed_draft_plan_field_turns_the_gate_red() {
         || {
             let (c, rules, policy) = ranks();
             let gpu = RecordingGpu::new(SMS);
-            let (_st, dl, mut r) = drafter(&gpu, 0);
+            let (_st, dl, mut r) = drafter(&gpu, 0, served_world());
             let plans = [plan(&c, &rules, &policy, 0, Mode::Draft, 1)];
             let (inst, _) = installed_at(&gpu, &c[0], &plans, &policy, &dl, mtp(&dl)).unwrap();
             let good = inst.get(1).unwrap();
@@ -169,7 +179,7 @@ fn each_dsa_site_installs_only_at_its_own_shapes() {
         || {
             let (c, rules, policy) = ranks();
             let gpu = RecordingGpu::new(SMS);
-            let (_st, dl, _r) = drafter(&gpu, 0);
+            let (_st, dl, _r) = drafter(&gpu, 0, served_world());
             let text_plans = [
                 plan(&c, &rules, &policy, 0, Mode::Decode, 1),
                 plan(&c, &rules, &policy, 0, Mode::Verify, 2),
@@ -178,7 +188,7 @@ fn each_dsa_site_installs_only_at_its_own_shapes() {
                 installed_at(&gpu, &c[0], &text_plans, &policy, &dl, mtp(&dl)).unwrap();
             assert!(sites.is_empty() && inst.get(1).is_none(), "{sites:#?}");
             let draft = [plan(&c, &rules, &policy, 0, Mode::Draft, 1)];
-            let st = stack(&gpu, 0, served_levers());
+            let st = stack(&gpu, 0, served_world(), served_levers());
             let l = dsa_layers(&c[0])[0];
             let text_layer = layer(&gpu, &st, l, 0);
             let (inst, sites) = installed(&gpu, &c[0], &draft, &policy, &text_layer).unwrap();

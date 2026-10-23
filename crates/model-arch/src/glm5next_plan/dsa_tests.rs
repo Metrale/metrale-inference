@@ -25,7 +25,9 @@ use crate::glm5next_dsa::attend::Glm5NextDsaDecodeKernel;
 use crate::glm5next_dsa::plan::{AttendStep, plan_rows};
 use crate::glm5next_plan::dsa_fixture::*;
 use crate::glm5next_plan::dsa_sabotage::sabotaged;
-use crate::glm5next_plan::fixture::{RUNS, plan, ranks, served_levers};
+use crate::glm5next_plan::fixture::{
+    RUNS, plan, ranks, ranks_at, served_levers, served_world, worlds,
+};
 use crate::glm5next_plan::fixture_site::{SMS, gate};
 use crate::glm5next_plan::{compile_dsa, dsa};
 
@@ -42,17 +44,20 @@ fn every_dsa_mixer_launches_what_decode_k_launches() {
         TESTS,
         "every_dsa_mixer_launches_what_decode_k_launches",
         || {
-            let (c, rules, policy) = ranks();
             let gpu = RecordingGpu::new(SMS);
             let (mut runs, mut sites_total) = (0, 0);
-            for rank in 0..3 {
+            for (world, rank) in worlds()
+                .into_iter()
+                .flat_map(|w| (0..w).map(move |r| (w, r)))
+            {
+                let (c, rules, policy) = ranks_at(world).unwrap();
                 let layers = dsa_layers(&c[rank]);
                 assert!(
                     layers.len() >= 10,
                     "rank {rank}: {} DSA layers",
                     layers.len()
                 );
-                let st = stack(&gpu, rank, served_levers());
+                let st = stack(&gpu, rank, world, served_levers());
                 let mut r = rig(&gpu, &st);
                 let plans: Vec<_> = RUNS
                     .iter()
@@ -128,7 +133,7 @@ fn a_changed_plan_field_turns_the_gate_red() {
     in_served_process(TESTS, "a_changed_plan_field_turns_the_gate_red", || {
         let (c, rules, policy) = ranks();
         let gpu = RecordingGpu::new(SMS);
-        let st = stack(&gpu, 0, served_levers());
+        let st = stack(&gpu, 0, served_world(), served_levers());
         let mut r = rig(&gpu, &st);
         let l = dsa_layers(&c[0])[0];
         let dl = layer(&gpu, &st, l, 0);
@@ -167,7 +172,7 @@ fn a_plan_runs_only_a_captured_pass_with_row_metadata() {
         "a_plan_runs_only_a_captured_pass_with_row_metadata",
         || {
             let gpu = RecordingGpu::new(SMS);
-            let st = stack(&gpu, 0, served_levers());
+            let st = stack(&gpu, 0, served_world(), served_levers());
             let r = rig(&gpu, &st);
             assert!(plan_rows(&r.ctx(&gpu, 1, true), 1, false).is_some());
             assert!(plan_rows(&r.ctx(&gpu, 2, true), 2, false).is_some());
@@ -205,7 +210,7 @@ fn installation_refuses_unmodelled_levers_and_another_split_count() {
         || {
             let (c, rules, policy) = ranks();
             let gpu = RecordingGpu::new(SMS);
-            let st = stack(&gpu, 0, served_levers());
+            let st = stack(&gpu, 0, served_world(), served_levers());
             let l = dsa_layers(&c[0])[0];
             let plans = [plan(&c, &rules, &policy, 0, Mode::Decode, 1)];
             let mut dl = layer(&gpu, &st, l, 0);

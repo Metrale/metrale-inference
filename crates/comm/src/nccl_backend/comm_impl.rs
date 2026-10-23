@@ -13,7 +13,7 @@ use std::ptr;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use super::ar_path::ArPath;
+use crate::ar_path::ArPath;
 use super::{
     ALL_REDUCE_DTYPE_BYTES, COLLECTIVE_TIMEOUT_SECS, NcclBackend, RENDEZVOUS_TIMEOUT_SECS,
 };

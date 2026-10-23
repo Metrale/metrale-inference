@@ -32,7 +32,7 @@ use crate::glm5next_dsa::{Glm5NextDsaConfig, Glm5NextDsaKernels};
 use crate::glm5next_layer::GlmLevers;
 use crate::glm5next_plan::dsa;
 use crate::glm5next_plan::fixture::{
-    in_child_process, model_config, recipe_default, served_settings,
+    in_child_process, model_config_at, recipe_default, served_settings,
 };
 use crate::glm5next_plan::fixture_site::STREAM;
 
@@ -72,9 +72,9 @@ pub(crate) fn dsa_layers(c: &Circuit) -> Vec<usize> {
     v
 }
 
-/// 2026-10-23: Rank `rank`'s model config at the recipe's context (`max_model_len`).
-pub(crate) fn served_config(rank: usize) -> metrale_config::ModelConfig {
-    let mut c = model_config(rank);
+/// 2026-10-23: Rank `rank` of `world`'s model config at the recipe's context (`max_model_len`).
+pub(crate) fn served_config(rank: usize, world: usize) -> metrale_config::ModelConfig {
+    let mut c = model_config_at(rank, world);
     c.serve_max_seq_len = recipe_default("max_model_len").parse().unwrap();
     c
 }
@@ -93,8 +93,8 @@ pub(crate) struct Stack {
     pub(crate) levers: GlmLevers,
 }
 
-pub(crate) fn stack(gpu: &RecordingGpu, rank: usize, levers: GlmLevers) -> Stack {
-    let config = served_config(rank);
+pub(crate) fn stack(gpu: &RecordingGpu, rank: usize, world: usize, levers: GlmLevers) -> Stack {
+    let config = served_config(rank, world);
     let s = served_settings();
     // 2026-10-23: The served stack's KDA layers load the W4A16 tier (its SM count) before any
     // projection runs; a DSA layer alone registers only W8A8 projections.

@@ -18,9 +18,24 @@ fn an_unset_forward_on_glm_resolves_to_circuit_with_its_instance() {
     assert_eq!(r.mode, ForwardArg::Circuit, "{}", r.reason);
     assert_eq!(r.instance.unwrap().checkpoint, GLM);
     assert!(r.reason.contains("circuit instance"), "{}", r.reason);
-    // 2026-10-23: The rank count picks the deployment: no GLM recipe deploys 2 ranks.
-    let r = resolve_forward(None, Some(GLM), Ok(GLM_TARGET), 2).unwrap();
-    assert_eq!(r.mode, ForwardArg::Legacy, "{}", r.reason);
+    // 2026-10-23: Any rank count the circuit admits resolves to circuit, its deployment derived
+    // for that N; one rank takes the one-device recipe; a count a part cannot split at (GLM's
+    // vocab past four) runs legacy, naming the part.
+    for n in [2, 3, 4] {
+        let r = resolve_forward(None, Some(GLM), Ok(GLM_TARGET), n).unwrap();
+        assert_eq!(r.mode, ForwardArg::Circuit, "{n}: {}", r.reason);
+        assert_eq!(r.instance.unwrap().parallel.unwrap().ranks, n);
+    }
+    let one = resolve_forward(None, Some(GLM), Ok(GLM_TARGET), 1).unwrap();
+    assert_eq!(one.mode, ForwardArg::Circuit, "{}", one.reason);
+    assert!(one.instance.unwrap().parallel.is_none());
+    for n in 5..=8 {
+        let r = resolve_forward(None, Some(GLM), Ok(GLM_TARGET), n).unwrap();
+        assert_eq!(r.mode, ForwardArg::Legacy, "{n}: {}", r.reason);
+        assert!(r.reason.contains("part `vocab`"), "{}", r.reason);
+        let e = resolve_forward(Some(ForwardArg::Circuit), Some(GLM), Ok(GLM_TARGET), n);
+        assert!(format!("{:#}", e.unwrap_err()).contains("part `vocab`"));
+    }
 }
 
 #[test]
@@ -28,11 +43,21 @@ fn an_unset_forward_without_an_instance_resolves_to_legacy_and_says_why() {
     let r = resolve_forward(None, Some(OTHER), Ok(OTHER_TARGET), 3).unwrap();
     assert_eq!(r.mode, ForwardArg::Legacy);
     assert!(r.instance.is_none());
-    assert!(r.reason.contains("no circuit instance serves"), "{}", r.reason);
+    assert!(
+        r.reason.contains("no circuit instance serves"),
+        "{}",
+        r.reason
+    );
     let r = resolve_forward(None, None, Ok(GLM_TARGET), 3).unwrap();
     assert_eq!(r.mode, ForwardArg::Legacy);
     assert!(r.reason.contains("no checkpoint id"), "{}", r.reason);
-    let r = resolve_forward(None, Some(GLM), Err("kernel arch `gfx1151` is not an sm_ arch"), 3).unwrap();
+    let r = resolve_forward(
+        None,
+        Some(GLM),
+        Err("kernel arch `gfx1151` is not an sm_ arch"),
+        3,
+    )
+    .unwrap();
     assert_eq!(r.mode, ForwardArg::Legacy);
     assert!(r.reason.contains("gfx1151"), "{}", r.reason);
 }
@@ -41,9 +66,15 @@ fn an_unset_forward_without_an_instance_resolves_to_legacy_and_says_why() {
 fn an_explicit_circuit_without_an_instance_is_refused() {
     for mode in [ForwardArg::Circuit, ForwardArg::CircuitReference] {
         let e = resolve_forward(Some(mode), Some(OTHER), Ok(OTHER_TARGET), 3).unwrap_err();
-        assert!(format!("{e:#}").contains("no circuit instance serves"), "{e:#}");
+        assert!(
+            format!("{e:#}").contains("no circuit instance serves"),
+            "{e:#}"
+        );
         let e = resolve_forward(Some(mode), None, Ok(GLM_TARGET), 3).unwrap_err();
-        assert!(format!("{e:#}").contains("needs the checkpoint id"), "{e:#}");
+        assert!(
+            format!("{e:#}").contains("needs the checkpoint id"),
+            "{e:#}"
+        );
         assert!(resolve_forward(Some(mode), Some(GLM), Err("no circuit target"), 3).is_err());
     }
 }

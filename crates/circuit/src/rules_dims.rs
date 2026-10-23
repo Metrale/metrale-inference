@@ -78,26 +78,32 @@ pub(crate) fn parse(
 ) -> Result<BTreeMap<String, DimPred>, String> {
     let mut out = BTreeMap::new();
     for (dim, f) in file {
-        let modulo = match (f.modulo, f.rem) {
-            (None, None) => None,
-            (Some(m), Some(r)) if m > 0 && r < m => Some((m, r)),
-            (Some(m), Some(r)) => {
-                return Err(format!("dims.{dim}: mod {m} rem {r} needs 0 <= rem < mod"));
-            }
-            _ => return Err(format!("dims.{dim}: `mod` and `rem` go together")),
-        };
-        let p = DimPred {
-            eq: f.eq,
-            min: f.min,
-            max: f.max,
-            modulo,
-        };
-        if p == DimPred::default() {
-            return Err(format!("dims.{dim}: states no test"));
-        }
+        let p = parse_one(&format!("dims.{dim}"), &f)?;
         out.insert(dim, p);
     }
     Ok(out)
+}
+
+/// 2026-10-23: Parse one predicate named `what` in errors (`dims.<dim>`, a collective's `ranks`).
+pub(crate) fn parse_one(what: &str, f: &DimPredFile) -> Result<DimPred, String> {
+    let modulo = match (f.modulo, f.rem) {
+        (None, None) => None,
+        (Some(m), Some(r)) if m > 0 && r < m => Some((m, r)),
+        (Some(m), Some(r)) => {
+            return Err(format!("{what}: mod {m} rem {r} needs 0 <= rem < mod"));
+        }
+        _ => return Err(format!("{what}: `mod` and `rem` go together")),
+    };
+    let p = DimPred {
+        eq: f.eq,
+        min: f.min,
+        max: f.max,
+        modulo,
+    };
+    if p == DimPred::default() {
+        return Err(format!("{what}: states no test"));
+    }
+    Ok(p)
 }
 
 /// 2026-10-23: `Ok(true)` when every predicate holds under `dims`, `Err(dim)` naming the first dim

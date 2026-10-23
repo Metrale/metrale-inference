@@ -12,6 +12,7 @@
 
 use anyhow::Result;
 
+pub mod ar_path;
 // 2026-09-26: Gated on `nccl` because the bindings link libnccl. The release
 // targets built with `--features cuda` alone, such as the AMD SCALE one, have
 // no NCCL library.

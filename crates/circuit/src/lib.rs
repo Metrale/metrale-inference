@@ -34,6 +34,7 @@ pub mod config_map;
 pub mod critical;
 pub mod critical_report;
 pub mod declared_precision;
+pub mod deploy;
 pub mod digest;
 pub mod dims;
 pub mod fidelity;

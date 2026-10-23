@@ -240,9 +240,9 @@ Rule kernels a matrix model's policy could select that the device cannot run (th
 | nvfp4_mmq::metrale_nvfp4_scale_bf16 | not compiled for this class | 6 |
 | nvfp4_mmq::metrale_nvfp4_silu_mul_quant | not compiled for this class | 6 |
 | residual_add_rms_norm_exact::residual_add_rms_norm_exact | not compiled for this class | 12 |
-| screen_head::screen_head_rescore | not compiled for this class | 1 |
-| screen_head::screen_head_resolve | not compiled for this class | 1 |
-| screen_head::screen_head_scan | not compiled for this class | 1 |
+| screen_head::screen_head_rescore | not compiled for this class | 2 |
+| screen_head::screen_head_resolve | not compiled for this class | 2 |
+| screen_head::screen_head_scan | not compiled for this class | 2 |
 | w4a16::w4a16_gemm_t_k64_n64_p3 | not compiled for this class | 7 |
 | w4a16::w4a16_gemm_t_k64_p3 | not compiled for this class | 3 |
 | w4a16::w4a16_gemm_t_m128 | not compiled for this class | 7 |
