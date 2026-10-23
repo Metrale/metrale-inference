@@ -5116,7 +5116,7 @@ cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-164 (2026-10-23: 
 # meets one that needs the whole tensor). At three ranks every payload of a C=1 step
 # fits `all_reduce_oneshot_max_kb` (1024 in the recipe), so each takes the one-shot path: one NCCL
 # group of a send and a receive per peer, one `ncclDevKernel_SendRecv` (crates/comm/src/
-# nccl_backend/ar_path.rs:29-42, sendrecv.rs:61,231-240), then the rank-order sum. The `comm` entry
+# ar_path.rs:29-42, nccl_backend/sendrecv.rs:61,231-240), then the rank-order sum. The `comm` entry
 # is that library launch; `at` is how many of the rule's kernels precede it.
 
 [[rule]]
@@ -5135,7 +5135,7 @@ cite = "crates/model-arch/src/glm5next_layer/steps/mhc_site.rs:243-255,113-141 (
 
 [[rule]]
 id = "tp_all_reduce_oneshot"
-pattern = [{ op = "all_reduce" }]
+pattern = [{ op = "all_reduce", ranks = { min = 3 } }]
 comm = [{ api = "exchange", kernel = "ncclDevKernel_SendRecv", at = 0 }]
 kernels = [{ module = "bf16_add", func = "bf16_add_rank_sum" }]
 repeat = "once"
@@ -5151,7 +5151,7 @@ cite = "crates/comm/src/nccl_backend/sendrecv.rs:178-221 (all_reduce_oneshot: th
 # METRALE_GLM_MTP_EH_TP; the vocab shard's logits before a plain argmax).
 [[rule]]
 id = "tp_all_gather_as_sum"
-pattern = [{ op = "all_gather" }]
+pattern = [{ op = "all_gather", ranks = { min = 3 } }]
 comm = [{ api = "exchange", kernel = "ncclDevKernel_SendRecv", at = 0 }]
 kernels = [{ module = "bf16_add", func = "bf16_add_rank_sum" }]
 repeat = "once"
@@ -5161,6 +5161,41 @@ modes = ["decode", "multi_seq", "verify", "draft"]
 numerics = "reference"
 priority = 10
 cite = "crates/model-arch/src/glm5next_mtp_head.rs:229-243 (METRALE_GLM_MTP_EH_TP: each rank's eh_proj rows into a zeroed row, then the sum); crates/model-engine/src/model/impl_a3_lm_head.rs:172,225,432 (the vocab shard's logits all-reduced into the full row, then the argmax); crates/comm/src/nccl_backend/sendrecv.rs:61 (oneshot_applies: bytes <= all_reduce_oneshot_max_kb), :178-221 (all_reduce_oneshot)"
+
+# 2026-10-23: At two ranks the engine's all-reduce takes the 2-rank exchange whenever its add
+# kernel is set (crates/comm/src/ar_path.rs: `ArPath::TwoRank` before the one-shot): one NCCL
+# group of a send to and a receive from the partner (one `ncclDevKernel_SendRecv`), then
+# `bf16_add_inplace` of the partner's partial. The one-shot rules above take three or more ranks
+# (`ranks = { min = 3 }`); model-arch `world_tests` checks the rule each group size takes against
+# `ar_path`'s table. Priority 9, below the one-shot's 10: the group-size predicates are disjoint,
+# so a dropped predicate shows as the one-shot rule taking a two-rank group, never as a tie.
+[[rule]]
+id = "tp_all_reduce_2rank"
+pattern = [{ op = "all_reduce", ranks = { max = 2 } }]
+comm = [{ api = "exchange", kernel = "ncclDevKernel_SendRecv", at = 0 }]
+kernels = [{ module = "bf16_add", func = "bf16_add_inplace" }]
+repeat = "once"
+emitter = "tp_all_reduce"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify", "draft"]
+numerics = "reference"
+priority = 9
+cite = "crates/comm/src/ar_path.rs:32-45 (ar_path: world 2 with the add kernel set -> TwoRank); crates/comm/src/nccl_backend/sendrecv.rs:285-365 (all_reduce_2rank: ncclSend + ncclRecv with the partner in one group, then bf16_add_inplace over ceil(count/256) blocks); comm_impl.rs:25-31,52-72 (all_reduce / all_reduce_async take it); kernels/gb10/common/bf16_add.cu:3-9"
+
+# 2026-10-23: The all-gather the engine runs as an all-reduce of zero-padded slices, at two ranks:
+# the same 2-rank exchange and add as `tp_all_reduce_2rank`.
+[[rule]]
+id = "tp_all_gather_as_sum_2rank"
+pattern = [{ op = "all_gather", ranks = { max = 2 } }]
+comm = [{ api = "exchange", kernel = "ncclDevKernel_SendRecv", at = 0 }]
+kernels = [{ module = "bf16_add", func = "bf16_add_inplace" }]
+repeat = "once"
+emitter = "tp_all_reduce"
+rows = [1, 3]
+modes = ["decode", "multi_seq", "verify", "draft"]
+numerics = "reference"
+priority = 9
+cite = "crates/model-arch/src/glm5next_mtp_head.rs:229-243 (METRALE_GLM_MTP_EH_TP: each rank's eh_proj rows into a zeroed row, then the all-reduce); crates/model-engine/src/model/impl_a3_lm_head.rs:172,225,432 (the vocab shard's logits all-reduced into the full row); crates/comm/src/ar_path.rs:32-45 (TwoRank at two ranks), crates/comm/src/nccl_backend/sendrecv.rs:285-365 (all_reduce_2rank)"
 
 # 2026-10-23 (P0-prereq): The vocab-sharded LM head's gather. Decode sums the zero-padded
 # logits rows (309,760 bytes a row: one-shot up to three rows, `tp_all_gather_as_sum`) before the

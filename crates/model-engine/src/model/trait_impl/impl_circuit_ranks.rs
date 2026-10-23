@@ -9,8 +9,11 @@
 //! Invariants:
 //! - The plans are fused over this rank's circuit of the instance, under the one policy every
 //!   layer derives from its live levers (`CircuitBindings::plan_policy`); layers that disagree,
-//!   an instance of another world size, or a model with no plan-executed site refuse the
-//!   selection rather than run legacy under the name `circuit`.
+//!   or a model with no plan-executed site refuse the selection rather than run legacy under the
+//!   name `circuit`.
+//! - 2026-10-23: Any world size: the rank circuits are the instance's derived deployment over
+//!   this serve's N (`load_served`, `metrale_circuit::deploy`); an N a part cannot split at is
+//!   refused there (`ErrorCode::CircuitRanksRefused`, naming the part and dim).
 //! - Only `circuit` (every rule) is accepted: `circuit-reference` is refused under TP.
 //! - A drafter with a circuit block (the GLM MTP block) installs its sites from the rank's draft
 //!   plan (draft n=1), fused under the same policy, which its block must derive too.

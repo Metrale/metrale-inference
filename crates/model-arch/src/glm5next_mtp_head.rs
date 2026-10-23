@@ -45,7 +45,7 @@ mod draft_io;
 mod draft_lp;
 mod graph;
 mod head_sweep;
-mod head_xchg;
+pub(crate) mod head_xchg;
 mod hidden_half;
 mod init;
 pub(crate) mod kv_pool;

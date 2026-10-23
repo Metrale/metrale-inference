@@ -246,6 +246,36 @@ class GeneratorTest(unittest.TestCase):
             'extern "C" __global__ void mystery(float* s) {}\n',
             "no rule classifies")
 
+    def test_partial_json_keeps_an_unclassified_kernel_that_strict_json_refuses(self):
+        # 2026-10-23: --json --partial (metrale-kg's inventory) lists the kernel with component
+        # null and a structured problem, exit 0; strict --json still refuses the same tree.
+        import json
+        write_tree(self.root, {"kernels/gb10/common/mamba_scan.cu":
+            'extern "C" __global__ void mamba2_scan(float* s) {}\nextern "C" __global__ void mamba2_state(float* s) {}\n'
+            'extern "C" __global__ void mystery(float* s) {}\n'})
+        strict = run(self.root, "--json")
+        self.assertNotEqual(strict.returncode, 0)
+        self.assertEqual(strict.stdout, "")
+        out = run(self.root, "--json", "--partial")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        d = json.loads(out.stdout)
+        key = "kernels/gb10/common/mamba_scan.cu::mystery"
+        self.assertEqual(d["problems"], [{"kind": "unclassified", "kernel": key}])
+        row = next(r for r in d["kernels"] if r["kernel"].endswith("::mystery"))
+        self.assertIsNone(row["component"])
+        classified = [r for r in d["kernels"] if r["component"] is not None]
+        self.assertEqual(len(classified), len(d["kernels"]) - 1)
+
+    def test_partial_json_on_a_consistent_tree_has_no_problems_and_the_strict_rows(self):
+        import json
+        strict = run(self.root, "--json")
+        out = run(self.root, "--json", "--partial")
+        self.assertEqual(out.returncode, 0, out.stderr)
+        d = json.loads(out.stdout)
+        self.assertEqual(d["problems"], [])
+        self.assertEqual(d["kernels"], json.loads(strict.stdout))
+        self.assertNotEqual(run(self.root, "--partial").returncode, 0)
+
     def test_mutation_stale_tradeoff_is_refused(self):
         self.assert_mutation_fails(
             "docs/kernel-perf/tradeoffs.toml",
