@@ -96,29 +96,16 @@ impl Glm5NextKdaLayer {
         let c = &self.cfg;
         let (qkv, cd, d) = (c.qkv_dim(), c.conv_dim(), c.head_dim);
         let io = RowIo::workspace(c, ws, 0);
-        // 2026-10-21: `METRALE_GLM_KDA_CONV_SNAP_TO`: each conv intermediate as one
-        // `causal_conv1d_window_advance_to` from the live window (the same bytes as the copy then
-        // the advance), so no copy node breaks the graph's PDL chain.
-        let to = self.levers.kda.conv_snap_to && s.conv_window_to.0 != 0;
-        for (t, &(_, conv_dst)) in snapshots.iter().enumerate() {
-            let mut launch = if to {
-                KernelLaunch::new(gpu, s.conv_window_to).arg_ptr(state.conv)
-            } else {
-                gpu.copy_d2d_async(state.conv, conv_dst, c.conv_state_elems() * 4, stream)?;
-                KernelLaunch::new(gpu, s.conv_window)
-            };
-            launch = launch.arg_ptr(conv_dst);
-            launch
-                .grid([div_ceil(cd as u32, 256), 1, 1])
-                .block([256, 1, 1])
-                .arg_ptr(io.qkv_in)
-                .arg_u32(cd as u32)
-                .arg_u32(c.conv_kernel as u32)
-                .arg_u32(t as u32 + 1)
-                .launch(stream)?;
+        // 2026-10-23: `METRALE_GLM_KDA_CONV_ONE`: the conv, the intermediates and the advance
+        // in one launch; otherwise the intermediates, then `conv_tokens`.
+        if self.levers.kda.conv_one {
+            self.conv_tokens_snap(gpu, k, state, io, snapshots, stream)?;
+        } else {
+            self.conv_snapshots(gpu, state, io, snapshots, stream)?;
+            // 2026-10-13: The snapshots above read the packed rows, so the pack ran in
+            // `front_end`.
+            self.conv_tokens(gpu, k, state, ws, Pack::InFrontEnd, stream)?;
         }
-        // 2026-10-13: The snapshots above read the packed rows, so the pack ran in `front_end`.
-        self.conv_tokens(gpu, k, state, ws, Pack::InFrontEnd, stream)?;
         let snap = |t: usize| snapshots.get(t).map_or(DevicePtr::NULL, |p| p.0);
         KernelLaunch::new(gpu, s.recurrent_snap)
             .grid([c.heads as u32, (d / SEQ_VB) as u32, 1])
@@ -142,6 +129,88 @@ impl Glm5NextKdaLayer {
             .arg_ptr(snap(1))
             .arg_ptr(snap(2))
             .arg_u32(snapshots.len() as u32)
+            .launch(stream)
+    }
+
+    /// 2026-10-11: Each conv intermediate of a verify: the conv window copied and advanced past
+    /// rows `0..=t` into `snapshots[t].1` (the advance only moves inputs), before the conv
+    /// advances the live window.
+    fn conv_snapshots(
+        &self,
+        gpu: &dyn GpuBackend,
+        state: &KdaSeqState,
+        io: RowIo,
+        snapshots: &[(DevicePtr, DevicePtr)],
+        stream: u64,
+    ) -> Result<()> {
+        let c = &self.cfg;
+        let cd = c.conv_dim();
+        let s = &self.kernels.seq;
+        // 2026-10-21: `METRALE_GLM_KDA_CONV_SNAP_TO`: each conv intermediate as one
+        // `causal_conv1d_window_advance_to` from the live window (the same bytes as the copy then
+        // the advance), so no copy node breaks the graph's PDL chain.
+        let to = self.levers.kda.conv_snap_to && s.conv_window_to.0 != 0;
+        for (t, &(_, conv_dst)) in snapshots.iter().enumerate() {
+            let mut launch = if to {
+                KernelLaunch::new(gpu, s.conv_window_to).arg_ptr(state.conv)
+            } else {
+                gpu.copy_d2d_async(state.conv, conv_dst, c.conv_state_elems() * 4, stream)?;
+                KernelLaunch::new(gpu, s.conv_window)
+            };
+            launch = launch.arg_ptr(conv_dst);
+            launch
+                .grid([div_ceil(cd as u32, 256), 1, 1])
+                .block([256, 1, 1])
+                .arg_ptr(io.qkv_in)
+                .arg_u32(cd as u32)
+                .arg_u32(c.conv_kernel as u32)
+                .arg_u32(t as u32 + 1)
+                .launch(stream)?;
+        }
+        Ok(())
+    }
+
+    /// 2026-10-23: [`Self::conv_snapshots`] then [`Self::conv_tokens`] (packed rows) as one
+    /// `causal_conv1d_update_l2norm_tokens_snap` launch: the same bytes (the kernel's
+    /// invariant). Refuses a target without the kernel: the lever asked for it.
+    fn conv_tokens_snap(
+        &self,
+        gpu: &dyn GpuBackend,
+        k: usize,
+        state: &KdaSeqState,
+        io: RowIo,
+        snapshots: &[(DevicePtr, DevicePtr)],
+        stream: u64,
+    ) -> Result<()> {
+        let c = &self.cfg;
+        let (cd, d) = (c.conv_dim(), c.head_dim);
+        let kernel = self.kernels.seq.conv_snap;
+        if kernel.0 == 0 || snapshots.len() > 3 {
+            bail!(
+                "METRALE_GLM_KDA_CONV_ONE: no causal_conv1d_update_l2norm_tokens_snap for {} \
+                 intermediates on this target",
+                snapshots.len()
+            );
+        }
+        let snap = |t: usize| snapshots.get(t).map_or(DevicePtr::NULL, |p| p.1);
+        KernelLaunch::new(gpu, kernel)
+            .grid([div_ceil(cd as u32, 256), 1, 1])
+            .block([256, 1, 1])
+            .arg_ptr(state.conv)
+            .arg_ptr(io.qkv_in)
+            .arg_ptr(self.weights.conv.weight)
+            .arg_ptr(DevicePtr::NULL)
+            .arg_ptr(io.conv_out)
+            .arg_ptr(snap(0))
+            .arg_ptr(snap(1))
+            .arg_ptr(snap(2))
+            .arg_u32(snapshots.len() as u32)
+            .arg_u32(cd as u32)
+            .arg_u32(c.conv_kernel as u32)
+            .arg_u32(c.qk_channels() as u32)
+            .arg_u32(d as u32)
+            .arg_f32(c.l2_eps)
+            .arg_u32(k as u32)
             .launch(stream)
     }
 

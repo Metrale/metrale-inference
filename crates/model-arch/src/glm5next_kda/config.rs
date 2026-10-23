@@ -92,6 +92,8 @@ impl Glm5NextKdaConfig {
 
 /// 2026-09-25: One KDA block's device weights. Torch `Linear` layout `[out, in]`, BF16, except the
 /// two F32 gate parameters. There is no `Z` tensor; the output gate is low-rank `g_a`/`g_b`.
+/// 2026-10-23: Clone: pointers only (the paired A/B's per-step lever view, `with_levers`).
+#[derive(Clone)]
 pub struct Glm5NextKdaWeights {
     pub q_proj: DenseWeight,
     pub k_proj: DenseWeight,

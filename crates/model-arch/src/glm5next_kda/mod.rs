@@ -181,6 +181,7 @@ impl Glm5NextKdaWorkspace {
 }
 
 /// 2026-09-25: One bound KDA attention block.
+#[derive(Clone)]
 pub struct Glm5NextKdaLayer {
     /// 2026-09-25: The checkpoint layer index this block was bound from.
     pub layer_idx: usize,

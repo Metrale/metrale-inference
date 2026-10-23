@@ -168,8 +168,8 @@ impl Nvfp4QuantKernels {
 
 /// 2026-10-09: One registered projection: its NVFP4 weight and `[n, k]` shape.
 #[derive(Clone, Copy)]
-struct Entry {
-    w: QuantizedWeight,
+pub(crate) struct Entry {
+    pub(crate) w: QuantizedWeight,
     n: usize,
     k: usize,
 }
@@ -295,7 +295,7 @@ pub fn proj(
 }
 
 /// 2026-10-09: The registered entry under `b`, checked against the launch shape `[n, k]`.
-fn lookup(b: DevicePtr, n: usize, k: usize) -> Result<Option<Entry>> {
+pub(crate) fn lookup(b: DevicePtr, n: usize, k: usize) -> Result<Option<Entry>> {
     let g = state().lock().unwrap_or_else(|e| e.into_inner());
     let Some(&e) = g.get(&b.0) else {
         return Ok(None);
@@ -366,7 +366,7 @@ fn proj_registered(
         // K 2048 take the M-row segmented GEMV, whose rows are these tiers' bytes (each the
         // one-row GEMV's); from K 2048 up the tier, unless `w4a16_gemv_pipe` takes the rows
         // (2026-10-21: `SegPlan::pipe_rows`; KDA o 31.2 -> 30.6 us at 2 rows).
-        if plan.seg_gemv(m) && (w4a16_gemv_seg_lone(k32) || plan.pipe_rows(m)) {
+        if plan.seg_gemv(m) && (w4a16_gemv_seg_lone(k32) || plan.lone_pipe(m)) {
             let segs = [W4a16Seg {
                 weight: e.w,
                 output: c,

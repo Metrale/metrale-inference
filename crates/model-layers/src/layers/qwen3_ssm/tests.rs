@@ -171,6 +171,7 @@ fn run_batched_verify(
         midchunk_capture: None,
         // 2026-09-25: The default route; the layer has no FFN, so nothing reads it.
         moe_lora_route: crate::layer::MoeLoraRoute::Fold,
+        ab_levers: crate::layer::AbLevers::NONE,
     };
     let kv_config = metrale_cache::kv_cache::KvCacheConfig {
         block_size: 16,

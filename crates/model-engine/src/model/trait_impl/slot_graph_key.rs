@@ -31,6 +31,9 @@ pub(crate) struct SlotGraphKey {
     /// 2026-10-10: The step ends in the sharded device argmax (`device_argmax.rs`) instead of
     /// the gathered logits: a different head tail is captured.
     pub device_argmax: bool,
+    /// 2026-10-23: The paired A/B instrument's lever set the capture baked
+    /// (`ops::paired_ab`); 0 outside the instrument.
+    pub ab_levers: u32,
 }
 
 impl SlotGraphKey {
@@ -52,6 +55,15 @@ impl SlotGraphKey {
                 MoeLoraRoute::Refuse => 2,
             },
             device_argmax: false,
+            ab_levers: 0,
+        }
+    }
+
+    /// 2026-10-23: This key for a step run with the instrument's lever set `ab`.
+    pub(crate) fn with_ab_levers(self, ab: metrale_model_layers::layer::AbLevers) -> Self {
+        SlotGraphKey {
+            ab_levers: ab.bits(),
+            ..self
         }
     }
 

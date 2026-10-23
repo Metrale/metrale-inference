@@ -103,6 +103,7 @@ fn mla_decode_keep_state(
         routed_lora_layers: None,
         midchunk_capture: None,
         moe_lora_route: MoeLoraRoute::Fold,
+        ab_levers: metrale_model_layers::layer::AbLevers::NONE,
     };
     let seed = K3BoundLayer {
         index: 0,
@@ -241,6 +242,7 @@ fn serving_cuda_mla_requires_serve_max_seq_len() {
         routed_lora_layers: None,
         midchunk_capture: None,
         moe_lora_route: MoeLoraRoute::Fold,
+        ab_levers: metrale_model_layers::layer::AbLevers::NONE,
     };
     let layer = K3BoundLayer {
         index: 3,

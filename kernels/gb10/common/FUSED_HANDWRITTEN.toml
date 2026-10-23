@@ -94,8 +94,6 @@ handwritten = [
   "w4a16_gemv::w4a16_gemv_qg_batch3",
   "w4a16_gemv_fused::w4a16_gemv_dual",
   "w4a16_gemv_fused::w4a16_gemv_silu_input_sw",
-  "w4a16_gemv_pipe::w4a16_gemv_pipe_m1",
-  "w4a16_gemv_pipe::w4a16_gemv_pipe_m2",
   "w4a16_tc_rows::w4a16_tc_rows_16",
   "w4a16_tc_rows_seg::w4a16_tc_rows_seg_16_k1",
   "w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep",

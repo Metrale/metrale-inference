@@ -68,6 +68,10 @@ pub async fn dispatch(args: BenchmarkArgs, levers: Arc<BenchLevers>) -> Result<(
             }
             Ok(())
         }
+        BenchmarkCommand::PairedAb(a) => {
+            let code = super::bench_paired_ab::paired_ab_cmd(a)?;
+            std::process::exit(code);
+        }
         BenchmarkCommand::SpecCostTable(a) => {
             let code = super::bench_spec_cost::spec_cost_table_cmd(a)?;
             std::process::exit(code);

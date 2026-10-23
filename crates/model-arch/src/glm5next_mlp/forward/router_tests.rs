@@ -142,3 +142,29 @@ fn per_row_gemvs_otherwise() {
         }
     }
 }
+
+/// 2026-10-23: The paired A/B instrument's `router_npb1`: the same one launch on the same
+/// operands, on `glm5next_router_gemv_npb1` at one output per 64-thread block (grid 288), where
+/// the common few entry holds four per 256-thread block (grid 72). Without the entry, refused.
+#[test]
+fn router_npb1_is_the_same_launch_at_one_output_per_block() {
+    const NPB1: u64 = 0x75;
+    let gpu = MockGpuBackend::new();
+    let mut k = kernels(&gpu);
+    let base = run(&k, 2, true);
+    assert_eq!(
+        (base[0].func, base[0].grid, base[0].block),
+        (FEW_F32, [72, 1, 1], [256, 1, 1])
+    );
+    k.gemv_batchm_few.router_npb1 = KernelHandle(0);
+    assert!(k.gemv_batchm_few.with_router_npb1().is_err());
+    k.gemv_batchm_few.router_npb1 = KernelHandle(NPB1);
+    k.gemv_batchm_few = k.gemv_batchm_few.with_router_npb1().unwrap();
+    let l = run(&k, 2, true);
+    assert_eq!(l.len(), 1);
+    assert_eq!(
+        (l[0].func, l[0].grid, l[0].block),
+        (NPB1, [288, 1, 1], [64, 1, 1])
+    );
+    assert_eq!(l[0].args, base[0].args, "same operands and shape");
+}

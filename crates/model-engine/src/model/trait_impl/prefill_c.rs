@@ -376,6 +376,7 @@ impl TransformerModel {
             routed_lora_layers: self.routed_slot_layers(seq.adapter_slot),
             midchunk_capture: None,
             moe_lora_route: self.moe_lora_route(seq.adapter_slot),
+            ab_levers: metrale_model_layers::layer::AbLevers::NONE,
         };
 
         // 2026-09-25: Marconi hit: the first `cached_prefix_tokens - proc_start` processed

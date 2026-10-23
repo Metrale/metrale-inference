@@ -3571,6 +3571,31 @@ cite = "crates/model-arch/src/glm5next_kda/decode.rs:148 (glm_kda_row_reg: recur
 # window's advance, then `kda_recurrent_decode_bf16_seq_reg_snap` storing each state snapshot. One
 # rule per row count, as the snapshot launches are k - 1 (the pack stays `glm_kda_pack`).
 
+# 2026-10-23: glm_kda_conv_one (METRALE_GLM_KDA_CONV_ONE): that verify's conv, its intermediates and
+# the live window advance as one launch (kda_conv_snap.cu, an instantiation of the conv family's
+# template), each thread carrying its channel's window through the k rows. Bytes equal the
+# glm_kda_conv_tokens_verify_* launches'.
+
+[[rule]]
+id = "glm_kda_conv_one_verify"
+pattern = [
+  { op = "conv1d_update", local = "short_conv" },
+  { op = "state_snapshot" },
+  { op = "l2_norm", writes = "bf16" },
+]
+kernels = [
+  { module = "kda_conv_snap", func = "causal_conv1d_update_l2norm_tokens_snap" },
+]
+repeat = "once"
+emitter = "kda"
+rows = [2, 4]
+modes = ["verify"]
+when = { glm_kda_verify_tokens = "on", glm_kda_conv_one = "on" }
+numerics = "bit_identical"
+microtest = "glm5next_kda_conv_one_microtest"
+priority = 135
+cite = "crates/model-arch/src/glm5next_kda/seq_tokens.rs:101-102 (glm_kda_conv_one, crates/settings/src/groups/kernels.rs:287), :176-215 (conv_tokens_snap: one causal_conv1d_update_l2norm_tokens_snap over the k rows with the k - 1 intermediates); kernels/gb10/common/kda_conv_snap.cu:17-37; crates/model-arch/src/glm5next_kda/decode.rs:302-306 (snap_tokens)"
+
 [[rule]]
 id = "glm_kda_conv_tokens_verify_2"
 pattern = [
@@ -4386,6 +4411,54 @@ when = { glm_w4a16_gemv_seg = "on", glm_w4a16_gemv_rows = "2" }
 numerics = "reference"
 priority = 130
 cite = "crates/model-arch/src/glm5next_w4a16_seg.rs:246-256 (seg_gemv: one row, or 2..=gemv_rows rows; pipe_rows: glm_w4a16_gemv_pipe default on, crates/settings/src/groups/kernels.rs:164); crates/model-arch/src/glm5next_w4a16_dense.rs:446-495 (group_of_six, proj_group_registered); crates/model-layers/src/layers/ops/w4a16_gemv_pipe.rs:47-53 (w4a16_gemv_pipe_m1, _m2); crates/model-arch/src/glm5next_mlp/forward/dense.rs:62-125"
+
+# 2026-10-23: METRALE_GLM_SWIGLU_DOWN_FOLD (glm_swiglu_down_fold): the shared expert's clamp + SiLU
+# folded into the down's input stage (glm5next_swiglu_down_pipe_m<M>, an instantiation of the
+# w4a16_gemv_pipe template), wherever the down runs on the pipe. Bytes equal the unfolded pair's.
+
+[[rule]]
+id = "glm_w4a16_pipe_shared_fold_1row"
+pattern = [
+  { op = "linear", role = "shared_gate_up", weight = "nvfp4/g16", input = "bf16" },
+  { op = "swiglu_clamp", local = "shared_clamp", holds = "f32" },
+  { op = "silu_mul", local = "shared_act" },
+  { op = "linear", role = "shared_down", weight = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a16_gemv_pipe", func = "w4a16_gemv_pipe_m1" },
+  { module = "glm5next_swiglu_down", func = "glm5next_swiglu_down_pipe_m1" },
+]
+repeat = "once"
+emitter = "glm_w4a16"
+rows = [1, 1]
+modes = ["decode"]
+when = { glm_w4a16_gemv_seg = "on", glm_swiglu_down_fold = "on" }
+numerics = "bit_identical"
+microtest = "glm5next_swiglu_down_microtest"
+priority = 140
+cite = "crates/model-arch/src/glm5next_mlp/forward/dense.rs:103-122 (glm5next_swiglu_down::swiglu_down before the unfolded pair); crates/model-arch/src/glm5next_swiglu_down.rs:56-79 (only where SegPlan::lone_pipe, crates/model-arch/src/glm5next_w4a16_seg.rs:260-269); kernels/gb10/common/glm5next_swiglu_down.cu:34-46"
+
+[[rule]]
+id = "glm_w4a16_pipe_shared_fold_2rows"
+pattern = [
+  { op = "linear", role = "shared_gate_up", weight = "nvfp4/g16", input = "bf16" },
+  { op = "swiglu_clamp", local = "shared_clamp", holds = "f32" },
+  { op = "silu_mul", local = "shared_act" },
+  { op = "linear", role = "shared_down", weight = "nvfp4/g16" },
+]
+kernels = [
+  { module = "w4a16_gemv_pipe", func = "w4a16_gemv_pipe_m2" },
+  { module = "glm5next_swiglu_down", func = "glm5next_swiglu_down_pipe_m2" },
+]
+repeat = "once"
+emitter = "glm_w4a16"
+rows = [2, 2]
+modes = ["multi_seq", "verify"]
+when = { glm_w4a16_gemv_seg = "on", glm_w4a16_gemv_rows = "2", glm_swiglu_down_fold = "on" }
+numerics = "bit_identical"
+microtest = "glm5next_swiglu_down_microtest"
+priority = 140
+cite = "crates/model-arch/src/glm5next_mlp/forward/dense.rs:103-122 (glm5next_swiglu_down::swiglu_down before the unfolded pair); crates/model-arch/src/glm5next_swiglu_down.rs:56-79 (only where SegPlan::lone_pipe, crates/model-arch/src/glm5next_w4a16_seg.rs:260-269); kernels/gb10/common/glm5next_swiglu_down.cu:34-46"
 
 [[rule]]
 id = "glm_w4a16_seg_kda_qkv"

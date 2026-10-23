@@ -12,35 +12,57 @@ use super::*;
 use crate::layers::ops::W4A16_GEMV_SEG_MAX_ROWS;
 use crate::weight_map::QuantizedWeight;
 
+const CUH: &str = include_str!("../../../../../kernels/gb10/common/w4a16_gemv_pipe.cuh");
 const CU: &str = include_str!("../../../../../kernels/gb10/common/w4a16_gemv_pipe.cu");
+/// 2026-10-23: The other instantiation, whose stage takes two inputs and an F32
+/// ([`PipeInput::Pair`]).
+const FOLD: &str = include_str!("../../../../../kernels/gb10/common/glm5next_swiglu_down.cu");
 
 /// 2026-10-21: The host's constants are the kernel's: block size, segment count, entries and
 /// their launch bounds, and `w4a16_gemv_seg`'s staging layout (the shared-memory size it reuses).
+/// 2026-10-23: The template is `w4a16_gemv_pipe.cuh`; each entry file instantiates it.
 #[test]
 fn host_constants_match_the_kernel() {
-    assert!(CU.contains(&format!(
+    assert!(CUH.contains(&format!(
         "#define PIPE_THREADS {}\n",
         W4A16_GEMV_PIPE_WARPS * 32
     )));
-    assert!(CU.contains(&format!("#define PIPE_WARPS {W4A16_GEMV_PIPE_WARPS}\n")));
-    assert_eq!(CU.matches("PIPE_PARAMS(").count(), W4A16_GEMV_SEG_MAX + 1);
+    assert!(CUH.contains(&format!("#define PIPE_WARPS {W4A16_GEMV_PIPE_WARPS}\n")));
+    assert_eq!(CUH.matches("PIPE_PARAMS(").count(), W4A16_GEMV_SEG_MAX + 1);
+    let bounds = format!("__launch_bounds__(PIPE_THREADS, {W4A16_GEMV_PIPE_BLOCKS_PER_SM})");
     for m in 1..=2 {
+        assert!(CU.contains(&format!("{bounds} w4a16_gemv_pipe_m{m}(")));
         assert!(CU.contains(&format!(
-            "PIPE_ENTRY_NAMED(w4a16_gemv_pipe_m{m}, {m}, 1, {W4A16_GEMV_PIPE_BLOCKS_PER_SM})\n"
+            "w4a16_gemv_pipe_body<{m}, 1>(PipeRowsIn{{A, K}}, seg, K);"
+        )));
+        assert!(FOLD.contains(&format!("{bounds} glm5next_swiglu_down_pipe_m{m}(")));
+        assert!(FOLD.contains(&format!(
+            "w4a16_gemv_pipe_body<{m}, 1>(SwigluIn{{gate, up, limit, K}}"
         )));
         assert_eq!(
             w4a16_gemv_pipe_entry(m),
             Some(format!("w4a16_gemv_pipe_m{m}")).as_deref()
         );
     }
-    assert_eq!(CU.matches("\nPIPE_ENTRY_NAMED(").count(), 2);
+    assert_eq!(CU.matches("extern \"C\" __global__").count(), 2);
+    assert!(CU.contains("const __nv_bfloat16* __restrict__ A, PIPE_SEG_PARAMS, unsigned int K)"));
+    assert!(FOLD.contains(
+        "const __nv_bfloat16* __restrict__ gate, const __nv_bfloat16* __restrict__ up, float limit,\n    PIPE_SEG_PARAMS, unsigned int K)"
+    ));
     assert_eq!(w4a16_gemv_pipe_entry(0), None);
     assert_eq!(w4a16_gemv_pipe_entry(3), None);
-    assert!(CU.contains("sm[256u * j + 64u * (2u * (r & 1u) + h) + (r >> 1)] = A4[u];"));
-    assert!(CU.contains("const unsigned int J = (K16 + 127) / 128;"));
-    assert!(CU.contains("float* s_lut = (float*)(s_a + 256u * J * M);"));
-    assert!(CU.contains("uint4* sm = s_a + 256u * J * m;"));
-    assert!(!CU.contains("__shared__ float"), "no static shared memory");
+    assert!(
+        CUH.contains(
+            "sm[256u * j + 64u * (2u * (r & 1u) + h) + (r >> 1)] = in((unsigned int)m, u);"
+        )
+    );
+    assert!(CUH.contains("return ((const uint4*)(A + (unsigned long long)m * K))[u];"));
+    assert!(CUH.contains("const unsigned int J = (K16 + 127) / 128;"));
+    assert!(CUH.contains("float* s_lut = (float*)(s_a + 256u * J * M);"));
+    assert!(CUH.contains("uint4* sm = s_a + 256u * J * m;"));
+    for src in [CUH, CU, FOLD] {
+        assert!(!src.contains("__shared__ float"), "no static shared memory");
+    }
 }
 
 /// 2026-10-21: The contract is `w4a16_gemv_seg`'s at a row count with an entry.
@@ -152,4 +174,38 @@ fn the_launch_carries_the_policy_grid() {
     assert!(w4a16_gemv_pipe(&gpu, a, &segs, 2, 768 + 16, 48, 7).is_err());
     assert!(w4a16_gemv_pipe_at(&gpu, a, &segs, 2, 768, 0, 7).is_err());
     assert_eq!(gpu.launches_snapshot().len(), 2);
+}
+
+/// 2026-10-23: A staged `Pair` input pushes its two pointers and the F32 ahead of the segments
+/// (the fold entry's parameter order), on the given kernel and the policy grid; the segments and
+/// K follow as for the plain entry.
+#[test]
+fn a_pair_input_leads_the_arguments() {
+    let gpu = MockGpuBackend::new();
+    let segs = [W4a16Seg {
+        weight: QuantizedWeight {
+            weight: DevicePtr(0x1000),
+            weight_scale: DevicePtr(0x1100),
+            weight_scale_2: 0.5,
+            ..QuantizedWeight::null()
+        },
+        output: DevicePtr(0x9000),
+        n: 4096,
+    }];
+    let k = metrale_gpu_runtime::gpu::KernelHandle(0x77);
+    let input = PipeInput::Pair(DevicePtr(0x5000), DevicePtr(0x6000), 10.0);
+    let cap = w4a16_gemv_pipe_cap(&[4096], 768, 2, 48);
+    w4a16_gemv_pipe_staged(&gpu, k, input, &segs, 2, 768, cap, 7).unwrap();
+    let l = gpu.launches_snapshot();
+    assert_eq!(l.len(), 1);
+    assert_eq!(l[0].func, k.0);
+    assert_eq!((l[0].grid, l[0].shared_mem), ([192, 1, 1], 2 * 4096 + 64));
+    assert_eq!(l[0].args.len(), 3 + 5 * W4A16_GEMV_SEG_MAX + 1);
+    assert_eq!(ptr(&l[0].args[0]), DevicePtr(0x5000));
+    assert_eq!(ptr(&l[0].args[1]), DevicePtr(0x6000));
+    assert_eq!(bytes(&l[0].args[2]), 10.0f32.to_le_bytes());
+    assert_eq!(ptr(&l[0].args[3]), segs[0].weight.weight);
+    assert_eq!(bytes(&l[0].args[33]), 768u32.to_le_bytes());
+    assert!(w4a16_gemv_pipe_staged(&gpu, k, input, &segs, 3, 768, cap, 7).is_err());
+    assert_eq!(gpu.launches_snapshot().len(), 1);
 }

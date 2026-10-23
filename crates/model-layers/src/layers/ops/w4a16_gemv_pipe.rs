@@ -13,12 +13,11 @@
 //!   kernel's invariant; GPU proof: the `glm5next_w4a16_gemv_pipe_bench` example).
 
 use anyhow::{Context, Result};
-use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
+use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use super::{
-    W4A16_GEMV_SEG_MAX, W4a16Seg, w4a16_gemv_seg_rows_ok, w4a16_gemv_seg_smem,
-    w4a16_gemv_seg_tiles,
+    W4A16_GEMV_SEG_MAX, W4a16Seg, w4a16_gemv_seg_rows_ok, w4a16_gemv_seg_smem, w4a16_gemv_seg_tiles,
 };
 
 /// 2026-10-21: The kernel module.
@@ -80,6 +79,17 @@ pub fn w4a16_gemv_pipe_cap(ns: &[u32], k: u32, m: u32, sms: u32) -> u32 {
     }
 }
 
+/// 2026-10-23: The input a `w4a16_gemv_pipe` instantiation stages: its leading kernel
+/// parameters (`w4a16_gemv_pipe.cuh`: the stage functor's fields), pushed before the segments.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PipeInput {
+    /// 2026-10-23: `w4a16_gemv_pipe_m<M>`: `m` contiguous BF16 rows of K.
+    Rows(DevicePtr),
+    /// 2026-10-23: An instantiation whose stage computes the rows from two `m`-row BF16 inputs
+    /// of K and an F32 (`glm5next_swiglu_down_pipe_m<M>`: gate, up, limit).
+    Pair(DevicePtr, DevicePtr, f32),
+}
+
 /// 2026-10-21: One launch of `segs` (1..=6) over `m` contiguous input rows of K on at most
 /// `max_blocks` blocks; segment i's output is `m` contiguous rows of `n_i`. Refuses a shape
 /// [`w4a16_gemv_pipe_ok`] refuses or `max_blocks == 0`.
@@ -93,23 +103,51 @@ pub fn w4a16_gemv_pipe_at(
     max_blocks: u32,
     stream: u64,
 ) -> Result<()> {
+    let entry = w4a16_gemv_pipe_entry(m).context("w4a16_gemv_pipe: no entry")?;
+    let kernel = gpu
+        .op_cache()
+        .kernel(gpu, W4A16_GEMV_PIPE_MODULE, entry)
+        .with_context(|| format!("w4a16_gemv_pipe: {W4A16_GEMV_PIPE_MODULE}::{entry}"))?;
+    w4a16_gemv_pipe_staged(
+        gpu,
+        kernel,
+        PipeInput::Rows(input),
+        segs,
+        m,
+        k,
+        max_blocks,
+        stream,
+    )
+}
+
+/// 2026-10-23: One launch of the `w4a16_gemv_pipe` instantiation `kernel` (an entry of `m`
+/// rows) staging `input`, as [`w4a16_gemv_pipe_at`] otherwise.
+#[allow(clippy::too_many_arguments)]
+pub fn w4a16_gemv_pipe_staged(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    input: PipeInput,
+    segs: &[W4a16Seg],
+    m: u32,
+    k: u32,
+    max_blocks: u32,
+    stream: u64,
+) -> Result<()> {
     let ns: Vec<u32> = segs.iter().map(|g| g.n).collect();
     anyhow::ensure!(
         w4a16_gemv_pipe_ok(k, &ns, m) && max_blocks > 0,
         "w4a16_gemv_pipe: k={k} n={ns:?} rows={m} max_blocks={max_blocks} outside the kernel's \
          contract"
     );
-    let entry = w4a16_gemv_pipe_entry(m).context("w4a16_gemv_pipe: no entry")?;
-    let kernel = gpu
-        .op_cache()
-        .kernel(gpu, W4A16_GEMV_PIPE_MODULE, entry)
-        .with_context(|| format!("w4a16_gemv_pipe: {W4A16_GEMV_PIPE_MODULE}::{entry}"))?;
     let blocks = w4a16_gemv_pipe_blocks(w4a16_gemv_seg_tiles(&ns, 1), max_blocks);
-    let mut launch = KernelLaunch::new(gpu, kernel)
+    let launch = KernelLaunch::new(gpu, kernel)
         .grid([blocks, 1, 1])
         .block([W4A16_GEMV_PIPE_WARPS * 32, 1, 1])
-        .shared_mem(w4a16_gemv_seg_smem(k, m))
-        .arg_ptr(input);
+        .shared_mem(w4a16_gemv_seg_smem(k, m));
+    let mut launch = match input {
+        PipeInput::Rows(a) => launch.arg_ptr(a),
+        PipeInput::Pair(a, b, x) => launch.arg_ptr(a).arg_ptr(b).arg_f32(x),
+    };
     for i in 0..W4A16_GEMV_SEG_MAX {
         launch = match segs.get(i) {
             Some(g) => launch

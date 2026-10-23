@@ -94,6 +94,29 @@ pub enum BenchmarkCommand {
     /// GPU-free. It refuses runs that were not measured alike, a vacuous width, and a grid
     /// the serve would not load.
     SpecCostTable(SpecCostTableArgs),
+    /// The verdict of a paired in-serve A/B run (`METRALE_PAIRED_AB`) from its serve log.
+    ///
+    /// GPU-free. Per request and per arm against A: the paired step difference with a BCa
+    /// interval, HAC ESS, TOST at the margin and one-sided superiority, Holm-corrected.
+    PairedAb(PairedAbArgs),
+}
+
+/// 2026-10-23: `met benchmark paired-ab`.
+#[derive(clap::Args, Debug)]
+pub struct PairedAbArgs {
+    /// The rank-0 serve log holding the `PAIRED_AB` lines.
+    #[arg(long)]
+    pub log: std::path::PathBuf,
+    /// Leading arm cycles of each request to drop (each arm's first steps capture its graph).
+    #[arg(long)]
+    pub warm_cycles: usize,
+    /// The equivalence margin, percent of the A step (0.25 for the decode gates).
+    #[arg(long)]
+    pub margin_pct: f64,
+    /// Huber's tuning constant for the location of the cycle differences (1.345: 95%
+    /// efficiency at the normal).
+    #[arg(long)]
+    pub huber_k: f64,
 }
 
 #[derive(clap::Args, Debug)]

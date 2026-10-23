@@ -249,6 +249,10 @@ impl TransformerModel {
         if device_draft {
             self.verify_device_row(seq, hidden.offset(h * fp32), stream)?;
         }
+        // 2026-10-23: `METRALE_PAIRED_AB`: this step's arm, its graph and its on-device span.
+        let paired = (self.stats.paired_ab).get(self.settings.telemetry.paired_ab.as_deref())?;
+        let pstep = paired.map(|p| p.begin(seq.seq_len, stream)).transpose()?;
+        let ab_levers = pstep.map_or(metrale_model_layers::layer::AbLevers::NONE, |s| s.levers);
 
         let ctx = ForwardContext {
             buffers: &self.buffers,
@@ -272,6 +276,7 @@ impl TransformerModel {
             routed_lora_layers: None,
             midchunk_capture: None,
             moe_lora_route: self.decode_moe_route(),
+            ab_levers,
         };
 
         // 2026-10-21: A graph-less verify launches nothing early.
@@ -295,7 +300,8 @@ impl TransformerModel {
         // 2026-10-21: A screened verify ends in the device argmax instead of the logits.
         let graph_key = self
             .slot_graph_key(seq.slot_idx, seq_slot, ctx.moe_lora_route)
-            .with_device_argmax(screened);
+            .with_device_argmax(screened)
+            .with_ab_levers(ab_levers);
         let cached_for_slot = graph_cache
             .as_ref()
             .and_then(|c| c.get(&graph_key).copied());
@@ -448,6 +454,9 @@ impl TransformerModel {
             }
         }
 
+        if let (Some(p), Some(st)) = (paired, pstep) {
+            p.end(st, stream)?;
+        }
         self.screen_after_verify(screened);
         let out_ptr = self.buffers.scratch();
         let mut buf = [0u8; 8];

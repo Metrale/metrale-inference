@@ -89,6 +89,7 @@ fn run_batch(native_fp8: bool, rows: u32) {
         routed_lora_layers: None,
         midchunk_capture: None,
         moe_lora_route: MoeLoraRoute::Fold,
+        ab_levers: crate::layer::AbLevers::NONE,
     };
     assert!(layer.can_forward_km(rows));
     let start = gpu.launch_count();

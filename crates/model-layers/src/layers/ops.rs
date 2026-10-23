@@ -87,6 +87,8 @@ mod gemm_fp4;
 pub mod model_stats;
 #[path = "ops/n_tile.rs"]
 mod n_tile;
+#[path = "ops/paired_ab.rs"]
+pub mod paired_ab;
 #[path = "ops/w8a16_gemm_m16.rs"]
 mod w8a16_gemm_m16;
 // 2026-09-25: N-column-blocked W8A16 batch-16 GEMVs (`w8a16_gemv_batch16_ncol2`/`ncol4`).

@@ -283,6 +283,7 @@ impl TransformerModel {
             // 2026-09-25: `Refuse` was rejected above. `upload_batch_metadata_fixed`
             // supplies the per-row MoE adapter map for `Fold`.
             moe_lora_route: self.decode_moe_route(),
+            ab_levers: metrale_model_layers::layer::AbLevers::NONE,
             derived: &self.derived,
             levers: &self.levers,
             settings: &self.settings,

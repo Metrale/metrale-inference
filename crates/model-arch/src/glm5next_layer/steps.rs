@@ -10,6 +10,7 @@ use super::*;
 use crate::glm5next_layer_dump::tap as dump;
 use crate::glm5next_mhc_levers::fused_runs;
 
+mod ab_levers;
 mod drafter;
 mod forward;
 mod forward_pieces;
@@ -353,7 +354,7 @@ impl Glm5NextLayer {
                 for &n in row_pieces {
                     forward_dense_site(
                         ctx.gpu,
-                        &self.mlp_kernels,
+                        &ab_levers::mlp_kernels(&self.mlp_kernels, ctx)?,
                         &self.mlp_cfg,
                         w,
                         self.mlp_cfg.local_dense_intermediate,
@@ -368,7 +369,7 @@ impl Glm5NextLayer {
             }
             Glm5NextMlpSite::Moe(w) => forward_moe_pieces(
                 ctx.gpu,
-                &self.mlp_kernels,
+                &ab_levers::mlp_kernels(&self.mlp_kernels, ctx)?,
                 &self.mlp_cfg,
                 w,
                 normed,

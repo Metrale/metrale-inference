@@ -153,6 +153,9 @@ pub struct KdaSeqKernels {
     /// [`Self::conv_window`] on the copy, in one launch (`METRALE_GLM_KDA_CONV_SNAP_TO`,
     /// `seq_tokens.rs`). `0` when absent: the copy and the advance run.
     pub conv_window_to: KernelHandle,
+    /// 2026-10-23: `causal_conv1d_update_l2norm_tokens_snap` (`kda_conv_snap.cu`): a verify's
+    /// conv, intermediates and window advance in one launch (`METRALE_GLM_KDA_CONV_ONE`).
+    pub conv_snap: KernelHandle,
     pub recurrent: KernelHandle,
     /// 2026-10-11: `kda_recurrent_decode_bf16_seq_reg_snap`: `recurrent` that also stores the
     /// state after each of the first rows (a verify's intermediates, `stateful_tokens_snap`).
@@ -186,6 +189,11 @@ impl KdaSeqKernels {
             ),
             conv_window: k(gpu, "kda_conv_tokens", "causal_conv1d_window_advance"),
             conv_window_to: k(gpu, "kda_conv_tokens", "causal_conv1d_window_advance_to"),
+            conv_snap: k(
+                gpu,
+                "kda_conv_snap",
+                "causal_conv1d_update_l2norm_tokens_snap",
+            ),
             recurrent: k(gpu, "kda_recurrent", "kda_recurrent_decode_bf16_seq_reg"),
             recurrent_snap: k(
                 gpu,

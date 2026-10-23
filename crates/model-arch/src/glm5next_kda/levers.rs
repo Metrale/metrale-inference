@@ -44,6 +44,9 @@ pub struct KdaLevers {
     pub conv_pack: bool,
     /// 2026-10-21: `METRALE_GLM_KDA_CONV_SNAP_TO` (on unless `0`; `seq_tokens.rs`).
     pub conv_snap_to: bool,
+    /// 2026-10-23: `METRALE_GLM_KDA_CONV_ONE`: that verify's conv, intermediates and window
+    /// advance in one launch (`seq_tokens.rs`); same bits.
+    pub conv_one: bool,
     /// 2026-10-14: `METRALE_GLM_KDA_GATE_IN_PREPARE` (`gate_at.rs`).
     pub gate_in_prepare: bool,
     /// 2026-10-10: `METRALE_GLM_KDA_GATES_FUSED` (`gates_fused.rs`).
@@ -110,6 +113,7 @@ impl KdaLevers {
             chunk64_conv: under_chunk64("METRALE_GLM_KDA_CHUNK64_CONV", k.glm_kda_chunk64_conv),
             conv_pack: k.glm_kda_conv_pack,
             conv_snap_to: k.glm_kda_conv_snap_to,
+            conv_one: k.glm_kda_conv_one,
             gate_in_prepare: under_chunk64(
                 "METRALE_GLM_KDA_GATE_IN_PREPARE",
                 k.glm_kda_gate_in_prepare,

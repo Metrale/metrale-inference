@@ -454,6 +454,9 @@ rows = [1, 2]
 kernels = [
   "w4a16_gemv_pipe::w4a16_gemv_pipe_m1", "w4a16_gemv_pipe::w4a16_gemv_pipe_m2",
   "glm5next_ffn::glm5next_swiglu_clamp", "kda_layer_ops::kda_o_norm_gated_bf16",
+  # 2026-10-23: The same GEMV with the clamp + SiLU in its input stage (glm_swiglu_down_fold).
+  "glm5next_swiglu_down::glm5next_swiglu_down_pipe_m1",
+  "glm5next_swiglu_down::glm5next_swiglu_down_pipe_m2",
 ]
 kind = "backlog"
 reason = "GLM-5 W4A16 projections at 1-2 rows on the pipelined CUDA-core NVFP4 GEMV (the recipe's GEMV tier). The segmented tensor-core row tile w4a16_tc_rows_seg runs them from two rows without the tier; measure it at 1-2 rows against this GEMV."

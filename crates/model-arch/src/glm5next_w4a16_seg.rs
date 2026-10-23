@@ -42,10 +42,10 @@ use anyhow::{Context, Result};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
 use metrale_model_layers::layers::ops::{
-    W4A16_GEMV_PIPE_MODULE, W4A16_GEMV_SEG_MAX_ROWS, W4A16_GEMV_SEG_MODULE, W4A16_GEMV_SEG_TILES, W4A16_TC_ROWS_MAX_M,
-    W4A16_TC_ROWS_SEG_MODULE, W4a16GemvSegPoint, W4a16Seg, w4a16_gemv_seg, w4a16_gemv_seg_point,
-    w4a16_gemv_pipe, w4a16_gemv_pipe_entry, w4a16_gemv_seg_policy, w4a16_tc_rows_seg, w4a16_tc_rows_seg_entries, w4a16_tc_rows_seg_tiles,
-    w4a16_tc_rows_split_for,
+    W4A16_GEMV_PIPE_MODULE, W4A16_GEMV_SEG_MAX_ROWS, W4A16_GEMV_SEG_MODULE, W4A16_GEMV_SEG_TILES,
+    W4A16_TC_ROWS_MAX_M, W4A16_TC_ROWS_SEG_MODULE, W4a16GemvSegPoint, W4a16Seg, w4a16_gemv_pipe,
+    w4a16_gemv_pipe_entry, w4a16_gemv_seg, w4a16_gemv_seg_point, w4a16_gemv_seg_policy,
+    w4a16_tc_rows_seg, w4a16_tc_rows_seg_entries, w4a16_tc_rows_seg_tiles, w4a16_tc_rows_split_for,
 };
 use metrale_model_layers::weight_map::QuantizedWeight;
 
@@ -204,6 +204,8 @@ pub(crate) fn prepare(gpu: &dyn GpuBackend, l: &DenseLevers) -> Result<()> {
                     format!("METRALE_GLM_W4A16_GEMV_PIPE: {W4A16_GEMV_PIPE_MODULE}::{entry}")
                 })?;
         }
+        // 2026-10-23: and the folded SwiGLU + down's, which the paired A/B can switch on.
+        crate::glm5next_swiglu_down::prepare(gpu)?;
     }
     if SMS.get().is_none() && (l.gemv_seg || l.seg != SegMode::Off) {
         let _ = SMS.set(gpu.sm_count()?);
@@ -253,6 +255,16 @@ impl SegPlan {
         self.pipe
             && self.seg_gemv(m)
             && u32::try_from(m).is_ok_and(|m| w4a16_gemv_pipe_entry(m).is_some())
+    }
+
+    /// 2026-10-23: Whether a lone registered projection of `m` rows runs on `w4a16_gemv_pipe`
+    /// (`glm5next_w4a16_dense::proj_registered`'s order: neither row-floor GEMM takes it, 2+ rows
+    /// on the GEMV tiers, [`Self::pipe_rows`]); the folded SwiGLU + down launch reads the same.
+    pub(crate) fn lone_pipe(&self, m: usize) -> bool {
+        !crate::glm5next_w4a16_tc::takes(self.tc_min_rows, m)
+            && !crate::glm5next_w4a16_wide::takes(self.dequant_min_rows, m)
+            && self.gemv_tier(m)
+            && self.pipe_rows(m)
     }
 
     /// 2026-10-10: Whether a launch of `m` rows runs on the GEMV tiers.

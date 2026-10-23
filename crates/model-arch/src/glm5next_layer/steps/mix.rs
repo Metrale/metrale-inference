@@ -65,6 +65,19 @@ impl Glm5NextLayer {
 
         match (&self.mixer, &kda_ctx) {
             (Glm5NextMixer::Kda { layer, ws, .. }, Some((kda, snaps))) => {
+                // 2026-10-23: The paired A/B's KDA levers for this step (`ab_levers.rs`).
+                let view;
+                let layer: &crate::glm5next_kda::Glm5NextKdaLayer =
+                    match super::ab_levers::kda_levers(layer.levers, ctx)? {
+                        Some(levers) => {
+                            view = crate::glm5next_kda::Glm5NextKdaLayer {
+                                levers,
+                                ..(**layer).clone()
+                            };
+                            &view
+                        }
+                        None => layer,
+                    };
                 // 2026-09-25: The chunked scan runs only for a prefill sub-chunk of more
                 // than one row that asked for no intermediates: it never materialises the
                 // state after an interior row, and its order differs from `decode_k`'s,

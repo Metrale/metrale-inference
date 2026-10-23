@@ -100,17 +100,26 @@ pub fn forward_dense(
         )?;
     }
     drop(stable);
-    swiglu(
+    // 2026-10-23: One launch under `METRALE_GLM_SWIGLU_DOWN_FOLD` (`glm5next_swiglu_down`).
+    let (gate, up, limit) = (ws.gate, ws.up, cfg.swiglu_limit);
+    let down = w.down_proj;
+    if crate::glm5next_swiglu_down::swiglu_down(
         gpu,
-        k.swiglu,
-        ws.gate,
-        ws.up,
-        ws.act,
-        // 2026-09-25: Elementwise over all `m * inter` values.
-        m * inter,
-        cfg.swiglu_limit,
+        &k.levers.dense,
+        gate,
+        up,
+        limit,
+        down,
+        out,
+        m,
+        cfg.hidden,
+        inter,
         stream,
-    )?;
+    )? {
+        return Ok(());
+    }
+    // 2026-09-25: Elementwise over all `m * inter` values.
+    swiglu(gpu, k.swiglu, gate, up, ws.act, m * inter, limit, stream)?;
     gemm(
         gpu,
         &k.levers,
@@ -118,7 +127,7 @@ pub fn forward_dense(
         k.gemv,
         k.batchm(),
         ws.act,
-        w.down_proj,
+        down,
         out,
         m,
         cfg.hidden,

@@ -33,6 +33,7 @@ pub mod history;
 pub mod http;
 pub mod levers;
 pub mod metadata;
+pub mod paired_ab;
 pub mod param_text;
 pub mod params;
 pub mod plugin;

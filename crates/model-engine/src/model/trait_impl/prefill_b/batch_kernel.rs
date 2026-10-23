@@ -432,6 +432,7 @@ impl TransformerModel {
             // error (`moe_route_gate`) rather than apply one adapter to every
             // packed row. Without a MoE adapter the route is not consulted.
             moe_lora_route: metrale_model_layers::layer::MoeLoraRoute::Refuse,
+            ab_levers: metrale_model_layers::layer::AbLevers::NONE,
         };
 
         // 2026-09-25: Scratch offset of the `h_state_ptrs` array, staged per SSM

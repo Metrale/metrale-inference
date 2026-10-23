@@ -300,6 +300,7 @@ impl TransformerModel {
             routed_lora_layers: self.routed_slot_layers(adapter_slot),
             midchunk_capture: None,
             moe_lora_route: self.moe_lora_route(adapter_slot),
+            ab_levers: metrale_model_layers::layer::AbLevers::NONE,
         };
         let counters: Vec<std::sync::atomic::AtomicUsize> = plans
             .iter()

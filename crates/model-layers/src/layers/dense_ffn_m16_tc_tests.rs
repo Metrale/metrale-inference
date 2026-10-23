@@ -210,6 +210,7 @@ fn run_tiled(m: u32, expect: Expect, tile: u32, configure: impl FnOnce(&mut Dens
         routed_lora_layers: None,
         midchunk_capture: None,
         moe_lora_route: MoeLoraRoute::Fold,
+        ab_levers: crate::layer::AbLevers::NONE,
     };
     let start = gpu.launch_count();
     layer

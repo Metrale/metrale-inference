@@ -80,6 +80,8 @@ pub(super) fn layer(gpu: &MockGpuBackend) -> Glm5NextKdaLayer {
         gemv_batchm_few: crate::glm5next_layer::wide_gemv::FewGemv {
             bf16: k(0),
             f32: k(0),
+            f32_npb: crate::glm5next_layer::wide_gemv::FEW_NPB,
+            router_npb1: k(0),
         },
         conv_decode: k(CONV),
         conv_decode_rows: k(CONV_ROWS),
@@ -97,6 +99,7 @@ pub(super) fn layer(gpu: &MockGpuBackend) -> Glm5NextKdaLayer {
             conv_tokens_parts: k(CONV_TOKENS_PARTS),
             conv_window: k(CONV_WINDOW),
             conv_window_to: k(CONV_WINDOW_TO),
+            conv_snap: metrale_gpu_runtime::gpu::KernelHandle(0),
             recurrent: k(RECUR_SEQ),
             // 2026-10-11: The verify's snapshotting kernel, which these batched-decode paths
             // never launch: absent.

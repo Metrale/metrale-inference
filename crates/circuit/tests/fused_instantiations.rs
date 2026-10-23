@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 const CLASSES: [&str; 1] = ["gb10"];
 /// 2026-10-23: The allowlist's seeded size per class: the hand-fused kernels FUSIONS.toml named
 /// on 2026-10-23 (megakernel branch @41654eeb1). It may only fall.
-const CEILING: [(&str, usize); 1] = [("gb10", 103)];
+const CEILING: [(&str, usize); 1] = [("gb10", 101)];
 /// 2026-10-23: The marker an instantiation's first line after the SPDX line carries.
 const MARKER: &str = "// metrale: instantiates ";
 /// 2026-10-23: Constructs an instantiation must not contain: they belong to the template.

@@ -315,6 +315,7 @@ impl Fwd {
             routed_lora_layers: None,
             midchunk_capture: None,
             moe_lora_route: MoeLoraRoute::Fold,
+            ab_levers: metrale_model_layers::layer::AbLevers::NONE,
         }
     }
 }
