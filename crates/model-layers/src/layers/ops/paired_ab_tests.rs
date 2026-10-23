@@ -14,6 +14,19 @@ fn aa_is_two_identical_a_arms() {
     assert_eq!(s.lever_sets(), vec![AbLevers::NONE]);
 }
 
+/// 2026-10-23: `aa:graphs` keys its arms apart while no named position is on, so every model
+/// lever reads off on both arms.
+#[test]
+fn aa_graphs_is_two_a_arms_with_distinct_keys() {
+    let s = PairedAbSpec::parse("aa:graphs").unwrap();
+    assert!(s.names.is_empty());
+    assert_eq!(s.arms.len(), 2);
+    assert_eq!(s.arms[0], AbLevers::NONE);
+    assert_ne!(s.arms[1].bits(), AbLevers::NONE.bits());
+    assert!((0..AbLevers::MAX - 1).all(|i| !s.arms[1].has(i)));
+    assert_eq!(s.lever_sets().len(), 2);
+}
+
 #[test]
 fn a_list_is_a_against_all_on_and_attr_adds_one_off_arms() {
     let s = PairedAbSpec::parse("x, y").unwrap();

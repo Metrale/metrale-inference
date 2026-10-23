@@ -10,7 +10,8 @@
 //! Owner: model-layers ops (instrument; family-neutral: a model maps the lever names).
 //! Invariants:
 //! - Off (`NONE` levers, nothing timed) unless the setting is present; resolved once per model.
-//! - The spec grammar: `aa` (two arms, both A: the A/A control), or `n1,n2,..` (arms A and
+//! - The spec grammar: `aa` (two arms, both A: the A/A control), `aa:graphs` (both A, each through
+//!   its own graph: the control for a lever arm's cost of switching graphs), or `n1,n2,..` (arms A and
 //!   all-on), with an optional `:attr` suffix adding, per lever, the arm with only that lever
 //!   off. At most [`AbLevers::MAX`] names; duplicates and empty names are refused.
 //! - The arm of step `i` is [`PairedAbSpec::arm_at`]: cycle `i / order.len()` runs `order` (arms
@@ -47,6 +48,14 @@ impl PairedAbSpec {
             return Ok(Self {
                 names: Vec::new(),
                 arms: vec![AbLevers::NONE, AbLevers::NONE],
+            });
+        }
+        // 2026-10-23: A/A over two graphs: arm 1 holds a position no name owns, so a model
+        // (which reads only its named positions) runs A, but the step's graph key differs.
+        if text == "aa:graphs" {
+            return Ok(Self {
+                names: Vec::new(),
+                arms: vec![AbLevers::NONE, AbLevers::only(AbLevers::MAX - 1)],
             });
         }
         let (list, attr) = match text.strip_suffix(":attr") {
