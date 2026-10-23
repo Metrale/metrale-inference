@@ -65,7 +65,8 @@ fn range_bounds_match_the_owner_confirmed_table() {
             (0x0400, 0x04FF),
             (0x0500, 0x05FF),
             (0x0600, 0x06FF),
-            (0x0700, 0x07FF)
+            (0x0700, 0x07FF),
+            (0x0900, 0x09FF)
         ],
     );
 }

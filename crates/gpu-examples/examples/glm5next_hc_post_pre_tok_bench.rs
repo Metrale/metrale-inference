@@ -37,7 +37,9 @@ use metrale_comm::PeerPartials;
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_model_arch::glm5next_mhc::{Glm5NextMhcKernels, Glm5NextMhcSiteWeights};
-use metrale_model_arch::glm5next_mhc_fused::{PreNormChoice, glm_hc_post_rank_sum, glm_hc_pre_norm_with};
+use metrale_model_arch::glm5next_mhc_fused::{
+    PreNormChoice, glm_hc_post_rank_sum, glm_hc_pre_norm_with,
+};
 use metrale_model_arch::glm5next_mhc_post_pre_tok::{PostPreTok, kernel_for, launch};
 
 const H: usize = 4096;
@@ -216,7 +218,12 @@ impl Bench<'_> {
             norm_eps,
             hc_eps,
             rms_eps,
-            PreNormChoice { prefetch: false, splitk: false, tok, c1: false },
+            PreNormChoice {
+                prefetch: false,
+                splitk: false,
+                tok,
+                c1: false,
+            },
             s,
         )
     }

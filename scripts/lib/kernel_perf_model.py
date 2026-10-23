@@ -10,7 +10,8 @@ Pure: takes the parsed TOML documents and the inventory, returns rows, and raise
 * every trade-off `match` names an existing file or `file::function`, carries text
   of at most TEXT_MAX characters, and cites PRs only as positive integers;
 * every measurement row names an existing kernel, and its stored pct_of_floor
-  equals floor_us / time_us * 100 to within PCT_TOL points.
+  equals floor_us / time_us * 100 to within PCT_TOL points;
+* a row's optional energy group passes kernel_perf_energy.check.
 
 Family attribution (the "LLMs" column), per engine call site of a kernel: a family
 F is admitted when (1) a target of F compiles the kernel's file, (2) the kernel's
@@ -29,6 +30,8 @@ from __future__ import annotations
 import fnmatch
 from dataclasses import dataclass, field
 
+import kernel_perf_energy as energy
+
 TEXT_MAX = 400
 PCT_TOL = 0.5
 MEASURE_KEYS = {
@@ -36,6 +39,8 @@ MEASURE_KEYS = {
     "time_us": (int, float), "bytes": int, "flops": int, "bound": str,
     "floor_us": (int, float), "pct_of_floor": (int, float), "source": str, "notes": str,
 }
+# 2026-10-22: Optional per-row energy group (kernel_perf_energy.KEYS), all-or-none.
+OPTIONAL_MEASURE_KEYS = energy.KEYS
 
 
 class ModelError(Exception):
@@ -93,7 +98,9 @@ def _longest(prefixes: dict[str, object], path: str):
     return best[1] if best else None
 
 
-def build(inv, tax: dict, tradeoffs: dict, measurements: dict, existing_paths: set[str]) -> Model:
+def build(inv, tax: dict, tradeoffs: dict, measurements: dict, existing_paths: set[str],
+          rooflines: dict[str, dict] | None = None) -> Model:
+    """`rooflines`: hardware -> its KERNEL_FAMILIES.toml [roofline] table (energy floors)."""
     problems: list[str] = []
     fams = tax.get("family", [])
     comps = tax.get("component", [])
@@ -205,6 +212,7 @@ def build(inv, tax: dict, tradeoffs: dict, measurements: dict, existing_paths: s
         derived = m["floor_us"] / m["time_us"] * 100.0
         if abs(derived - m["pct_of_floor"]) > PCT_TOL:
             problems.append(f"{where}: pct_of_floor {m['pct_of_floor']} != floor_us/time_us*100 = {derived:.2f}")
+        problems += energy.check(m, where, (rooflines or {}).get(m["hardware"]))
         func = m["kernel"].rsplit("::", 1)[-1]
         row = by_key.get(f"{m['file']}::{func}")
         if row is None:

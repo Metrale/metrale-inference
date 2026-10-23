@@ -254,4 +254,71 @@ error_registry! {
         /// quote it).
         KernelTreeResolve = 0x0711 => "{}",
     }
+    /// 2026-10-22: `0x0900–0x09FF`: power and energy (DESIGN-kernel-energy.md): the power port
+    /// and its meters `0x0900–0x090F`, energy attribution `0x0910–0x091F`, power traces
+    /// `0x0920–0x092F`, statistics (`metrale-stats`) `0x0930–0x093F`, cost `0x0940–0x094F`,
+    /// measurement rows `0x0950–0x095F`, external meters `0x0960–0x096F`. `0x0800` is left to
+    /// the next block an owner confirms.
+    Energy = 0x0900..=0x09FF {
+        /// 2026-10-22: A power source that cannot be opened here: (source, reason).
+        PowerSourceUnavailable = 0x0900 => "power source {} is unavailable: {}",
+        /// 2026-10-22: A meter reported a field its capabilities do not declare available:
+        /// (source, field).
+        PowerFieldUndeclared = 0x0901 => "power source {} reported {}, which its capabilities \
+            do not declare available",
+        /// 2026-10-22: A ticket the meter did not issue or already completed: (source, ticket).
+        PowerTicketUnknown = 0x0902 => "power source {}: ticket {} was not issued or is done",
+        /// 2026-10-22: One read of a meter failed: (source, reason).
+        PowerReadFailed = 0x0903 => "power source {}: read failed: {}",
+        /// 2026-10-22: A capability set that leaves a field neither available nor declared
+        /// unavailable with a reason (PCND): (source, field).
+        PowerCapabilitiesIncomplete = 0x0904 => "power source {}: {} is neither available nor \
+            declared unavailable",
+        /// 2026-10-22: A meter's issue queue is full; complete a ticket first: (source, depth).
+        PowerQueueFull = 0x0905 => "power source {}: {} reads already in flight",
+        /// 2026-10-22: A measurement window the attribution refuses to integrate: (window,
+        /// reason).
+        EnergyWindowRefused = 0x0910 => "energy window {} refused: {}",
+        /// 2026-10-22: Dynamic energy without both interleaved idle baselines: (repeat, which).
+        EnergyBaselineMissing = 0x0911 => "repeat {}: idle baseline {} is missing; dynamic \
+            energy needs the baselines on both sides of the load",
+        /// 2026-10-22: The two idle baselines of a repeat drift apart: (repeat, percent, limit).
+        EnergyBaselineDrift = 0x0912 => "repeat {}: idle baselines differ by {}% (limit {}%)",
+        /// 2026-10-22: A run whose SM clock is below the floor: (MHz, floor MHz).
+        EnergyClockFloor = 0x0913 => "SM clock {} MHz is below the {} MHz floor",
+        /// 2026-10-22: Too many samples carry a throttle reason: (percent, limit).
+        EnergyThrottled = 0x0914 => "{}% of load samples carry a throttle reason (limit {}%)",
+        /// 2026-10-22: An in-serve attribution whose design matrix is ill-conditioned:
+        /// (condition number, limit, worst VIF).
+        EnergyIllConditioned = 0x0915 => "attribution refused: condition number {} exceeds {} \
+            (worst VIF {})",
+        /// 2026-10-22: Attribution inputs that do not fit together: (what).
+        EnergyInputInvalid = 0x0916 => "energy attribution input invalid: {}",
+        /// 2026-10-22: No source the platform's declared preference names is present: (scope,
+        /// order).
+        EnergyNoPreferredSource = 0x0917 => "no {} power source is present; the platform \
+            declares the order {}",
+        /// 2026-10-22: A power trace line or header that does not parse: (line, reason).
+        PowerTraceFormat = 0x0920 => "power trace line {}: {}",
+        /// 2026-10-22: A trace whose bytes differ from the hash its row names: (expected, found).
+        PowerTraceHash = 0x0921 => "power trace sha256 must be {} but is {}",
+        /// 2026-10-22: Too few observations for a statistic: (statistic, needed, got).
+        StatsInsufficient = 0x0930 => "{} needs at least {} observations, got {}",
+        /// 2026-10-22: Statistic inputs that are not valid: (statistic, reason).
+        StatsInvalid = 0x0931 => "{}: {}",
+        /// 2026-10-22: An iterative estimator that did not converge: (estimator, iterations).
+        StatsNoConvergence = 0x0932 => "{} did not converge in {} iterations",
+        /// 2026-10-22: A cost input that was not given; there is no default (PCND): (input).
+        CostInputMissing = 0x0940 => "cost: {} is required; there is no default",
+        /// 2026-10-22: A cost input out of range: (input, reason).
+        CostInputInvalid = 0x0941 => "cost: {} {}",
+        /// 2026-10-22: A measurement row key already present: (key).
+        MeasurementDuplicate = 0x0950 => "measurements.toml already has a row {}",
+        /// 2026-10-22: A measurement row the writer refuses: (key, reason).
+        MeasurementInvalid = 0x0951 => "measurement row {}: {}",
+        /// 2026-10-22: An external meter frame that does not parse: (meter, reason).
+        ExternalMeterProtocol = 0x0960 => "external meter {}: {}",
+        /// 2026-10-22: An external meter transport failure: (meter, reason).
+        ExternalMeterTransport = 0x0961 => "external meter {} transport: {}",
+    }
 }

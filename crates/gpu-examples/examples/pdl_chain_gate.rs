@@ -263,7 +263,11 @@ fn main() -> Result<()> {
     let (bad, first) = arm(&off, &kv, &b, &inp, &want, Some(g_new), REPLAYS, s)?;
     println!("  new kernels (serialised graph): {REPLAYS} replays, {bad} differ");
     off.destroy_graph(g_new)?;
-    ensure!(bad == 0, "RED: the new kernels changed the bytes: {}", first.unwrap_or_default());
+    ensure!(
+        bad == 0,
+        "RED: the new kernels changed the bytes: {}",
+        first.unwrap_or_default()
+    );
 
     let g_on = capture(&on, &kn, &b, s)?;
     let (bad_g, first_g) = arm(&on, &kn, &b, &inp, &want, Some(g_on), REPLAYS, s)?;

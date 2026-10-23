@@ -20,6 +20,7 @@
 //! | `0x0500–0x05FF` | KV-cache codec registry and plan (`metrale-kv-codec`) | unknown codec `0x0500`, pair `0x0501`, transition `0x0502`, capability `0x0503`, spill `0x0504`, plan `0x0505`, ladder `0x0506`, ABI `0x0507`, indexer geometry `0x0508`, host dequant `0x0509`, codec feature `0x050a` |
 //! | `0x0600–0x06FF` | blueprints (`metrale-blueprint`, `metrale-blueprint-trust`, `metrale-seal`) | framing `0x0600–0x0603`, trust and signatures `0x0604–0x0609`, decode `0x060a`, kernel resolution `0x060b–0x060d`, recipe projection `0x060e`, keys `0x060f`, codec `0x0610`, sealed kernels `0x0611–0x0617` (`metrale-seal`) |
 //! | `0x0700–0x07FF` | precision declarations and circuit sources (`metrale-precision`, `metrale-circuit`) | quantization_config `0x0700`, weight storage `0x0701`, weight tier `0x0702`, activation quantization `0x0703`, circuit sources `0x0710`, kernel tree `0x0711` |
+//! | `0x0900–0x09FF` | power and energy (`metrale-abstract-io` power port, `metrale-power`, `metrale-stats`, power hosts) | port and meters `0x0900–0x090F`, attribution `0x0910–0x091F`, traces `0x0920–0x092F`, statistics `0x0930–0x093F`, cost `0x0940–0x094F`, measurement rows `0x0950–0x095F`, external meters `0x0960–0x096F` |
 //!
 //! A code is never renumbered or removed; `codes.lock` and its test enforce that.
 //!

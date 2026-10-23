@@ -13,6 +13,7 @@ pub mod contamination;
 pub mod decode_floor;
 pub mod default_tier_boot;
 pub mod kat_equality;
+pub mod kernel_energy;
 pub mod media_integrity;
 pub mod mlperf_agentic;
 pub mod quick_speed;

@@ -100,7 +100,13 @@ fn key(rng: &mut Rng, p: usize, d: usize) -> f32 {
         (2, _) => 3.0e19 * if d.is_multiple_of(2) { 1.0 } else { -1.0 },
         (4, _) => 3.0e38 * if d.is_multiple_of(3) { 1.0 } else { -1.0 },
         (3, _) => 1.0e-39 * (d as f32 + 1.0),
-        (_, 4) => if d < 64 { 0.5 } else { -0.5 },
+        (_, 4) => {
+            if d < 64 {
+                0.5
+            } else {
+                -0.5
+            }
+        }
         (_, 5) => rng.unit() * 1.0e-20,
         _ => rng.unit(),
     }
@@ -145,7 +151,13 @@ fn build(gpu: &dyn GpuBackend, rng: &mut Rng, s: usize, rows: usize, short: bool
     for r in 0..rows {
         let sr = s - (rows - 1 - r);
         let np = sr / KP;
-        geom.extend_from_slice(&[sr as i32, sr.div_ceil(KP) as i32, np as i32, np.min(SEL) as i32, 2048]);
+        geom.extend_from_slice(&[
+            sr as i32,
+            sr.div_ceil(KP) as i32,
+            np as i32,
+            np.min(SEL) as i32,
+            2048,
+        ]);
         qpos.push(sr as i32 - 1 - if short { 6 + r as i32 } else { 0 });
     }
     let mut bt = perm.clone();
@@ -241,9 +253,17 @@ fn first_diff(a: &[u8], b: &[u8], rows: usize) -> String {
     let i = a.iter().zip(b).position(|(x, y)| x != y).unwrap_or(0);
     let sb = rows * MAX_POOLS * 4;
     if i < sb {
-        format!("score row {} pool {}", i / 4 / MAX_POOLS, (i / 4) % MAX_POOLS)
+        format!(
+            "score row {} pool {}",
+            i / 4 / MAX_POOLS,
+            (i / 4) % MAX_POOLS
+        )
     } else {
-        format!("candidacy row {} pool {}", (i - sb) / MAX_POOLS, (i - sb) % MAX_POOLS)
+        format!(
+            "candidacy row {} pool {}",
+            (i - sb) / MAX_POOLS,
+            (i - sb) % MAX_POOLS
+        )
     }
 }
 
@@ -282,12 +302,21 @@ fn main() -> Result<()> {
                     );
                 }
             }
-            println!("S={s:7} rows={rows} short={short:5}: identical (grids {sms}, 1, {})", 3 * sms);
+            println!(
+                "S={s:7} rows={rows} short={short:5}: identical (grids {sms}, 1, {})",
+                3 * sms
+            );
             if ctxs.contains(&s) && rows <= 2 && !short {
                 let pk = |i: usize| c.pk_copies[i % c.pk_copies.len()];
-                let to = graph_us(&gpu, &|i, st| launch(&gpu, old, &c, pk(i), grid_old(&c), st))?;
-                let tn = graph_us(&gpu, &|i, st| launch(&gpu, heads, &c, pk(i), grid_new(&c), st))?;
-                let tw = graph_us(&gpu, &|i, st| launch(&gpu, window, &c, pk(i), grid_new(&c), st))?;
+                let to = graph_us(&gpu, &|i, st| {
+                    launch(&gpu, old, &c, pk(i), grid_old(&c), st)
+                })?;
+                let tn = graph_us(&gpu, &|i, st| {
+                    launch(&gpu, heads, &c, pk(i), grid_new(&c), st)
+                })?;
+                let tw = graph_us(&gpu, &|i, st| {
+                    launch(&gpu, window, &c, pk(i), grid_new(&c), st)
+                })?;
                 let gb = (c.pools * D * 4) as f64 / 1e3;
                 println!(
                     "  TIME S={s:7} rows={rows}: warp_paged {to:8.1} us ({:5.1} GB/s) | heads {tn:8.1} us ({:5.1} GB/s) | window {tw:8.1} us ({:5.1} GB/s) | window/heads {:.3}",
@@ -297,7 +326,10 @@ fn main() -> Result<()> {
                     tw / tn
                 );
             }
-            for p in [c.q, c.pk, c.w, c.bt, c.qpos, c.geom, c.out, c.cand].into_iter().chain(c.pk_copies.iter().copied()) {
+            for p in [c.q, c.pk, c.w, c.bt, c.qpos, c.geom, c.out, c.cand]
+                .into_iter()
+                .chain(c.pk_copies.iter().copied())
+            {
                 gpu.free(p)?;
             }
         }

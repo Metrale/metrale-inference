@@ -21,53 +21,9 @@
 use crate::seqcell::SeqCell;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// 2026-09-26: What one counter reading did to the running total.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Advance {
-    /// 2026-09-26: The first reading: it anchors the series and contributes nothing.
-    First,
-    /// 2026-09-26: The counter moved forward by this many mJ.
-    Delta(u64),
-    /// 2026-09-26: The counter wrapped past `u64::MAX`; this many mJ elapsed.
-    Wrapped(u64),
-    /// 2026-09-26: The counter restarted; the new reading, the mJ since the
-    /// restart, is charged.
-    Reset(u64),
-}
-
-impl Advance {
-    pub fn millijoules(self) -> u64 {
-        match self {
-            Self::First => 0,
-            Self::Delta(d) | Self::Wrapped(d) | Self::Reset(d) => d,
-        }
-    }
-}
-
-/// 2026-09-26: Turns raw counter readings into non-negative deltas.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct CounterTracker {
-    prev: Option<u64>,
-}
-
-/// 2026-09-26: A backwards step is a wrap only when the previous reading sat
-/// in the top quarter of the range and the new one in the bottom quarter;
-/// any other backwards step is a restart.
-const QUARTER: u64 = u64::MAX / 4;
-
-impl CounterTracker {
-    pub fn advance(&mut self, raw: u64) -> Advance {
-        let prev = self.prev.replace(raw);
-        match prev {
-            None => Advance::First,
-            Some(p) if raw >= p => Advance::Delta(raw - p),
-            Some(p) if p > u64::MAX - QUARTER && raw < QUARTER => {
-                Advance::Wrapped(raw.wrapping_sub(p))
-            }
-            Some(_) => Advance::Reset(raw),
-        }
-    }
-}
+// 2026-10-22: The counter tracker moved to the pure attribution core (SSOT), which the power
+// meters share; telemetry re-exports it so its callers are unchanged.
+pub use metrale_power::counter::{Advance, CounterTracker};
 
 /// 2026-09-26: GPU-rail joules per token for a (ΔmJ, Δtokens) pair. `None`
 /// when either is 0, so the result is never 0 or ∞.

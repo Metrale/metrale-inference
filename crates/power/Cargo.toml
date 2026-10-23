@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-power"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: per-kernel energy attribution (steady-state and in-serve NNLS), power traces, replay and scripted meters, measurement rows and cost; no_std, no I/O."
+
+# 2026-10-22: Pure: no_std + alloc, forbid(unsafe_code), builds for both wasm32 targets (NSCC).
+[dependencies]
+metrale-abstract-io = { workspace = true }
+metrale-error = { workspace = true }
+metrale-stats = { workspace = true }
+libm = { workspace = true }
+# 2026-10-22: trace_sha256 (the HPAR recompute key).
+sha2 = { workspace = true }
+
+[lints]
+workspace = true
+
+[package.metadata.metrale]
+role = "core"

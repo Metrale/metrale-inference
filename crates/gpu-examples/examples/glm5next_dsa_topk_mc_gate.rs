@@ -81,7 +81,13 @@ fn rows_of(gpu: &dyn GpuBackend, data: &[Vec<f32>]) -> Result<Rows> {
     for (r, d) in data.iter().enumerate() {
         all[r * MAX_POOLS..r * MAX_POOLS + d.len()].copy_from_slice(d);
         let np = d.len();
-        geom.extend_from_slice(&[(np * 4) as i32, np as i32 + 1, np as i32, np.min(SEL) as i32, 2048]);
+        geom.extend_from_slice(&[
+            (np * 4) as i32,
+            np as i32 + 1,
+            np as i32,
+            np.min(SEL) as i32,
+            2048,
+        ]);
     }
     Ok(Rows {
         sc: up(gpu, &all)?,
@@ -104,7 +110,15 @@ fn radix(gpu: &dyn GpuBackend, k: &Kernels, r: &Rows, out: DevicePtr, st: u64) -
         .launch(st)
 }
 
-fn mc(gpu: &dyn GpuBackend, k: &Kernels, r: &Rows, ws: DevicePtr, c: usize, out: DevicePtr, st: u64) -> Result<()> {
+fn mc(
+    gpu: &dyn GpuBackend,
+    k: &Kernels,
+    r: &Rows,
+    ws: DevicePtr,
+    c: usize,
+    out: DevicePtr,
+    st: u64,
+) -> Result<()> {
     for pass in 0..4u32 {
         KernelLaunch::new(gpu, k.pass)
             .grid([c as u32, r.rows as u32, 1])
@@ -165,7 +179,13 @@ fn row(rng: &mut Rng, kind: usize, n: usize) -> (String, Vec<f32>) {
                 1 => -0.0,
                 _ => rng.unit(),
             },
-            4 => if i % 5 == 0 { rng.unit() } else { f32::MIN },
+            4 => {
+                if i % 5 == 0 {
+                    rng.unit()
+                } else {
+                    f32::MIN
+                }
+            }
             5 => [0.5f32, 0.25, 0.75][i % 3] + if i % 1000 == 999 { 1e-7 } else { 0.0 },
             6 => (rng.unit() * 1e6).round() / 1e6 * f32::MAX,
             _ => -(i as f32) * 1e-3,
@@ -186,17 +206,32 @@ fn main() -> Result<()> {
     let ws = gpu.alloc(max_rows * ws_bytes(64))?;
     // 2026-10-21: Garbage in the workspace: nothing may depend on its contents.
     gpu.memset(ws, 0xc3, max_rows * ws_bytes(64))?;
-    let (oa, ob) = (gpu.alloc(max_rows * SEL * 4)?, gpu.alloc(max_rows * SEL * 4)?);
+    let (oa, ob) = (
+        gpu.alloc(max_rows * SEL * 4)?,
+        gpu.alloc(max_rows * SEL * 4)?,
+    );
     let mut sets: Vec<Vec<(String, Vec<f32>)>> = Vec::new();
     for n in [0usize, 1, 300, 511, 512, 513, 2_000, 20_000, 131_072] {
         for kind in 0..8 {
             sets.push(vec![row(&mut rng, kind, n)]);
         }
     }
-    for (a, b) in [(32_768usize, 32_767usize), (4_096, 513), (512, 100_000), (65_536, 65_535)] {
+    for (a, b) in [
+        (32_768usize, 32_767usize),
+        (4_096, 513),
+        (512, 100_000),
+        (65_536, 65_535),
+    ] {
         for kind in [0usize, 2, 4, 5] {
-            sets.push(vec![row(&mut rng, kind, a), row(&mut rng, (kind + 1) % 8, b)]);
-            sets.push(vec![row(&mut rng, kind, a), row(&mut rng, kind, b), row(&mut rng, 3, a / 2)]);
+            sets.push(vec![
+                row(&mut rng, kind, a),
+                row(&mut rng, (kind + 1) % 8, b),
+            ]);
+            sets.push(vec![
+                row(&mut rng, kind, a),
+                row(&mut rng, kind, b),
+                row(&mut rng, 3, a / 2),
+            ]);
         }
     }
     let mut checked = 0;
@@ -224,18 +259,29 @@ fn main() -> Result<()> {
         gpu.free(r.sc)?;
         gpu.free(r.geom)?;
     }
-    println!("multi-CTA top-k: {checked} launches over {} row sets identical to dsa_topk_pools_radix", sets.len());
+    println!(
+        "multi-CTA top-k: {checked} launches over {} row sets identical to dsa_topk_pools_radix",
+        sets.len()
+    );
     for ctx in [1_024usize, 16_384, 65_536, 131_072, 524_288] {
         for rows in [1usize, 2] {
             let n = ctx / 4;
-            let data: Vec<Vec<f32>> = (0..rows).map(|_| (0..n).map(|_| rng.unit().max(0.0) * 0.3).collect()).collect();
+            let data: Vec<Vec<f32>> = (0..rows)
+                .map(|_| (0..n).map(|_| rng.unit().max(0.0) * 0.3).collect())
+                .collect();
             let r = rows_of(&gpu, &data)?;
             let told = graph_us(&gpu, &|st| radix(&gpu, &k, &r, oa, st))?;
             let want = read(&gpu, oa, rows * SEL * 4)?;
-            let mut line = format!("  TIME ctx {ctx:7} rows {rows} ({} pools): radix {told:7.1} us |", r.live[0]);
+            let mut line = format!(
+                "  TIME ctx {ctx:7} rows {rows} ({} pools): radix {told:7.1} us |",
+                r.live[0]
+            );
             for c in [16usize, 32, 48, 64] {
                 let t = graph_us(&gpu, &|st| mc(&gpu, &k, &r, ws, c, ob, st))?;
-                ensure!(read(&gpu, ob, rows * SEL * 4)? == want, "ctx {ctx} rows {rows} C={c}: timed selection differs");
+                ensure!(
+                    read(&gpu, ob, rows * SEL * 4)? == want,
+                    "ctx {ctx} rows {rows} C={c}: timed selection differs"
+                );
                 line += &format!(" mc C={c} {t:6.1} us");
             }
             println!("{line}");

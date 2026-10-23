@@ -83,7 +83,10 @@ fn main() -> Result<()> {
     // 2026-10-21: `PDL_BENCH_BASE_PTX=<dir>`: a third arm on the kernels before this change
     // (their PTX, one `<module>.ptx` per module), launched serialised, in the same process.
     let base = match std::env::var("PDL_BENCH_BASE_PTX") {
-        Ok(dir) => Some(MetraleCudaBackend::new(0, &metrale_gpu_examples::base_ptx::with_base(&glm.modules, &dir)?)?),
+        Ok(dir) => Some(MetraleCudaBackend::new(
+            0,
+            &metrale_gpu_examples::base_ptx::with_base(&glm.modules, &dir)?,
+        )?),
         Err(_) => None,
     };
     // 2026-10-21: A third arm: PDL on with the new side of the levers `Variant` names.
