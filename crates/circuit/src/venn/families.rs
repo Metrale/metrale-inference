@@ -353,8 +353,8 @@ pub struct Roofline {
 pub struct EnergyRoofline {
     /// 2026-10-22: Dynamic energy per DRAM byte, pJ.
     pub dram_pj_per_byte: f64,
-    /// 2026-10-22: Dynamic energy per CUDA-core FP32 FLOP, pJ.
-    pub cuda_core_fp32_pj_per_flop: Option<f64>,
+    /// 2026-10-22: Per scalar (SIMT) FP32 FLOP, pJ (TOML `cuda_core_fp32_pj_per_flop`).
+    pub simt_fp32_pj_per_flop: Option<f64>,
     /// 2026-10-22: Per BF16 MMA FLOP, pJ.
     pub bf16_mma_pj_per_flop: Option<f64>,
     /// 2026-10-22: Per FP8 MMA FLOP, pJ.

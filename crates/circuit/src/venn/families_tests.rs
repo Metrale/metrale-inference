@@ -172,7 +172,7 @@ fn the_energy_roofline_parses_and_its_absence_is_none() {
     let f = parse_families(&with_roofline(ENERGY)).unwrap();
     let e = f.energy.unwrap();
     assert_eq!(e.dram_pj_per_byte, 23.2);
-    assert_eq!(e.cuda_core_fp32_pj_per_flop, Some(1.7));
+    assert_eq!(e.simt_fp32_pj_per_flop, Some(1.7));
     assert_eq!(e.nvfp4_mma_pj_per_flop, None);
     assert_eq!(e.static_w, 12.5);
     assert_eq!(e.label, "preliminary");

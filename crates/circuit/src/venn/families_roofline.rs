@@ -27,7 +27,10 @@ pub(super) struct RooflineFile {
     nvfp4_tflops: f64,
     context_tokens: u64,
     dram_pj_per_byte: Option<f64>,
-    cuda_core_fp32_pj_per_flop: Option<f64>,
+    // 2026-10-22: The TOML key keeps the `compute = "cuda_core"` vocabulary of KERNEL_FAMILIES;
+    // the Rust name is vendor-neutral (VBOP, `xtask vendor-ban`).
+    #[serde(rename = "cuda_core_fp32_pj_per_flop")]
+    simt_fp32_pj_per_flop: Option<f64>,
     bf16_mma_pj_per_flop: Option<f64>,
     fp8_mma_pj_per_flop: Option<f64>,
     nvfp4_mma_pj_per_flop: Option<f64>,
@@ -60,7 +63,7 @@ pub(super) fn roofline(r: RooflineFile) -> Result<(Roofline, Option<EnergyRoofli
         context_tokens: r.context_tokens,
     };
     let per_class = [
-        r.cuda_core_fp32_pj_per_flop,
+        r.simt_fp32_pj_per_flop,
         r.bf16_mma_pj_per_flop,
         r.fp8_mma_pj_per_flop,
         r.nvfp4_mma_pj_per_flop,
@@ -92,7 +95,7 @@ pub(super) fn roofline(r: RooflineFile) -> Result<(Roofline, Option<EnergyRoofli
             }
             Some(EnergyRoofline {
                 dram_pj_per_byte: b,
-                cuda_core_fp32_pj_per_flop: r.cuda_core_fp32_pj_per_flop,
+                simt_fp32_pj_per_flop: r.simt_fp32_pj_per_flop,
                 bf16_mma_pj_per_flop: r.bf16_mma_pj_per_flop,
                 fp8_mma_pj_per_flop: r.fp8_mma_pj_per_flop,
                 nvfp4_mma_pj_per_flop: r.nvfp4_mma_pj_per_flop,
