@@ -121,6 +121,7 @@ impl TransformerModel {
         fusions: Fusions,
         modules: &TargetModules,
         config_json: &str,
+        verify_rows: &[u64],
     ) -> Result<CircuitExec> {
         let unmodelled = self.circuit_unmodelled();
         if !unmodelled.is_empty() {
@@ -220,8 +221,10 @@ impl TransformerModel {
             // 2026-09-29: The MTP verify widths the scheduler runs one sequence at
             // (`serial_verify_plan`), when a drafter is loaded.
             draft: draft.map(|d| d.layer),
+            // 2026-10-23: The serve's verify widths (`ForwardSelect::Circuit::verify_rows`), when
+            // a drafter is loaded.
             verify_rows: if self.proposer.is_some() {
-                vec![2, 3, 4]
+                verify_rows.to_vec()
             } else {
                 Vec::new()
             },
@@ -258,11 +261,13 @@ impl ModelCircuit for TransformerModel {
             fusions,
             modules,
             config_json,
+            verify_rows,
         } = sel
             && self.circuit_by_rank()
         {
             self.destroy_lora_decode_graphs();
-            let sites = self.install_rank_plans(instance, *fusions, modules, config_json)?;
+            let sites =
+                self.install_rank_plans(instance, *fusions, modules, config_json, verify_rows)?;
             tracing::info!(
                 "{}",
                 super::impl_circuit_ranks::report_sites(self.config.tp_rank, &sites)
@@ -276,7 +281,8 @@ impl ModelCircuit for TransformerModel {
                 fusions,
                 modules,
                 config_json,
-            } => Some(self.build_circuit(instance, *fusions, modules, config_json)?),
+                verify_rows,
+            } => Some(self.build_circuit(instance, *fusions, modules, config_json, verify_rows)?),
         };
         self.destroy_lora_decode_graphs();
         // 2026-09-29: The draft head drops the previous executor's program before its

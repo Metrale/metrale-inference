@@ -27,6 +27,7 @@ pub mod fixed;
 pub mod kernels;
 pub mod policy;
 pub mod program;
+pub mod rank_shapes;
 pub mod routes;
 pub mod sources;
 pub mod spec_key;

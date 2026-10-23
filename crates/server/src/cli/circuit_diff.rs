@@ -274,6 +274,10 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
         fusions,
         modules: modules.clone(),
         config_json: engine.config_json.clone(),
+        // 2026-10-23: The verify widths of the serve's draft depth.
+        verify_rows: metrale_model_layers::circuit_exec::rank_shapes::speculative_verify_rows(
+            num_drafts,
+        ),
     };
     let forwards = [
         ("legacy-repeat", ForwardSelect::Legacy),

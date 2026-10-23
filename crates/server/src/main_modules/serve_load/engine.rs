@@ -308,10 +308,12 @@ pub(crate) fn load_engine(
     }
 
     // 2026-09-28: `--forward`, applied before the audit so the gate sees the executor's lookups.
+    let verify_rows = super::scheduler_setup::verify_rows(&args, model.as_ref());
     model.set_forward(&serve_phases::forward_select(
         &args,
         &ptx_set,
         &config_json,
+        verify_rows,
     )?)?;
     let forward = model.forward_disclosure();
 

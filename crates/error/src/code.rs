@@ -233,7 +233,7 @@ error_registry! {
     }
     /// 2026-10-22: `0x0700–0x07FF`: precision declarations (`metrale-precision`) and the
     /// architecture circuits' sources (`metrale-circuit`). Sub-blocks: precision `0x0700–0x070F`,
-    /// circuit sources `0x0710–0x071F`.
+    /// circuit sources `0x0710–0x071F`, circuit plans `0x0720–0x072F`.
     Precision = 0x0700..=0x07FF {
         /// 2026-10-22: A `quantization_config` that does not parse into a declared precision
         /// plan: (the field path and why, as one sentence).
@@ -253,6 +253,9 @@ error_registry! {
         /// target) its host could not complete: (the host's reason, verbatim, since reports
         /// quote it).
         KernelTreeResolve = 0x0711 => "{}",
+        /// 2026-10-23: A shape the serve runs that no plan-executed site of this rank covers
+        /// under `--forward circuit` on a tensor-parallel rank: (mode, rows, why).
+        CircuitPlanUncovered = 0x0720 => "{} at {} rows has no plan coverage: {}",
     }
     /// 2026-10-22: `0x0900–0x09FF`: power and energy (DESIGN-kernel-energy.md): the power port
     /// and its meters `0x0900–0x090F`, energy attribution `0x0910–0x091F`, power traces
