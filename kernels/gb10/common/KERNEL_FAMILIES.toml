@@ -2752,12 +2752,12 @@ compute = "cuda_core"
 # launch, the state in registers, and stores the state after each of the first T - 1 (a K-row
 # verify's snapshots; METRALE_GLM_KDA_VERIFY_TOKENS, opt-in). Per token it is seq_reg's
 # arithmetic, and the outputs, snapshots and final state are the per-row walk's bits
-# (kda_recurrent.cu:500-511).
+# (kda_recurrent.cu:486-497).
 kernels = [
   "kda_recurrent::kda_recurrent_decode_bf16", "kda_recurrent::kda_recurrent_decode_bf16_smem",
   "kda_recurrent::kda_recurrent_decode_bf16_seq_reg_snap",
   # 2026-10-22: The register-resident single-token step (METRALE_GLM_KDA_ROW_REG, the recipe's): T = 1
-  # of seq_reg's body, the shared-memory kernel's expressions in order (kda_recurrent.cu:447).
+  # of seq_reg's body, the shared-memory kernel's expressions in order (kda_recurrent.cu:433).
   "kda_recurrent::kda_recurrent_decode_bf16_seq_reg",
 ]
 rows = [1, 4]
@@ -2786,7 +2786,7 @@ measurement = "glm-5.3-flash::kda_recurrent_decode_bf16_seq_reg_snap @ decode C=
 # launch (grid.z = rows), each sequence's state its own slot (METRALE_GLM_KDA_SEQ_ROWS=decode): the
 # shared-memory kernel's 1R+1W geometry (`_smem_rows`), or the register-resident one under
 # METRALE_GLM_KDA_ROWS_REG (`_rows_reg`); per row the one-token kernel's expressions in order
-# (kda_recurrent.cu:279, :333).
+# (kda_recurrent.cu:265, :319).
 [[family]]
 id = "kda_recurrent_rows"
 description = "KDA gated delta rule with per-channel decay, one token of each of up to 16 sequences per launch"

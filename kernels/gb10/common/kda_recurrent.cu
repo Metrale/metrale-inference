@@ -168,20 +168,6 @@ extern "C" __global__ void kda_recurrent_decode_bf16(
 // has it and the request fits KDA_SMEM_BUDGET, and skips it when
 // METRALE_GLM_KDA_NO_SMEM=1.
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 // 2026-10-09: The body of kda_recurrent_decode_bf16_smem, for one sequence's row; the
 // _rows entry below runs it for several sequences, each with its own state.
 __device__ __forceinline__ void kda_recurrent_decode_bf16_smem_body(

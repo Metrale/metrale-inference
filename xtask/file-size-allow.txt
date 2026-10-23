@@ -30,7 +30,7 @@ kernels/gb10/common/gated_delta_rule_fla.cu 2105
 kernels/gb10/common/gated_delta_rule_persistent.cu 1114
 kernels/gb10/common/gated_delta_rule_wyn.cu 578
 kernels/gb10/common/glm5next_mhc.cu 722
-kernels/gb10/common/kda_recurrent.cu 573
+kernels/gb10/common/kda_recurrent.cu 562
 kernels/gb10/common/mamba2_ssd_chunk.cu 518
 kernels/gb10/common/moe_expert_gemv_fused.cu 653
 kernels/gb10/common/moe_fp8_grouped_gemm.cu 524
