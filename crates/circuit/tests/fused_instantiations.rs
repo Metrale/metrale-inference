@@ -30,9 +30,9 @@ const CLASSES: [&str; 1] = ["gb10"];
 /// 2026-10-23: The allowlist's seeded size per class: the hand-fused kernels FUSIONS.toml named
 /// on 2026-10-23 (megakernel branch @41654eeb1). It may only fall.
 // 2026-10-23 (P0-prereq): 103 -> 118, the served kernels the GLM TP=3 fidelity rules name
-// (FUSED_HANDWRITTEN.toml header); owner sign-off pending. 2026-10-23 (P1): 118 -> 116,
-// w4a16_gemv_pipe_m1/_m2 became instantiations of w4a16_gemv_pipe.cuh; merged with mk-prereq's
-// 118 -> 114: 112.
+// (FUSED_HANDWRITTEN.toml header); owner signed off 2026-10-23, shrink-only from here.
+// 2026-10-23 (P1): 118 -> 116, w4a16_gemv_pipe_m1/_m2 became instantiations of
+// w4a16_gemv_pipe.cuh; merged with mk-prereq's 118 -> 114: 112.
 const CEILING: [(&str, usize); 1] = [("gb10", 112)];
 /// 2026-10-23: The marker an instantiation's first line after the SPDX line carries.
 const MARKER: &str = "// metrale: instantiates ";

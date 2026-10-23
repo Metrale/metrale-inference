@@ -95,10 +95,12 @@ pub(crate) fn resolve_forward(
 }
 
 /// 2026-09-28: The selection `--forward` asks for; `config_json` is the served checkpoint's.
+/// 2026-10-23: `verify_rows`, the verify widths the serve's speculation runs.
 pub(crate) fn forward_select(
     args: &cli::ServeArgs,
     ptx_set: &metrale_kernels::TargetPtxSet,
     config_json: &str,
+    verify_rows: Vec<u64>,
 ) -> Result<ForwardSelect> {
     let target = circuit_target(&ptx_set.target).map_err(|e| format!("{e:#}"));
     let r = resolve_forward(
@@ -119,6 +121,7 @@ pub(crate) fn forward_select(
         fusions,
         modules: TargetModules(ptx_set.modules.clone()),
         config_json: config_json.to_string(),
+        verify_rows,
     })
 }
 

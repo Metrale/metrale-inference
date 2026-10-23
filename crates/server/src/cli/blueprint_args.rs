@@ -232,7 +232,7 @@ pub struct ExportArgs {
     /// Export `kbp-card/v1`.
     #[arg(long)]
     pub card: bool,
-    /// Export `kbp-graph/v1` for `--arm`.
+    /// Export `kbp-graph/v2` for `--arm`.
     #[arg(long, requires = "arm")]
     pub graph: bool,
     /// The plan arm of a graph, `mode:rows` (e.g. `decode:1`).

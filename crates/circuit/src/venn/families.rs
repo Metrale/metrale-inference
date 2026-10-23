@@ -240,6 +240,8 @@ pub struct Family {
     pub id: String,
     /// 2026-09-29: One line.
     pub description: String,
+    /// 2026-10-22: What its kernels compute, as prose and LaTeX ([`explain`]).
+    pub explain: explain::Explain,
     /// 2026-09-29: Entry points, as FUSIONS.toml names them.
     pub kernels: Vec<KernelId>,
     /// 2026-09-29: FUSIONS.toml emitters of kernel-less groups (host copies) it stands for.
@@ -452,6 +454,8 @@ pub enum FamilyError {
 
 #[path = "families_compute.rs"]
 mod compute_file;
+#[path = "families_explain.rs"]
+pub mod explain;
 #[path = "families_file.rs"]
 mod file;
 #[path = "families_legacy.rs"]

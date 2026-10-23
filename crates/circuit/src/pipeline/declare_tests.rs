@@ -31,6 +31,9 @@ context_tokens = 1
 [[family]]
 id = "f"
 description = "toy"
+explain.about = "toy"
+explain.numerics = "toy"
+explain.math = ["x"]
 compute = "cuda_core"
 kernels = ["m::a", "m::b"]
 rows = [1, 128]
