@@ -249,7 +249,8 @@ fn export_cmd(a: &ExportArgs) -> Result<()> {
             serde_json::to_value(export::card::card(&o, &ctx))?
         } else {
             let arm = parse_arm(a.arm.as_deref().context("--graph needs --arm")?)?;
-            serde_json::to_value(export::graph::graph(&o, arm, &ctx)?)?
+            let families = super::circuit::families_of_class(&o.blueprint.hardware.class)?;
+            serde_json::to_value(export::graph::graph(&o, arm, &ctx, &families)?)?
         }
     };
     let mut text = serde_json::to_string_pretty(&value)?;

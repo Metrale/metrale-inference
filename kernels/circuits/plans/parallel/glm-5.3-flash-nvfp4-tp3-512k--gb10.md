@@ -35,9 +35,42 @@ Every other dim is replicated on every rank.
 
 ## Cost model (decode n=1)
 
-Per rank: main-section weight bytes / 273 GB/s (kernels/DEVICES.toml) + each collective at 17.57 us + payload / 25 GB/s (f14a_p1k rank 0: 95 ncclDevKernel_SendRecv/step, median 13.47 [13.22, 13.79] us + idle-before 4.10 [4.06, 4.13] us (P1-MEASUREMENTS.md); bandwidth: ConnectX-7 200 Gb/s datasheet); the step is the slowest rank (crates/circuit/src/parallel_cost.rs). It ranks layouts and predicts no step time: a lower row is a **candidate to measure**, not a change to the serve.
+Per rank: main-section weight bytes / 273 GB/s (kernels/DEVICES.toml) + each collective at 17.57 us + payload / 25 GB/s (f14a_p1k rank 0: 95 ncclDevKernel_SendRecv/step, median 13.47 [13.22, 13.79] us + idle-before 4.10 [4.06, 4.13] us (P1-MEASUREMENTS.md); bandwidth: ConnectX-7 200 Gb/s datasheet). Ranks wait for each other at every collective (over its group), so the step is the sum over segments of the slowest rank in each, not the slowest rank's whole-step total (crates/circuit/src/parallel_cost.rs). It ranks layouts and predicts no step time: a lower row is a **candidate to measure**, not a change to the serve.
 
-Today: **17059.5 us** (weight + collectives per rank: 15335.1 + 1724.4, 15255.9 + 1724.4, 14134.7 + 1724.4).
+Today: **17059.5 us** over 96 segments (weight + collectives per rank, as if it never waited: 15335.1 + 1724.4, 15255.9 + 1724.4, 14134.7 + 1724.4; the slowest of those, 17059.5 us, is the whole-step form). Each rank waits at collectives for 0.0, 79.3, 1200.4 us.
+
+### Per-segment imbalance
+
+Per closing block: Σ over its segments of the slowest rank's work less the fastest's, and of each rank's wait.
+
+| closes in | segments | Σ (max − min) us | rank 0 waits us | rank 1 waits us | rank 2 waits us |
+|---|---:|---:|---:|---:|---:|
+| `dsa` | 11 | 79.3 | 0.0 | 79.3 | 79.3 |
+| `glm_mtp_out` | 1 | 0.0 | 0.0 | 0.0 | 0.0 |
+| `head` | 1 | 1.9 | 0.0 | 0.0 | 1.9 |
+| `kda` | 34 | 302.6 | 0.0 | 0.0 | 302.6 |
+| `mlp` | 3 | 0.0 | 0.0 | 0.0 | 0.0 |
+| `moe` | 42 | 816.7 | 0.0 | 0.0 | 816.7 |
+| `mtp_dsa` | 2 | 0.0 | 0.0 | 0.0 | 0.0 |
+| `mtp_moe` | 1 | 0.0 | 0.0 | 0.0 | 0.0 |
+
+After the last collective each rank works 0.0, 0.0, 0.0 us.
+
+### `Remainder::Rotate` (priced, not built)
+
+Each segment's split parts rotate which rank takes which slice, the offsets chosen per segment to minimise its slowest rank: Σ slowest work 15335.1 us today, 15335.1 us rotated, **0.0 us/step recoverable** (an upper bound: an offset per segment, ignoring that a state's slicing must stay one across steps).
+
+| closes in | segments | improved | us saved |
+|---|---:|---:|---:|
+| `(tail)` | 1 | 0 | 0.0 |
+| `dsa` | 11 | 0 | 0.0 |
+| `glm_mtp_out` | 1 | 0 | 0.0 |
+| `head` | 1 | 0 | 0.0 |
+| `kda` | 34 | 0 | 0.0 |
+| `mlp` | 3 | 0 | 0.0 |
+| `moe` | 42 | 0 | 0.0 |
+| `mtp_dsa` | 2 | 0 | 0.0 |
+| `mtp_moe` | 1 | 0 | 0.0 |
 
 | change (one part) | model us | vs today |
 |---|---:|---:|

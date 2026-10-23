@@ -167,3 +167,27 @@ fn an_emitter_refuses_another_block() {
     let e = reg.emit(&g, &mut GlmBlock::default()).err().unwrap();
     assert!(format!("{e:#}").contains("`moe` block"), "{e:#}");
 }
+
+/// 2026-10-23: `glm_w4a16` refuses a six-projection group naming another row count's pipelined
+/// entry and a group outside the KDA block (the shared expert's), naming each.
+#[test]
+fn the_w4a16_emitter_refuses_another_entry_and_block() {
+    let (c, rules, policy) = ranks();
+    let mut p = plan(&c, &rules, &policy, 0, Mode::Decode, 1);
+    let i = PlanGroup::all(&c[0], &p)
+        .position(|g| g.layer() == Some(4) && g.locals() == ["q", "k", "v", "f_a", "b", "g_a"])
+        .unwrap();
+    p.groups[i].kernels[0].func = "w4a16_gemv_pipe_m2".into();
+    let e = compile_kda(&c[0], &p, 4).err().unwrap();
+    assert!(format!("{e:#}").contains("w4a16_gemv_pipe_m1"), "{e:#}");
+    let p = plan(&c, &rules, &policy, 0, Mode::Decode, 1);
+    let g = PlanGroup::all(&c[0], &p)
+        .find(|g| g.layer() == Some(4) && g.block() == "moe" && g.group.emitter == "glm_w4a16")
+        .expect("the shared expert is a glm_w4a16 group");
+    let e = registry()
+        .unwrap()
+        .emit(&g, &mut GlmBlock::default())
+        .err()
+        .unwrap();
+    assert!(format!("{e:#}").contains("`kda` block"), "{e:#}");
+}
