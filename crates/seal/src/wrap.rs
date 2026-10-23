@@ -133,16 +133,20 @@ impl SealRandom {
     }
 }
 
-/// 2026-10-22: A key wrapped to one recipient.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// 2026-10-22: A key wrapped to one recipient (the KKB1 `WrappedDek` minus its scheme string:
+/// the suite is stated once, by whoever carries the wrap). Postcard writes each array as one
+/// length-prefixed byte string and reads it back only at its exact length.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct WrappedCek {
     /// 2026-10-22: The ephemeral X25519 public key.
     pub epk: [u8; X25519_LEN],
     /// 2026-10-22: The ML-KEM-768 ciphertext.
+    #[serde(with = "crate::fixed")]
     pub ct_mlkem: [u8; MLKEM768_CT_LEN],
     /// 2026-10-22: The AES-GCM nonce.
     pub nonce: [u8; NONCE_LEN],
     /// 2026-10-22: The wrapped key ‖ tag.
+    #[serde(with = "crate::fixed")]
     pub ct: [u8; WRAPPED_CT_LEN],
 }
 

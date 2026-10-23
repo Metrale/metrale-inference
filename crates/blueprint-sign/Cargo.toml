@@ -14,11 +14,18 @@ role = "host-std"
 metrale-blueprint = { workspace = true }
 metrale-blueprint-trust = { workspace = true }
 metrale-error = { workspace = true }
+# 2026-10-22: The Entropy port (recipient seed generation; the host supplies OsEntropy).
+metrale-abstract-io = { workspace = true }
+# 2026-10-22: The recipient key type the key files hold (SSOT).
+metrale-seal = { workspace = true }
+# 2026-10-22: The recipient public key file's `public` line (standard padded base64).
+base64 = { workspace = true, features = ["alloc"] }
 postcard = { workspace = true, features = ["alloc"] }
 serde = { workspace = true, features = ["std", "derive"] }
 zeroize = { workspace = true, features = ["alloc"] }
 
 [dev-dependencies]
+metrale-io-host-mem = { workspace = true }
 tempfile = { workspace = true, features = ["getrandom"] }
 
 [lints]

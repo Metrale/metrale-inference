@@ -17,10 +17,17 @@
 //! - Every decompression is bounded by a header or section length under its cap and by the
 //!   caller's [`DecodeMemory`]; there is no default memory budget (PCND).
 //! - The body is canonical: a decoded body re-encodes to the bytes it came from.
+//! - 2026-10-22: The sealed section (`sealed`, `sealed_check`) is verified after the body, by
+//!   its own signature, and copied verbatim by [`sign`], [`rewrite`] and [`recode`], so plain,
+//!   lite, full and sealed files of one build share the [`BlueprintId`] and the body signature.
+//!   A sealed file's payload holds ciphertext, stored as is ([`Codec::Stored`]): it was
+//!   compressed before it was sealed and does not compress again.
 
 mod header;
 mod locator;
 mod payload;
+pub mod sealed;
+pub mod sealed_check;
 
 use alloc::borrow::Cow;
 use alloc::vec::Vec;
@@ -33,11 +40,13 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 pub use header::{
-    FLAG_FULL, FLAG_SOLID, HEADER_LEN, Header, KBP_FORMAT, MAX_ARTIFACT, MAX_BODY, MAX_BODY_RAW,
-    MAX_LOCATOR, MAX_PAYLOAD, MAX_PAYLOAD_RAW, MAX_SIG, Sections,
+    FLAG_FULL, FLAG_SEALED, FLAG_SOLID, HEADER_LEN, Header, KBP_FORMAT, MAX_ARTIFACT, MAX_BODY,
+    MAX_BODY_RAW, MAX_LOCATOR, MAX_PAYLOAD, MAX_PAYLOAD_RAW, MAX_SEALED, MAX_SIG, Sections,
 };
 pub use locator::{InlineArtifact, KernelSource, Unsigned};
 pub use payload::PayloadEntry;
+pub use sealed::{Recipient, SEALED_SCHEMA, SealedArtifact, SealedBlock, SealedManifest};
+pub use sealed_check::{Sealed, customer_tag};
 
 use crate::codec::{Codec, DecodeMemory};
 use crate::ids::{BlueprintId, Sha256};
@@ -91,8 +100,25 @@ impl<'a> Body<'a> {
     }
 }
 
-fn assemble(flags: u8, body: Body<'_>, locator: &[u8], payload: &[u8], sig: &[u8]) -> Vec<u8> {
+/// 2026-10-22: The unsigned sections of a file: locator, payload, sealed section.
+struct Tail<'a> {
+    locator: &'a [u8],
+    payload: &'a [u8],
+    sealed: &'a [u8],
+}
+
+fn assemble(flags: u8, body: Body<'_>, tail: Tail<'_>, sig: &[u8]) -> Vec<u8> {
+    let Tail {
+        locator,
+        payload,
+        sealed,
+    } = tail;
     let stored = &body.stored[..];
+    let flags = if sealed.is_empty() {
+        flags & !FLAG_SEALED
+    } else {
+        flags | FLAG_SEALED
+    };
     let h = Header {
         flags,
         codec: body.codec,
@@ -102,11 +128,13 @@ fn assemble(flags: u8, body: Body<'_>, locator: &[u8], payload: &[u8], sig: &[u8
         locator_len: len64(locator.len()),
         payload_len: len64(payload.len()),
         sig_len: len64(sig.len()),
+        sealed_len: len64(sealed.len()),
     };
-    let mut out =
-        Vec::with_capacity(HEADER_LEN + stored.len() + locator.len() + payload.len() + sig.len());
+    let mut out = Vec::with_capacity(
+        HEADER_LEN + stored.len() + locator.len() + payload.len() + sealed.len() + sig.len(),
+    );
     out.extend_from_slice(&h.write());
-    for s in [stored, locator, payload, sig] {
+    for s in [stored, locator, payload, sealed, sig] {
         out.extend_from_slice(s);
     }
     out
@@ -129,8 +157,11 @@ pub fn encode_unsigned(
     Ok(assemble(
         flags,
         Body::encode(&encode("body", bp)?, Codec::WRITE),
-        &encode("locator", unsigned)?,
-        &payload,
+        Tail {
+            locator: &encode("locator", unsigned)?,
+            payload: &payload,
+            sealed: &[],
+        },
         &[],
     ))
 }
@@ -173,8 +204,11 @@ pub fn sign(
     Ok(assemble(
         h.flags,
         Body::verbatim(&h, stored),
-        &file[s.locator],
-        &file[s.payload],
+        Tail {
+            locator: &file[s.locator],
+            payload: &file[s.payload],
+            sealed: &file[s.sealed],
+        },
         &encode("signature block", &block)?,
     ))
 }
@@ -217,6 +251,9 @@ pub struct Opened {
     pub payload: Vec<InlineArtifact>,
     /// 2026-10-22: Who signed it.
     pub signer: Verified,
+    /// 2026-10-22: The verified sealed section, for a sealed file: what a reader without a
+    /// recipient key may know about its encrypted modules.
+    pub sealed: Option<Sealed>,
 }
 
 fn decode_body(raw: &[u8]) -> Result<Blueprint, Error> {
@@ -260,18 +297,28 @@ pub fn open(file: &[u8], policy: &TrustPolicy<'_>, memory: DecodeMemory) -> Resu
             "the full flag disagrees with the payload"
         ));
     }
+    let id = BlueprintId::of_body(&raw);
+    let sealed = sealed_check::open_sealed(policy, &file[s.sealed], &id, &blueprint, &unsigned)?;
     Ok(Opened {
-        id: BlueprintId::of_body(&raw),
+        id,
         header: h,
         blueprint,
         unsigned,
         payload,
         signer,
+        sealed,
     })
 }
 
+/// 2026-10-22: The codec a writer stores a payload under: ciphertext as is, else
+/// [`Codec::WRITE`].
+fn payload_codec(sealed: bool) -> Codec {
+    if sealed { Codec::Stored } else { Codec::WRITE }
+}
+
 /// 2026-10-22: Verify `file`, then write it with new locator and payload sections (the payload
-/// under [`Codec::WRITE`]); the body and signature bytes are copied verbatim.
+/// under [`Codec::WRITE`], or stored for a sealed file); the body, sealed section and signature
+/// bytes are copied verbatim, and a sealed module may not become `internal`.
 pub fn rewrite(
     file: &[u8],
     policy: &TrustPolicy<'_>,
@@ -286,20 +333,66 @@ pub fn rewrite(
             "the locator table must have one source per module"
         ));
     }
+    if let Some(sealed) = &opened.sealed {
+        sealed_check::check_manifest(&sealed.manifest, &opened.id, &opened.blueprint, unsigned)?;
+    }
     let (h, s) = Header::parse(file)?;
-    let (flags, payload) = payload::encode_payload(payload, Codec::WRITE)?;
+    let (flags, payload) =
+        payload::encode_payload(payload, payload_codec(opened.sealed.is_some()))?;
     Ok(assemble(
         flags,
         Body::verbatim(&h, &file[s.body]),
-        &encode("locator", unsigned)?,
-        &payload,
+        Tail {
+            locator: &encode("locator", unsigned)?,
+            payload: &payload,
+            sealed: &file[s.sealed],
+        },
+        &file[s.sig],
+    ))
+}
+
+/// 2026-10-22: Write the verified plain file `file` as sealed: the new locator table, the
+/// payload of ciphertexts (stored as is) and the signed sealed section; body and body signature
+/// verbatim. The section is checked against the body and the locator before anything is written.
+pub(crate) fn write_sealed(
+    file: &[u8],
+    opened: &Opened,
+    unsigned: &Unsigned,
+    payload: &[InlineArtifact],
+    manifest: &SealedManifest,
+    sealed_section: &[u8],
+) -> Result<Vec<u8>, Error> {
+    if opened.sealed.is_some() {
+        return Err(error!(
+            ErrorCode::SealedManifest,
+            "the file is already sealed"
+        ));
+    }
+    if unsigned.sources.len() != opened.blueprint.kernels.modules.len() {
+        return Err(error!(
+            ErrorCode::BlueprintFrame,
+            "the locator table must have one source per module"
+        ));
+    }
+    sealed_check::check_manifest(manifest, &opened.id, &opened.blueprint, unsigned)?;
+    let (h, s) = Header::parse(file)?;
+    let (flags, payload) = payload::encode_payload(payload, payload_codec(true))?;
+    Ok(assemble(
+        flags,
+        Body::verbatim(&h, &file[s.body]),
+        Tail {
+            locator: &encode("locator", unsigned)?,
+            payload: &payload,
+            sealed: sealed_section,
+        },
         &file[s.sig],
     ))
 }
 
 /// 2026-10-22: Verify `file`, then write it with its body and its payload stored under `codec`
-/// (a per-entry payload becomes one solid block); the locator and signature bytes are copied
-/// verbatim. The id and the signature do not change, because neither covers stored bytes.
+/// (a per-entry payload becomes one solid block); the locator, sealed section and signature
+/// bytes are copied verbatim, and sealed entries (ciphertext) keep their bytes exactly. The id
+/// and the signatures do not change, because none covers stored bytes.
 pub fn recode(
     file: &[u8],
     policy: &TrustPolicy<'_>,
@@ -312,8 +405,11 @@ pub fn recode(
     Ok(assemble(
         flags,
         Body::encode(&encode("body", &opened.blueprint)?, codec),
-        &file[s.locator],
-        &payload,
+        Tail {
+            locator: &file[s.locator],
+            payload: &payload,
+            sealed: &file[s.sealed],
+        },
         &file[s.sig],
     ))
 }

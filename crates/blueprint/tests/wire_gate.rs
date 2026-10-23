@@ -25,6 +25,7 @@ const OWNED: &[(&str, &str)] = &[
         include_str!("../src/types/settings.rs"),
     ),
     ("frame/locator.rs", include_str!("../src/frame/locator.rs")),
+    ("frame/sealed.rs", include_str!("../src/frame/sealed.rs")),
 ];
 
 const BANNED: &[&str] = &["HashMap", "HashSet", "usize", "isize", "f32", "f64"];

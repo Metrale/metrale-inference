@@ -9,6 +9,9 @@
 //!   sees an unverified body, so `signature.status` is `verified` whenever a card exists.
 //! - `performance` is filled only from gate records the blueprint's `evidence` names, each with
 //!   its fingerprint; Phase 1 resolves no records, so it is empty.
+//! - 2026-10-22: `sealed` (null for a plain file) states what any reader may know of a sealed
+//!   file: suite, codec, recipient fingerprints, the opaque customer tag, counts and sizes, and
+//!   the sealed signature. Never a customer id; module names were already public.
 
 use alloc::collections::BTreeMap;
 use alloc::string::String;
@@ -213,6 +216,48 @@ json_struct! {
 }
 
 json_struct! {
+    /// 2026-10-22: One recipient of a sealed file.
+    pub struct CardRecipient {
+        /// 2026-10-22: `sha256:<hex>` of the recipient's public key.
+        pub fingerprint: String,
+    }
+}
+
+json_struct! {
+    /// 2026-10-22: The sealed section's signature as the exporter verified it.
+    pub struct CardSealedSignature {
+        /// 2026-10-22: Status.
+        pub status: SignatureStatus,
+        /// 2026-10-22: Signing kid.
+        pub kid: String,
+        /// 2026-10-22: Anchor kid.
+        pub anchor: String,
+    }
+}
+
+json_struct! {
+    /// 2026-10-22: The sealed section of a sealed file.
+    pub struct CardSealed {
+        /// 2026-10-22: Suite id, e.g. `hybrid-x25519-mlkem768-hkdf-a256gcm`.
+        pub suite: String,
+        /// 2026-10-22: The codec each module was compressed with before sealing.
+        pub codec: String,
+        /// 2026-10-22: Recipients, sorted by fingerprint.
+        pub recipients: Vec<CardRecipient>,
+        /// 2026-10-22: `sha256:<hex>`: opaque tag of the customer id, never the id.
+        pub customer_tag: String,
+        /// 2026-10-22: Sealed modules.
+        pub modules_sealed: u64,
+        /// 2026-10-22: Total ciphertext bytes.
+        pub ciphertext_bytes: u64,
+        /// 2026-10-22: Unix ms when sealed.
+        pub issued_at: i64,
+        /// 2026-10-22: The sealed signature.
+        pub signature: CardSealedSignature,
+    }
+}
+
+json_struct! {
     /// 2026-10-22: `kbp-card/v1`.
     pub struct Card {
         /// 2026-10-22: `kbp-card/v1`.
@@ -249,7 +294,35 @@ json_struct! {
         pub performance: Vec<CardPerformance>,
         /// 2026-10-22: Evidence.
         pub evidence: Vec<CardEvidence>,
+        /// 2026-10-22: The sealed section, for a sealed file (additive; null otherwise).
+        pub sealed: Option<CardSealed>,
     }
+}
+
+fn sealed_card(o: &Opened) -> Option<CardSealed> {
+    let s = o.sealed.as_ref()?;
+    let m = &s.manifest;
+    let n = |x: usize| u64::try_from(x).unwrap_or(u64::MAX);
+    Some(CardSealed {
+        suite: String::from(m.suite.name()),
+        codec: String::from(m.codec.name()),
+        recipients: m
+            .recipients
+            .iter()
+            .map(|r| CardRecipient {
+                fingerprint: alloc::format!("{}", r.fingerprint),
+            })
+            .collect(),
+        customer_tag: alloc::format!("{}", m.customer),
+        modules_sealed: n(m.artifacts.len()),
+        ciphertext_bytes: m.artifacts.iter().map(|a| a.ct_len).sum(),
+        issued_at: m.issued_ms,
+        signature: CardSealedSignature {
+            status: SignatureStatus::Verified,
+            kid: String::from(s.signer.kid.as_str()),
+            anchor: String::from(s.signer.anchor.as_str()),
+        },
+    })
 }
 
 fn bump(m: &mut BTreeMap<String, u64>, k: &str) {
@@ -365,5 +438,6 @@ pub fn card(o: &Opened, ctx: &ExportContext) -> Card {
                 closure: e.closure.map(|c| c.hex()),
             })
             .collect(),
+        sealed: sealed_card(o),
     }
 }

@@ -108,6 +108,7 @@ fn metrale_auth_signatures_and_ours_never_cross() {
     );
     for p in [
         Purpose::KbpBody,
+        Purpose::KbpSealed,
         Purpose::KernelArtifact,
         Purpose::KernelIndex,
         Purpose::KeyCert,

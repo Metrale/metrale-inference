@@ -61,6 +61,16 @@
         "schema": {
           "type": "string"
         },
+        "sealed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CardSealed"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "signature": {
           "$ref": "#/$defs/CardSignature"
         },
@@ -85,7 +95,8 @@
         "sizes",
         "signature",
         "performance",
-        "evidence"
+        "evidence",
+        "sealed"
       ],
       "type": "object"
     },
@@ -405,6 +416,83 @@
         "table_sha256",
         "linear_by_format",
         "kv_cache"
+      ],
+      "type": "object"
+    },
+    "CardRecipient": {
+      "additionalProperties": false,
+      "properties": {
+        "fingerprint": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "fingerprint"
+      ],
+      "type": "object"
+    },
+    "CardSealed": {
+      "additionalProperties": false,
+      "properties": {
+        "ciphertext_bytes": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "codec": {
+          "type": "string"
+        },
+        "customer_tag": {
+          "type": "string"
+        },
+        "issued_at": {
+          "type": "integer"
+        },
+        "modules_sealed": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "recipients": {
+          "items": {
+            "$ref": "#/$defs/CardRecipient"
+          },
+          "type": "array"
+        },
+        "signature": {
+          "$ref": "#/$defs/CardSealedSignature"
+        },
+        "suite": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "suite",
+        "codec",
+        "recipients",
+        "customer_tag",
+        "modules_sealed",
+        "ciphertext_bytes",
+        "issued_at",
+        "signature"
+      ],
+      "type": "object"
+    },
+    "CardSealedSignature": {
+      "additionalProperties": false,
+      "properties": {
+        "anchor": {
+          "type": "string"
+        },
+        "kid": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/SignatureStatus"
+        }
+      },
+      "required": [
+        "status",
+        "kid",
+        "anchor"
       ],
       "type": "object"
     },

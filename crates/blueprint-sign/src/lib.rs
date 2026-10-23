@@ -16,16 +16,22 @@
 //! reads the file, holds the seeds in `Zeroizing` buffers until the key is expanded, and writes
 //! the public objects (anchors, certificates, revocation lists) as postcard files.
 //!
+//! 2026-10-22: [`recipient`] holds the sealed-kernel recipient key files (`kbp-recipient-key
+//! v1`, `kbp-recipient-public v1`), and [`read_signer`] gives `met blueprint seal` its manifest signer.
+//!
 //! Owner: blueprint.
 //! Invariants:
 //! - A key is only ever read from a file path, never from an argument or the environment.
 //! - On unix a key file readable by group or others is refused.
-//! - No seed is generated here: tests generate their own, and production keys are the
-//!   owner's ceremony (DESIGN.md §11 Q1).
+//! - No signing seed is generated here: tests generate their own, and production keys are the
+//!   owner's ceremony (DESIGN.md §11 Q1). A recipient seed is generated only by
+//!   [`recipient::gen_recipient`], from the caller's `Entropy` port.
 
 #![forbid(unsafe_code)]
 #![deny(warnings)]
 #![deny(clippy::all)]
+
+pub mod recipient;
 
 use std::path::Path;
 
@@ -144,6 +150,17 @@ pub fn write_public<T: Serialize>(path: &Path, v: &T) -> Result<(), Error> {
     std::fs::write(path, bytes).map_err(|e| io(path, &e))
 }
 
+/// 2026-10-22: The signer the key file at `key` holds and its certificate at `cert`, which must
+/// certify that key's kid.
+pub fn read_signer(key: &Path, cert: &Path) -> Result<(Signer, SignedCert), Error> {
+    let signer = read_key(key)?;
+    let cert: SignedCert = read_public(cert)?;
+    if &cert.subject != signer.kid() {
+        return Err(bad(key, "the certificate is for another kid"));
+    }
+    Ok((signer, cert))
+}
+
 /// 2026-10-22: Sign a `.kbp` with the key at `key` and its certificate at `cert`; the body
 /// decodes within the caller's `memory` budget.
 pub fn sign_kbp(
@@ -152,10 +169,6 @@ pub fn sign_kbp(
     cert: &Path,
     memory: DecodeMemory,
 ) -> Result<Vec<u8>, Error> {
-    let signer = read_key(key)?;
-    let cert: SignedCert = read_public(cert)?;
-    if &cert.subject != signer.kid() {
-        return Err(bad(key, "the certificate is for another kid"));
-    }
+    let (signer, cert) = read_signer(key, cert)?;
     metrale_blueprint::frame::sign(file, &signer, vec![cert], memory)
 }

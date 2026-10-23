@@ -229,3 +229,18 @@ fn equal_and_unequal_keys_compare_as_such() {
     b[31] = 4;
     assert!(!Cek::from_bytes([3; 32]).same_as(&Cek::from_bytes(b)));
 }
+
+#[test]
+fn a_wrap_round_trips_through_postcard_and_refuses_other_lengths() {
+    let sk = HybridSecret::from_seed(&[7; 32]);
+    let w = wrap_key(&label_for(&sk), &Cek::from_bytes([1; 32]), &sk.public(), &rnd(1)).unwrap();
+    let bytes = postcard::to_allocvec(&w).unwrap();
+    assert_eq!(postcard::from_bytes::<metrale_seal::WrappedCek>(&bytes).unwrap(), w);
+    assert_eq!(bytes.len(), 32 + 2 + 1088 + 12 + 1 + 48, "fixed arrays, two varint lengths");
+    // 2026-10-22: A 1087-byte ML-KEM ciphertext: rewrite the varint length (1088 = 0xC0 0x08).
+    let mut short = bytes.clone();
+    assert_eq!(&short[32..34], &[0xc0, 0x08]);
+    short[32] = 0xbf;
+    short.remove(34);
+    assert!(postcard::from_bytes::<metrale_seal::WrappedCek>(&short).is_err());
+}

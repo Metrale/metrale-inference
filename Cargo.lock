@@ -1885,6 +1885,7 @@ dependencies = [
  "metrale-circuit",
  "metrale-error",
  "metrale-kernel-target",
+ "metrale-seal",
  "metrale-settings",
  "miniz_oxide 0.8.9",
  "postcard",
@@ -1897,9 +1898,13 @@ dependencies = [
 name = "metrale-blueprint-sign"
 version = "1.0.0-beta-preview"
 dependencies = [
+ "base64 0.23.1",
+ "metrale-abstract-io",
  "metrale-blueprint",
  "metrale-blueprint-trust",
  "metrale-error",
+ "metrale-io-host-mem",
+ "metrale-seal",
  "postcard",
  "serde",
  "tempfile",
@@ -2332,6 +2337,8 @@ dependencies = [
  "metrale-abstract-io",
  "metrale-error",
  "ml-kem",
+ "postcard",
+ "serde",
  "sha2 0.11.0",
  "x25519-dalek",
  "zeroize",

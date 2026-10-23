@@ -126,6 +126,11 @@ fn a_card_and_a_graph_validate_and_state_the_blueprint() {
     assert_eq!(c["sizes"]["full_file"], Value::Null);
     assert_eq!(c["signature"]["status"], "verified");
     assert_eq!(c["execution"], "legacy:toy");
+    assert_eq!(
+        c["sealed"],
+        Value::Null,
+        "a plain file has no sealed object"
+    );
 
     let g =
         serde_json::to_value(graph::graph(&o, (Mode::Decode, 1), &ctx(f.len())).unwrap()).unwrap();
@@ -155,4 +160,40 @@ fn the_validator_rejects_what_the_schema_forbids() {
     c.as_object_mut().unwrap().remove("surprise");
     c["signature"]["status"] = Value::from("trusted-ish");
     assert!(validate(&cs, &cs, &c, "card").is_err());
+}
+
+#[test]
+fn a_sealed_card_validates_and_states_only_public_facts() {
+    let w = world();
+    let f = sealed_full(&w);
+    let o = frame::open(&f, &w.policy(), MEM).unwrap();
+    let c = serde_json::to_value(card::card(&o, &ctx(f.len()))).unwrap();
+    let cs = card_schema();
+    validate(&cs, &cs, &c, "card").unwrap();
+    let s = &c["sealed"];
+    assert_eq!(s["suite"], "hybrid-x25519-mlkem768-hkdf-a256gcm");
+    assert_eq!(s["codec"], "kzx");
+    assert_eq!(
+        s["recipients"][0]["fingerprint"],
+        format!("{}", recipient(7).public().fingerprint())
+    );
+    assert_eq!(
+        s["customer_tag"],
+        format!("{}", frame::customer_tag("acme"))
+    );
+    assert_eq!(s["modules_sealed"], 2);
+    let m = &o.sealed.as_ref().unwrap().manifest;
+    assert_eq!(
+        s["ciphertext_bytes"],
+        m.artifacts.iter().map(|a| a.ct_len).sum::<u64>()
+    );
+    assert_eq!(s["issued_at"], NOW);
+    assert_eq!(s["signature"]["status"], "verified");
+    assert_eq!(s["signature"]["kid"], "test-blueprints");
+    assert_eq!(
+        c["blueprint_id"],
+        format!("{}", o.id),
+        "the same id as the plain card"
+    );
+    assert!(!c.to_string().contains("\"acme\""), "never the customer id");
 }

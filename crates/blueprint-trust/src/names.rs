@@ -132,6 +132,8 @@ impl Scope {
 pub enum Purpose {
     /// 2026-10-22: A blueprint body.
     KbpBody,
+    /// 2026-10-22: A sealed manifest (the per-customer sealed section of a `.kbp`).
+    KbpSealed,
     /// 2026-10-22: A kernel artifact manifest.
     KernelArtifact,
     /// 2026-10-22: The registry index.
@@ -148,6 +150,7 @@ impl Purpose {
     pub const fn context(self) -> &'static [u8] {
         match self {
             Purpose::KbpBody => b"metrale/kbp-body/v1",
+            Purpose::KbpSealed => b"metrale/kbp-sealed/v1",
             Purpose::KernelArtifact => b"metrale/kernel-artifact/v1",
             Purpose::KernelIndex => b"metrale/kernel-index/v1",
             Purpose::KeyCert => b"metrale/key-cert/v1",

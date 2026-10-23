@@ -19,10 +19,16 @@ metrale-error = { workspace = true }
 # deterministic encapsulation; aes-gcm 0.11 / hkdf 0.13 on digest 0.11 (the workspace sha2).
 aes-gcm = { workspace = true, features = ["aes", "alloc", "zeroize"] }
 hkdf = { workspace = true }
+# 2026-10-22: The wire forms of Fingerprint, SealSuite and WrappedCek, so the `.kbp` sealed
+# manifest carries this crate's own types (SSOT) rather than mirrors.
+serde = { workspace = true, features = ["alloc", "derive"] }
 ml-kem = { workspace = true, features = ["hazmat", "zeroize"] }
 sha2 = { workspace = true }
 x25519-dalek = { workspace = true, features = ["static_secrets", "zeroize"] }
 zeroize = { workspace = true, features = ["alloc"] }
+
+[dev-dependencies]
+postcard = { workspace = true, features = ["alloc"] }
 
 [lints]
 workspace = true

@@ -34,6 +34,7 @@
 extern crate alloc;
 
 pub mod artifact;
+mod fixed;
 pub mod hybrid;
 pub mod labels;
 pub mod primitives;
@@ -49,7 +50,9 @@ pub use wrap::{
 
 /// 2026-10-22: The sealed-kernel suites. A new suite (XChaCha20-Poly1305, libcrux ML-KEM) is a
 /// new variant, never a format change.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum SealSuite {
     /// 2026-10-22: X25519 + ML-KEM-768 wrap (HKDF-SHA-256 combiner) and AES-256-GCM.
     HybridX25519MlKem768HkdfA256Gcm,

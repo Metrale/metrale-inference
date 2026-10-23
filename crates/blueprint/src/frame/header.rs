@@ -1,20 +1,24 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-22: The fixed 80-byte `.kbp` header and its caps.
+//! 2026-10-22: The fixed 88-byte `.kbp` header and its caps.
 //!
 //! ```text
-//! [0..4]   magic "MKBP"   [4..6] KBP_FORMAT u16   [6] flags u8 (bit0 full, bit1 solid payload)
-//! [7]      body codec id u8
+//! [0..4]   magic "MKBP"   [4..6] KBP_FORMAT u16
+//! [6]      flags u8 (bit0 full, bit1 solid payload, bit2 sealed)   [7] body codec id u8
 //! [8..16]  body_len (stored)        [16..24] body_raw_len      [24..56] body_sha256 (raw)
-//! [56..64] locator_len    [64..72] payload_len    [72..80] sig_len
-//! then body, locator, payload, sig
+//! [56..64] locator_len    [64..72] payload_len    [72..80] sig_len    [80..88] sealed_len
+//! then body, locator, payload, sealed, sig
 //! ```
+//!
+//! 2026-10-22: Widened from 80 to 88 bytes for the sealed section while `KBP_FORMAT = 1` was
+//! unreleased (owner decision, DESIGN-encrypted-kernels.md §9 Q2); no 80-byte file was published.
 //!
 //! Owner: blueprint.
 //! Invariants:
 //! - Little-endian; every length is `u64` and checked against its cap before anything is
 //!   sliced or allocated; the sections tile the file exactly (no trailing bytes).
-//! - Unknown flag bits, an unknown codec id and an unknown format are refused.
+//! - Unknown flag bits, an unknown codec id and an unknown format are refused; [`FLAG_SEALED`]
+//!   and a non-empty sealed section come together or not at all.
 //! - `body_sha256` and the signed message cover the raw (decompressed, canonical) body, never
 //!   the stored bytes, so neither depends on the codec.
 
@@ -27,12 +31,16 @@ pub const MAGIC: &[u8; 4] = b"MKBP";
 /// 2026-10-22: The framing version; bumps only on a framing change.
 pub const KBP_FORMAT: u16 = 1;
 /// 2026-10-22: The header length.
-pub const HEADER_LEN: usize = 80;
+pub const HEADER_LEN: usize = 88;
 /// 2026-10-22: Flag: the payload section carries inline artifacts.
 pub const FLAG_FULL: u8 = 1;
 /// 2026-10-22: Flag: the payload section is one solid block (`payload.rs`); set only with
 /// [`FLAG_FULL`]. Unsigned, like every flag.
 pub const FLAG_SOLID: u8 = 2;
+/// 2026-10-22: Flag: a sealed section (per-customer encrypted kernels, `super::sealed`) sits
+/// between the payload and the signature. Unsigned like every flag: confidentiality never
+/// depends on it, and the sealed section carries its own signature.
+pub const FLAG_SEALED: u8 = 4;
 
 /// 2026-10-22: Stored body cap (hard refusal, DESIGN.md §3).
 pub const MAX_BODY: u64 = 4 << 20;
@@ -44,6 +52,9 @@ pub const MAX_LOCATOR: u64 = 16 << 20;
 pub const MAX_PAYLOAD: u64 = 1 << 30;
 /// 2026-10-22: Signature block cap.
 pub const MAX_SIG: u64 = 256 << 10;
+/// 2026-10-22: Sealed section cap: about 700 recipients at ~1.3 KB each beside a GLM-sized
+/// artifact list (DESIGN-encrypted-kernels.md §2.1).
+pub const MAX_SEALED: u64 = 1 << 20;
 /// 2026-10-22: One raw artifact's cap.
 pub const MAX_ARTIFACT: u64 = 256 << 20;
 /// 2026-10-22: The raw solid payload's cap (every inline artifact together); GLM's full gb10 set
@@ -69,6 +80,8 @@ pub struct Header {
     pub payload_len: u64,
     /// 2026-10-22: Signature block length (0: unsigned).
     pub sig_len: u64,
+    /// 2026-10-22: Sealed section length (0: not sealed).
+    pub sealed_len: u64,
 }
 
 fn u64_at(b: &[u8], at: usize) -> u64 {
@@ -84,7 +97,7 @@ fn cap(section: &'static str, len: u64, max: u64) -> Result<(), Error> {
     Ok(())
 }
 
-/// 2026-10-22: Byte ranges of the four sections.
+/// 2026-10-22: Byte ranges of the five sections.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Sections {
     /// 2026-10-22: Body.
@@ -93,6 +106,8 @@ pub struct Sections {
     pub locator: core::ops::Range<usize>,
     /// 2026-10-22: Payload.
     pub payload: core::ops::Range<usize>,
+    /// 2026-10-22: Sealed section (empty unless [`FLAG_SEALED`]).
+    pub sealed: core::ops::Range<usize>,
     /// 2026-10-22: Signature block.
     pub sig: core::ops::Range<usize>,
 }
@@ -114,7 +129,7 @@ impl Header {
             ));
         }
         let flags = file[6];
-        if flags & !(FLAG_FULL | FLAG_SOLID) != 0 {
+        if flags & !(FLAG_FULL | FLAG_SOLID | FLAG_SEALED) != 0 {
             return Err(error!(ErrorCode::BlueprintFrame, "unknown flag bits"));
         }
         let mut body_sha256 = [0u8; 32];
@@ -128,16 +143,30 @@ impl Header {
             locator_len: u64_at(file, 56),
             payload_len: u64_at(file, 64),
             sig_len: u64_at(file, 72),
+            sealed_len: u64_at(file, 80),
         };
         cap("body", h.body_len, MAX_BODY)?;
         cap("raw body", h.body_raw_len, MAX_BODY_RAW)?;
         cap("locator", h.locator_len, MAX_LOCATOR)?;
         cap("payload", h.payload_len, MAX_PAYLOAD)?;
         cap("signature", h.sig_len, MAX_SIG)?;
-        let total = [h.body_len, h.locator_len, h.payload_len, h.sig_len]
-            .iter()
-            .try_fold(HEADER_LEN as u64, |a, b| a.checked_add(*b))
-            .ok_or_else(|| error!(ErrorCode::BlueprintFrame, "section lengths overflow"))?;
+        cap("sealed section", h.sealed_len, MAX_SEALED)?;
+        if (h.flags & FLAG_SEALED != 0) != (h.sealed_len != 0) {
+            return Err(error!(
+                ErrorCode::BlueprintFrame,
+                "the sealed flag disagrees with the sealed section"
+            ));
+        }
+        let total = [
+            h.body_len,
+            h.locator_len,
+            h.payload_len,
+            h.sealed_len,
+            h.sig_len,
+        ]
+        .iter()
+        .try_fold(HEADER_LEN as u64, |a, b| a.checked_add(*b))
+        .ok_or_else(|| error!(ErrorCode::BlueprintFrame, "section lengths overflow"))?;
         let file_len = u64::try_from(file.len())
             .map_err(|_| error!(ErrorCode::BlueprintFrame, "file length"))?;
         if total != file_len {
@@ -157,19 +186,21 @@ impl Header {
         let b1 = b0 + at(h.body_len)?;
         let l1 = b1 + at(h.locator_len)?;
         let p1 = l1 + at(h.payload_len)?;
-        let s1 = p1 + at(h.sig_len)?;
+        let x1 = p1 + at(h.sealed_len)?;
+        let s1 = x1 + at(h.sig_len)?;
         Ok((
             h,
             Sections {
                 body: b0..b1,
                 locator: b1..l1,
                 payload: l1..p1,
-                sig: p1..s1,
+                sealed: p1..x1,
+                sig: x1..s1,
             },
         ))
     }
 
-    /// 2026-10-22: The 80 header bytes.
+    /// 2026-10-22: The 88 header bytes.
     pub fn write(&self) -> [u8; HEADER_LEN] {
         let mut b = [0u8; HEADER_LEN];
         b[0..4].copy_from_slice(MAGIC);
@@ -182,12 +213,14 @@ impl Header {
         b[56..64].copy_from_slice(&self.locator_len.to_le_bytes());
         b[64..72].copy_from_slice(&self.payload_len.to_le_bytes());
         b[72..80].copy_from_slice(&self.sig_len.to_le_bytes());
+        b[80..88].copy_from_slice(&self.sealed_len.to_le_bytes());
         b
     }
 
     /// 2026-10-22: The bytes the signature covers, given the raw body:
     /// `"kbp-sig-v1\0" ‖ KBP_FORMAT ‖ body_raw_len ‖ body_sha256 ‖ raw body`. No flag, codec or
-    /// stored length is covered, so lite/full and any re-encoding keep the signature.
+    /// stored length is covered (nor the sealed section), so lite/full, sealed/plain and any
+    /// re-encoding keep the signature.
     pub fn signed_message(&self, raw: &[u8]) -> alloc::vec::Vec<u8> {
         let mut m = alloc::vec::Vec::with_capacity(raw.len() + 64);
         m.extend_from_slice(b"kbp-sig-v1\0");

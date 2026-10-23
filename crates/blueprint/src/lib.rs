@@ -7,6 +7,8 @@
 //! - [`frame`]: the container (72-byte header, signed body, unsigned locator table, inline
 //!   payload, signature block), verification before decode, lite ↔ full;
 //! - [`resolve`]: kernel bytes from `internal` and `inline` sources, checked by hash;
+//! - [`sealing`], [`resolve_sealed`]: per-customer sealed kernels (the sealed section, its
+//!   verification order, unwrap and open; `metrale-seal` holds the crypto);
 //! - [`transport`]: the `kbp1.` + base64 text form;
 //! - [`recipe_view`]: a recipe as a projection of a blueprint, both directions;
 //! - [`export`]: the store's `kbp-card/v1` and `kbp-graph/v1` and their JSON Schemas.
@@ -35,6 +37,8 @@ pub mod frame;
 pub mod ids;
 pub mod recipe_view;
 pub mod resolve;
+pub mod resolve_sealed;
+pub mod sealing;
 pub mod transport;
 pub mod types;
 

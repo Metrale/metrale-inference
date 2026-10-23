@@ -45,7 +45,9 @@ pub fn hex(bytes: &[u8]) -> String {
 }
 
 /// 2026-10-22: SHA-256 of a [`HybridPublic`]'s bytes: the name of a recipient.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct Fingerprint(pub [u8; 32]);
 
 impl Fingerprint {

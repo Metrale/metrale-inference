@@ -352,3 +352,90 @@ pub fn payload_range(file: &[u8]) -> std::ops::Range<usize> {
     let (_, s) = frame::Header::parse(file).unwrap();
     s.payload
 }
+
+/// 2026-10-22: A recipient key from a fixed test seed.
+pub fn recipient(seed: u8) -> metrale_seal::HybridSecret {
+    metrale_seal::HybridSecret::from_seed(&[seed; 32])
+}
+
+/// 2026-10-22: A seal run's randomness for `n` recipients: bytes `start, start+1, …`.
+pub fn run_random(start: u8, n: usize) -> metrale_seal::SealRandom {
+    let len = metrale_seal::SealRandom::len(n);
+    let bytes: Vec<u8> = (0..len).map(|i| start.wrapping_add(i as u8)).collect();
+    metrale_seal::SealRandom::from_bytes(&bytes, n).unwrap()
+}
+
+/// 2026-10-22: Seal `input` (a signed plain file of the toy) for `keys` as `customer`, signed
+/// by the test leaf.
+pub fn seal_for(
+    w: &World,
+    input: &[u8],
+    keys: &[&metrale_seal::HybridSecret],
+    customer: &str,
+    placement: metrale_blueprint::sealing::Placement<'_>,
+    start: u8,
+) -> metrale_blueprint::sealing::SealedOutput {
+    let pks: Vec<_> = keys.iter().map(|k| k.public()).collect();
+    let req = metrale_blueprint::sealing::SealRequest {
+        recipients: &pks,
+        customer_id: customer,
+        issued_ms: NOW,
+        codec: Codec::Kzx,
+        placement,
+    };
+    metrale_blueprint::sealing::seal(
+        input,
+        &w.policy(),
+        MEM,
+        internal,
+        &req,
+        run_random(start, pks.len()),
+        &w.leaf,
+        vec![w.cert()],
+    )
+    .unwrap()
+}
+
+/// 2026-10-22: The toy sealed full for recipient seed 7, customer `acme`.
+pub fn sealed_full(w: &World) -> Vec<u8> {
+    seal_for(
+        w,
+        &w.signed(),
+        &[&recipient(7)],
+        "acme",
+        metrale_blueprint::sealing::Placement::Inline,
+        0,
+    )
+    .file
+}
+
+/// 2026-10-22: Which section [`splice`] replaces.
+#[derive(Clone, Copy)]
+pub enum Part {
+    Locator,
+    Payload,
+    Sealed,
+}
+
+/// 2026-10-22: `file` with one section replaced by `bytes` (header lengths patched; flags as
+/// given), the other sections verbatim.
+pub fn splice(file: &[u8], part: Part, bytes: &[u8], flags: u8) -> Vec<u8> {
+    let (mut h, s) = frame::Header::parse(file).unwrap();
+    let mut sections = [
+        file[s.locator.clone()].to_vec(),
+        file[s.payload.clone()].to_vec(),
+        file[s.sealed.clone()].to_vec(),
+    ];
+    sections[part as usize] = bytes.to_vec();
+    h.flags = flags;
+    h.locator_len = sections[0].len() as u64;
+    h.payload_len = sections[1].len() as u64;
+    h.sealed_len = sections[2].len() as u64;
+    let mut out = h.write().to_vec();
+    out.extend_from_slice(&file[s.body]);
+    for x in &sections {
+        out.extend_from_slice(x);
+    }
+    out.extend_from_slice(&file[s.sig]);
+    out
+}

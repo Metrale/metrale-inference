@@ -144,6 +144,7 @@ fn a_signature_under_another_context_is_refused() {
         "the control verifies"
     );
     for p in [
+        Purpose::KbpSealed,
         Purpose::KernelArtifact,
         Purpose::KernelIndex,
         Purpose::KeyCert,
