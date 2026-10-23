@@ -33,7 +33,7 @@ use metrale_model_arch::glm5next_mhc_fused::{
 };
 
 mod arms;
-use arms::{fused, fused_arm, graph_us, max_rel, pf_case};
+use arms::{fused, fused_arm, graph_us, max_rel, pf_case, site, unfused};
 
 /// 2026-10-09: `(hidden, hc_mult, tokens)`. Rows 1, 4 and 16 are the decode widths; at 32 the
 /// unfused arm takes its 8-row mix and the fused arm its per-row grid, from 64 both take 8-row
