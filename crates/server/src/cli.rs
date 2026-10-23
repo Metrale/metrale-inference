@@ -24,6 +24,7 @@ pub mod bench_forced_ab;
 mod bench_gate_check;
 #[cfg(feature = "bench")]
 pub mod bench_lease;
+#[cfg(feature = "bench")]
 pub mod bench_paired_ab;
 #[cfg(feature = "bench")]
 mod bench_print;

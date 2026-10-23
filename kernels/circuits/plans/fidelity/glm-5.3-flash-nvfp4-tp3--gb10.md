@@ -8,6 +8,8 @@ Each rank's fused plan (its own TP dims) against the launches an nsys capture of
 
 - `glm-5.3-flash-nvfp4-tp3--gb10--f14a-p1k.trace.toml`: rank 0, 240 steps (variants A x165, B x73, C x2); sqlite sha256 `4190a2b98f839c70`. nsys f14a_p1k.sqlite, dgx1 rank 0, 2026-10-23: profile glm53-tp3-512k-promo1 (binary sha256 6b362205 = 255cbfaff), recipes/glm-5.3/glm-5.3-flash-nvfp4-tp3-512k.yaml, MTP 1 draft forced; nsys --cuda-graph-trace=node; single capture (claude-state glm/megakernel/tools/p1_chain1.sh)
 - `glm-5.3-flash-nvfp4-tp3--gb10--f14a-p128k.trace.toml`: rank 0, 231 steps (variants A x172, B x56, C x2, D x1); sqlite sha256 `cfbbdb4b68781f13`. nsys f14a_p128k.sqlite, dgx1 rank 0, 2026-10-23: profile glm53-tp3-512k-promo1 (binary sha256 6b362205 = 255cbfaff), recipes/glm-5.3/glm-5.3-flash-nvfp4-tp3-512k.yaml, MTP 1 draft forced; nsys --cuda-graph-trace=node; single capture (claude-state glm/megakernel/tools/p1_chain1.sh)
+- `glm-5.3-flash-nvfp4-tp3--gb10--t4c-p1k.trace.toml`: rank 0, 242 steps (variants A x167, B x73, C x2); sqlite sha256 `6a2d9303ca6d1b06`. nsys t4c_p1k.sqlite, dgx1 rank 0, 2026-10-23: profile glm53-tp3-512k-mkc (binary sha256 71e6522f = f75c6b73e), recipes/glm-5.3/glm-5.3-flash-nvfp4-tp3-512k.yaml, --forward circuit nvidia/GLM-5.3-Flash-NVFP4, MTP 1 draft forced; nsys --cuda-graph-trace=node; single capture, host idle-gated (claude-state glm/megakernel/tools/nsysrun_t4.sh)
+- `glm-5.3-flash-nvfp4-tp3--gb10--t4c-p128k.trace.toml`: rank 0, 230 steps (variants A x172, B x56, C x2); sqlite sha256 `073c858b494d17ea`. nsys t4c_p128k.sqlite, dgx1 rank 0, 2026-10-23: profile glm53-tp3-512k-mkc (binary sha256 71e6522f = f75c6b73e), recipes/glm-5.3/glm-5.3-flash-nvfp4-tp3-512k.yaml, --forward circuit nvidia/GLM-5.3-Flash-NVFP4, MTP 1 draft forced; nsys --cuda-graph-trace=node; single capture, host idle-gated (claude-state glm/megakernel/tools/nsysrun_t4.sh)
 
 ## Scores
 
@@ -18,10 +20,14 @@ Each rank's fused plan (its own TP dims) against the launches an nsys capture of
 | decode n=1 | 2 | no capture of this run | 1269 | - | - | - | - | 0 |
 | verify n=2 | 0 | `glm-5.3-flash-nvfp4-tp3--gb10--f14a-p1k.trace.toml` | 1392 | 1392 | 1392 | 100.0% | 86.1% | 0 |
 | verify n=2 | 0 | `glm-5.3-flash-nvfp4-tp3--gb10--f14a-p128k.trace.toml` | 1392 | 1392 | 1392 | 100.0% | 86.1% | 0 |
+| verify n=2 | 0 | `glm-5.3-flash-nvfp4-tp3--gb10--t4c-p1k.trace.toml` | 1392 | 1392 | 1392 | 100.0% | 86.1% | 0 |
+| verify n=2 | 0 | `glm-5.3-flash-nvfp4-tp3--gb10--t4c-p128k.trace.toml` | 1392 | 1392 | 1392 | 100.0% | 86.1% | 0 |
 | verify n=2 | 1 | no capture of this rank (code-derived) | 1392 | - | - | - | - | 0 |
 | verify n=2 | 2 | no capture of this rank (code-derived) | 1392 | - | - | - | - | 0 |
 | draft n=1 | 0 | `glm-5.3-flash-nvfp4-tp3--gb10--f14a-p1k.trace.toml` | 55 | 55 | 55 | 100.0% | 90.9% | 0 |
 | draft n=1 | 0 | `glm-5.3-flash-nvfp4-tp3--gb10--f14a-p128k.trace.toml` | 55 | 55 | 55 | 100.0% | 90.9% | 0 |
+| draft n=1 | 0 | `glm-5.3-flash-nvfp4-tp3--gb10--t4c-p1k.trace.toml` | 55 | 55 | 55 | 100.0% | 90.9% | 0 |
+| draft n=1 | 0 | `glm-5.3-flash-nvfp4-tp3--gb10--t4c-p128k.trace.toml` | 55 | 55 | 55 | 100.0% | 90.9% | 0 |
 | draft n=1 | 1 | no capture of this rank (code-derived) | 55 | - | - | - | - | 0 |
 | draft n=1 | 2 | no capture of this rank (code-derived) | 55 | - | - | - | - | 0 |
 
@@ -31,10 +37,14 @@ Each rank's fused plan (its own TP dims) against the launches an nsys capture of
 - decode n=1 rank 2 (code-derived) vs rank 0's plan: only here: `w4a4_gemv_mx8_moe_slots_sweep_cs` x42, `w4a4_quant_rows_static` x42; only on rank 0: `w4a4_gemv_mx8_moe_slots_sweep_k64_cs` x42, `w4a4_quant_rows_static_k64` x42; placeholders: none
 - verify n=2 rank 0 vs `glm-5.3-flash-nvfp4-tp3--gb10--f14a-p1k.trace.toml` (variant A): traced, not planned: none; planned, not traced: none; placeholders: none
 - verify n=2 rank 0 vs `glm-5.3-flash-nvfp4-tp3--gb10--f14a-p128k.trace.toml` (variant A): traced, not planned: none; planned, not traced: none; placeholders: none
+- verify n=2 rank 0 vs `glm-5.3-flash-nvfp4-tp3--gb10--t4c-p1k.trace.toml` (variant A): traced, not planned: none; planned, not traced: none; placeholders: none
+- verify n=2 rank 0 vs `glm-5.3-flash-nvfp4-tp3--gb10--t4c-p128k.trace.toml` (variant A): traced, not planned: none; planned, not traced: none; placeholders: none
 - verify n=2 rank 1 (code-derived) vs rank 0's plan: only here: none; only on rank 0: none; placeholders: none
-- verify n=2 rank 2 (code-derived) vs rank 0's plan: only here: `w4a4_gemv_mx8_moe_union_sweep_cs` x42, `w4a4_quant_rows_static` x42; only on rank 0: `w4a4_gemv_mx8_moe_union_sweep_k64_cs` x42, `w4a4_quant_rows_static_k64` x42; placeholders: none
+- verify n=2 rank 2 (code-derived) vs rank 0's plan: only here: `w4a4_gemv_mx8_moe_union_sweep_sl_cs` x42, `w4a4_quant_rows_static` x42; only on rank 0: `w4a4_gemv_mx8_moe_union_sweep_k64_cs` x42, `w4a4_quant_rows_static_k64` x42; placeholders: none
 - draft n=1 rank 0 vs `glm-5.3-flash-nvfp4-tp3--gb10--f14a-p1k.trace.toml` (variant A): traced, not planned: none; planned, not traced: none; placeholders: none
 - draft n=1 rank 0 vs `glm-5.3-flash-nvfp4-tp3--gb10--f14a-p128k.trace.toml` (variant A): traced, not planned: none; planned, not traced: none; placeholders: none
+- draft n=1 rank 0 vs `glm-5.3-flash-nvfp4-tp3--gb10--t4c-p1k.trace.toml` (variant A): traced, not planned: none; planned, not traced: none; placeholders: none
+- draft n=1 rank 0 vs `glm-5.3-flash-nvfp4-tp3--gb10--t4c-p128k.trace.toml` (variant A): traced, not planned: none; planned, not traced: none; placeholders: none
 - draft n=1 rank 1 (code-derived) vs rank 0's plan: only here: none; only on rank 0: none; placeholders: none
 - draft n=1 rank 2 (code-derived) vs rank 0's plan: only here: none; only on rank 0: none; placeholders: none
 
@@ -54,3 +64,15 @@ Each rank's fused plan (its own TP dims) against the launches an nsys capture of
 - `glm-5.3-flash-nvfp4-tp3--gb10--f14a-p128k.trace.toml` variant C (2 steps), commit: `mtp_k2_verdict` x1, `ncclDevKernel_Broadcast_RING_LL` x4, `predicated_copy_2d` x4
 - `glm-5.3-flash-nvfp4-tp3--gb10--f14a-p128k.trace.toml` variant D (1 steps), refeed: `dense_gemv_bf16` x4, `dense_gemv_bf16_fp32out` x1, `dsa_pool_keys_store_rows` x1, `glm5next_mla_latent_write_fp8` x1, `nllb_layernorm_bf16` x1, `rms_norm_vanilla` x4
 - `glm-5.3-flash-nvfp4-tp3--gb10--f14a-p128k.trace.toml` variant D (1 steps), commit: `ncclDevKernel_Broadcast_RING_LL` x2, `predicated_copy_2d` x4
+- `glm-5.3-flash-nvfp4-tp3--gb10--t4c-p1k.trace.toml` variant A (167 steps), refeed: `dense_gemv_bf16` x4, `dense_gemv_bf16_fp32out` x1, `dsa_pool_keys_store_rows` x1, `glm5next_mla_latent_write_fp8` x1, `nllb_layernorm_bf16` x1, `rms_norm_vanilla` x4
+- `glm-5.3-flash-nvfp4-tp3--gb10--t4c-p1k.trace.toml` variant A (167 steps), commit: `mtp_k2_verdict` x1, `ncclDevKernel_Broadcast_RING_LL` x2, `predicated_copy_2d` x4
+- `glm-5.3-flash-nvfp4-tp3--gb10--t4c-p1k.trace.toml` variant B (73 steps), refeed: none
+- `glm-5.3-flash-nvfp4-tp3--gb10--t4c-p1k.trace.toml` variant B (73 steps), commit: `mtp_k2_verdict` x1, `ncclDevKernel_Broadcast_RING_LL` x2, `predicated_copy_2d` x2
+- `glm-5.3-flash-nvfp4-tp3--gb10--t4c-p1k.trace.toml` variant C (2 steps), refeed: `dense_gemv_bf16` x4, `dense_gemv_bf16_fp32out` x1, `dsa_pool_keys_store_rows` x1, `glm5next_mla_latent_write_fp8` x1, `nllb_layernorm_bf16` x1, `rms_norm_vanilla` x4
+- `glm-5.3-flash-nvfp4-tp3--gb10--t4c-p1k.trace.toml` variant C (2 steps), commit: `mtp_k2_verdict` x1, `ncclDevKernel_Broadcast_RING_LL` x4, `predicated_copy_2d` x4
+- `glm-5.3-flash-nvfp4-tp3--gb10--t4c-p128k.trace.toml` variant A (172 steps), refeed: `dense_gemv_bf16` x4, `dense_gemv_bf16_fp32out` x1, `dsa_pool_keys_store_rows` x1, `glm5next_mla_latent_write_fp8` x1, `nllb_layernorm_bf16` x1, `rms_norm_vanilla` x4
+- `glm-5.3-flash-nvfp4-tp3--gb10--t4c-p128k.trace.toml` variant A (172 steps), commit: `mtp_k2_verdict` x1, `ncclDevKernel_Broadcast_RING_LL` x2, `predicated_copy_2d` x4
+- `glm-5.3-flash-nvfp4-tp3--gb10--t4c-p128k.trace.toml` variant B (56 steps), refeed: none
+- `glm-5.3-flash-nvfp4-tp3--gb10--t4c-p128k.trace.toml` variant B (56 steps), commit: `mtp_k2_verdict` x1, `ncclDevKernel_Broadcast_RING_LL` x2, `predicated_copy_2d` x2
+- `glm-5.3-flash-nvfp4-tp3--gb10--t4c-p128k.trace.toml` variant C (2 steps), refeed: `dense_gemv_bf16` x4, `dense_gemv_bf16_fp32out` x1, `dsa_pool_keys_store_rows` x1, `glm5next_mla_latent_write_fp8` x1, `nllb_layernorm_bf16` x1, `rms_norm_vanilla` x4
+- `glm-5.3-flash-nvfp4-tp3--gb10--t4c-p128k.trace.toml` variant C (2 steps), commit: `mtp_k2_verdict` x1, `ncclDevKernel_Broadcast_RING_LL` x4, `predicated_copy_2d` x4
