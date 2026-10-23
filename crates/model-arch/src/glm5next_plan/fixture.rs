@@ -121,7 +121,7 @@ pub(crate) fn served_settings() -> metrale_settings::InferenceServerSettings {
 /// 2026-10-23: The child is marked by its arguments, `--skip <CHILD>` (a filter no test name
 /// holds), not by the environment: this crate reads no process environment (`env-ban`).
 pub(crate) fn in_child_process(path: &str, publish: impl FnOnce(), body: impl FnOnce()) {
-    const CHILD: &str = "METRALE_TEST_GLM_PLAN_CHILD";
+    const CHILD: &str = "glm_plan_child_marker";
     if std::env::args().any(|a| a == CHILD) {
         publish();
         body();
