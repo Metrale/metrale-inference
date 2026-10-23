@@ -14,6 +14,7 @@ metal = ["metrale-model-layers/metal"]
 
 [dependencies]
 metrale-cache = { workspace = true }
+metrale-circuit = { workspace = true }
 metrale-comm = { workspace = true }
 metrale-config = { workspace = true }
 metrale-settings = { workspace = true }

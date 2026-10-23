@@ -19,7 +19,7 @@
 //!   sums a row the same way.
 //! - Launches only after the shape checks pass; never falls back to another format.
 
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
@@ -112,8 +112,8 @@ fn moe_slots(
 }
 
 /// 2026-10-09: Which entry list the persistent sweep reads.
-#[derive(Clone, Copy)]
-enum SweepEntries {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SweepEntries {
     /// 2026-10-09: One row's own slots: the router's ids row (`w4a4_gemv_mx8_moe_slots_sweep`).
     OwnSlots,
     /// 2026-10-09: The rows' union, which `glm5next_moe_row_union` builds first.
@@ -255,13 +255,60 @@ fn moe_sweep(
         "GLM W4A4 union sweep: one projection's table has a base table and the other's not"
     );
     let (kern, bases) = site.k.scale_dict.pick(kern, projs[0].0.scale_bases)?;
+    let shape = SweepShape {
+        ctas: site.k.w4a4_sweep_ctas,
+        n,
+        k,
+        rows: site.rows,
+        top_k: cfg.top_k,
+        act_div,
+        num_experts: cfg.num_experts,
+    };
+    sweep_raw(
+        site.gpu,
+        ws,
+        (kern, entries),
+        bases,
+        projs,
+        shape,
+        site.stream,
+    )
+}
+
+/// 2026-10-23: The scalar launch arguments of one sweep: its persistent grid of `ctas`, the
+/// projection's `n` and `k`, the routed `rows`, `top_k`, the activation row divisor and the full
+/// expert count.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct SweepShape {
+    pub(super) ctas: u32,
+    pub(super) n: usize,
+    pub(super) k: usize,
+    pub(super) rows: usize,
+    pub(super) top_k: usize,
+    pub(super) act_div: usize,
+    pub(super) num_experts: usize,
+}
+
+/// 2026-10-23: One sweep launch on the entry `kern` itself (a `_cs` twin when `bases` is set,
+/// with the first projection's base table): the launch [`moe_sweep`] makes after its twin pick,
+/// and the plan executor's for the kernel its plan names.
+pub(super) fn sweep_raw(
+    gpu: &dyn GpuBackend,
+    ws: &Glm5NextMlpWorkspace,
+    (kern, entries): (KernelHandle, SweepEntries),
+    bases: Option<DevicePtr>,
+    projs: &[(&Glm5NextExpertPtrTable, DevicePtr)],
+    s: SweepShape,
+    stream: u64,
+) -> Result<()> {
+    let last = *projs.last().context("a sweep of no projection")?;
     // 2026-10-09: The own-slots entry reads the ids row as its entry list and not u_slot.
     let u_eid = match entries {
         SweepEntries::OwnSlots => ws.ids,
         SweepEntries::Union => ws.u_eid,
     };
-    let mut launch = KernelLaunch::new(site.gpu, kern)
-        .grid([site.k.w4a4_sweep_ctas, 1, 1])
+    let mut launch = KernelLaunch::new(gpu, kern)
+        .grid([s.ctas, 1, 1])
         .block([W4A4_BLOCK, 1, 1])
         .arg_ptr(ws.w4a4_aq)
         .arg_ptr(ws.w4a4_as)
@@ -279,17 +326,38 @@ fn moe_sweep(
     }
     launch = launch
         .arg_u32(projs.len() as u32)
-        .arg_u32(n as u32)
-        .arg_u32(k as u32)
-        .arg_u32(site.rows as u32)
-        .arg_u32(cfg.top_k as u32)
-        .arg_u32(act_div as u32)
-        .arg_u32(cfg.num_experts as u32);
+        .arg_u32(s.n as u32)
+        .arg_u32(s.k as u32)
+        .arg_u32(s.rows as u32)
+        .arg_u32(s.top_k as u32)
+        .arg_u32(s.act_div as u32)
+        .arg_u32(s.num_experts as u32);
     match bases {
         Some(b) => launch.arg_ptr(b).arg_ptr(last.0.scale_bases),
         None => launch,
     }
-    .launch(site.stream)
+    .launch(stream)
+}
+
+/// 2026-10-23: The union of `rows` rows' `top_k` expert ids into `u_eid` / `u_slot` on `kern`
+/// (`glm5next_moe_row_union`), which every union sweep reads.
+pub(super) fn row_union_raw(
+    gpu: &dyn GpuBackend,
+    kern: KernelHandle,
+    ws: &Glm5NextMlpWorkspace,
+    rows: usize,
+    top_k: usize,
+    stream: u64,
+) -> Result<()> {
+    KernelLaunch::new(gpu, kern)
+        .grid([1, 1, 1])
+        .block([(rows * top_k) as u32, 1, 1])
+        .arg_ptr(ws.ids)
+        .arg_ptr(ws.u_eid)
+        .arg_ptr(ws.u_slot)
+        .arg_u32(rows as u32)
+        .arg_u32(top_k as u32)
+        .launch(stream)
 }
 
 /// 2026-10-08: The routed experts of `forward_moe` at W4A4, every (row, slot) in one launch per
@@ -341,15 +409,7 @@ pub(super) fn w4a4_experts(site: &MoeSite<'_>, scales: W4a4ActScales) -> Result<
         |s: Option<(KernelHandle, SweepEntries)>| matches!(s, Some((_, SweepEntries::Union)));
     if union(sweep) || union(down_sweep) {
         // 2026-10-09: The union of the rows' experts, which every union launch below reads.
-        KernelLaunch::new(gpu, k.moe_row_union)
-            .grid([1, 1, 1])
-            .block([slots as u32, 1, 1])
-            .arg_ptr(ws.ids)
-            .arg_ptr(ws.u_eid)
-            .arg_ptr(ws.u_slot)
-            .arg_u32(rows as u32)
-            .arg_u32(cfg.top_k as u32)
-            .launch(stream)?;
+        row_union_raw(gpu, k.moe_row_union, ws, rows, cfg.top_k, stream)?;
     }
     let slots_gemv = |kern, table: &Glm5NextExpertPtrTable, out, n, kk, act_div| {
         moe_slots(

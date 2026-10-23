@@ -3279,6 +3279,36 @@ numerics = "reference"
 priority = 20
 cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:92-126; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:204-205 (grid [rows, 1]; glm_moe_combine_split and _vec8 off, crates/settings/src/groups/kernels.rs:145-146)"
 
+# 2026-10-23: The same combine on the grid `METRALE_GLM_MOE_COMBINE_SPLIT=1` gives it: one block
+# per 256 elements of `hidden` per row instead of one (same kernel, same bytes). The grid is a plan
+# field (emitter `moe_blend_split`), so a plan-executed site launches the served grid; the served
+# recipe sets the lever (recipes/glm-5.3/glm-5.3-flash-nvfp4-tp3-512k.yaml:117).
+[[rule]]
+id = "glm_moe_combine_split_kda"
+pattern = [{ op = "blend", layer_kind = "linear_attention", params = { shared_gate = "none" } }]
+kernels = [{ module = "glm5next_ffn", func = "glm5next_moe_combine" }]
+repeat = "once"
+emitter = "moe_blend_split"
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify"]
+when = { glm_moe_combine_split = "on" }
+numerics = "reference"
+priority = 21
+cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:187-209 (combine: the split lever, read at crates/model-arch/src/glm5next_layer/levers.rs:183, crates/settings/src/groups/kernels.rs:145), :64-70 (combine_blocks_per_row: hidden / 256 blocks per row), :151 (the scalar kernel at that grid; _vec8 only from 1024 rows, COMBINE_VEC8_MIN_ROWS); emitter moe_blend_split sizes the grid by the same rule (crates/model-arch/src/glm5next_plan/moe.rs)"
+
+[[rule]]
+id = "glm_moe_combine_split_dsa"
+pattern = [{ op = "blend", layer_kind = "deepseek_sparse_attention", params = { shared_gate = "none" } }]
+kernels = [{ module = "glm5next_ffn", func = "glm5next_moe_combine" }]
+repeat = "once"
+emitter = "moe_blend_split"
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify"]
+when = { glm_moe_combine_split = "on" }
+numerics = "reference"
+priority = 21
+cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:187-209 (combine: the split lever, read at crates/model-arch/src/glm5next_layer/levers.rs:183, crates/settings/src/groups/kernels.rs:145), :64-70 (combine_blocks_per_row: hidden / 256 blocks per row), :151 (the scalar kernel at that grid; _vec8 only from 1024 rows, COMBINE_VEC8_MIN_ROWS); emitter moe_blend_split sizes the grid by the same rule (crates/model-arch/src/glm5next_plan/moe.rs)"
+
 # 2026-10-22: The GLM BF16 projections at 2..=16 rows (a verify's k rows, a batched decode
 # group's rows): `glm_mm` (glm5next_layer/wide_gemv.rs:174-202) launches the register-resident
 # entry `fixed_entry` picks (:105-115): `dense_gemv_bf16_batchm_few` at 2..=8 rows
@@ -3866,7 +3896,7 @@ pattern = [
 ]
 kernels = [
   { module = "w4a4_gemv_mx_moe", func = "w4a4_quant_rows_static" },
-  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx8_moe_union_sweep" },
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx8_moe_union_sweep_sl" },
 ]
 repeat = "once"
 emitter = "glm_moe_w4a4"
@@ -3874,7 +3904,7 @@ rows = [2, 8]
 modes = ["multi_seq", "verify"]
 numerics = "reference"
 priority = 110
-cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:408-422 (quant_static, then the 8-row union sweep over the union built for gate/up; down keeps its PDL entry)"
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:408-422 (quant_static, then the 8-row union sweep over the union built for gate/up; down keeps its PDL entry); the plain-width down reuses the gate/up sweep handles (w4a4.rs down_kernels `sweep: k.w4a4_moe_sweep`; mod.rs `gate_up_sweeps(gpu, levers.mlp.sweep_serial)`), so it launches the `_sl` entry like gate/up"
 
 [[rule]]
 id = "glm_moe_w4a4_down_2_8_dsa"
@@ -3884,7 +3914,7 @@ pattern = [
 ]
 kernels = [
   { module = "w4a4_gemv_mx_moe", func = "w4a4_quant_rows_static" },
-  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx8_moe_union_sweep" },
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx8_moe_union_sweep_sl" },
 ]
 repeat = "once"
 emitter = "glm_moe_w4a4"
@@ -3892,7 +3922,7 @@ rows = [2, 8]
 modes = ["multi_seq", "verify"]
 numerics = "reference"
 priority = 110
-cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:408-422 (quant_static, then the 8-row union sweep over the union built for gate/up; down keeps its PDL entry)"
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:408-422 (quant_static, then the 8-row union sweep over the union built for gate/up; down keeps its PDL entry); the plain-width down reuses the gate/up sweep handles (w4a4.rs down_kernels `sweep: k.w4a4_moe_sweep`; mod.rs `gate_up_sweeps(gpu, levers.mlp.sweep_serial)`), so it launches the `_sl` entry like gate/up"
 
 [[rule]]
 id = "glm_moe_w4a4_down_9_16_kda"
@@ -3902,7 +3932,7 @@ pattern = [
 ]
 kernels = [
   { module = "w4a4_gemv_mx_moe", func = "w4a4_quant_rows_static" },
-  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx16_moe_union_sweep" },
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx16_moe_union_sweep_sl" },
 ]
 repeat = "once"
 emitter = "glm_moe_w4a4"
@@ -3910,7 +3940,7 @@ rows = [9, 16]
 modes = ["multi_seq", "verify"]
 numerics = "reference"
 priority = 110
-cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:408-422 (quant_static, then the 16-row union sweep over the union built for gate/up; down keeps its PDL entry)"
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:408-422 (quant_static, then the 16-row union sweep over the union built for gate/up; down keeps its PDL entry); the plain-width down reuses the gate/up sweep handles (w4a4.rs down_kernels `sweep: k.w4a4_moe_sweep`; mod.rs `gate_up_sweeps(gpu, levers.mlp.sweep_serial)`), so it launches the `_sl` entry like gate/up"
 
 [[rule]]
 id = "glm_moe_w4a4_down_9_16_dsa"
@@ -3920,7 +3950,7 @@ pattern = [
 ]
 kernels = [
   { module = "w4a4_gemv_mx_moe", func = "w4a4_quant_rows_static" },
-  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx16_moe_union_sweep" },
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx16_moe_union_sweep_sl" },
 ]
 repeat = "once"
 emitter = "glm_moe_w4a4"
@@ -3928,7 +3958,7 @@ rows = [9, 16]
 modes = ["multi_seq", "verify"]
 numerics = "reference"
 priority = 110
-cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:408-422 (quant_static, then the 16-row union sweep over the union built for gate/up; down keeps its PDL entry)"
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:408-422 (quant_static, then the 16-row union sweep over the union built for gate/up; down keeps its PDL entry); the plain-width down reuses the gate/up sweep handles (w4a4.rs down_kernels `sweep: k.w4a4_moe_sweep`; mod.rs `gate_up_sweeps(gpu, levers.mlp.sweep_serial)`), so it launches the `_sl` entry like gate/up"
 
 # 2026-10-22: The recipe arm of glm_moe_w4a4_grouped with glm_moe_expert_layout tp
 # (METRALE_GLM_MOE_W4A4_GROUPED=1, `moe_expert_layout: tp`). The grouped GEMM itself takes only
@@ -4103,7 +4133,7 @@ pattern = [
 ]
 kernels = [
   { module = "w4a4_gemv_mx_moe", func = "w4a4_quant_rows_static" },
-  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx8_moe_union_sweep_cs" },
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx8_moe_union_sweep_sl_cs" },
 ]
 repeat = "once"
 emitter = "glm_moe_w4a4"
@@ -4112,7 +4142,7 @@ modes = ["multi_seq", "verify"]
 when = { glm_moe_w4a4_grouped = "on", glm_moe_expert_layout = "tp" }
 numerics = "reference"
 priority = 115
-cite = "crates/model-arch/src/weight_loader/glm5_next_load/mlp_precision.rs:43-52 (glm_moe_w4a4_grouped lifts the routed W4A4 row cap; crates/settings/src/groups/kernels.rs:151); crates/model-arch/src/glm5next_mlp/precision.rs:155-162 (w4a4_at_every_row); crates/model-arch/src/glm5next_mlp/scale_dict.rs:149-161 (Compact needs the lever, default on at crates/settings/src/groups/kernels.rs:149, and the sliced tp layout, --moe-expert-layout default ep at crates/server/src/cli/serve_args/service.rs:176); crates/model-arch/src/glm5next_mlp/scale_dict_kernels.rs:105-120 (pick: the `_cs` twin); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-162 (down_kernels: the plain entries at a moe_inter multiple of 128), :170-188 (the mx8 union sweep over the gate/up union)"
+cite = "crates/model-arch/src/weight_loader/glm5_next_load/mlp_precision.rs:43-52 (glm_moe_w4a4_grouped lifts the routed W4A4 row cap; crates/settings/src/groups/kernels.rs:151); crates/model-arch/src/glm5next_mlp/precision.rs:155-162 (w4a4_at_every_row); crates/model-arch/src/glm5next_mlp/scale_dict.rs:149-161 (Compact needs the lever, default on at crates/settings/src/groups/kernels.rs:149, and the sliced tp layout, --moe-expert-layout default ep at crates/server/src/cli/serve_args/service.rs:176); crates/model-arch/src/glm5next_mlp/scale_dict_kernels.rs:105-120 (pick: the `_cs` twin); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-162 (down_kernels: the plain entries at a moe_inter multiple of 128), :170-188 (the mx8 union sweep over the gate/up union); the plain-width down reuses the gate/up sweep handles (w4a4.rs down_kernels `sweep: k.w4a4_moe_sweep`; mod.rs `gate_up_sweeps(gpu, levers.mlp.sweep_serial)`), so it launches the `_sl` entry like gate/up"
 
 [[rule]]
 id = "glm_moe_w4a4_cs_down_2_8_dsa"
@@ -4122,7 +4152,7 @@ pattern = [
 ]
 kernels = [
   { module = "w4a4_gemv_mx_moe", func = "w4a4_quant_rows_static" },
-  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx8_moe_union_sweep_cs" },
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx8_moe_union_sweep_sl_cs" },
 ]
 repeat = "once"
 emitter = "glm_moe_w4a4"
@@ -4131,7 +4161,7 @@ modes = ["multi_seq", "verify"]
 when = { glm_moe_w4a4_grouped = "on", glm_moe_expert_layout = "tp" }
 numerics = "reference"
 priority = 115
-cite = "crates/model-arch/src/weight_loader/glm5_next_load/mlp_precision.rs:43-52 (glm_moe_w4a4_grouped lifts the routed W4A4 row cap; crates/settings/src/groups/kernels.rs:151); crates/model-arch/src/glm5next_mlp/precision.rs:155-162 (w4a4_at_every_row); crates/model-arch/src/glm5next_mlp/scale_dict.rs:149-161 (Compact needs the lever, default on at crates/settings/src/groups/kernels.rs:149, and the sliced tp layout, --moe-expert-layout default ep at crates/server/src/cli/serve_args/service.rs:176); crates/model-arch/src/glm5next_mlp/scale_dict_kernels.rs:105-120 (pick: the `_cs` twin); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-162 (down_kernels: the plain entries at a moe_inter multiple of 128), :170-188 (the mx8 union sweep over the gate/up union)"
+cite = "crates/model-arch/src/weight_loader/glm5_next_load/mlp_precision.rs:43-52 (glm_moe_w4a4_grouped lifts the routed W4A4 row cap; crates/settings/src/groups/kernels.rs:151); crates/model-arch/src/glm5next_mlp/precision.rs:155-162 (w4a4_at_every_row); crates/model-arch/src/glm5next_mlp/scale_dict.rs:149-161 (Compact needs the lever, default on at crates/settings/src/groups/kernels.rs:149, and the sliced tp layout, --moe-expert-layout default ep at crates/server/src/cli/serve_args/service.rs:176); crates/model-arch/src/glm5next_mlp/scale_dict_kernels.rs:105-120 (pick: the `_cs` twin); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-162 (down_kernels: the plain entries at a moe_inter multiple of 128), :170-188 (the mx8 union sweep over the gate/up union); the plain-width down reuses the gate/up sweep handles (w4a4.rs down_kernels `sweep: k.w4a4_moe_sweep`; mod.rs `gate_up_sweeps(gpu, levers.mlp.sweep_serial)`), so it launches the `_sl` entry like gate/up"
 
 [[rule]]
 id = "glm_moe_w4a4_cs_down_9_16_kda"
@@ -4141,7 +4171,7 @@ pattern = [
 ]
 kernels = [
   { module = "w4a4_gemv_mx_moe", func = "w4a4_quant_rows_static" },
-  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx16_moe_union_sweep_cs" },
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx16_moe_union_sweep_sl_cs" },
 ]
 repeat = "once"
 emitter = "glm_moe_w4a4"
@@ -4150,7 +4180,7 @@ modes = ["multi_seq", "verify"]
 when = { glm_moe_w4a4_grouped = "on", glm_moe_expert_layout = "tp" }
 numerics = "reference"
 priority = 115
-cite = "crates/model-arch/src/weight_loader/glm5_next_load/mlp_precision.rs:43-52 (glm_moe_w4a4_grouped lifts the routed W4A4 row cap; crates/settings/src/groups/kernels.rs:151); crates/model-arch/src/glm5next_mlp/precision.rs:155-162 (w4a4_at_every_row); crates/model-arch/src/glm5next_mlp/scale_dict.rs:149-161 (Compact needs the lever, default on at crates/settings/src/groups/kernels.rs:149, and the sliced tp layout, --moe-expert-layout default ep at crates/server/src/cli/serve_args/service.rs:176); crates/model-arch/src/glm5next_mlp/scale_dict_kernels.rs:105-120 (pick: the `_cs` twin); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-162 (down_kernels: the plain entries at a moe_inter multiple of 128), :170-188 (the mx16 union sweep over the gate/up union)"
+cite = "crates/model-arch/src/weight_loader/glm5_next_load/mlp_precision.rs:43-52 (glm_moe_w4a4_grouped lifts the routed W4A4 row cap; crates/settings/src/groups/kernels.rs:151); crates/model-arch/src/glm5next_mlp/precision.rs:155-162 (w4a4_at_every_row); crates/model-arch/src/glm5next_mlp/scale_dict.rs:149-161 (Compact needs the lever, default on at crates/settings/src/groups/kernels.rs:149, and the sliced tp layout, --moe-expert-layout default ep at crates/server/src/cli/serve_args/service.rs:176); crates/model-arch/src/glm5next_mlp/scale_dict_kernels.rs:105-120 (pick: the `_cs` twin); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-162 (down_kernels: the plain entries at a moe_inter multiple of 128), :170-188 (the mx16 union sweep over the gate/up union); the plain-width down reuses the gate/up sweep handles (w4a4.rs down_kernels `sweep: k.w4a4_moe_sweep`; mod.rs `gate_up_sweeps(gpu, levers.mlp.sweep_serial)`), so it launches the `_sl` entry like gate/up"
 
 [[rule]]
 id = "glm_moe_w4a4_cs_down_9_16_dsa"
@@ -4160,7 +4190,7 @@ pattern = [
 ]
 kernels = [
   { module = "w4a4_gemv_mx_moe", func = "w4a4_quant_rows_static" },
-  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx16_moe_union_sweep_cs" },
+  { module = "w4a4_gemv_mx_moe", func = "w4a4_gemv_mx16_moe_union_sweep_sl_cs" },
 ]
 repeat = "once"
 emitter = "glm_moe_w4a4"
@@ -4169,7 +4199,7 @@ modes = ["multi_seq", "verify"]
 when = { glm_moe_w4a4_grouped = "on", glm_moe_expert_layout = "tp" }
 numerics = "reference"
 priority = 115
-cite = "crates/model-arch/src/weight_loader/glm5_next_load/mlp_precision.rs:43-52 (glm_moe_w4a4_grouped lifts the routed W4A4 row cap; crates/settings/src/groups/kernels.rs:151); crates/model-arch/src/glm5next_mlp/precision.rs:155-162 (w4a4_at_every_row); crates/model-arch/src/glm5next_mlp/scale_dict.rs:149-161 (Compact needs the lever, default on at crates/settings/src/groups/kernels.rs:149, and the sliced tp layout, --moe-expert-layout default ep at crates/server/src/cli/serve_args/service.rs:176); crates/model-arch/src/glm5next_mlp/scale_dict_kernels.rs:105-120 (pick: the `_cs` twin); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-162 (down_kernels: the plain entries at a moe_inter multiple of 128), :170-188 (the mx16 union sweep over the gate/up union)"
+cite = "crates/model-arch/src/weight_loader/glm5_next_load/mlp_precision.rs:43-52 (glm_moe_w4a4_grouped lifts the routed W4A4 row cap; crates/settings/src/groups/kernels.rs:151); crates/model-arch/src/glm5next_mlp/precision.rs:155-162 (w4a4_at_every_row); crates/model-arch/src/glm5next_mlp/scale_dict.rs:149-161 (Compact needs the lever, default on at crates/settings/src/groups/kernels.rs:149, and the sliced tp layout, --moe-expert-layout default ep at crates/server/src/cli/serve_args/service.rs:176); crates/model-arch/src/glm5next_mlp/scale_dict_kernels.rs:105-120 (pick: the `_cs` twin); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-162 (down_kernels: the plain entries at a moe_inter multiple of 128), :170-188 (the mx16 union sweep over the gate/up union); the plain-width down reuses the gate/up sweep handles (w4a4.rs down_kernels `sweep: k.w4a4_moe_sweep`; mod.rs `gate_up_sweeps(gpu, levers.mlp.sweep_serial)`), so it launches the `_sl` entry like gate/up"
 
 # 2026-10-22: At 2..=16 routed rows the SwiGLU also writes +0.0 over `expert_out` (the memset the
 # down sweep needs, folded in; METRALE_GLM_MOE_ZERO_IN_SWIGLU default on). One row keeps the

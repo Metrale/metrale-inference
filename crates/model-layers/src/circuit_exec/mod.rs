@@ -22,6 +22,7 @@ pub mod bindings;
 pub mod compile;
 mod draft_rows;
 mod emitters;
+pub mod family;
 pub mod fixed;
 pub mod kernels;
 pub mod policy;

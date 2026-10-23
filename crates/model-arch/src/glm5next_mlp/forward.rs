@@ -22,6 +22,7 @@ mod launch;
 mod levers;
 mod moe_experts;
 mod pieces;
+pub mod plan_moe;
 mod route;
 mod router;
 mod shared_fork;

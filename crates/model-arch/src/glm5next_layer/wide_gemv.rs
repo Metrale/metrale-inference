@@ -114,6 +114,33 @@ pub(crate) fn fixed_entry(
         .then_some(batchm.few)
 }
 
+/// 2026-10-23: One launch of a fixed-count batched entry (`wide` or `few`) over `m` rows: the
+/// launch [`glm_mm`] makes for one, and the plan executor's for a group that names one.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn launch_fixed(
+    gpu: &dyn GpuBackend,
+    entry: KernelHandle,
+    a: DevicePtr,
+    b: DevicePtr,
+    c: DevicePtr,
+    m: usize,
+    n: usize,
+    kk: usize,
+    stream: u64,
+) -> Result<()> {
+    KernelLaunch::new(gpu, entry)
+        .grid([div_ceil(n as u32, 4), 1, 1])
+        .block([256, 1, 1])
+        .arg_ptr(a)
+        .arg_ptr(b)
+        .arg_ptr(c)
+        .arg_u32(m as u32)
+        .arg_u32(n as u32)
+        .arg_u32(kk as u32)
+        .arg_u32(n as u32)
+        .launch(stream)
+}
+
 /// 2026-10-11: [`glm_mm`] in launches of at most `DENSE_GEMV_BATCHM_MAX_M` rows, each on the
 /// GEMV tiers (one row: the M = 1 GEMV; 2..=16: the batched GEMV), whose rows have the M = 1
 /// GEMV's bits; `C` rows are `n` elements of `batchm.out_bytes`. Errors when the batched handle
@@ -189,17 +216,7 @@ pub(crate) fn glm_mm(
         return ops::cublas_bf16_proj_dense(a, b, c, m as u32, n as u32, kk as u32, stream);
     }
     if let Some(entry) = fixed_entry(&batchm, m, &levers.dense) {
-        return KernelLaunch::new(gpu, entry)
-            .grid([div_ceil(n as u32, 4), 1, 1])
-            .block([256, 1, 1])
-            .arg_ptr(a)
-            .arg_ptr(b)
-            .arg_ptr(c)
-            .arg_u32(m as u32)
-            .arg_u32(n as u32)
-            .arg_u32(kk as u32)
-            .arg_u32(n as u32)
-            .launch(stream);
+        return launch_fixed(gpu, entry, a, b, c, m, n, kk, stream);
     }
     ops::dense_mm_bf16(
         gpu,
