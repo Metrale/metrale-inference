@@ -32,6 +32,7 @@ pub mod headroom;
 pub mod headroom_ci;
 mod headroom_model;
 mod headroom_render;
+mod headroom_shares;
 pub mod headroom_sites;
 mod headroom_svg;
 pub mod headroom_trace;

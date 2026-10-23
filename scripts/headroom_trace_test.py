@@ -75,7 +75,9 @@ def build(db: Path) -> None:
 def export(db: Path, amap: Path) -> dict:
     out = subprocess.run(
         [sys.executable, str(HERE / "headroom_trace.py"), str(db), "--step-kernel", "step",
-         "--source", "test", "--attribution", str(amap), "--kv-tokens", "100", "--kv-basis", "t"],
+         "--source", "test", "--attribution", str(amap), "--kv-tokens", "100", "--kv-basis", "t",
+         "--execution", "verify n=2", "plan", "test", "--executed-sites", "verify n=2", "blk [big];blk [small]",
+         "--execution", "draft n=1", "legacy", "test: no executor"],
         capture_output=True, text=True, check=True)
     return tomllib.loads(out.stdout)
 
@@ -86,6 +88,12 @@ def main() -> int:
         build(db)
         amap.write_text(MAP)
         t = export(db, amap)
+        # 2026-10-23: The execution is required, and `plan` needs its sites.
+        for extra in ([], ["--execution", "verify n=2", "plan", "x"]):
+            r = subprocess.run([sys.executable, str(HERE / "headroom_trace.py"), str(db),
+                                "--step-kernel", "step", "--source", "test", *extra],
+                               capture_output=True, text=True)
+            assert r.returncode == 2 and "--execution" in r.stderr, (extra, r.returncode, r.stderr)
     assert t["steps"] == 2 and t["window_us"] == 2.0, (t["steps"], t["window_us"])
     rows = {(k["kernel"], k.get("site")): k for k in t["kernel"]}
     big = rows[("gemv", "blk.big")]
@@ -104,6 +112,9 @@ def main() -> int:
     # The shortest never-overlapped kernel launched every step: `step` (100 ns).
     assert t["launch_floor_us"]["value"] == 0.1, t["launch_floor_us"]
     assert t["plan"]["dims"] == {"q_heads": 22} and t["plan"]["kv_tokens"] == 100
+    assert t["plan"]["execution"] == {
+        "verify n=2": {"by": "plan", "sites": ["blk [big]", "blk [small]"], "why": "test"},
+        "draft n=1": {"by": "legacy", "why": "test: no executor"}}, t["plan"]["execution"]
     # Per-step series: two 1 us steps; each kernel's series sums to its totals, and no step's
     # exclusive time exceeds the step.
     assert t["step_us"] == [1.0, 1.0], t["step_us"]

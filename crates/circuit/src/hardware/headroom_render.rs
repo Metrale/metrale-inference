@@ -70,6 +70,7 @@ pub fn render_headroom(h: &Headroom, command: &str) -> String {
     }
     inputs(&mut s, h);
     budget(&mut s, h);
+    plan_shares(&mut s, h);
     top(&mut s, h);
     cumulative(&mut s, h);
     outside(&mut s, h);
@@ -77,6 +78,46 @@ pub fn render_headroom(h: &Headroom, command: &str) -> String {
     cross_check(&mut s, h);
     drift(&mut s, h);
     s
+}
+
+/// 2026-10-23: Per run, the plan-describable and plan-executed shares of the step; nothing
+/// without a capture.
+fn plan_shares(s: &mut String, h: &Headroom) {
+    if h.shares.is_empty() {
+        return;
+    }
+    let _ = writeln!(
+        s,
+        "## Plan shares\n\nPlan-describable: the exclusive time of the launch sites the plan names. Plan-executed: the part of it the circuit executor issued from the plan in the captured serve (the capture's `[plan.execution]`); the rest ran on the model's own layer code.\n\n| run | executed by | describable us | describable share | executed us | executed share | why |\n|---|---|---:|---:|---:|---:|---|"
+    );
+    for r in &h.shares {
+        let _ = writeln!(
+            s,
+            "| {} | {} | {} | {} | {} | {} | {} |",
+            r.run,
+            r.by.name(),
+            us(r.describable_us),
+            pct(r.describable_pct),
+            us(r.executed_us),
+            pct(r.executed_pct),
+            r.why
+        );
+    }
+    let (d, e): (f64, f64) = h
+        .shares
+        .iter()
+        .fold((0.0, 0.0), |(d, e), r| (d + r.describable_us, e + r.executed_us));
+    let (dp, ep): (f64, f64) = h.shares.iter().fold((0.0, 0.0), |(d, e), r| {
+        (d + r.describable_pct, e + r.executed_pct)
+    });
+    let _ = writeln!(
+        s,
+        "| **step** | – | {} | {} | {} | {} | – |\n",
+        us(d),
+        pct(dp),
+        us(e),
+        pct(ep)
+    );
 }
 
 /// 2026-10-22: `x [lo, hi]` with `f`, or `x` alone without an interval.

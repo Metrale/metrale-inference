@@ -7,6 +7,9 @@
         [--tokens-per-step X --tokens-basis '<text>'] tokens a step emits in the capture
         [--kv-tokens N --kv-basis '<text>']           KV length the window's decode attended
         [--device N]                                  the device to read (default: the only one)
+        --execution '<mode n=rows>' legacy|plan '<why>'   (repeat per run) who issued the run's
+                                                      launches in the captured serve
+        [--executed-sites '<mode n=rows>' '<site>;...']  under `plan`, the sites it issued (`*`: all)
 
 The window is whole steps: from the first launch of the step kernel to its last launch, so
 `steps` = launches - 1. Every kernel that starts in the window counts. Per kernel:
@@ -156,6 +159,15 @@ def render(a, groups, anchors, plan) -> str:
     if a.kv_tokens is not None:
         out.append(f"kv_tokens = {a.kv_tokens}")
         out.append(f"kv_basis = {q(a.kv_basis)}")
+    out.append("")
+    out.append("[plan.execution]")
+    sites = dict(a.executed_sites or [])
+    for run, by, why in a.execution:
+        parts = [f"by = {q(by)}"]
+        if run in sites:
+            parts.append("sites = [" + ", ".join(q(x) for x in sites[run].split(";")) + "]")
+        parts.append(f"why = {q(why)}")
+        out.append(f"{q(run)} = {{ {', '.join(parts)} }}")
     for (name, site, label, note), g in sorted(groups.items(), key=lambda kv: (-kv[1]["total"], kv[0][0], str(kv[0][2]))):
         out.append("")
         out.append("[[kernel]]")
@@ -184,7 +196,23 @@ def main(argv):
     ap.add_argument("--kv-tokens", type=int)
     ap.add_argument("--kv-basis")
     ap.add_argument("--device", type=int)
+    # 2026-10-23: How the captured serve issued each run: required, a fact about the serve.
+    ap.add_argument("--execution", nargs=3, action="append", required=True,
+                    metavar=("RUN", "BY", "WHY"))
+    ap.add_argument("--executed-sites", nargs=2, action="append", metavar=("RUN", "SITES"))
     a = ap.parse_args(argv)
+    runs = [r for r, _, _ in a.execution]
+    if len(set(runs)) != len(runs):
+        ap.error(f"--execution states a run twice: {runs}")
+    for run, by, why in a.execution:
+        if by not in ("legacy", "plan") or not why.strip():
+            ap.error(f"--execution {run!r}: BY is legacy or plan and WHY is stated")
+    for run, _ in a.executed_sites or []:
+        if (run, "plan") not in [(r, b) for r, b, _ in a.execution]:
+            ap.error(f"--executed-sites {run!r}: only a run executed `plan` names sites")
+    for run, by, _ in a.execution:
+        if by == "plan" and run not in dict(a.executed_sites or []):
+            ap.error(f"--execution {run!r} plan: state --executed-sites (`*` for all)")
     for v, b, what in ((a.tokens_per_step, a.tokens_basis, "--tokens-per-step"),
                        (a.kv_tokens, a.kv_basis, "--kv-tokens")):
         if (v is None) != (b is None):

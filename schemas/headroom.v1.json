@@ -221,6 +221,46 @@
       ],
       "type": "object"
     },
+    "PlanShare": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One run's shares of the step: describable = exclusive time of the sites the plan names; executed = the part the circuit executor issued from the plan in the captured serve.",
+      "properties": {
+        "run": {
+          "type": "string"
+        },
+        "by": {
+          "enum": [
+            "plan",
+            "legacy"
+          ]
+        },
+        "why": {
+          "type": "string"
+        },
+        "describable_us": {
+          "type": "number"
+        },
+        "describable_pct": {
+          "type": "number"
+        },
+        "executed_us": {
+          "type": "number"
+        },
+        "executed_pct": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "by",
+        "describable_pct",
+        "describable_us",
+        "executed_pct",
+        "executed_us",
+        "run",
+        "why"
+      ]
+    },
     "SiteCi": {
       "additionalProperties": false,
       "description": "95% intervals of a measured site: moving-block bootstrap over the capture's steps; pct_of_floor_delta is the delta-method cross-check.",
@@ -674,6 +714,13 @@
         "headroom/v1"
       ]
     },
+    "shares": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PlanShare"
+      },
+      "description": "Per run of the step: the plan-describable and plan-executed shares (empty without a capture)."
+    },
     "sites": {
       "items": {
         "$ref": "#/$defs/SiteRow"
@@ -718,6 +765,7 @@
     "roofline",
     "runs",
     "schema",
+    "shares",
     "sites",
     "target_pct",
     "tokens_per_step",

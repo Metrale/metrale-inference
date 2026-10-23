@@ -17,6 +17,8 @@ use super::HwError;
 pub use super::headroom_ci::{SiteCi, TotalsCi};
 pub use super::headroom_sites::Outside;
 use super::headroom_svg::Ceilings;
+pub use super::headroom_shares::PlanShare;
+pub use super::headroom_trace::ExecutedBy;
 use super::headroom_trace::{Stated, Trace};
 
 /// 2026-10-22: Which term sets a site's floor.
@@ -237,6 +239,9 @@ pub struct Headroom {
     pub curve: Vec<CurvePoint>,
     /// 2026-10-22: Totals.
     pub totals: Totals,
+    /// 2026-10-23: Per run, the plan-describable and plan-executed shares of the step
+    /// ([`super::headroom_shares`]); empty without a capture.
+    pub shares: Vec<PlanShare>,
     /// 2026-10-22: What the intervals cover, or why there are none.
     pub uncertainty: String,
 }
