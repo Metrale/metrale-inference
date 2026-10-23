@@ -49,6 +49,7 @@ mod circuit_diff;
 pub(crate) mod circuit_headroom;
 pub(crate) mod circuit_hw;
 pub(crate) mod circuit_hw_tree;
+mod circuit_rules;
 mod circuit_memory;
 pub(crate) mod circuit_memory_point;
 mod circuit_memory_serve;
@@ -188,6 +189,8 @@ pub enum CircuitAction {
     /// How far each launch site of a step is from its roofline floor, what the step and tok/s
     /// would be at that floor (Amdahl), and the time no kernel runs; from a capture when given.
     Headroom(Box<circuit_headroom::CircuitHeadroomArgs>),
+    /// Check the fusion rules themselves (`--critical-pairs`: overlaps settled by priority alone).
+    Rules(Box<circuit_rules::CircuitRulesArgs>),
 }
 
 /// `met circuit memory` options. Serve settings come from `--recipe` (`recipes/<id>.yaml`) and the
