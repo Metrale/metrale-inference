@@ -8,7 +8,7 @@
 //! Invariants:
 //! - `glm_hc_pre_norm` writes what `glm_hc_pre` followed by `rms_norm_vanilla` (block
 //!   `min(hidden, 1024)`) writes, byte for byte: `y_out`, `post_out`, `comb_out` and
-//!   `normed_out` (`examples/glm5next_hc_fused_gate.rs`).
+//!   `normed_out` (`examples/glm5next_hc_fused_gate/`).
 //! - Both grids give every mix the same bits (the per-row and 8-row unfused mix kernels agree,
 //!   and the gate compares the fused kernel against whichever the unfused path picks), so the
 //!   grid is chosen for speed alone: per row below `HC_PRE_NORM_ROWS_MIN_TOKENS`.

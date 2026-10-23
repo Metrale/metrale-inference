@@ -29,7 +29,7 @@
 //! Timing: `DSA_LAYERS` layers with distinct weights per graph, PDL on (the serve's default),
 //! each arm per M in `ROWS_TIMED` (graph_arms). `--no-timing` skips it.
 
-#[path = "common/glm5next_rows_fixture.rs"]
+#[path = "../common/glm5next_rows_fixture.rs"]
 mod fixture;
 
 use anyhow::{Result, bail};
@@ -43,6 +43,9 @@ use metrale_model_layers::layers::ops::{
     W8a8Weight, w8a8_act_quant, w8a8_gemv, w8a8_gemv_split4, w8a8_proj,
 };
 use metrale_model_layers::weight_map::{Fp8Weight, WeightQuantFormat};
+
+mod oracle;
+use oracle::{kernels, oracle, outs};
 
 const HID: usize = 4096;
 const QA: usize = 1536;
@@ -383,55 +386,6 @@ fn new(g: &dyn GpuBackend, k: &Kernels, l: &Layer, b: &Bufs, swap: bool, s: u64)
     w8a8_gemv_split4(g, k.split4, &segs, &b.scratch, m, s)?;
     tail(g, k, l, b, s)?;
     selector(g, k, l, b, !old_lever("pair"), s)
-}
-
-fn outs(g: &dyn GpuBackend, b: &Bufs) -> Result<Vec<Vec<u8>>> {
-    g.synchronize(0)?;
-    b.out
-        .iter()
-        .zip(ROW_BYTES)
-        .map(|(&p, w)| read(g, p, b.m * w))
-        .collect()
-}
-
-/// 2026-10-21: `split`: resolve the split and pair entries (the base PTX has neither).
-fn kernels(g: &dyn GpuBackend, split: bool) -> Result<Kernels> {
-    Ok(Kernels {
-        w8a8: W8a8Kernels::load(g),
-        split4: if split {
-            g.kernel(W8A8_SPLIT4_MODULE, W8A8_SPLIT4_ENTRY)?
-        } else {
-            KernelHandle(0)
-        },
-        rms: g.kernel("rms_norm_vanilla", "rms_norm_vanilla")?,
-        few_f32: g.kernel(
-            "dense_gemv_bf16_batchm_few",
-            "dense_gemv_bf16_batchm_few_fp32out",
-        )?,
-        pair: if split {
-            g.kernel(
-                "dense_gemv_bf16_batchm_few",
-                "dense_gemv_bf16_batchm_few_fp32out_pair",
-            )?
-        } else {
-            KernelHandle(0)
-        },
-    })
-}
-
-/// 2026-10-21: The oracle's outputs per M on backend `g`, from the fixed seed.
-fn oracle(g: &dyn GpuBackend, k: &Kernels) -> Result<Vec<Vec<Vec<u8>>>> {
-    let mut rng = Lcg(0x6473_6170);
-    let l = layer(g, &mut rng)?;
-    ROWS_TESTED
-        .iter()
-        .map(|&m| {
-            let b = bufs(g, m, &hidden_rows(&mut rng, m))?;
-            poison(g, &b)?;
-            old(g, k, &l, &b, 0)?;
-            outs(g, &b)
-        })
-        .collect()
 }
 
 fn main() -> Result<()> {
