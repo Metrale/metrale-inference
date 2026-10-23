@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="viz" viewBox="0 0 960 600" width="960" height="600" role="img" aria-label="Step waterfall: recipe glm-5.3/glm-5.3-flash-nvfp4-tp3-512k on gb10">
+<title>Step waterfall: recipe glm-5.3/glm-5.3-flash-nvfp4-tp3-512k on gb10</title>
+<desc>Microseconds per step: the measured step, the time no kernel runs, the kernels' exclusive time, the time above the floors, and the step ceiling.</desc>
+<style>
+.viz text{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:12px}
+.viz .t{font-size:15px;font-weight:600}
+.viz .g{stroke-width:1}.viz .c{stroke-width:2;fill:none;stroke-dasharray:6 4}
+.viz .m{stroke-width:2}.viz .p{stroke-width:2}.viz .d{stroke-width:2;opacity:.45}
+.viz .bg{fill:#fcfcfb}.viz text{fill:#52514e}.viz .t{fill:#0b0b0b}.viz .g{stroke:#e4e3df}.viz .c{stroke:#52514e}.viz .m{fill:#2a78d6;stroke:#fcfcfb}.viz .p{fill:#fcfcfb;stroke:#eb6834}.viz .d{stroke:#2a78d6}.viz .b1{fill:#2a78d6}.viz .b2{fill:#eb6834}.viz .b3{fill:#1baf7a}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .viz .bg{fill:#1a1a19}:root:not([data-theme="light"]) .viz text{fill:#c3c2b7}:root:not([data-theme="light"]) .viz .t{fill:#f0efec}:root:not([data-theme="light"]) .viz .g{stroke:#3a3936}:root:not([data-theme="light"]) .viz .c{stroke:#c3c2b7}:root:not([data-theme="light"]) .viz .m{fill:#3987e5;stroke:#1a1a19}:root:not([data-theme="light"]) .viz .p{fill:#1a1a19;stroke:#d95926}:root:not([data-theme="light"]) .viz .d{stroke:#3987e5}:root:not([data-theme="light"]) .viz .b1{fill:#3987e5}:root:not([data-theme="light"]) .viz .b2{fill:#d95926}:root:not([data-theme="light"]) .viz .b3{fill:#199e70}}
+[data-theme="dark"] .viz .bg{fill:#1a1a19}[data-theme="dark"] .viz text{fill:#c3c2b7}[data-theme="dark"] .viz .t{fill:#f0efec}[data-theme="dark"] .viz .g{stroke:#3a3936}[data-theme="dark"] .viz .c{stroke:#c3c2b7}[data-theme="dark"] .viz .m{fill:#3987e5;stroke:#1a1a19}[data-theme="dark"] .viz .p{fill:#1a1a19;stroke:#d95926}[data-theme="dark"] .viz .d{stroke:#3987e5}[data-theme="dark"] .viz .b1{fill:#3987e5}[data-theme="dark"] .viz .b2{fill:#d95926}[data-theme="dark"] .viz .b3{fill:#199e70}
+</style>
+<rect class="bg" width="960" height="600"/>
+<text class="t" x="80" y="28">Step waterfall · recipe glm-5.3/glm-5.3-flash-nvfp4-tp3-512k on gb10 · verify n=2 + draft n=1</text>
+<text x="190.0" y="106.0" text-anchor="end">measured step</text><rect class="b1" x="200.0" y="74.4" width="720.0" height="55.2" rx="4"><title>32738 us, 51.1 tok/s</title></rect><text x="800.0" y="70.4">32.74 ms</text>
+<text x="190.0" y="198.0" text-anchor="end">− no kernel running</text><rect class="b2" x="903.3" y="166.4" width="16.7" height="55.2" rx="4"><title>residual 761 us (host, syncs, waits, gaps)</title></rect><text x="800.0" y="162.4">0.76 ms</text>
+<text x="190.0" y="290.0" text-anchor="end">= Σ kernels, exclusive</text><rect class="b1" x="200.0" y="258.4" width="703.3" height="55.2" rx="4"><title>31977 us: launch sites 26387 + outside the plan 5590</title></rect><text x="800.0" y="254.4">31.98 ms</text>
+<text x="190.0" y="382.0" text-anchor="end">− above the floors</text><rect class="b2" x="802.5" y="350.4" width="100.8" height="55.2" rx="4"><title>4582 us (outside-the-plan kernels have no floor)</title></rect><text x="800.0" y="346.4">4.58 ms</text>
+<text x="190.0" y="474.0" text-anchor="end">= step ceiling: Σ floors</text><rect class="b3" x="200.0" y="442.4" width="602.5" height="55.2" rx="4"><title>27395 us, 61.0 tok/s; unmeasured sites' projections 4862 us</title></rect><text x="800.0" y="438.4">27.40 ms</text>
+</svg>
