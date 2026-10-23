@@ -15,8 +15,8 @@
 use anyhow::{Context, Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_model_layers::layers::ops::{
-    W4A16_GEMV_PIPE_MODULE, W4a16Seg, w4a16_gemv, w4a16_gemv_pipe_cap, w4a16_gemv_pipe_entry,
-    w4a16_gemv_pipe_with,
+    PipeInput, W4A16_GEMV_PIPE_MODULE, W4a16Seg, w4a16_gemv, w4a16_gemv_pipe_cap,
+    w4a16_gemv_pipe_entry, w4a16_gemv_pipe_staged,
 };
 
 /// 2026-10-23: The entries a W4A16 step launches.
@@ -88,7 +88,8 @@ pub fn launch(
         W4a16Step::Pipe(kernel) => {
             let ns: Vec<u32> = segs.iter().map(|s| s.n).collect();
             let cap = w4a16_gemv_pipe_cap(&ns, k32, m32, sms);
-            w4a16_gemv_pipe_with(gpu, kernel, a, &segs, m32, k32, cap, stream)
+            let rows = PipeInput::Rows(a);
+            w4a16_gemv_pipe_staged(gpu, kernel, rows, &segs, m32, k32, cap, stream)
         }
     }
 }
