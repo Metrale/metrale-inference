@@ -12,6 +12,8 @@
 //!   an instance of another world size, or a model with no plan-executed site refuse the
 //!   selection rather than run legacy under the name `circuit`.
 //! - Only `circuit` (every rule) is accepted: `circuit-reference` is refused under TP.
+//! - A drafter with a circuit block (the GLM MTP block) installs its sites from the rank's draft
+//!   plan (draft n=1), fused under the same policy, which its block must derive too.
 
 use anyhow::{Context, Result, bail, ensure};
 use metrale_circuit::Mode;
@@ -59,14 +61,23 @@ impl TransformerModel {
                 i + 1
             );
         }
+        let drafter = self.proposer.as_deref().and_then(|p| p.circuit_block());
+        if let Some(b) = drafter {
+            ensure!(
+                b.plan_policy(&instance.policy)? == policy,
+                "the draft block derives another plan policy than layer 0"
+            );
+        }
         let available = kernels::available_in(&loaded.rules, &modules.0)?;
-        let shapes = std::iter::once((Mode::Decode, 1)).chain(
-            self.proposer
-                .is_some()
-                .then_some([2, 3, 4].map(|r| (Mode::Verify, r)))
-                .into_iter()
-                .flatten(),
-        );
+        let shapes = std::iter::once((Mode::Decode, 1))
+            .chain(
+                self.proposer
+                    .is_some()
+                    .then_some([2, 3, 4].map(|r| (Mode::Verify, r)))
+                    .into_iter()
+                    .flatten(),
+            )
+            .chain(drafter.map(|_| (Mode::Draft, 1)));
         let mut plans = Vec::new();
         for (mode, rows) in shapes {
             let p = metrale_circuit::fuse(circuit, &loaded.rules, &available, &policy, mode, rows)
@@ -82,6 +93,9 @@ impl TransformerModel {
         for l in &self.layers {
             sites.extend(l.install_plans(self.gpu.as_ref(), Some(rp))?);
         }
+        if let Some(b) = drafter {
+            sites.extend(b.install_plans(self.gpu.as_ref(), Some(rp))?);
+        }
         if sites.is_empty() {
             bail!(
                 "--forward circuit on TP rank {rank}/{world}: no layer of this model executes a \
@@ -96,6 +110,9 @@ impl TransformerModel {
         for l in &self.layers {
             l.install_plans(self.gpu.as_ref(), None)?;
         }
+        if let Some(b) = self.proposer.as_deref().and_then(|p| p.circuit_block()) {
+            b.install_plans(self.gpu.as_ref(), None)?;
+        }
         Ok(())
     }
 
@@ -103,7 +120,13 @@ impl TransformerModel {
     /// forward `circuit-sites`, the digest over the executed sites (each names its layer, rows,
     /// group and kernels), no whole-step launch count (the other sites are legacy).
     pub(super) fn rank_plans_disclosure(&self) -> Option<ForwardDisclosure> {
-        let sites: Vec<String> = self.layers.iter().flat_map(|l| l.plan_sites()).collect();
+        let drafter = self.proposer.as_deref().and_then(|p| p.circuit_block());
+        let sites: Vec<String> = self
+            .layers
+            .iter()
+            .flat_map(|l| l.plan_sites())
+            .chain(drafter.into_iter().flat_map(|b| b.plan_sites()))
+            .collect();
         (!sites.is_empty()).then(|| ForwardDisclosure {
             forward: "circuit-sites",
             plan_digest: Some(metrale_circuit::digest::plans_digest(

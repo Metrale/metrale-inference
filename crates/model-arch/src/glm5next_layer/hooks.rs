@@ -245,14 +245,25 @@ impl metrale_model_layers::circuit_exec::CircuitBindings for Glm5NextLayer {
     }
 
     /// 2026-10-23: A text layer's mHC sites, its KDA or DSA mixer and, on a routed layer, its
-    /// MoE site; the MTP block executes nothing from a plan.
+    /// MoE site. The MTP block (no hyper-connection): its DSA mixer from the draft plan; its MoE
+    /// and plain-residual steps are its own code.
     fn install_plans(
         &self,
         gpu: &dyn GpuBackend,
         plans: Option<metrale_model_layers::circuit_exec::family::RankPlans<'_>>,
     ) -> Result<Vec<String>> {
+        use crate::glm5next_plan::dsa::DsaSite;
         let Some(mhc) = &self.mhc else {
-            return Ok(Vec::new());
+            let Glm5NextMixer::Dsa(layer) = &self.mixer else {
+                bail!(
+                    "GLM layer {}: a block without a hyper-connection is the MTP block, a DSA layer",
+                    self.layer_idx
+                );
+            };
+            let site = DsaSite::Mtp {
+                layer: self.layer_idx,
+            };
+            return crate::glm5next_plan::dsa::install(gpu, site, plans, layer, &self.plans.dsa);
         };
         let mut sites = crate::glm5next_plan::mhc::install(
             gpu,
@@ -273,7 +284,9 @@ impl metrale_model_layers::circuit_exec::CircuitBindings for Glm5NextLayer {
             )?),
             Glm5NextMixer::Dsa(layer) => sites.extend(crate::glm5next_plan::dsa::install(
                 gpu,
-                self.layer_idx,
+                DsaSite::Text {
+                    layer: self.layer_idx,
+                },
                 plans,
                 layer,
                 &self.plans.dsa,

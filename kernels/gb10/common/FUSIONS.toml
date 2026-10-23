@@ -5486,4 +5486,4 @@ modes = ["verify"]
 when = { glm_mtp_device_step = "on" }
 numerics = "reference"
 priority = 20
-cite = "crates/model-engine/src/model/trait_impl/verify_b.rs:240-251 (token upload, then verify_device_row); crates/model-engine/src/model/trait_impl/device_step.rs:425-452 (verify_device_row: the draft id into token_ids row 1, batched_embed of one row); :131-145 (wants_device_draft under glm_mtp_device_step); crates/model-arch/src/glm5next_mtp_head/proposer.rs:239 (the only propose_device)"
+cite = "crates/model-engine/src/model/trait_impl/verify_b.rs:240-251 (token upload, then verify_device_row); crates/model-engine/src/model/trait_impl/device_step.rs:425-452 (verify_device_row: the draft id into token_ids row 1, batched_embed of one row); :131-145 (wants_device_draft under glm_mtp_device_step); crates/model-arch/src/glm5next_mtp_head/proposer.rs:245 (the only propose_device)"

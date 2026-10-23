@@ -15,11 +15,11 @@
 use super::*;
 
 /// 2026-10-11: Rows per drafter KV block.
-pub(super) const DRAFTER_KV_BLOCK: usize = 16;
+pub(crate) const DRAFTER_KV_BLOCK: usize = 16;
 
 /// 2026-10-11: One KV head of `kv_lora_rank` per token, the absorbed-MLA latent that the
 /// block's `latent_write` and paged gather address.
-pub(super) fn drafter_kv_config(kv_lora_rank: usize) -> KvCacheConfig {
+pub(crate) fn drafter_kv_config(kv_lora_rank: usize) -> KvCacheConfig {
     KvCacheConfig {
         block_size: DRAFTER_KV_BLOCK,
         num_kv_heads: 1,
@@ -35,7 +35,7 @@ pub(super) fn drafter_kv_config(kv_lora_rank: usize) -> KvCacheConfig {
 
 /// 2026-10-11: Blocks one state's region holds for `rows` drafter rows (two spare, as the
 /// single-sequence pool had).
-pub(super) fn blocks_per_seq(rows: usize) -> usize {
+pub(crate) fn blocks_per_seq(rows: usize) -> usize {
     rows / DRAFTER_KV_BLOCK + 2
 }
 

@@ -29,6 +29,9 @@ use crate::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels};
 /// 2026-10-23: The shapes the plan-vs-legacy launch gate covers.
 pub const GATED: [(Mode, u64); 2] = [(Mode::Decode, 1), (Mode::Verify, 2)];
 
+/// 2026-10-23: The shape the MTP block's launch gate covers (`dsa_mtp_tests`): one draft row.
+pub const DRAFT_GATED: [(Mode, u64); 1] = [(Mode::Draft, 1)];
+
 /// 2026-10-23: The policy settings the MoE, mHC, KDA and DSA rules read that come from this
 /// layer's levers and layout, as `(key, value)`. `glm_dsa_decode_hb` is the head-batched split
 /// count, `off` for the per-head kernel.

@@ -14,6 +14,8 @@
 //! - The head-batched attend's split count is the `glm_dsa_decode_hb` the plan was fused under
 //!   ([`DsaSlots::hb_splits`], set by `compile_dsa` from the policy), the setting its rule's
 //!   `when` names.
+//! - Two block instances ([`DsaSite`]): a text layer's mixer (`dsa`) at a decode or a verify,
+//!   and the MTP block's (`mtp_dsa`) at a draft; each only at the shapes its gate covers.
 
 use anyhow::{Context, Result, bail, ensure};
 use metrale_circuit::rules::Repeat;
@@ -50,6 +52,65 @@ const LEGACY: [&str; 12] = [
     "o",
 ];
 
+/// 2026-10-23: The MTP block's steps around its mixer (the gather of the draft input, the input
+/// norm, the output all-reduce and the plain residual add): `forward_one_plain` runs them.
+const MTP_OUTSIDE: [&str; 4] = ["x@all_gather", "input_norm", "o@all_reduce", "add"];
+
+/// 2026-10-23: The DSA block instance a site compiles from and installs on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DsaSite {
+    /// 2026-10-23: Text layer `layer`'s mixer (block `dsa`).
+    Text { layer: usize },
+    /// 2026-10-23: The MTP block's mixer (block `mtp_dsa`, no layer in the circuit); `layer` is
+    /// the block's own index (`num_hidden_layers`), which its sites are named by.
+    Mtp { layer: usize },
+}
+
+impl DsaSite {
+    pub fn layer(self) -> usize {
+        match self {
+            Self::Text { layer } | Self::Mtp { layer } => layer,
+        }
+    }
+
+    /// 2026-10-23: The block template the site's groups belong to.
+    pub fn block(self) -> &'static str {
+        match self {
+            Self::Text { .. } => "dsa",
+            Self::Mtp { .. } => "mtp_dsa",
+        }
+    }
+
+    /// 2026-10-23: The shapes the launch gate proves this site's plans at: decode n=1 and verify
+    /// n=2 for a text layer (`install::GATED`), draft n=1 for the MTP block
+    /// (`install::DRAFT_GATED`).
+    pub fn shapes(self) -> &'static [(Mode, u64)] {
+        match self {
+            Self::Text { .. } => &super::install::GATED,
+            Self::Mtp { .. } => &super::install::DRAFT_GATED,
+        }
+    }
+
+    /// 2026-10-23: Whether `g` is one of this mixer's groups: its own or a projection, not the
+    /// mHC pre-norm and post-mix around a text mixer or the MTP block's plain-residual steps.
+    pub fn holds(self, g: &PlanGroup<'_>) -> bool {
+        g.block() == self.block()
+            && match self {
+                Self::Text { layer } => g.layer() == Some(layer) && !super::mhc::is_site_group(g),
+                Self::Mtp { .. } => !g.locals().iter().all(|l| MTP_OUTSIDE.contains(l)),
+            }
+    }
+}
+
+/// 2026-10-23: The modes each DSA block runs from a plan here.
+fn block_modes(block: &str) -> Option<&'static [Mode]> {
+    match block {
+        "dsa" => Some(&[Mode::Decode, Mode::Verify]),
+        "mtp_dsa" => Some(&[Mode::Draft]),
+        _ => None,
+    }
+}
+
 /// 2026-10-23: The policy setting that carries the head-batched attend's split count.
 pub const HB_SETTING: &str = "glm_dsa_decode_hb";
 
@@ -68,12 +129,12 @@ pub struct DsaSlots {
 
 /// 2026-10-23: Whether a group is one of the DSA block's own groups this emitter compiles.
 pub fn is_site_group(g: &PlanGroup<'_>) -> bool {
-    g.block() == "dsa" && g.group.emitter == "dsa"
+    block_modes(g.block()).is_some() && g.group.emitter == "dsa"
 }
 
 /// 2026-10-23: Whether a group is one of the block's projection sites the layer runs.
 pub fn is_legacy_group(g: &PlanGroup<'_>) -> bool {
-    g.block() == "dsa" && g.locals().iter().all(|l| LEGACY.contains(l))
+    block_modes(g.block()).is_some() && g.locals().iter().all(|l| LEGACY.contains(l))
 }
 
 /// 2026-10-23: `glm_dsa_decode_hb` of `policy` as a split count, `None` for `off`.
@@ -119,16 +180,18 @@ impl GroupEmitter<GlmBlock> for Dsa {
     }
 
     fn emit(&self, g: &PlanGroup<'_>, site: &mut GlmBlock) -> Result<()> {
+        let modes = block_modes(g.block()).with_context(|| {
+            format!(
+                "`dsa` serves the `dsa` and `mtp_dsa` blocks here; group {} is {}",
+                g.index,
+                g.site()
+            )
+        })?;
         ensure!(
-            matches!(g.mode, Mode::Decode | Mode::Verify),
-            "`dsa` runs one sequence's decode or verify here; the plan is {:?}",
+            modes.contains(&g.mode),
+            "`dsa` runs block `{}` at {modes:?} here; the plan is {:?}",
+            g.block(),
             g.mode
-        );
-        ensure!(
-            g.block() == "dsa",
-            "`dsa` serves the `dsa` block here; group {} is {}",
-            g.index,
-            g.site()
         );
         let s = &mut site.dsa;
         let locals = g.locals();
@@ -292,11 +355,12 @@ pub fn unmodelled(layer: &crate::glm5next_dsa::layer::Glm5NextDsaLayer) -> Vec<&
     .collect()
 }
 
-/// 2026-10-23: Compile and bind layer `layer`'s DSA mixer `dsa` from each gated plan of `plans`
-/// into `into` (`None` clears); returns the executed sites, each `layer L n=R: <site>`.
+/// 2026-10-23: Compile and bind the DSA mixer `dsa` of `site` from each plan of `plans` at the
+/// site's gated shapes into `into` (`None` clears); returns the executed sites, each
+/// `layer L n=R: <site>`.
 pub fn install(
     gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
-    layer: usize,
+    site: DsaSite,
     plans: Option<metrale_model_layers::circuit_exec::family::RankPlans<'_>>,
     dsa: &crate::glm5next_dsa::layer::Glm5NextDsaLayer,
     into: &crate::glm5next_dsa::plan::InstalledDsa,
@@ -307,6 +371,7 @@ pub fn install(
         into.set(Vec::new());
         return Ok(Vec::new());
     };
+    let layer = site.layer();
     let refused = unmodelled(dsa);
     ensure!(
         refused.is_empty(),
@@ -324,12 +389,12 @@ pub fn install(
     );
     let mut next = Vec::new();
     for plan in rp.plans {
-        if !super::install::GATED.contains(&(plan.mode, plan.rows)) {
+        if !site.shapes().contains(&(plan.mode, plan.rows)) {
             continue;
         }
-        let site = super::compile_dsa(rp.circuit, plan, layer, rp.policy)?;
-        let rows = site.steps.rows;
-        let steps = site
+        let compiled = super::compile_dsa(rp.circuit, plan, site, rp.policy)?;
+        let rows = compiled.steps.rows;
+        let steps = compiled
             .steps
             .map(|k| metrale_model_layers::circuit_exec::family::plan_kernel(gpu, &k))?;
         let plan_hb = match steps.attend {
@@ -348,7 +413,7 @@ pub fn install(
             topk_ctas: topk_mc_ctas(max_pools),
             sm_count,
         };
-        let sites = site
+        let sites = compiled
             .executed
             .iter()
             .map(|e| format!("layer {layer} n={rows}: {e}"))

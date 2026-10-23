@@ -133,6 +133,13 @@ pub trait DraftProposer: Send + Sync {
         anyhow::bail!("this proposer has no collective propose")
     }
 
+    /// 2026-10-23: The drafter's block as `--forward circuit` binds it on a tensor-parallel
+    /// rank: its own plan sites (`CircuitBindings::install_plans`) from the rank's draft plan.
+    /// Default: `None`, a proposer that executes nothing from a plan.
+    fn circuit_block(&self) -> Option<&dyn crate::circuit_exec::CircuitBindings> {
+        None
+    }
+
     /// 2026-09-25: Whether this proposer's context prefill uses the shared
     /// forward scratch (`ctx.buffers`). If so, the model skips the prefill at
     /// the end of the target's prefill, while the target still owns those
