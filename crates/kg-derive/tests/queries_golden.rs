@@ -14,7 +14,7 @@ fn id(s: &str) -> KgId {
 
 #[test]
 fn q1_blocked_rows_name_their_blocker_and_an_unnamed_blocker_is_unresolved() {
-    let b = derive(&common::config(), &common::sources()).unwrap();
+    let b = derive(&common::config(), &common::sources(), None).unwrap();
     let rows = blocked_by_gate(&b);
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].0, id("ledger:p0-x"));
@@ -23,7 +23,7 @@ fn q1_blocked_rows_name_their_blocker_and_an_unnamed_blocker_is_unresolved() {
     let mut src = common::sources();
     let l = src.files.get_mut("c/LEDGER.tsv").unwrap();
     *l = l.replace("blocked on decision:2026-10-22/p0-split, ", "");
-    let b = derive(&common::config(), &src).unwrap();
+    let b = derive(&common::config(), &src, None).unwrap();
     assert_eq!(
         blocked_by_gate(&b)[0].2,
         [id("unresolved:gate:blocker-of-p0-x")]
@@ -32,7 +32,7 @@ fn q1_blocked_rows_name_their_blocker_and_an_unnamed_blocker_is_unresolved() {
 
 #[test]
 fn q2_every_claim_bearing_verdict_without_a_gate_is_listed() {
-    let b = derive(&common::config(), &common::sources()).unwrap();
+    let b = derive(&common::config(), &common::sources(), None).unwrap();
     let got: Vec<(String, String, bool)> = claims_without_gate(&b)
         .into_iter()
         .map(|(i, v, s)| (i.to_string(), v, s))
@@ -48,7 +48,7 @@ fn q2_every_claim_bearing_verdict_without_a_gate_is_listed() {
 
 #[test]
 fn q7_principles_named_in_a_row_are_touched_and_others_are_not() {
-    let b = derive(&common::config(), &common::sources()).unwrap();
+    let b = derive(&common::config(), &common::sources(), None).unwrap();
     let touched: Vec<String> = b
         .out(&id("ledger:p0-x"), Rel::Touches)
         .map(|e| e.to.to_string())
@@ -59,7 +59,7 @@ fn q7_principles_named_in_a_row_are_touched_and_others_are_not() {
 
 #[test]
 fn q8_dependency_chain_and_downstream_closure() {
-    let b = derive(&common::config(), &common::sources()).unwrap();
+    let b = derive(&common::config(), &common::sources(), None).unwrap();
     let (up, cut) = impact(&b, &id("ledger:seg"), false, &[Rel::DependsOn], 100).unwrap();
     let up: Vec<(String, u32)> = up
         .into_iter()
@@ -83,7 +83,7 @@ fn q8_dependency_chain_and_downstream_closure() {
 
 #[test]
 fn decisions_levers_profiles_and_commits_come_from_their_text() {
-    let b = derive(&common::config(), &common::sources()).unwrap();
+    let b = derive(&common::config(), &common::sources(), None).unwrap();
     for want in [
         "decision:2026-10-22/p0-first-glm-decode",
         "decision:2026-10-22/kernel-generation-cuda-templates",

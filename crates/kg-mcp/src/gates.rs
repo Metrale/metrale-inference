@@ -123,7 +123,10 @@ pub fn parity_cmd(cfg_path: &Path, campaign: &str, ledger_file: Option<&Path>) -
             chk.stdout, rust_check
         ));
     }
-    let bundle = derive(&cfg, &src)?;
+    // 2026-10-23: parity is over the campaign records; the LKB half is not needed for it.
+    let mut records = cfg.clone();
+    records.sources.lkb = None;
+    let bundle = derive(&records, &src, None)?;
     let valid = queries::ledger_valid(&bundle, &c.ledger).is_ok();
     let links = queries::ledger_links(&bundle, campaign);
     let tnt = py.run(&text, &["tainted"])?;

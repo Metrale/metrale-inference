@@ -45,7 +45,7 @@ use crate::rules::Mode;
 
 pub use cli_args::VennArgs;
 pub use families::{EnergyRoofline, Families, FamilyError, ParamKind, parse_families};
-pub use measurements::{Measurements, parse_measurements};
+pub use measurements::{MeasurementRow, Measurements, parse_measurement_rows, parse_measurements};
 pub use render::render;
 pub use repo::{Repo, checkpoint_id_of, report_text, resolve};
 pub use report::{VennInputs, VennReport, build};

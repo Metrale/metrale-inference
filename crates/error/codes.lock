@@ -90,6 +90,9 @@
 0x0806 KgSecretRedacted
 0x0807 KgBadClaim
 0x0808 KgBadId
+0x0809 KgForwardLink
+0x080a KgInventoryRefused
+0x080b KgInventoryProblem
 0x0810 KgConfig
 0x0811 KgSource
 0x0812 KgValidatorRejected

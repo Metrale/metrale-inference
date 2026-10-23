@@ -16,7 +16,7 @@ mod handlers;
 mod mcp;
 mod store;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -96,8 +96,27 @@ enum Cmd {
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<()> {
+async fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
+    match run(cli).await {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            // 2026-10-23: stdout stays JSON on every path (a caller parses it); the human line
+            // goes to stderr.
+            let code = e
+                .downcast_ref::<metrale_error::Error>()
+                .map_or("Failed", |k| k.code().name());
+            println!(
+                "{}",
+                serde_json::json!({"error": code, "message": format!("{e:#}")})
+            );
+            eprintln!("metrale-kg: {code}: {e:#}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+async fn run(cli: Cli) -> Result<()> {
     let data = cli.data_dir.as_deref();
     match cli.cmd {
         Cmd::Derive { out } => gates::derive_cmd(&cli.config, out.as_deref()),
@@ -149,7 +168,7 @@ async fn tool(
             println!("{}", serde_json::to_string_pretty(&v)?);
             Ok(())
         }
-        Err(e) => bail!("{}: {e}", e.code().name()),
+        Err(e) => Err(e.into()),
     }
 }
 

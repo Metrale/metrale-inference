@@ -146,6 +146,13 @@ pub struct Builder {
     errors: BTreeSet<Finding>,
 }
 
+/// 2026-10-23: Whether an undefined target of `label` is a forward reference rather than an
+/// integrity error: memory and feedback-rule links name memories worth writing later (the memory
+/// rules: "a [[name]] that doesn't match is fine"), so they never count against integrity.
+pub fn is_forward_link(label: Label) -> bool {
+    matches!(label, Label::Memory | Label::Rule)
+}
+
 impl Builder {
     /// 2026-10-23: Define a node from its source record. A second definition of the same id
     /// keeps the smaller `src` and records `KgDuplicateId`.
@@ -284,10 +291,16 @@ impl Builder {
                 continue;
             }
             let u = KgId::unresolved(&id);
-            let e = error!(ErrorCode::KgDanglingRef, at.clone(), id.to_string());
+            let forward = is_forward_link(id.label());
+            let e = if forward {
+                error!(ErrorCode::KgForwardLink, at.clone(), id.to_string())
+            } else {
+                error!(ErrorCode::KgDanglingRef, at.clone(), id.to_string())
+            };
             self.error(&e, &at);
             let mut p = BTreeMap::new();
             p.insert("target".to_string(), Value::String(id.to_string()));
+            p.insert("forward".to_string(), Value::Bool(forward));
             let canon = u.to_string();
             if !self.defined.contains_key(&u) {
                 self.define(u.clone(), at, &canon, p);

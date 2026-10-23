@@ -8,7 +8,7 @@
 
 use crate::bundle::Bundle;
 use crate::config::Config;
-use crate::id::{Label, Rel};
+use crate::id::{KgId, Label, Rel};
 use crate::ledger;
 use crate::prelude::*;
 use crate::queries;
@@ -99,26 +99,64 @@ pub fn section(
                 .collect::<Vec<_>>(),
         ),
         "dangling" => {
-            let mut rows: Vec<Value> = queries::dangling(b)
-                .into_iter()
-                .map(|(u, by)| {
-                    let mut o = Map::new();
-                    o.insert("id".into(), Value::String(u.to_string()));
-                    o.insert("referenced_by".into(), ids(&by));
-                    Value::Object(o)
-                })
+            let rows = |v: Vec<(KgId, Vec<KgId>)>| -> Vec<Value> {
+                let mut rows: Vec<Value> = v
+                    .into_iter()
+                    .map(|(u, by)| {
+                        let mut o = Map::new();
+                        let kind = u.key().split_once(':').map_or("", |(k, _)| k).to_string();
+                        o.insert("id".into(), Value::String(u.to_string()));
+                        o.insert("kind".into(), Value::String(kind));
+                        o.insert("referenced_by".into(), ids(&by));
+                        Value::Object(o)
+                    })
+                    .collect();
+                rows.truncate(500);
+                rows
+            };
+            let refs = rows(queries::dangling(b));
+            let fwd = rows(queries::forward_links(b));
+            let mut by_kind: BTreeMap<String, u64> = BTreeMap::new();
+            for r in &refs {
+                *by_kind
+                    .entry(r["kind"].as_str().unwrap_or("").to_string())
+                    .or_insert(0) += 1;
+            }
+            let mut o = Map::new();
+            o.insert("count".into(), Value::from(refs.len()));
+            o.insert(
+                "by_kind".into(),
+                Value::Object(
+                    by_kind
+                        .into_iter()
+                        .map(|(k, n)| (k, Value::from(n)))
+                        .collect(),
+                ),
+            );
+            o.insert("refs".into(), Value::from(refs));
+            let uncommitted: Vec<Value> = crate::owed::uncommitted_measurements(b)
+                .iter()
+                .map(|m| Value::String(m.to_string()))
                 .collect();
-            rows.truncate(500);
-            Value::from(rows)
+            o.insert(
+                "no_commit_in_source_count".into(),
+                Value::from(uncommitted.len()),
+            );
+            o.insert("no_commit_in_source".into(), Value::from(uncommitted));
+            o.insert("forward_links_count".into(), Value::from(fwd.len()));
+            o.insert("forward_links".into(), Value::from(fwd));
+            Value::Object(o)
         }
-        "owed_lkb" | "calibration" => {
-            let _ = instance;
+
+        "owed_lkb" => owed_section(b, instance)?,
+        "calibration" => {
             return Err(error!(
                 ErrorCode::NotImplemented,
                 name.to_string(),
-                "the campaign-record bundle (LKB sources arrive in P1)"
+                "prediction calibration (P4)"
             ));
         }
+
         "freshness" => {
             let mut o = Map::new();
             o.insert("derived_at_ms".into(), Value::from(fresh.derived_at_ms));
@@ -183,6 +221,67 @@ pub fn section(
             ));
         }
     })
+}
+
+/// 2026-10-23: Q3 for one instance: every kernel that owes an LKB facet, landed ones first,
+/// with the measurements of it that predate a change of its file (Q4's `stale_since`).
+fn owed_section(b: &Bundle, instance: Option<&str>) -> Result<Value> {
+    let instances: Vec<String> = b
+        .of(Label::Instance)
+        .map(|n| n.id.key().to_string())
+        .collect();
+    if instances.is_empty() {
+        return Err(error!(
+            ErrorCode::KgSource,
+            "sources.lkb", "is not configured: the graph holds no LKB"
+        ));
+    }
+    if let Some(f) = b.errors.iter().find(|f| f.code == "KgInventoryRefused") {
+        return Err(error!(ErrorCode::KgSource, f.at.clone(), f.msg.clone()));
+    }
+    let Some(inst) = instance else {
+        return Err(error!(
+            ErrorCode::KgToolArgument,
+            "instance",
+            format!("is required; instances: {}", instances.join(", "))
+        ));
+    };
+    if !instances.iter().any(|i| i == inst) {
+        return Err(error!(
+            ErrorCode::KgToolArgument,
+            "instance",
+            format!("no instance `{inst}`; instances: {}", instances.join(", "))
+        ));
+    }
+    let rows = crate::owed::owed_lkb_rows(b, inst)?;
+    let landed = rows.iter().filter(|r| r.landed).count();
+    let out: Vec<Value> = rows
+        .iter()
+        .map(|r| {
+            let mut o = Map::new();
+            o.insert("kernel".into(), Value::String(r.kernel.to_string()));
+            o.insert("landed".into(), Value::Bool(r.landed));
+            o.insert("has_point".into(), Value::Bool(r.has_point));
+            o.insert("classified".into(), Value::Bool(r.classified));
+            o.insert("measured".into(), Value::Bool(r.measured));
+            o.insert("evidenced".into(), Value::Bool(r.evidenced));
+            let stale: Vec<Value> = b
+                .into(&r.kernel, Rel::Measures)
+                .filter_map(|e| {
+                    b.field(&e.from, "stale_since")
+                        .map(|c| Value::String(format!("{} (file changed at {c})", e.from)))
+                })
+                .collect();
+            o.insert("stale_since".into(), Value::from(stale));
+            Value::Object(o)
+        })
+        .collect();
+    let mut o = Map::new();
+    o.insert("instance".into(), Value::String(inst.to_string()));
+    o.insert("owed".into(), Value::from(rows.len()));
+    o.insert("owed_landed".into(), Value::from(landed));
+    o.insert("rows".into(), Value::from(out));
+    Ok(Value::Object(o))
 }
 
 /// 2026-10-23: A section that cannot be computed, as a declared mode (PCND): the others are

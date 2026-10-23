@@ -278,6 +278,15 @@ error_registry! {
         KgBadClaim = 0x0807 => "{}: claim `{}`: {}",
         /// 2026-10-23: An id that does not parse as `<label-prefix>:<key>`: (id, reason).
         KgBadId = 0x0808 => "id `{}`: {}",
+        /// 2026-10-23: A memory `[[wikilink]]` to a memory not written yet: a deliberate forward
+        /// reference (the memory rules), reported apart from integrity errors: (at, target).
+        KgForwardLink = 0x0809 => "{} links to {}, which is not written yet",
+        /// 2026-10-23: The LKB's own inventory script refused to build (its model is strict):
+        /// (script, its first refusal line and count). The graph keeps the rest of the LKB.
+        KgInventoryRefused = 0x080A => "{} refused to build the kernel inventory: {}",
+        /// 2026-10-23: The inventory script built the inventory but reported a problem other than
+        /// an unclassified kernel: (script, `kind: text`). Not fatal; the inventory is kept.
+        KgInventoryProblem = 0x080B => "{} reports an inventory problem: {}",
         /// 2026-10-23: A config field missing or invalid; there is no default: (field, reason).
         KgConfig = 0x0810 => "kg config {}: {}",
         /// 2026-10-23: A source its host could not read or stat: (path, reason).

@@ -12,9 +12,10 @@
 
 use crate::bundle::{Builder, Bundle};
 use crate::config::Config;
+use crate::lkb_derive::{self, LkbFacts, LkbSources};
 use crate::prelude::*;
 use crate::sources::SourceSet;
-use crate::{decisions, ledger_adapter, memory, principles, research, tooling};
+use crate::{decisions, ledger_adapter, memory, owed, principles, research, tooling};
 use metrale_error::{ErrorCode, Result, error};
 
 fn need<'a>(src: &'a SourceSet, path: &str) -> Result<&'a str> {
@@ -27,8 +28,9 @@ fn need<'a>(src: &'a SourceSet, path: &str) -> Result<&'a str> {
     })
 }
 
-/// 2026-10-23: Derive the campaign-record bundle (P0 sources).
-pub fn derive(cfg: &Config, src: &SourceSet) -> Result<Bundle> {
+/// 2026-10-23: Derive the bundle. `lkb` carries the host-computed LKB facts and must be given
+/// exactly when the config has a `[sources.lkb]` table.
+pub fn derive(cfg: &Config, src: &SourceSet, lkb: Option<&LkbFacts>) -> Result<Bundle> {
     let mut b = Builder::default();
     let s = &cfg.sources;
     let mut texts = Vec::new();
@@ -50,9 +52,29 @@ pub fn derive(cfg: &Config, src: &SourceSet) -> Result<Bundle> {
     }
     research::graph_theory_map(&mut b, &s.graph_theory_map, need(src, &s.graph_theory_map)?);
     research::mathbomb(&mut b, &s.mathbomb, need(src, &s.mathbomb)?);
+    match (&s.lkb, lkb) {
+        (Some(t), Some(facts)) => lkb_derive::derive(&mut b, &LkbSources::parse(t)?, src, facts)?,
+        (None, None) => {}
+        (Some(_), None) => {
+            return Err(error!(
+                ErrorCode::KgSource,
+                "sources.lkb", "is configured but the host gave no LKB facts"
+            ));
+        }
+        (None, Some(_)) => {
+            return Err(error!(
+                ErrorCode::KgSource,
+                "sources.lkb", "is not configured but LKB facts were given"
+            ));
+        }
+    }
     memory::derive(&mut b, src.under(&s.memory_dir));
     if !cfg.origin.is_empty() {
         crate::settings::project_node(&mut b, &cfg.origin, need(src, &cfg.origin)?, &cfg.embedder);
     }
-    Ok(b.seal(src.digests()))
+    let mut bundle = b.seal(src.digests());
+    if let Some(facts) = lkb {
+        owed::mark_stale(&mut bundle, &facts.file_last, &facts.commit_date);
+    }
+    Ok(bundle)
 }

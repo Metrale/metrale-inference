@@ -16,7 +16,6 @@ designs = ["bp/DESIGN-x.md"]
 graph_theory_map = "bp/GTM.md"
 mathbomb = "bp/MB.md"
 memory_dir = "mem"
-lkb_repo = "repo"
 [[sources.campaigns]]
 id = "glm/mk"
 ledger = "c/LEDGER.tsv"

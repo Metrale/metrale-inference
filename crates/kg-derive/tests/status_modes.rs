@@ -19,7 +19,7 @@ fn fresh() -> Freshness {
 
 #[test]
 fn one_unavailable_section_does_not_take_down_the_others() {
-    let b = derive(&common::config(), &common::sources()).unwrap();
+    let b = derive(&common::config(), &common::sources(), None).unwrap();
     let v = status(&b, &common::config(), "glm/mk", &[], &fresh(), None).unwrap();
     assert_eq!(
         v["calibration"]["unavailable"], true,
@@ -33,7 +33,7 @@ fn one_unavailable_section_does_not_take_down_the_others() {
 
 #[test]
 fn an_unknown_section_or_campaign_is_refused_with_the_known_names() {
-    let b = derive(&common::config(), &common::sources()).unwrap();
+    let b = derive(&common::config(), &common::sources(), None).unwrap();
     let e = status(
         &b,
         &common::config(),
@@ -56,7 +56,7 @@ fn an_unknown_section_or_campaign_is_refused_with_the_known_names() {
 
 #[test]
 fn a_bare_or_misspelled_id_is_refused_with_the_closest_ids() {
-    let b = derive(&common::config(), &common::sources()).unwrap();
+    let b = derive(&common::config(), &common::sources(), None).unwrap();
     assert_eq!(
         resolve_id(&b, "ledger:seg").unwrap().to_string(),
         "ledger:seg"

@@ -142,10 +142,12 @@ image = { version = "0.25", default-features = false }
 io-uring = { version = "0.7", default-features = false }
 # 2026-10-17: latticedb-core is published on crates.io (0.3.4 = lattice-db main e94ccad); the
 # package is named `latticedb-core` and its lib target `lattice_core`, so `package` is required.
-lattice-core = { version = "0.3.4", package = "latticedb-core", default-features = false }
+# 2026-10-23: pinned exactly: 0.3.4 is main e94ccad, which carries 95b9ade (a search after a
+# delete never returns the deleted point; textstore.rs tests it). The acid branch lacks it.
+lattice-core = { version = "=0.3.4", package = "latticedb-core", default-features = false }
 # 2026-10-23: LatticeDB's durable `DiskStorage` (WAL + pages) under the knowledge graph's derived
 # store (metrale-kg-mcp); the same 0.3.4 as lattice-core. Library target `lattice_storage`.
-lattice-storage = { version = "0.3.4", package = "latticedb-storage", default-features = false }
+lattice-storage = { version = "=0.3.4", package = "latticedb-storage", default-features = false }
 lazy_static = { version = "1", default-features = false }
 libc = { version = "0.2", default-features = false }
 libloading = { version = "0.9", default-features = false }

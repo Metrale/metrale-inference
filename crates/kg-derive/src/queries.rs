@@ -198,7 +198,17 @@ pub fn progress(b: &Bundle, campaign: &str) -> BTreeMap<String, BTreeMap<String,
 
 /// 2026-10-23: `Unresolved` nodes with what referenced each.
 pub fn dangling(b: &Bundle) -> Vec<(KgId, Vec<KgId>)> {
+    unresolved(b, false)
+}
+
+/// 2026-10-23: Memory forward links (targets not written yet), with who links to them.
+pub fn forward_links(b: &Bundle) -> Vec<(KgId, Vec<KgId>)> {
+    unresolved(b, true)
+}
+
+fn unresolved(b: &Bundle, forward: bool) -> Vec<(KgId, Vec<KgId>)> {
     b.of(Label::Unresolved)
+        .filter(|u| (u.p.get("forward") == Some(&Value::Bool(true))) == forward)
         .map(|u| {
             let mut by: Vec<KgId> = b
                 .edges

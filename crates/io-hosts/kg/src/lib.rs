@@ -13,4 +13,5 @@
 
 pub mod fs;
 pub mod ledger_py;
+pub mod lkb;
 pub mod settings;

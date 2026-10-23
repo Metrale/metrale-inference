@@ -61,8 +61,11 @@ pub struct Sources {
     pub graph_theory_map: String,
     pub mathbomb: String,
     pub memory_dir: String,
-    /// 2026-10-23: The LKB checkout (root-relative), read through metrale-circuit (P1).
-    pub lkb_repo: String,
+    /// 2026-10-23: `[sources.lkb]`, the LKB of one hardware directory (P1), kept as the raw table
+    /// the metrale pack parses (`lkb_derive::LkbSources`), so the core config never learns its
+    /// shape. Absent: the graph holds the campaign records only, and `kg_status owed_lkb` says so.
+    #[serde(default)]
+    pub lkb: Option<toml::Table>,
 }
 
 /// 2026-10-23: One campaign directory's record files.

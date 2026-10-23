@@ -16,6 +16,7 @@ use metrale_io_host_kg::fs::{FsSources, Stamp, read_config};
 use metrale_io_host_kg::settings::{Resolved, resolve_settings};
 use metrale_io_host_std::SystemClock;
 use metrale_kg_derive::jsonl::digest;
+use metrale_kg_derive::lkb_derive::LkbSources;
 use metrale_kg_derive::settings::Embedder;
 use metrale_kg_derive::status::Freshness;
 use metrale_kg_derive::{Bundle, Config, SourceSet, derive};
@@ -41,7 +42,15 @@ pub struct App {
 /// 2026-10-23: Read and derive once (no store).
 pub fn derive_once(cfg: &Config, host: &FsSources) -> Result<(SourceSet, Bundle)> {
     let src = host.read(cfg)?;
-    let b = derive(cfg, &src)?;
+    let facts = match &cfg.sources.lkb {
+        Some(t) => Some(metrale_io_host_kg::lkb::facts(
+            Path::new(&cfg.sources.root),
+            &LkbSources::parse(t)?,
+            &cfg.validator.python,
+        )?),
+        None => None,
+    };
+    let b = derive(cfg, &src, facts.as_ref())?;
     Ok((src, b))
 }
 
