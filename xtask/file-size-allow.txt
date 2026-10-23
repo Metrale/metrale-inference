@@ -22,7 +22,7 @@ kernels/gb10/common/attn_prefill.cu 990
 kernels/gb10/common/attn_prefill_h128.cu 928
 kernels/gb10/common/causal_conv1d.cu 645
 kernels/gb10/common/dense_gemm_bf16.cu 629
-kernels/gb10/common/dsa_indexer_rows.cu 550
+kernels/gb10/common/dsa_indexer_rows.cu 506
 kernels/gb10/common/gated_delta_rule_carry.cu 653
 kernels/gb10/common/gated_delta_rule.cu 1466
 kernels/gb10/common/gated_delta_rule_fla.cu 2105
