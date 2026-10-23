@@ -32,7 +32,7 @@ Each rank's fused plan (its own TP dims) against the launches an nsys capture of
 - verify n=2 rank 0 vs `glm-5.3-flash-nvfp4-tp3--gb10--f14a-p1k.trace.toml` (variant A): traced, not planned: none; planned, not traced: none; placeholders: none
 - verify n=2 rank 0 vs `glm-5.3-flash-nvfp4-tp3--gb10--f14a-p128k.trace.toml` (variant A): traced, not planned: none; planned, not traced: none; placeholders: none
 - verify n=2 rank 1 (code-derived) vs rank 0's plan: only here: none; only on rank 0: none; placeholders: none
-- verify n=2 rank 2 (code-derived) vs rank 0's plan: only here: `w4a4_gemv_mx8_moe_union_sweep_cs` x42, `w4a4_quant_rows_static` x42; only on rank 0: `w4a4_gemv_mx8_moe_union_sweep_k64_cs` x42, `w4a4_quant_rows_static_k64` x42; placeholders: none
+- verify n=2 rank 2 (code-derived) vs rank 0's plan: only here: `w4a4_gemv_mx8_moe_union_sweep_sl_cs` x42, `w4a4_quant_rows_static` x42; only on rank 0: `w4a4_gemv_mx8_moe_union_sweep_k64_cs` x42, `w4a4_quant_rows_static_k64` x42; placeholders: none
 - draft n=1 rank 0 vs `glm-5.3-flash-nvfp4-tp3--gb10--f14a-p1k.trace.toml` (variant A): traced, not planned: none; planned, not traced: none; placeholders: none
 - draft n=1 rank 0 vs `glm-5.3-flash-nvfp4-tp3--gb10--f14a-p128k.trace.toml` (variant A): traced, not planned: none; planned, not traced: none; placeholders: none
 - draft n=1 rank 1 (code-derived) vs rank 0's plan: only here: none; only on rank 0: none; placeholders: none

@@ -96,16 +96,12 @@ Rule kernels a matrix model's policy could select that the device cannot run (th
 | w4a4_gemv_mx::w4a4_gemv_mx32_ps | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 6 |
 | w4a4_gemv_mx::w4a4_gemv_mx8 | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 7 |
 | w4a4_gemv_mx::w4a4_quant_rows | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 8 |
-| w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 3 |
-| w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_cs | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 1 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_k64_cs | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 1 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_sl | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 3 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_sl_cs | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 1 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots_sweep | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 3 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots_sweep_cs | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 1 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots_sweep_k64_cs | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 1 |
-| w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 3 |
-| w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_cs | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 1 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_k64_cs | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 1 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_sl | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 3 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_sl_cs | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 1 |
@@ -139,16 +135,12 @@ Rule kernels a matrix model's policy could select that the device cannot run (th
 | w4a4_gemv_mx::w4a4_gemv_mx32_ps | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 6 |
 | w4a4_gemv_mx::w4a4_gemv_mx8 | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 7 |
 | w4a4_gemv_mx::w4a4_quant_rows | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 8 |
-| w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 3 |
-| w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_cs | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 1 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_k64_cs | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 1 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_sl | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 3 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_sl_cs | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 1 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots_sweep | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 3 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots_sweep_cs | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 1 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots_sweep_k64_cs | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 1 |
-| w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 3 |
-| w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_cs | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 1 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_k64_cs | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 1 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_sl | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 3 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_sl_cs | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 1 |
@@ -182,16 +174,12 @@ Rule kernels a matrix model's policy could select that the device cannot run (th
 | w4a4_gemv_mx::w4a4_gemv_mx32_ps | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 6 |
 | w4a4_gemv_mx::w4a4_gemv_mx8 | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 7 |
 | w4a4_gemv_mx::w4a4_quant_rows | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 8 |
-| w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 3 |
-| w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_cs | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 1 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_k64_cs | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 1 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_sl | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 3 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_sl_cs | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 1 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots_sweep | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 3 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots_sweep_cs | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 1 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots_sweep_k64_cs | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 1 |
-| w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 3 |
-| w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_cs | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 1 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_k64_cs | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 1 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_sl | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 3 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_sl_cs | compiled out by -DMETRALE_NO_WARP_BLOCKSCALE_MMA (needs mma_sync.fp4_block_scale) | 1 |
@@ -272,16 +260,12 @@ Rule kernels a matrix model's policy could select that the device cannot run (th
 | w4a4_gemv_mx::w4a4_gemv_mx32_ps | not compiled for this class | 6 |
 | w4a4_gemv_mx::w4a4_gemv_mx8 | not compiled for this class | 7 |
 | w4a4_gemv_mx::w4a4_quant_rows | not compiled for this class | 8 |
-| w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep | not compiled for this class | 3 |
-| w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_cs | not compiled for this class | 1 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_k64_cs | not compiled for this class | 1 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_sl | not compiled for this class | 3 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_sl_cs | not compiled for this class | 1 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots_sweep | not compiled for this class | 3 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots_sweep_cs | not compiled for this class | 1 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots_sweep_k64_cs | not compiled for this class | 1 |
-| w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep | not compiled for this class | 3 |
-| w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_cs | not compiled for this class | 1 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_k64_cs | not compiled for this class | 1 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_sl | not compiled for this class | 3 |
 | w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_sl_cs | not compiled for this class | 1 |

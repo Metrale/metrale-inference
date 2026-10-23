@@ -1316,8 +1316,8 @@
       "site": "moe [blend]",
       "kernels": "glm5next_ffn::glm5next_moe_combine",
       "rules": [
-        "glm_moe_combine_dsa",
-        "glm_moe_combine_kda"
+        "glm_moe_combine_split_dsa",
+        "glm_moe_combine_split_kda"
       ],
       "groups": 42,
       "launches": 42,
