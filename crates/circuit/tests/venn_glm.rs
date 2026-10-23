@@ -113,7 +113,7 @@ fn the_per_row_dsa_indexer_no_longer_flags_and_the_kda_verify_tops() {
     let top = &r.flags[0];
     assert_eq!(
         top.source,
-        "legacy: crates/model-arch/src/glm5next_kda/decode.rs:451"
+        "legacy: crates/model-arch/src/glm5next_kda/decode.rs:457"
     );
     assert!(top.run.mode == Mode::Verify && top.run.rows == 4);
 }
