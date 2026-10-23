@@ -31,7 +31,7 @@ const CLASSES: [&str; 1] = ["gb10"];
 /// on 2026-10-23 (megakernel branch @41654eeb1). It may only fall.
 // 2026-10-23 (P0-prereq): 103 -> 118, the served kernels the GLM TP=3 fidelity rules name
 // (FUSED_HANDWRITTEN.toml header); owner sign-off pending.
-const CEILING: [(&str, usize); 1] = [("gb10", 118)];
+const CEILING: [(&str, usize); 1] = [("gb10", 114)];
 /// 2026-10-23: The marker an instantiation's first line after the SPDX line carries.
 const MARKER: &str = "// metrale: instantiates ";
 /// 2026-10-23: Constructs an instantiation must not contain: they belong to the template.
