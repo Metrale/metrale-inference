@@ -136,6 +136,12 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
             };
             return super::circuit_headroom::run(*h);
         }
+        CircuitAction::Rules(_) => {
+            let CircuitAction::Rules(r) = args.action else {
+                unreachable!("matched above")
+            };
+            return super::circuit_rules::run(*r);
+        }
     };
     let inst = instance(&plan_args.recipe)?;
     let rows = rows_of(&inst, &plan_args)?;
@@ -157,7 +163,8 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
         | CircuitAction::Plan(_)
         | CircuitAction::Memory(_)
         | CircuitAction::Precision(_)
-        | CircuitAction::Headroom(_) => {
+        | CircuitAction::Headroom(_)
+        | CircuitAction::Rules(_) => {
             unreachable!("returned above")
         }
         CircuitAction::Display(d) => {

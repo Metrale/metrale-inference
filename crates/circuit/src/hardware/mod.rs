@@ -24,6 +24,7 @@ use crate::prelude::*;
 pub mod avail;
 mod avail_paste;
 pub mod class;
+pub mod critical_hw;
 pub mod device;
 pub mod estimate;
 pub mod exec;
