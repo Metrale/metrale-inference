@@ -220,7 +220,7 @@ impl PowerTrace {
                 "s" => {
                     if !decls.is_empty() {
                         for d in decls.drain(..) {
-                            t.add_source(d.build(n)?);
+                            t.add_source(d.build()?);
                         }
                     }
                     let mut f = rest.splitn(3, ',');
@@ -240,7 +240,7 @@ impl PowerTrace {
             }
         }
         for d in decls {
-            t.add_source(d.build(0)?);
+            t.add_source(d.build()?);
         }
         Ok(t)
     }
@@ -305,14 +305,16 @@ struct Decl {
     id: String,
     kind: SourceKind,
     version: String,
-    lines: Vec<(String, Vec<String>)>,
+    /// 2026-10-22: (tag, fields, the line it was read from).
+    lines: Vec<(String, Vec<String>, usize)>,
 }
 
 impl Decl {
-    fn build(self, line: usize) -> Result<PowerCapabilities> {
+    fn build(self) -> Result<PowerCapabilities> {
         let mut b = PowerCapabilities::builder(SourceId(self.id), self.kind, self.version);
         let mut universe = Vec::new();
-        for (tag, f) in &self.lines {
+        for (tag, f, line) in &self.lines {
+            let line = *line;
             let field = |name: &str| Field::parse(name).ok_or_else(|| bad(line, "unknown field"));
             let rail = |name: &str| Rail::parse(name).ok_or_else(|| bad(line, "unknown rail"));
             match (tag.as_str(), f.as_slice()) {
@@ -374,8 +376,10 @@ fn decl_line(decls: &mut Vec<Decl>, tag: &str, rest: &str, n: usize) -> Result<(
         });
         return Ok(());
     }
-    let parts = if tag == "unavailable" { 3 } else { 4 };
-    let f: Vec<&str> = rest.splitn(parts + 1, ',').collect();
+    // 2026-10-22: An `unavailable` reason is free text and may hold commas: it is the remainder
+    // after the source and the field. Every other declaration has at most four fields.
+    let limit = if tag == "unavailable" { 3 } else { 5 };
+    let f: Vec<&str> = rest.splitn(limit, ',').collect();
     let (id, fields) = f
         .split_first()
         .ok_or_else(|| bad(n, "declaration needs a source"))?;
@@ -387,6 +391,7 @@ fn decl_line(decls: &mut Vec<Decl>, tag: &str, rest: &str, n: usize) -> Result<(
     d.lines.push((
         tag.to_string(),
         fields.iter().map(|s| (*s).to_string()).collect(),
+        n,
     ));
     Ok(())
 }

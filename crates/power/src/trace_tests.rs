@@ -41,3 +41,20 @@ fn an_idle_window_with_launches_is_refused() {
         ErrorCode::PowerTraceFormat
     );
 }
+
+/// 2026-10-22: Found by the first live run (spark-28c2): nvidia-smi's reason for its missing
+/// instant power reads "…moving average, not an instant reading", and the comma split the
+/// declaration, so a trace the harness wrote could not be recomputed.
+#[test]
+fn an_unavailable_reason_with_commas_round_trips() {
+    let text = BASE.record().encode();
+    let at = text.find("\nfield,").expect("BASE declares a field");
+    let id = text[at + 7..].split(',').next().unwrap().to_string();
+    let reason = "the driver's moving average, not an instant reading, by design";
+    let line = format!("\nunavailable,{id},mem_clock,{reason}");
+    let with = format!("{}{line}{}", &text[..at], &text[at..]);
+    let t = PowerTrace::decode(&with).unwrap();
+    let again = t.encode();
+    assert!(again.contains(&line), "{again}");
+    assert_eq!(PowerTrace::decode(&again).unwrap().encode(), again);
+}
