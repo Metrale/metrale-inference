@@ -30,6 +30,7 @@ pub(crate) fn fits(c: &Circuit, p: &PatternOp, n: &Node) -> bool {
         _ => p.op == n.op,
     };
     op && p.local.as_deref().is_none_or(|l| l == n.local)
+        && p.block.as_deref().is_none_or(|b| b == n.block)
         && p.weight.is_none_or(|w| n.weight == Some(w))
         && reads_quantized_as(c, p, n)
         && p.layer_kind
@@ -108,7 +109,8 @@ impl Matcher<'_> {
                 || rule.pattern[j].keep
                 || c.nodes[m].outputs.iter().all(|&e| {
                     let edge = &c.edges[e];
-                    !edge.is_output && edge.consumers.iter().all(|x| chain.contains(x))
+                    (!edge.is_output || rule.pattern[j].elides)
+                        && edge.consumers.iter().all(|x| chain.contains(x))
                 })
         })
     }

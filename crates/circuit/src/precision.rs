@@ -35,6 +35,11 @@ pub struct LinearFormats {
 pub trait EdgePrecision {
     /// 2026-09-28: The formats `module` runs at.
     fn linear(&self, module: &str) -> LinearFormats;
+    /// 2026-10-23: The formats an entry naming `module` states, never a catch-all or the
+    /// checkpoint's own config: what reaches a module the circuit declares `unquantized` (a
+    /// load-time quantization the serve applies, the GLM indexer's compress gate on the FP8
+    /// tier). `None`: the module stays 16-bit.
+    fn named(&self, module: &str) -> Option<LinearFormats>;
 }
 
 /// 2026-09-28: Why a precision table did not load.
@@ -129,6 +134,10 @@ impl EdgePrecision for PrecisionTable {
             .iter()
             .find(|(p, _)| glob(p, module))
             .map_or(self.catch_all, |(_, f)| *f)
+    }
+
+    fn named(&self, module: &str) -> Option<LinearFormats> {
+        self.entries.iter().find(|(p, _)| glob(p, module)).map(|(_, f)| *f)
     }
 }
 

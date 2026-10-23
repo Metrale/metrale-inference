@@ -14,7 +14,7 @@
 <text class="t" x="80" y="28">Step waterfall · recipe glm-5.3/glm-5.3-flash-nvfp4-tp3-512k on gb10 · verify n=2 + draft n=1</text>
 <text x="190.0" y="106.0" text-anchor="end">measured step</text><rect class="b1" x="200.0" y="74.4" width="720.0" height="55.2" rx="4"><title>34622 us, 52.0 tok/s</title></rect><text x="800.0" y="70.4">34.62 ms</text>
 <text x="190.0" y="198.0" text-anchor="end">− no kernel running</text><rect class="b2" x="903.7" y="166.4" width="16.3" height="55.2" rx="4"><title>residual 782 us (host, syncs, waits, gaps)</title></rect><text x="800.0" y="162.4">0.78 ms</text>
-<text x="190.0" y="290.0" text-anchor="end">= Σ kernels, exclusive</text><rect class="b1" x="200.0" y="258.4" width="703.7" height="55.2" rx="4"><title>33840 us: launch sites 28075 + outside the plan 5765</title></rect><text x="800.0" y="254.4">33.84 ms</text>
-<text x="190.0" y="382.0" text-anchor="end">− above the floors</text><rect class="b2" x="774.9" y="350.4" width="128.8" height="55.2" rx="4"><title>6193 us (outside-the-plan kernels have no floor)</title></rect><text x="800.0" y="346.4">6.19 ms</text>
-<text x="190.0" y="474.0" text-anchor="end">= step ceiling: Σ floors</text><rect class="b3" x="200.0" y="442.4" width="574.9" height="55.2" rx="4"><title>27647 us, 65.1 tok/s; unmeasured sites' projections 4807 us</title></rect><text x="780.9" y="438.4">27.65 ms</text>
+<text x="190.0" y="290.0" text-anchor="end">= Σ kernels, exclusive</text><rect class="b1" x="200.0" y="258.4" width="703.7" height="55.2" rx="4"><title>33840 us: launch sites 27427 + outside the plan 6413</title></rect><text x="800.0" y="254.4">33.84 ms</text>
+<text x="190.0" y="382.0" text-anchor="end">− above the floors</text><rect class="b2" x="766.7" y="350.4" width="137.0" height="55.2" rx="4"><title>6590 us (outside-the-plan kernels have no floor)</title></rect><text x="800.0" y="346.4">6.59 ms</text>
+<text x="190.0" y="474.0" text-anchor="end">= step ceiling: Σ floors</text><rect class="b3" x="200.0" y="442.4" width="566.7" height="55.2" rx="4"><title>27251 us, 66.1 tok/s; unmeasured sites' projections 4457 us</title></rect><text x="772.7" y="438.4">27.25 ms</text>
 </svg>

@@ -87,3 +87,30 @@ fn a_bad_format_or_schema_is_refused() {
         Err(PrecisionError::Parse(_))
     ));
 }
+
+/// 2026-10-23: An `unquantized` module takes only a format an entry naming it states (a recipe's
+/// load-time quantization), never the catch-all: without the named entry it stays BF16 under a
+/// table whose catch-all is NVFP4; with it, it takes the entry's FP8 and its input is quantized.
+#[test]
+fn an_unquantized_module_takes_a_named_entry_and_never_the_catch_all() {
+    use crate::format::Scale;
+    use crate::test_toy::{CIRCUIT, PRECISION, shape};
+    let text = CIRCUIT.replace("binding = [\"{L}.up\"]", "binding = [\"{L}.up\"]\nunquantized = true");
+    assert_ne!(text, CIRCUIT);
+    let named = PRECISION.replace(
+        "[[linear]]\nmatch = \"*\"",
+        "[[linear]]\nmatch = \"layers.*.up\"\nweight = \"fp8/channel\"\nactivation = \"fp8/token\"\n\n[[linear]]\nmatch = \"*\"",
+    );
+    assert_ne!(named, PRECISION);
+    let up = |table: &str| {
+        let t = PrecisionTable::parse(table).unwrap();
+        let c = crate::instantiate(&text, &[], &shape(1), &t).unwrap();
+        let n = &c.nodes[c.node("l0.ffn.up").expect("up")];
+        (n.weight, c.edges[n.inputs[0]].format)
+    };
+    assert_eq!(up(PRECISION), (Some(Format::Bf16), Format::Bf16), "the catch-all never reaches it");
+    let fp8 = |scale| Format::Fp8E4m3 { scale };
+    assert_eq!(up(&named), (Some(fp8(Scale::PerChannel)), fp8(Scale::PerToken)));
+    let t = PrecisionTable::parse(&named).unwrap();
+    assert!(t.named("layers.0.up").is_some() && t.named("layers.0.down").is_none());
+}

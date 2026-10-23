@@ -419,3 +419,7 @@ pub(crate) fn tree_here() -> Result<(FsTree, Registry, PathBuf)> {
 #[cfg(test)]
 #[path = "circuit_hw_tests.rs"]
 mod circuit_hw_tests;
+
+#[cfg(test)]
+#[path = "circuit_fidelity_tests.rs"]
+mod circuit_fidelity_tests;

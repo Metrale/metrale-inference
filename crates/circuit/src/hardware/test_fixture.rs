@@ -404,6 +404,8 @@ pub fn model(precision: &str) -> ModelUnderPlan {
         kernel_model: "toy".into(),
         kernel_quant: "q".into(),
         circuit,
+        ranks: Vec::new(),
+            layout: None,
         policy: Policy {
             opt_in_levers: BTreeSet::new(),
             settings: BTreeMap::from([

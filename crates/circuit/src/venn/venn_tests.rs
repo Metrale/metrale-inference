@@ -305,6 +305,7 @@ fn instance(recipe: &str, hidden: u64) -> Instance {
         policy: test_toy::policy(),
         plans: BTreeMap::new(),
         verify_batch: Vec::new(),
+        parallel: None,
     }
 }
 
@@ -317,6 +318,8 @@ fn the_report_is_deterministic_and_ranked_by_time_then_site() {
         rules: rules.clone(),
         runtime: Vec::new(),
         rules_digest: String::new(),
+        layout: None,
+        ranks: Vec::new(),
     };
     let (t, a) = (instance("toy/target", 32), instance("toy/against", 64));
     let (lt, la) = (loaded(32), loaded(64));

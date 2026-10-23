@@ -122,6 +122,11 @@ impl EdgePrecision for DeclaredPrecision<'_> {
         };
         LinearFormats { weight, activation }
     }
+
+    /// 2026-10-23: A checkpoint's config never reaches a module it does not quantize.
+    fn named(&self, _module: &str) -> Option<LinearFormats> {
+        None
+    }
 }
 
 #[cfg(test)]

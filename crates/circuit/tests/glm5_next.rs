@@ -81,7 +81,7 @@ fn the_layers_take_the_dense_prefix_then_the_moe_under_the_highway() {
         .filter(|b| b.section == Section::Draft)
         .map(|b| b.template.as_str())
         .collect();
-    assert_eq!(draft, ["mtp_in", "mtp_dsa", "mtp_moe", "mtp_out"]);
+    assert_eq!(draft, ["glm_mtp_in", "mtp_dsa", "mtp_moe", "glm_mtp_out"]);
     // 2026-10-08: The stream between layers is the 4-stream highway; the head contracts it and
     // the MTP head reads the final-normed row.
     let highway = c.edge("l0.mlp.y").unwrap();
@@ -95,7 +95,7 @@ fn the_layers_take_the_dense_prefix_then_the_moe_under_the_highway() {
         Some(highway)
     );
     assert_eq!(c.edges[c.edge("head.h").unwrap()].dim_value, 4096);
-    let mtp_in = c.blocks.iter().find(|b| b.template == "mtp_in").unwrap();
+    let mtp_in = c.blocks.iter().find(|b| b.template == "glm_mtp_in").unwrap();
     assert_eq!(mtp_in.stream_in, c.edge("head.xn"));
 }
 

@@ -162,12 +162,14 @@ pub(super) fn check_state_access(
     circuit: &crate::ir::Circuit,
     first_state: usize,
     first_node: usize,
+    idle: &[(usize, StateAccess)],
 ) -> Result<(), CircuitError> {
     for (i, s) in circuit.states.iter().enumerate().skip(first_state) {
         let count = |a: StateAccess| {
             circuit.nodes[first_node..]
                 .iter()
                 .flat_map(|n| &n.state)
+                .chain(idle)
                 .filter(|&&(si, sa)| si == i && sa == a)
                 .count()
         };

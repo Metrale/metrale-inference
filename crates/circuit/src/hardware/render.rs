@@ -80,6 +80,7 @@ pub fn render_report(r: &HwReport) -> String {
     if let Some(t) = r.tables.first() {
         plan_sites(&mut s, t, r);
     }
+    super::ranks::section(&mut s, &r.model.circuit, &r.model.ranks, r.model.layout.as_ref(), &r.ranks);
     for t in &r.tables {
         gap_rows(&mut s, t, projection(r));
     }

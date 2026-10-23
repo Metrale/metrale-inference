@@ -5,13 +5,16 @@
 //! Greedy and deterministic. Rules are tried by priority (highest first, then id), and each
 //! rule scans the nodes in execution order; a node joins at most one group. A rule is skipped
 //! when its mode or rows do not apply, a kernel is absent, a capability is missing, a policy
-//! setting it names differs, or its `differs` lever is not opted in.
+//! setting it names differs, a dim predicate fails (2026-10-23), or its `differs` lever is not
+//! opted in.
 //!
 //! Owner: metrale-circuit.
 //! Invariants:
 //! - Every node of the mode's section ends in exactly one group, or `fuse` returns
 //!   [`FuseError::Uncovered`]; no node is left to an implicit kernel.
-//! - A policy must state every setting any rule reads ([`FuseError::PolicyMissing`]).
+//! - A policy must state every setting any rule reads ([`FuseError::PolicyMissing`]), and the
+//!   circuit every dim a rule's predicate tests ([`FuseError::DimMissing`]), wherever that rule
+//!   could match.
 //!   2026-10-22: Any rule whose pattern matches a node of the planned section: another
 //!   model's lever, read only by rules that match none of this circuit, need not be stated.
 //! - The plan is a pure function of its inputs; [`FusionPlan::digest`] changes exactly when
@@ -26,8 +29,13 @@ use crate::format::Format;
 use crate::ir::{Circuit, EdgeIdx, NodeIdx, Section};
 use crate::rules::{KernelId, Mode, Numerics, Repeat, Rule};
 
+#[path = "fuser_edges.rs"]
+mod fuser_edges;
 #[path = "fuser_match.rs"]
 mod fuser_match;
+
+pub use fuser_edges::group_io;
+use fuser_edges::{check_reads, edge_states, stored_formats};
 
 pub(crate) use fuser_match::fits as pattern_fits;
 
@@ -87,6 +95,8 @@ pub struct Group {
     pub repeat: Repeat,
     /// 2026-09-29: Copy-engine transfers besides the kernels, and how often.
     pub copies: Option<Repeat>,
+    /// 2026-10-23: Collective launches before the kernels ([`crate::rules::CommLaunch`]).
+    pub comm: Vec<crate::rules::CommLaunch>,
     /// 2026-09-28: Emitter id.
     pub emitter: String,
     /// 2026-09-28: Numerics class of the rule.
@@ -100,10 +110,16 @@ pub struct Group {
 
 impl Group {
     /// 2026-09-30: Kernel launches per step at `rows` rows (per run for a `per_run` group).
+    /// 2026-10-23: Collective launches count: each repetition launches them beside its kernels.
     pub fn launch_count(&self, rows: u64) -> u64 {
+        let comm = self.comm.len() as u64;
         match self.repeat.count(rows) {
-            Some(c) => self.kernels.len() as u64 * c,
-            None => self.runs.iter().map(|r| r.launch_count()).sum(),
+            Some(c) => (self.kernels.len() as u64 + comm) * c,
+            None => self
+                .runs
+                .iter()
+                .map(|r| r.launch_count() + comm)
+                .sum(),
         }
     }
 
@@ -171,6 +187,14 @@ pub enum FuseError {
         rule: String,
         /// 2026-09-28: Setting.
         key: String,
+    },
+    /// 2026-10-23: A rule's dim predicate names a dim the circuit does not define.
+    #[error("rule `{rule}` tests dim `{dim}`, which the circuit does not define")]
+    DimMissing {
+        /// 2026-10-23: Rule id.
+        rule: String,
+        /// 2026-10-23: Dim.
+        dim: String,
     },
     /// 2026-09-28: A kernel reads an edge in a format its producer does not store.
     #[error("edge `{edge}` is stored as {stored} but rule `{rule}` reads it as {expected}")]
@@ -278,10 +302,19 @@ fn fuse_inner(
                 key: key.clone(),
             });
         }
+        if let Err(dim) = crate::rules::dims::all_hold(&r.dims, &circuit.dims)
+            && (0..circuit.nodes.len()).any(|s| in_scope[s] && m.chain_at(r, s, &free).is_some())
+        {
+            return Err(FuseError::DimMissing {
+                rule: r.id.clone(),
+                dim,
+            });
+        }
     }
     let mut order: Vec<&Rule> = rules
         .iter()
         .filter(|r| applies(r, available, policy, mode, rows))
+        .filter(|r| crate::rules::dims::all_hold(&r.dims, &circuit.dims) == Ok(true))
         .filter(|r| {
             r.runs.is_empty()
                 || table.is_some_and(|t| crate::runs::resolve_runs(t, &r.runs).is_some())
@@ -329,6 +362,7 @@ fn fuse_inner(
                 kernels: rule.kernels.clone(),
                 repeat: rule.repeat,
                 copies: rule.copies,
+                comm: rule.comm.clone(),
                 emitter: rule.emitter.clone(),
                 numerics: rule.numerics.clone(),
                 nodes: nodes.clone(),
@@ -353,7 +387,18 @@ fn fuse_inner(
                 .flat_map(|(_, &n)| circuit.nodes[n].outputs.iter().copied())
         })
         .collect();
-    let edge_states = edge_states(circuit, &in_scope, &owner, &stored);
+    // 2026-10-23: Circuit outputs an `elides` element swallows are never written.
+    let elided: BTreeSet<EdgeIdx> = found
+        .iter()
+        .flat_map(|(rule, nodes)| {
+            rule.pattern
+                .iter()
+                .zip(nodes)
+                .filter(|(p, _)| p.elides)
+                .flat_map(|(_, &n)| circuit.nodes[n].outputs.iter().copied())
+        })
+        .collect();
+    let edge_states = edge_states(circuit, &in_scope, &owner, (&stored, &elided));
     let mut plan = FusionPlan {
         arch: circuit.arch.clone(),
         mode,
@@ -394,105 +439,6 @@ fn block_index(circuit: &Circuit) -> Vec<usize> {
 
 fn rule_of<'a>(rules: &'a [Rule], id: &str) -> Option<&'a Rule> {
     rules.iter().find(|r| r.id == id)
-}
-
-fn stored_formats(circuit: &Circuit, groups: &[Group], rules: &[Rule]) -> Vec<Format> {
-    let mut out: Vec<Format> = circuit.edges.iter().map(|e| e.format).collect();
-    for g in groups {
-        let Some(rule) = rule_of(rules, &g.rule) else {
-            continue;
-        };
-        for (p, &n) in rule.pattern.iter().zip(&g.nodes) {
-            if let Some(f) = p.writes {
-                for &e in &circuit.nodes[n].outputs {
-                    out[e] = f;
-                }
-            }
-        }
-    }
-    out
-}
-
-fn check_reads(
-    circuit: &Circuit,
-    groups: &[Group],
-    rules: &[Rule],
-    stored: &[Format],
-) -> Result<(), FuseError> {
-    for g in groups {
-        let Some(rule) = rule_of(rules, &g.rule) else {
-            continue;
-        };
-        for (p, &n) in rule.pattern.iter().zip(&g.nodes) {
-            let (Some(want), Some(&e)) = (p.input, circuit.nodes[n].inputs.first()) else {
-                continue;
-            };
-            if stored[e] != want {
-                return Err(FuseError::FormatConflict {
-                    edge: circuit.edges[e].id.clone(),
-                    stored: stored[e].name(),
-                    rule: rule.id.clone(),
-                    expected: want.name(),
-                });
-            }
-        }
-    }
-    Ok(())
-}
-
-fn edge_states(
-    circuit: &Circuit,
-    in_scope: &[bool],
-    owner: &[Option<usize>],
-    stored: &BTreeSet<EdgeIdx>,
-) -> Vec<Option<EdgeState>> {
-    circuit
-        .edges
-        .iter()
-        .enumerate()
-        .map(|(i, e)| {
-            let producer_in = e.producer.is_some_and(|p| in_scope[p]);
-            let read_in = e.consumers.iter().any(|&c| in_scope[c]);
-            if !producer_in && !read_in {
-                return None;
-            }
-            let g = e.producer.filter(|&p| in_scope[p]).and_then(|p| owner[p]);
-            let internal = g.is_some()
-                && !e.is_output
-                && !stored.contains(&i)
-                && !e.consumers.is_empty()
-                && e.consumers.iter().all(|&c| owner[c] == g);
-            Some(match (internal, g) {
-                (true, Some(g)) => EdgeState::Fused(g),
-                _ => EdgeState::Materialized,
-            })
-        })
-        .collect()
-}
-
-/// 2026-09-28: The edges a group reads from outside itself and the ones it writes, in edge
-/// order. Used by the renderers and the buffer planner.
-pub fn group_io(circuit: &Circuit, plan: &FusionPlan, g: usize) -> (Vec<EdgeIdx>, Vec<EdgeIdx>) {
-    let members: BTreeSet<NodeIdx> = plan.groups[g].nodes.iter().copied().collect();
-    let mut ins = BTreeSet::new();
-    let mut outs = BTreeSet::new();
-    for &n in &members {
-        let node = &circuit.nodes[n];
-        for &e in &node.inputs {
-            if circuit.edges[e]
-                .producer
-                .is_none_or(|p| !members.contains(&p))
-            {
-                ins.insert(e);
-            }
-        }
-        for &e in &node.outputs {
-            if plan.edge_states[e] == Some(EdgeState::Materialized) {
-                outs.insert(e);
-            }
-        }
-    }
-    (ins.into_iter().collect(), outs.into_iter().collect())
 }
 
 #[cfg(test)]

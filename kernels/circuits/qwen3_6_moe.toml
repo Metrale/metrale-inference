@@ -26,6 +26,52 @@ draft = ["mtp_in", "attn", "moe_ffn", "mtp_out"]
 # 2026-09-30: The draft head exists only in a checkpoint with an MTP layer (`mtp`).
 draft_when = "mtp"
 
+# 2026-10-23: How each dim may split over ranks (crates/circuit/src/parallel.rs). The Qwen3.5/3.6
+# loaders shard attention and linear attention by head and refuse a count that does not divide
+# (`TpSupport::Even`); the MoE (router, routed and shared experts) is loaded whole on every rank,
+# so it is replicated (no entry), as are the norms. A deployment states N and each part's degree.
+[parallel.kv_heads]
+unit = 1
+pad = false
+remainder = "exact"
+scope = "every"
+degree = { min = 1, max = 8 }
+why = "crates/config/src/tp_split.rs:196-213 (TpSupport::Even: num_key_value_heads / tp_size, refused unless it divides); crates/model-arch/src/weight_loader/qwen35.rs:62-67"
+
+[parallel.q_heads]
+unit = 8
+pad = false
+remainder = "exact"
+scope = "every"
+degree = { min = 1, max = 8 }
+tie = "kv_heads"
+why = "the query heads with their KV head (GQA groups of q_heads / kv_heads): crates/config/src/tp_split.rs:196-213"
+
+[parallel.lin_k_heads]
+unit = 1
+pad = false
+remainder = "exact"
+scope = "every"
+degree = { min = 1, max = 16 }
+why = "crates/config/src/tp_split.rs:200-208 (linear_num_key_heads / tp_size under TpSupport::Even); the NVFP4 linear-attention builders shard by head, crates/model-arch/src/weight_loader/qwen35.rs:62-67"
+
+[parallel.lin_v_heads]
+unit = 2
+pad = false
+remainder = "exact"
+scope = "every"
+degree = { min = 1, max = 16 }
+tie = "lin_k_heads"
+why = "the value heads with their key head (lin_v_heads / lin_k_heads per key head): crates/config/src/tp_split.rs:200-208"
+
+[parallel.vocab]
+unit = 64
+pad = true
+remainder = "front"
+scope = "every"
+degree = { min = 1, max = 8 }
+why = "the vocab-sharded LM head: crates/model-engine/src/model/lm_head_vocab_tp.rs:68,84-85 (tp_split of the vocab padded to LMHEAD_VOCAB_SPLIT_ALIGN 64)"
+
 [layout]
 kind = "interval"
 period = 4

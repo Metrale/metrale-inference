@@ -258,10 +258,15 @@ fn every_reference_rule_is_used_by_a_golden_plan_and_every_lever_moves_one() {
         .filter(|i| i.golden)
         .map(|i| common::load(i).circuit)
         .collect();
+    // 2026-10-23: With each non-golden deployment's rank circuits, whose derived collectives
+    // only a rank circuit has.
     let pending: Vec<metrale_circuit::Circuit> = common::instances()
         .iter()
         .filter(|i| !i.golden)
-        .map(|i| common::load(i).circuit)
+        .flat_map(|i| {
+            let l = common::load(i);
+            std::iter::once(l.circuit).chain(l.ranks)
+        })
         .collect();
     let heads = |r: &metrale_circuit::Rule, cs: &[metrale_circuit::Circuit]| {
         cs.iter()

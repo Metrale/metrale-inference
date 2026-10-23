@@ -25,13 +25,13 @@ Microseconds per step. Exclusive time is the part of a kernel no earlier-launche
 | | us/step | 95% interval | share of step | tok/s |
 |---|---:|---:|---:|---:|
 | measured step | 34621.82 | [34474.69, 34798.89] | 100.0% | 52.0 [51.7, 52.2] |
-| Σ launch sites, exclusive | 28074.87 | – | 81.1% | – |
-| Σ kernels outside the plan, exclusive | 5765.38 | – | 16.7% | – |
+| Σ launch sites, exclusive | 27427.43 | – | 79.2% | – |
+| Σ kernels outside the plan, exclusive | 6412.83 | – | 18.5% | – |
 | residual: no kernel running | 781.56 | [763.89, 804.83] | 2.3% | – |
 | overlap: two kernels at once (not added) | 14499.97 | – | 41.9% | – |
-| step ceiling: Σ site floors | 27646.92 | – | 79.9% | 65.1 |
-| of which measured sites' floors | 22840.32 | – | 66.0% | – |
-| of which unmeasured sites' projections | 4806.60 | – | 13.9% | – |
+| step ceiling: Σ site floors | 27250.57 | – | 78.7% | 66.1 |
+| of which measured sites' floors | 22793.66 | – | 65.8% | – |
+| of which unmeasured sites' projections | 4456.91 | – | 12.9% | – |
 
 ## Plan shares
 
@@ -39,9 +39,9 @@ Plan-describable: the exclusive time of the launch sites the plan names. Plan-ex
 
 | run | executed by | describable us | describable share | executed us | executed share | why |
 |---|---|---:|---:|---:|---:|---|
-| verify n=2 | legacy | 26919.20 | 77.8% | 0.00 | 0.0% | no GLM emitters in the circuit executor (crates/model-layers/src/circuit_exec/emitters/mod.rs), and the circuit plans the whole model, not a TP rank (kernels/circuits/INSTANCES.toml:176) |
+| verify n=2 | legacy | 26271.75 | 75.9% | 0.00 | 0.0% | no GLM emitters in the circuit executor (crates/model-layers/src/circuit_exec/emitters/mod.rs), and the circuit plans the whole model, not a TP rank (kernels/circuits/INSTANCES.toml:176) |
 | draft n=1 | legacy | 1155.68 | 3.3% | 0.00 | 0.0% | no GLM emitters in the circuit executor (crates/model-layers/src/circuit_exec/emitters/mod.rs), and the circuit plans the whole model, not a TP rank (kernels/circuits/INSTANCES.toml:176) |
-| **step** | – | 28074.87 | 81.1% | 0.00 | 0.0% | – |
+| **step** | – | 27427.43 | 79.2% | 0.00 | 0.0% | – |
 
 ## Top sites by upside
 
@@ -49,10 +49,10 @@ Each row alone: the time the step saves, and its tok/s, if that site fell to its
 
 | # | run | site | bound | floor us | measured us | % of floor | saved us @100% | tok/s @100% | saved us @80% | tok/s @80% | uJ/launch | % of E floor | E upside uJ |
 |---:|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | verify n=2 | dsa [select] | memory | 364.67 | 1780.05 [1772.10, 1789.50] | 20.5% [20.4%, 20.6%] | 1415.38 [1407.43, 1424.83] | 54.2 [53.9, 54.4] | 1324.21 [1316.26, 1333.67] | 54.1 [53.8, 54.3] | – | – | – |
-| 2 ≈ | verify n=2 | dsa [o] | memory | 1021.31 | 2193.25 [2187.52, 2200.32] | 46.6% [46.4%, 46.7%] | 1171.94 [1166.21, 1179.01] | 53.8 [53.5, 54.0] | 916.61 [910.88, 923.68] | 53.4 [53.1, 53.6] | – | – | – |
-| 3 ≈ | verify n=2 | moe [xn_quant,experts_gate_up] | memory | 8645.32 | 9780.31 [9716.06, 9846.86] | 88.4% [87.8%, 89.0%] | 1134.99 [1070.74, 1201.54] | 53.8 [53.6, 53.9] | 0.00 [0.00, 0.00] | 52.0 [51.7, 52.2] | – | – | – |
-| 4 | verify n=2 | moe [gate,top_k] | memory | 401.52 | 1325.94 [1319.74, 1332.67] | 30.3% [30.1%, 30.4%] | 852.98 [846.05, 859.38] | 53.3 [53.0, 53.5] | 824.05 [817.84, 830.77] | 53.3 [53.0, 53.5] | – | – | – |
+| 1 ≈ | verify n=2 | dsa [o] | memory | 1021.31 | 2193.25 [2187.52, 2200.32] | 46.6% [46.4%, 46.7%] | 1171.94 [1166.21, 1179.01] | 53.8 [53.5, 54.0] | 916.61 [910.88, 923.68] | 53.4 [53.1, 53.6] | – | – | – |
+| 2 ≈ | verify n=2 | moe [xn_quant,experts_gate_up] | memory | 8645.32 | 9780.31 [9716.06, 9846.86] | 88.4% [87.8%, 89.0%] | 1134.99 [1070.74, 1201.54] | 53.8 [53.6, 53.9] | 0.00 [0.00, 0.00] | 52.0 [51.7, 52.2] | – | – | – |
+| 3 | verify n=2 | dsa [select] | memory | 364.67 | 1391.80 [1385.84, 1399.18] | 26.2% [26.1%, 26.3%] | 1027.13 [1021.17, 1034.51] | 53.6 [53.3, 53.8] | 935.96 [930.00, 943.34] | 53.4 [53.2, 53.7] | – | – | – |
+| 4 | verify n=2 | moe [gate,top_k] | memory | 401.52 | 1314.87 [1309.09, 1321.12] | 30.5% [30.4%, 30.7%] | 844.48 [838.02, 850.41] | 53.3 [53.0, 53.5] | 812.97 [807.19, 819.22] | 53.2 [53.0, 53.5] | – | – | – |
 | 5 | verify n=2 | kda [out_norm,o] | memory | 895.85 | 1701.08 [1694.38, 1709.35] | 52.7% [52.4%, 52.9%] | 805.23 [798.53, 813.50] | 53.2 [53.0, 53.5] | 581.27 [574.57, 589.54] | 52.9 [52.6, 53.1] | – | – | – |
 | 6 | verify n=2 | moe [shared_gate_up,shared_clamp,shared_act,shared_down] | memory | 906.11 | 8256.64 [8178.28, 8331.38] | 11.0% [10.9%, 11.1%] | 783.64 [773.81, 795.46] | 53.2 [52.9, 53.4] | 783.64 [773.81, 795.46] | 53.2 [52.9, 53.4] | – | – | – |
 | 7 | verify n=2 | dsa [q_b] | memory | 383.56 | 900.56 [897.01, 905.24] | 42.6% [42.4%, 42.8%] | 517.00 [513.45, 521.67] | 52.8 [52.5, 53.0] | 421.11 [417.56, 425.78] | 52.6 [52.4, 52.9] | – | – | – |
@@ -64,42 +64,38 @@ Each row alone: the time the step saves, and its tok/s, if that site fell to its
 
 | N | adds | saved us @100% | step ms @100% | tok/s @100% | saved us @80% | step ms @80% | tok/s @80% |
 |---:|---|---:|---:|---:|---:|---:|---:|
-| 1 | verify n=2 · dsa [select] | 1415.38 | 33.206 | 54.2 | 1324.21 | 33.298 | 54.1 |
-| 2 | verify n=2 · dsa [o] | 2587.32 | 32.034 | 56.2 | 2240.82 | 32.381 | 55.6 |
-| 3 | verify n=2 · moe [xn_quant,experts_gate_up] | 3722.31 | 30.900 | 58.3 | 2240.82 | 32.381 | 55.6 |
-| 4 | verify n=2 · moe [gate,top_k] | 4575.29 | 30.047 | 59.9 | 3064.87 | 31.557 | 57.0 |
-| 5 | verify n=2 · kda [out_norm,o] | 5380.52 | 29.241 | 61.6 | 3646.14 | 30.976 | 58.1 |
-| 6 | verify n=2 · moe [shared_gate_up,shared_clamp,shared_act,shared_down] | 6164.16 | 28.458 | 63.3 | 4429.78 | 30.192 | 59.6 |
-| 7 | verify n=2 · dsa [q_b] | 6681.16 | 27.941 | 64.4 | 4850.89 | 29.771 | 60.5 |
-| 8 | verify n=2 · kda [q,k,v,f_a,b,g_a] | 6994.93 | 27.627 | 65.2 | 4850.89 | 29.771 | 60.5 |
-| 9 | verify n=2 · kda [short_conv,conv_ckpt,l2] | 7219.84 | 27.402 | 65.7 | 5075.80 | 29.546 | 60.9 |
-| 10 | draft n=1 · mtp_dsa [o] | 7443.88 | 27.178 | 66.2 | 5253.50 | 29.368 | 61.3 |
-| 11 | verify n=2 · kda [fa_quant,f_b,gates,ga_quant,g_b] | 7610.26 | 27.012 | 66.6 | 5394.03 | 29.228 | 61.6 |
-| 12 | verify n=2 · moe [eact_quant,experts_down] | 7731.78 | 26.890 | 66.9 | 5394.03 | 29.228 | 61.6 |
-| 13 | verify n=2 · kda [recur] | 7853.27 | 26.769 | 67.2 | 5413.24 | 29.209 | 61.6 |
-| 14 | verify n=2 · dsa [q_a,kv_a,idx_k] | 7954.22 | 26.668 | 67.5 | 5414.85 | 29.207 | 61.6 |
-| 15 | verify n=2 · dsa [idx_w,idx_q] | 8049.91 | 26.572 | 67.7 | 5414.85 | 29.207 | 61.6 |
-| 16 | draft n=1 · mtp_dsa [q_b] | 8126.64 | 26.495 | 67.9 | 5474.20 | 29.148 | 61.8 |
-| 17 | verify n=2 · moe [blend] | 8190.72 | 26.431 | 68.1 | 5538.27 | 29.084 | 61.9 |
-| 18 | verify n=2 · dsa [q_a_norm] | 8253.25 | 26.369 | 68.3 | 5598.51 | 29.023 | 62.0 |
-| 19 | verify n=2 · dsa [pool] | 8314.13 | 26.308 | 68.4 | 5650.24 | 28.972 | 62.1 |
-| 20 | draft n=1 · mtp_in [fc] | 8372.18 | 26.250 | 68.6 | 5650.24 | 28.972 | 62.1 |
-| 21 | verify n=2 · dsa [kv_norm,kv_write] | 8417.05 | 26.205 | 68.7 | 5690.54 | 28.931 | 62.2 |
-| 22 | verify n=2 · moe [experts_clamp,experts_act] | 8443.98 | 26.178 | 68.8 | 5708.73 | 28.913 | 62.3 |
-| 23 | verify n=2 · kda [qkv] | 8466.06 | 26.156 | 68.8 | 5730.81 | 28.891 | 62.3 |
-| 24 | draft n=1 · mtp_dsa [idx_k] | 8486.32 | 26.135 | 68.9 | 5750.01 | 28.872 | 62.3 |
-| 25 | draft n=1 · mtp_dsa [kv_a] | 8504.48 | 26.117 | 68.9 | 5763.95 | 28.858 | 62.4 |
-| 26 | draft n=1 · mtp_moe [shared_gate_up] | 8522.32 | 26.099 | 69.0 | 5769.14 | 28.853 | 62.4 |
-| 27 | verify n=2 · dsa [idx_k_norm] | 8539.50 | 26.082 | 69.0 | 5784.04 | 28.838 | 62.4 |
-| 28 | draft n=1 · mtp_moe [shared_down] | 8550.53 | 26.071 | 69.0 | 5788.74 | 28.833 | 62.4 |
-| 29 | draft n=1 · mtp_dsa [q_a] | 8556.80 | 26.065 | 69.1 | 5788.74 | 28.833 | 62.4 |
-| 30 | verify n=2 · embed [expand] | 8561.91 | 26.060 | 69.1 | 5793.65 | 28.828 | 62.4 |
-| 31 | draft n=1 · mtp_dsa [idx_q] | 8566.33 | 26.055 | 69.1 | 5793.65 | 28.828 | 62.4 |
-| 32 | verify n=2 · head [contract] | 8570.58 | 26.051 | 69.1 | 5797.69 | 28.824 | 62.4 |
-| 33 | draft n=1 · mtp_moe [gate] | 8572.36 | 26.049 | 69.1 | 5799.47 | 28.822 | 62.5 |
-| 34 | verify n=2 · mlp [clamp,act] | 8573.39 | 26.048 | 69.1 | 5799.88 | 28.822 | 62.5 |
-| 35 | draft n=1 · mtp_moe [experts_clamp] | 8574.38 | 26.047 | 69.1 | 5800.82 | 28.821 | 62.5 |
-| 36 | draft n=1 · mtp_moe [shared_clamp] | 8575.26 | 26.047 | 69.1 | 5801.70 | 28.820 | 62.5 |
+| 1 | verify n=2 · dsa [o] | 1171.94 | 33.450 | 53.8 | 916.61 | 33.705 | 53.4 |
+| 2 | verify n=2 · moe [xn_quant,experts_gate_up] | 2306.93 | 32.315 | 55.7 | 916.61 | 33.705 | 53.4 |
+| 3 | verify n=2 · dsa [select] | 3334.06 | 31.288 | 57.5 | 1852.57 | 32.769 | 54.9 |
+| 4 | verify n=2 · moe [gate,top_k] | 4178.54 | 30.443 | 59.1 | 2665.54 | 31.956 | 56.3 |
+| 5 | verify n=2 · kda [out_norm,o] | 4983.77 | 29.638 | 60.7 | 3246.81 | 31.375 | 57.4 |
+| 6 | verify n=2 · moe [shared_gate_up,shared_clamp,shared_act,shared_down] | 5767.41 | 28.854 | 62.4 | 4030.45 | 30.591 | 58.8 |
+| 7 | verify n=2 · dsa [q_b] | 6284.41 | 28.337 | 63.5 | 4451.56 | 30.170 | 59.7 |
+| 8 | verify n=2 · kda [q,k,v,f_a,b,g_a] | 6598.18 | 28.024 | 64.2 | 4451.56 | 30.170 | 59.7 |
+| 9 | verify n=2 · kda [short_conv,conv_ckpt,l2] | 6823.09 | 27.799 | 64.8 | 4676.47 | 29.945 | 60.1 |
+| 10 | draft n=1 · mtp_dsa [o] | 7047.14 | 27.575 | 65.3 | 4854.17 | 29.768 | 60.5 |
+| 11 | verify n=2 · kda [fa_quant,f_b,gates,ga_quant,g_b] | 7213.51 | 27.408 | 65.7 | 4994.71 | 29.627 | 60.8 |
+| 12 | verify n=2 · moe [eact_quant,experts_down] | 7335.03 | 27.287 | 66.0 | 4994.71 | 29.627 | 60.8 |
+| 13 | verify n=2 · kda [recur] | 7456.53 | 27.165 | 66.3 | 5013.92 | 29.608 | 60.8 |
+| 14 | verify n=2 · dsa [idx_w,idx_q] | 7552.21 | 27.070 | 66.5 | 5013.92 | 29.608 | 60.8 |
+| 15 | draft n=1 · mtp_dsa [q_b] | 7628.95 | 26.993 | 66.7 | 5073.27 | 29.549 | 60.9 |
+| 16 | verify n=2 · dsa [q_a,kv_a,idx_k,idx_gate] | 7705.63 | 26.916 | 66.9 | 5073.27 | 29.549 | 60.9 |
+| 17 | verify n=2 · moe [blend] | 7767.86 | 26.854 | 67.0 | 5135.51 | 29.486 | 61.0 |
+| 18 | draft n=1 · glm_mtp_in [fc] | 7825.91 | 26.796 | 67.2 | 5135.51 | 29.486 | 61.0 |
+| 19 | verify n=2 · moe [experts_clamp,experts_act] | 7852.84 | 26.769 | 67.2 | 5153.69 | 29.468 | 61.1 |
+| 20 | verify n=2 · kda [qkv] | 7874.92 | 26.747 | 67.3 | 5175.77 | 29.446 | 61.1 |
+| 21 | draft n=1 · mtp_dsa [idx_k] | 7895.18 | 26.727 | 67.3 | 5194.97 | 29.427 | 61.2 |
+| 22 | draft n=1 · mtp_dsa [kv_a] | 7913.34 | 26.708 | 67.4 | 5208.91 | 29.413 | 61.2 |
+| 23 | draft n=1 · mtp_moe [shared_gate_up] | 7931.18 | 26.691 | 67.4 | 5214.11 | 29.408 | 61.2 |
+| 24 | verify n=2 · embed [embed,expand] | 7945.29 | 26.677 | 67.5 | 5227.80 | 29.394 | 61.2 |
+| 25 | draft n=1 · mtp_moe [shared_down] | 7956.31 | 26.666 | 67.5 | 5232.50 | 29.389 | 61.2 |
+| 26 | draft n=1 · mtp_dsa [q_a] | 7962.58 | 26.659 | 67.5 | 5232.50 | 29.389 | 61.2 |
+| 27 | draft n=1 · mtp_dsa [idx_q] | 7967.00 | 26.655 | 67.5 | 5232.50 | 29.389 | 61.2 |
+| 28 | verify n=2 · head [contract] | 7971.25 | 26.651 | 67.5 | 5236.54 | 29.385 | 61.3 |
+| 29 | draft n=1 · mtp_moe [gate] | 7973.02 | 26.649 | 67.5 | 5238.32 | 29.383 | 61.3 |
+| 30 | verify n=2 · mlp [clamp,act] | 7974.06 | 26.648 | 67.5 | 5238.72 | 29.383 | 61.3 |
+| 31 | draft n=1 · mtp_moe [shared_clamp,shared_act] | 7974.93 | 26.647 | 67.6 | 5239.60 | 29.382 | 61.3 |
+| 32 | draft n=1 · mtp_moe [experts_clamp,experts_act] | 7975.27 | 26.647 | 67.6 | 5239.73 | 29.382 | 61.3 |
 
 ## Kernels outside the plan
 
@@ -113,19 +109,33 @@ Captured kernels no launch site of the step runs (another lowering than the plan
 | `dense_gemv_fp8w` | grid (12905, 1, 1) smem 0 | 1.00 | 877.01 | 877.01 | no launch site runs it |
 | `w4a4_gemv_mx8` | grid (256, 1, 1) smem 0 | 9.00 | 457.57 | 457.57 | several sites run it: mlp [down]; mlp [gate_up] |
 | `glm5next_hc_post_rank_sum` | grid (2, 16, 1) smem 0 | 90.00 | 222.50 | 222.50 | no launch site runs it |
-| `w4a16_gemv_sw_moe` | grid (88, 8, 1) smem 0 | 2.00 | 141.63 | 133.33 | no launch site runs it |
+| `dsa_topk_mc_collect` | grid (32, 2, 1) smem 0 | 11.00 | 139.41 | 139.41 | several sites run it: dsa [select]; mtp_dsa [select] |
+| `w4a16_gemv_sw_moe` | grid (88, 8, 1) smem 0 | 2.00 | 141.63 | 133.33 | several sites run it: mtp_moe [experts_down]; mtp_moe [experts_gate_up] |
+| `dsa_topk_mc_pass` | grid (32, 2, 1) smem 0 | 44.00 | 129.00 | 129.00 | several sites run it: dsa [select]; mtp_dsa [select] |
+| `dsa_expand_selection_rows` | grid (1, 2, 1) smem 0 | 11.00 | 109.58 | 109.58 | several sites run it: dsa [select]; mtp_dsa [select] |
 | `w8a8_act_quant_row` | grid (2, 1, 1) smem 0 | 33.00 | 121.70 | 83.19 | several sites run it: dsa [a_quant]; dsa [qan_quant]; dsa [xn_quant] |
-| `w4a16_gemv_sw_moe` | grid (512, 8, 1) smem 0 | 1.00 | 69.56 | 69.56 | no launch site runs it |
-| `dsa_write_geom` | grid (1, 1, 1) smem 0 | 23.00 | 26.75 | 26.75 | no launch site runs it |
-| `argmax_bf16` | grid (1, 1, 1) smem 0 | 1.00 | 20.12 | 20.12 | several sites run it: head [argmax]; mtp_out [argmax] |
+| `w4a16_gemv_sw_moe` | grid (512, 8, 1) smem 0 | 1.00 | 69.56 | 69.56 | several sites run it: mtp_moe [experts_down]; mtp_moe [experts_gate_up] |
+| `glm5next_mla_latent_write_fp8` | grid (1, 1, 1) smem 0 | 23.75 | 63.18 | 63.18 | several sites run it: dsa [kv_norm,kv_write]; mtp_dsa [kv_norm,kv_write] |
+| `dsa_indexer_store` | grid (1, 1, 1) smem 0 | 23.00 | 50.70 | 50.70 | several sites run it: dsa [pool]; mtp_dsa [pool] |
+| `dsa_pool_keys_store_rows` | grid (1, 1, 1) smem 0 | 23.75 | 46.79 | 46.79 | several sites run it: dsa [pool]; mtp_dsa [pool] |
+| `rms_norm_vanilla` | grid (2, 1, 1) smem 0 | 12.00 | 38.39 | 38.39 | several sites run it: dsa [q_a_norm]; head [final_norm]; glm_mtp_in [embed_norm]; glm_mtp_in [hidden_norm]; glm_mtp_out [final_norm]; mtp_dsa [input_norm]; mtp_dsa [q_a_norm]; mtp_moe [post_norm] |
+| `rms_norm_vanilla` | grid (1, 1, 1) smem 0 | 10.01 | 33.29 | 33.29 | several sites run it: dsa [q_a_norm]; head [final_norm]; glm_mtp_in [embed_norm]; glm_mtp_in [hidden_norm]; glm_mtp_out [final_norm]; mtp_dsa [input_norm]; mtp_dsa [q_a_norm]; mtp_moe [post_norm] |
+| `dsa_write_geom` | grid (1, 1, 1) smem 0 | 23.00 | 26.75 | 26.75 | several sites run it: dsa [pool]; mtp_dsa [pool] |
+| `nllb_layernorm_bf16` | grid (2, 1, 1) smem 512 | 11.00 | 22.59 | 22.59 | several sites run it: dsa [idx_k_norm]; mtp_dsa [idx_k_norm] |
+| `argmax_bf16` | grid (1, 1, 1) smem 0 | 1.00 | 20.12 | 20.12 | several sites run it: head [argmax]; glm_mtp_out [argmax] |
 | `ncclDevKernel_Broadcast_RING_LL` | grid (1, 1, 1) smem 61760 | 2.02 | 19.01 | 14.33 | no launch site runs it |
 | `screen_head_rescore` | grid (202, 1, 1) smem 0 | 1.00 | 14.00 | 14.00 | no launch site runs it |
-| `batched_embed` | grid (1, 1, 1) smem 0 | 1.00 | 9.82 | 9.82 | no launch site runs it |
-| `dense_gemv_bf16_fp32out` | grid (8, 1, 1) smem 0 | 1.75 | 6.07 | 6.07 | no launch site runs it |
+| `glm5next_router_topk_rank` | grid (1, 1, 1) smem 0 | 1.00 | 11.08 | 8.50 | several sites run it: moe [gate,top_k]; mtp_moe [top_k] |
+| `dense_gemv_bf16_fp32out` | grid (8, 1, 1) smem 0 | 1.75 | 6.07 | 6.07 | several sites run it: mtp_dsa [idx_q]; mtp_dsa [idx_w]; mtp_moe [gate] |
 | `bf16_add_rank_sum` | grid (16, 1, 1) smem 0 | 3.00 | 4.27 | 4.27 | no launch site runs it |
-| `bf16_add_inplace` | grid (16, 1, 1) smem 0 | 2.00 | 2.54 | 2.54 | no launch site runs it |
+| `dsa_topk_mc_pass` | grid (16, 1, 1) smem 0 | 4.00 | 3.80 | 3.80 | several sites run it: dsa [select]; mtp_dsa [select] |
+| `nllb_layernorm_bf16` | grid (1, 1, 1) smem 512 | 1.75 | 3.75 | 3.75 | several sites run it: dsa [idx_k_norm]; mtp_dsa [idx_k_norm] |
+| `dsa_topk_mc_collect` | grid (16, 1, 1) smem 0 | 1.00 | 3.48 | 3.48 | several sites run it: dsa [select]; mtp_dsa [select] |
+| `dsa_expand_selection_rows` | grid (1, 1, 1) smem 0 | 1.00 | 2.97 | 2.97 | several sites run it: dsa [select]; mtp_dsa [select] |
+| `bf16_add_inplace` | grid (16, 1, 1) smem 0 | 2.00 | 2.54 | 2.54 | several sites run it: mtp_dsa [add]; mtp_moe [add] |
 | `predicated_copy_2d` | grid (2, 1, 1) smem 0 | 2.00 | 2.49 | 2.24 | no launch site runs it |
 | `mtp_k2_verdict` | grid (1, 1, 1) smem 0 | 1.00 | 2.06 | 2.06 | no launch site runs it |
+| `glm5next_moe_combine` | grid (1, 16, 1) smem 0 | 1.00 | 1.84 | 1.84 | several sites run it: moe [blend]; mtp_moe [blend] |
 | `bf16_add_rank_sum` | grid (1, 1, 1) smem 0 | 1.00 | 1.48 | 1.48 | no launch site runs it |
 | `glm5next_mtp_xchg_pick` | grid (1, 1, 1) smem 0 | 1.00 | 1.48 | 1.48 | no launch site runs it |
 | `screen_head_resolve` | grid (1, 1, 1) smem 0 | 1.00 | 1.35 | 1.35 | no launch site runs it |
@@ -141,10 +151,10 @@ A % of floor above 100 means the capture's lowering moved work out of the site (
 
 | run | site | kernels | groups | launches | MB | GFLOP | bound | floor us | node sum us | fused | measured us | exclusive us | % of floor |
 |---|---|---|---:|---:|---:|---:|---|---:|---:|---|---:|---:|---:|
-| verify n=2 | dsa [select] | dsa_scores_heads_window::dsa_index_scores_heads_window + dsa_topk_mc::dsa_topk_mc_pass + dsa_topk_mc::dsa_topk_mc_pass + dsa_topk_mc::dsa_topk_mc_pass + dsa_topk_mc::dsa_topk_mc_pass + dsa_topk_mc::dsa_topk_mc_collect + dsa_indexer_rows::dsa_expand_selection_rows | 11 | 77 | 90.803 | 5.797 | memory | 364.67 | 364.67 | no | 1780.05 | 1780.05 | 20.5% |
 | verify n=2 | dsa [o] | w8a8_gemv::w8a8_gemv_rowscale_mb1_ku8 | 11 | 11 | 254.307 | 1.015 | memory | 1021.31 | 1021.31 | yes | 2193.25 | 2165.69 | 46.6% |
 | verify n=2 | moe [xn_quant,experts_gate_up] | w4a4_gemv_mx_moe::w4a4_quant_rows_static + w4a16_gemv::glm5next_moe_row_union + w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_sl_cs | 42 | 126 | 2152.685 | 7.751 | memory | 8645.32 | 8645.32 | no | 9780.31 | 9039.83 | 88.4% |
-| verify n=2 | moe [gate,top_k] | dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out + glm5next_ffn::glm5next_router_topk_rank | 42 | 84 | 99.977 | 0.198 | memory | 401.52 | 401.52 | no | 1325.94 | 852.98 | 30.3% |
+| verify n=2 | dsa [select] | dsa_scores_heads_window::dsa_index_scores_heads_window + dsa_topk_mc::dsa_topk_mc_pass + dsa_topk_mc::dsa_topk_mc_pass + dsa_topk_mc::dsa_topk_mc_pass + dsa_topk_mc::dsa_topk_mc_pass + dsa_topk_mc::dsa_topk_mc_collect + dsa_indexer_rows::dsa_expand_selection_rows | 11 | 77 | 90.803 | 5.797 | memory | 364.67 | 364.67 | no | 1391.80 | 1391.80 | 26.2% |
+| verify n=2 | moe [gate,top_k] | dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out + glm5next_ffn::glm5next_router_topk_rank | 42 | 84 | 99.977 | 0.198 | memory | 401.52 | 401.52 | no | 1314.87 | 844.48 | 30.5% |
 | verify n=2 | kda [out_norm,o] | kda_layer_ops::kda_o_norm_gated_bf16 + w4a16_gemv_pipe::w4a16_gemv_pipe_m2 | 34 | 68 | 223.066 | 1.569 | memory | 895.85 | 895.85 | no | 1701.08 | 1192.13 | 52.7% |
 | verify n=2 | moe [shared_gate_up,shared_clamp,shared_act,shared_down] | w4a16_gemv_pipe::w4a16_gemv_pipe_m2 + glm5next_ffn::glm5next_swiglu_clamp + w4a16_gemv_pipe::w4a16_gemv_pipe_m2 | 42 | 126 | 225.620 | 1.585 | memory | 906.11 | 906.11 | no | 8256.64 | 783.64 | 11.0% |
 | verify n=2 | dsa [q_b] | w8a8_gemv::w8a8_gemv_rowscale_mb1_ku8 | 11 | 11 | 95.508 | 0.381 | memory | 383.56 | 383.56 | yes | 900.56 | 892.61 | 42.6% |
@@ -152,77 +162,73 @@ A % of floor above 100 means the capture's lowering moved work out of the site (
 | verify n=2 | kda [short_conv,conv_ckpt,l2] | kda_conv_tokens::causal_conv1d_window_advance_to + kda_conv_tokens::causal_conv1d_update_l2norm_tokens + kda_conv_tokens::causal_conv1d_window_advance | 34 | 102 | 10.340 | 0.000 | launch | 84.86 | 41.53 | no | 559.72 | 224.91 | 15.2% |
 | draft n=1 | mtp_dsa [o] | gemv::dense_gemv_bf16 | 1 | 1 | 46.157 | 0.046 | memory | 185.37 | 185.37 | yes | 409.41 | 409.41 | 45.3% |
 | verify n=2 | kda [fa_quant,f_b,gates,ga_quant,g_b] | kda_gates_w8a8::kda_gates_w8a8_k128_rows | 34 | 34 | 25.738 | 0.098 | memory | 103.37 | 106.59 | yes | 269.74 | 267.91 | 38.3% |
-| verify n=2 | moe [eact_quant,experts_down] | w4a4_gemv_mx_moe::w4a4_quant_rows_static + w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_cs | 42 | 84 | 1081.850 | 3.876 | memory | 4344.78 | 4344.78 | no | 4466.30 | 4386.48 | 97.3% |
+| verify n=2 | moe [eact_quant,experts_down] | w4a4_gemv_mx_moe::w4a4_quant_rows_static_k64 + w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_k64_cs | 42 | 84 | 1081.850 | 3.876 | memory | 4344.78 | 4344.78 | no | 4466.30 | 4386.48 | 97.3% |
 | verify n=2 | kda [recur] | kda_recurrent::kda_recurrent_decode_bf16_seq_reg_snap | 34 | 34 | 101.878 | 0.098 | memory | 409.15 | 409.15 | yes | 530.64 | 504.21 | 77.1% |
-| verify n=2 | dsa [q_a,kv_a,idx_k] | w8a8_gemv::w8a8_gemv_rowscale_mb1_ku8_split4 | 11 | 11 | 98.949 | 0.392 | memory | 397.39 | 397.39 | yes | 498.33 | 481.55 | 79.7% |
 | verify n=2 | dsa [idx_w,idx_q] | dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out_pair | 11 | 11 | 141.725 | 0.283 | memory | 569.18 | 569.18 | yes | 664.86 | 648.36 | 85.6% |
-| draft n=1 | mtp_dsa [q_b] | (novel) | 1 | 0 | 17.316 | 0.017 | memory | 69.54 | 69.54 | yes | 146.28 | 146.28 | 47.5% |
-| verify n=2 | moe [blend] | glm5next_ffn::glm5next_moe_combine | 42 | 42 | 6.884 | 0.000 | launch | 34.94 | 27.65 | yes | 4332.20 | 64.07 | 0.8% |
-| verify n=2 | dsa [q_a_norm] | rms_norm_vanilla::rms_norm_vanilla | 11 | 11 | 0.135 | 0.000 | launch | 9.15 | 0.54 | yes | 71.68 | 71.68 | 12.8% |
-| verify n=2 | dsa [pool] | dsa_indexer::dsa_indexer_store + dsa_scores_warp::dsa_pool_keys_store_rows | 11 | 44 | 0.011 | 0.000 | launch | 36.61 | 0.05 | no | 97.49 | 97.49 | 37.6% |
-| draft n=1 | mtp_in [fc] | gemv::dense_gemv_bf16 | 1 | 1 | 67.133 | 0.067 | memory | 269.61 | 269.61 | yes | 327.66 | 327.66 | 82.3% |
-| verify n=2 | dsa [kv_norm,kv_write] | glm5next_mla_latent_write::glm5next_mla_latent_write_fp8 | 11 | 22 | 0.068 | 0.000 | launch | 18.30 | 0.27 | no | 63.18 | 63.18 | 29.0% |
+| draft n=1 | mtp_dsa [q_b] | gemv::dense_gemv_bf16 | 1 | 1 | 17.316 | 0.017 | memory | 69.54 | 69.54 | yes | 146.28 | 146.28 | 47.5% |
+| verify n=2 | dsa [q_a,kv_a,idx_k,idx_gate] | w8a8_gemv::w8a8_gemv_rowscale_mb1_ku8_split4 | 11 | 11 | 104.992 | 0.415 | memory | 421.66 | 421.66 | yes | 498.33 | 481.55 | 84.6% |
+| verify n=2 | moe [blend] | glm5next_ffn::glm5next_moe_combine | 42 | 42 | 6.884 | 0.000 | launch | 34.94 | 27.65 | yes | 4330.37 | 62.24 | 0.8% |
+| draft n=1 | glm_mtp_in [fc] | gemv::dense_gemv_bf16 | 1 | 1 | 67.133 | 0.067 | memory | 269.61 | 269.61 | yes | 327.66 | 327.66 | 82.3% |
 | verify n=2 | moe [experts_clamp,experts_act] | glm5next_ffn::glm5next_swiglu_clamp_zero | 42 | 42 | 2.839 | 0.000 | launch | 34.94 | 26.60 | yes | 61.87 | 53.33 | 56.5% |
 | verify n=2 | kda [qkv] | kda_layer_ops::kda_pack_qkv_bf16 | 34 | 34 | 2.298 | 0.000 | launch | 28.29 | 9.23 | yes | 243.00 | 22.08 | 11.6% |
-| draft n=1 | mtp_dsa [idx_k] | (novel) | 1 | 0 | 1.057 | 0.001 | memory | 4.25 | 4.25 | yes | 24.51 | 24.51 | 17.3% |
-| draft n=1 | mtp_dsa [kv_a] | (novel) | 1 | 0 | 4.204 | 0.004 | memory | 16.88 | 16.88 | yes | 35.04 | 35.04 | 48.2% |
-| draft n=1 | mtp_moe [shared_gate_up] | (novel) | 1 | 0 | 12.594 | 0.013 | memory | 50.58 | 50.58 | yes | 68.42 | 58.94 | 73.9% |
-| verify n=2 | dsa [idx_k_norm] | nllb_encoder::nllb_layernorm_bf16 | 11 | 11 | 0.011 | 0.000 | launch | 9.15 | 0.05 | yes | 26.34 | 26.34 | 34.7% |
-| draft n=1 | mtp_moe [shared_down] | (novel) | 1 | 0 | 6.301 | 0.006 | memory | 25.31 | 25.31 | yes | 36.33 | 18.10 | 69.7% |
-| draft n=1 | mtp_dsa [q_a] | (novel) | 1 | 0 | 12.594 | 0.013 | memory | 50.58 | 50.58 | yes | 56.85 | 56.83 | 89.0% |
-| verify n=2 | embed [expand] | glm5next_mhc::glm5next_hc_expand | 1 | 1 | 0.082 | 0.000 | launch | 0.83 | 0.33 | yes | 5.95 | 5.95 | 14.0% |
-| draft n=1 | mtp_dsa [idx_q] | (novel) | 1 | 0 | 12.594 | 0.013 | memory | 50.58 | 50.58 | yes | 55.00 | 55.00 | 92.0% |
+| draft n=1 | mtp_dsa [idx_k] | gemv::dense_gemv_bf16 | 1 | 1 | 1.057 | 0.001 | memory | 4.25 | 4.25 | yes | 24.51 | 24.51 | 17.3% |
+| draft n=1 | mtp_dsa [kv_a] | gemv::dense_gemv_bf16 | 1 | 1 | 4.204 | 0.004 | memory | 16.88 | 16.88 | yes | 35.04 | 35.04 | 48.2% |
+| draft n=1 | mtp_moe [shared_gate_up] | gemv::dense_gemv_bf16 + gemv::dense_gemv_bf16 | 1 | 2 | 12.594 | 0.013 | memory | 50.58 | 50.58 | no | 68.42 | 58.94 | 73.9% |
+| verify n=2 | embed [embed,expand] | embed_from_argmax::batched_embed + glm5next_mhc::glm5next_hc_expand | 1 | 2 | 0.098 | 0.000 | launch | 1.66 | 0.39 | no | 15.77 | 15.77 | 10.6% |
+| draft n=1 | mtp_moe [shared_down] | gemv::dense_gemv_bf16 | 1 | 1 | 6.301 | 0.006 | memory | 25.31 | 25.31 | yes | 36.33 | 18.10 | 69.7% |
+| draft n=1 | mtp_dsa [q_a] | gemv::dense_gemv_bf16 | 1 | 1 | 12.594 | 0.013 | memory | 50.58 | 50.58 | yes | 56.85 | 56.83 | 89.0% |
+| draft n=1 | mtp_dsa [idx_q] | gemv::dense_gemv_bf16_fp32out | 1 | 1 | 12.594 | 0.013 | memory | 50.58 | 50.58 | yes | 55.00 | 55.00 | 92.0% |
 | verify n=2 | head [contract] | glm5next_mhc::glm5next_hc_head | 1 | 1 | 0.082 | 0.000 | launch | 0.83 | 0.33 | yes | 5.08 | 5.08 | 16.4% |
-| draft n=1 | mtp_moe [gate] | (novel) | 1 | 0 | 2.369 | 0.002 | memory | 9.51 | 9.51 | yes | 40.54 | 1.78 | 23.5% |
+| draft n=1 | mtp_moe [gate] | gemv::dense_gemv_bf16_fp32out | 1 | 1 | 2.369 | 0.002 | memory | 9.51 | 9.51 | yes | 40.54 | 1.78 | 23.5% |
 | verify n=2 | mlp [clamp,act] | glm5next_ffn::glm5next_swiglu_clamp | 3 | 3 | 0.147 | 0.000 | launch | 2.50 | 1.38 | yes | 3.53 | 3.53 | 70.7% |
-| draft n=1 | mtp_moe [experts_clamp] | (novel) | 1 | 0 | 0.045 | 0.000 | memory | 0.18 | 0.18 | yes | 1.17 | 1.14 | 15.4% |
-| draft n=1 | mtp_moe [shared_clamp] | (novel) | 1 | 0 | 0.006 | 0.000 | memory | 0.02 | 0.02 | yes | 2.35 | 0.87 | 1.0% |
+| draft n=1 | mtp_moe [shared_clamp,shared_act] | glm5next_ffn::glm5next_swiglu_clamp | 1 | 1 | 0.005 | 0.000 | launch | 0.83 | 0.04 | yes | 2.35 | 0.87 | 35.4% |
+| draft n=1 | mtp_moe [experts_clamp,experts_act] | glm5next_ffn::glm5next_swiglu_clamp | 1 | 1 | 0.034 | 0.000 | launch | 0.83 | 0.32 | yes | 1.17 | 1.14 | 70.8% |
 | verify n=2 | head [lm_head] | dense_gemv_bf16_batchm::dense_gemv_bf16_batchm | 1 | 1 | 423.323 | 0.846 | memory | 1700.09 | 1700.09 | yes | unmeasured (projection 1700.09) | – | – |
-| draft n=1 | mtp_out [lm_head] | (novel) | 1 | 0 | 423.212 | 0.423 | memory | 1699.65 | 1699.65 | yes | unmeasured (projection 1699.65) | – | – |
+| draft n=1 | glm_mtp_out [lm_head] | (novel) | 1 | 0 | 423.212 | 0.423 | memory | 1699.65 | 1699.65 | yes | unmeasured (projection 1699.65) | – | – |
 | verify n=2 | dsa [attend] | glm5next_dsa_mla_decode_hb::glm5next_dsa_mla_decode_hb_fp8 + glm5next_dsa_mla_decode_hb::glm5next_dsa_mla_merge | 11 | 22 | 138.975 | 2.288 | memory | 558.13 | 558.13 | no | 382.94 | 382.94 | 145.7% |
-| draft n=1 | mtp_moe [experts_gate_up] | (novel) | 1 | 0 | 92.305 | 0.092 | memory | 370.70 | 370.70 | yes | unmeasured (projection 370.70) | – | – |
 | verify n=2 | mlp [gate_up] | w4a4_gemv_mx::w4a4_gemv_mx8 + w4a4_gemv_mx::w4a4_gemv_mx8 | 3 | 6 | 56.735 | 0.403 | memory | 227.85 | 227.85 | no | unmeasured (projection 227.85) | – | – |
-| draft n=1 | mtp_moe [experts_down] | (novel) | 1 | 0 | 46.214 | 0.046 | memory | 185.60 | 185.60 | yes | unmeasured (projection 185.60) | – | – |
 | verify n=2 | moe [mix,pre,post_norm] | glm5next_mhc_c1::glm5next_hc_pre_norm_c1 | 42 | 42 | 39.230 | 0.066 | memory | 157.55 | 163.14 | yes | unmeasured (projection 157.55) | – | – |
 | verify n=2 | kda [mix,pre,input_norm] | glm5next_mhc_c1::glm5next_hc_pre_norm_c1 | 34 | 34 | 31.758 | 0.053 | memory | 127.54 | 132.07 | yes | unmeasured (projection 127.54) | – | – |
 | verify n=2 | mlp [down] | w4a4_gemv_mx::w4a4_gemv_mx8 | 3 | 3 | 28.375 | 0.201 | memory | 113.95 | 113.95 | yes | unmeasured (projection 113.95) | – | – |
-| draft n=1 | mtp_dsa [attend] | (novel) | 1 | 0 | 12.610 | 0.104 | memory | 50.64 | 50.64 | yes | 15.36 | 15.36 | 329.7% |
-| verify n=2 | dsa [idx_gate] | gemv::dense_gemv_bf16 | 11 | 22 | 11.720 | 0.023 | memory | 47.07 | 47.07 | no | unmeasured (projection 47.07) | – | – |
+| draft n=1 | mtp_moe [experts_gate_up] | w4a16_gemv::w4a16_gemv_sw_moe + w4a16_gemv::w4a16_gemv_sw_moe | 1 | 2 | 25.983 | 0.092 | memory | 104.35 | 104.35 | no | unmeasured (projection 104.35) | – | – |
+| verify n=2 | dsa [pool] | dsa_indexer::dsa_indexer_store + dsa_scores_warp::dsa_pool_keys_store_rows + dsa_indexer::dsa_write_geom | 11 | 66 | 0.011 | 0.000 | launch | 54.91 | 0.05 | no | unmeasured (projection 54.91) | – | – |
+| draft n=1 | mtp_moe [experts_down] | w4a16_gemv::w4a16_gemv_sw_moe | 1 | 1 | 13.053 | 0.046 | memory | 52.42 | 52.42 | yes | unmeasured (projection 52.42) | – | – |
+| draft n=1 | mtp_dsa [attend] | glm5next_dsa_mla_decode_hb::glm5next_dsa_mla_decode_hb_fp8 + glm5next_dsa_mla_decode_hb::glm5next_dsa_mla_merge | 1 | 2 | 12.610 | 0.104 | memory | 50.64 | 50.64 | no | 15.36 | 15.36 | 329.7% |
 | verify n=2 | dsa [mix,pre,input_norm] | glm5next_mhc_c1::glm5next_hc_pre_norm_c1 | 11 | 11 | 10.275 | 0.017 | memory | 41.26 | 42.73 | yes | unmeasured (projection 41.26) | – | – |
 | verify n=2 | moe [post] | glm5next_mhc::glm5next_hc_post | 42 | 42 | 6.200 | 0.000 | launch | 34.94 | 24.90 | yes | unmeasured (projection 34.94) | – | – |
-| draft n=1 | mtp_dsa [select] | (novel) | 1 | 0 | 8.244 | 0.263 | memory | 33.11 | 33.11 | yes | 4.75 | 4.75 | 696.6% |
+| draft n=1 | mtp_dsa [select] | dsa_scores_warp::dsa_index_scores_heads_paged + dsa_topk_mc::dsa_topk_mc_pass + dsa_topk_mc::dsa_topk_mc_pass + dsa_topk_mc::dsa_topk_mc_pass + dsa_topk_mc::dsa_topk_mc_pass + dsa_topk_mc::dsa_topk_mc_collect + dsa_indexer_rows::dsa_expand_selection_rows | 1 | 7 | 8.244 | 0.263 | memory | 33.11 | 33.11 | no | 4.75 | 4.75 | 696.6% |
 | verify n=2 | kda [post] | glm5next_mhc::glm5next_hc_post | 34 | 34 | 5.019 | 0.000 | launch | 28.29 | 20.16 | yes | unmeasured (projection 28.29) | – | – |
+| verify n=2 | dsa [kv_norm,kv_write] | glm5next_mla_latent_write::glm5next_mla_latent_write_fp8 | 11 | 22 | 0.068 | 0.000 | launch | 18.30 | 0.27 | no | unmeasured (projection 18.30) | – | – |
 | verify n=2 | mlp [mix,pre,post_norm] | glm5next_mhc_c1::glm5next_hc_pre_norm_c1 | 3 | 3 | 2.802 | 0.005 | memory | 11.25 | 11.65 | yes | unmeasured (projection 11.25) | – | – |
 | verify n=2 | dsa [a_quant] | w8a8_act_quant::w8a8_act_quant_row | 11 | 11 | 0.372 | 0.000 | launch | 9.15 | 1.49 | yes | unmeasured (projection 9.15) | – | – |
+| verify n=2 | dsa [idx_k_norm] | nllb_encoder::nllb_layernorm_bf16 | 11 | 11 | 0.011 | 0.000 | launch | 9.15 | 0.05 | yes | unmeasured (projection 9.15) | – | – |
 | verify n=2 | dsa [post] | glm5next_mhc::glm5next_hc_post | 11 | 11 | 1.624 | 0.000 | launch | 9.15 | 6.52 | yes | unmeasured (projection 9.15) | – | – |
+| verify n=2 | dsa [q_a_norm] | rms_norm_vanilla::rms_norm_vanilla | 11 | 11 | 0.135 | 0.000 | launch | 9.15 | 0.54 | yes | unmeasured (projection 9.15) | – | – |
 | verify n=2 | dsa [qan_quant] | w8a8_act_quant::w8a8_act_quant_row | 11 | 11 | 0.101 | 0.000 | launch | 9.15 | 0.41 | yes | unmeasured (projection 9.15) | – | – |
 | verify n=2 | dsa [xn_quant] | w8a8_act_quant::w8a8_act_quant_row | 11 | 11 | 0.270 | 0.000 | launch | 9.15 | 1.09 | yes | unmeasured (projection 9.15) | – | – |
-| draft n=1 | mtp_dsa [idx_gate] | (novel) | 1 | 0 | 1.057 | 0.001 | memory | 4.25 | 4.25 | yes | unmeasured (projection 4.25) | – | – |
-| verify n=2 | mlp [a_quant] | w4a4_gemv_mx::w4a4_quant_rows | 3 | 3 | 0.063 | 0.000 | launch | 2.50 | 0.25 | yes | unmeasured (projection 2.50) | – | – |
+| draft n=1 | mtp_dsa [idx_gate] | gemv::dense_gemv_bf16 | 1 | 1 | 1.057 | 0.001 | memory | 4.25 | 4.25 | yes | unmeasured (projection 4.25) | – | – |
+| draft n=1 | mtp_dsa [pool] | dsa_indexer::dsa_indexer_store + dsa_scores_warp::dsa_pool_keys_store_rows + dsa_indexer::dsa_write_geom | 1 | 3 | 0.001 | 0.000 | launch | 2.50 | 0.00 | no | unmeasured (projection 2.50) | – | – |
+| verify n=2 | mlp [a_quant] | w4a4_gemv_mx_moe::w4a4_quant_rows_static | 3 | 3 | 0.063 | 0.000 | launch | 2.50 | 0.25 | yes | unmeasured (projection 2.50) | – | – |
 | verify n=2 | mlp [post] | glm5next_mhc::glm5next_hc_post | 3 | 3 | 0.443 | 0.000 | launch | 2.50 | 1.78 | yes | unmeasured (projection 2.50) | – | – |
-| verify n=2 | mlp [xn_quant] | w4a4_gemv_mx::w4a4_quant_rows | 3 | 3 | 0.063 | 0.000 | launch | 2.50 | 0.25 | yes | unmeasured (projection 2.50) | – | – |
+| verify n=2 | mlp [xn_quant] | w4a4_gemv_mx_moe::w4a4_quant_rows_static | 3 | 3 | 0.063 | 0.000 | launch | 2.50 | 0.25 | yes | unmeasured (projection 2.50) | – | – |
+| draft n=1 | glm_mtp_in [hidden_norm] | rms_norm_vanilla::rms_norm_vanilla + rms_norm_vanilla::rms_norm_vanilla | 1 | 2 | 0.016 | 0.000 | launch | 1.66 | 0.07 | no | unmeasured (projection 1.66) | – | – |
 | verify n=2 | head [argmax] | argmax::argmax_bf16 | 1 | 2 | 0.207 | 0.000 | launch | 1.66 | 0.83 | no | unmeasured (projection 1.66) | – | – |
-| draft n=1 | mtp_dsa [idx_w] | (novel) | 1 | 0 | 0.270 | 0.000 | memory | 1.09 | 1.09 | yes | unmeasured (projection 1.09) | – | – |
-| draft n=1 | mtp_dsa [add,post_norm] | norm::residual_add_rms_norm | 1 | 1 | 0.041 | 0.000 | launch | 0.83 | 0.16 | yes | unmeasured (projection 0.83) | – | – |
-| draft n=1 | mtp_dsa [input_norm] | norm::rms_norm | 1 | 1 | 0.016 | 0.000 | launch | 0.83 | 0.07 | yes | unmeasured (projection 0.83) | – | – |
-| draft n=1 | mtp_dsa [kv_norm] | norm::rms_norm | 1 | 1 | 0.002 | 0.000 | launch | 0.83 | 0.01 | yes | unmeasured (projection 0.83) | – | – |
-| draft n=1 | mtp_dsa [q_a_norm] | norm::rms_norm | 1 | 1 | 0.006 | 0.000 | launch | 0.83 | 0.02 | yes | unmeasured (projection 0.83) | – | – |
-| draft n=1 | mtp_in [concat] | residual_add::bf16_concat | 1 | 1 | 0.033 | 0.000 | launch | 0.83 | 0.13 | yes | unmeasured (projection 0.83) | – | – |
-| draft n=1 | mtp_in [embed_norm] | norm::rms_norm | 1 | 1 | 0.016 | 0.000 | launch | 0.83 | 0.07 | yes | unmeasured (projection 0.83) | – | – |
-| draft n=1 | mtp_in [hidden_norm] | norm::rms_norm | 1 | 1 | 0.016 | 0.000 | launch | 0.83 | 0.07 | yes | unmeasured (projection 0.83) | – | – |
-| draft n=1 | mtp_moe [add] | residual_add::bf16_residual_add | 1 | 1 | 0.025 | 0.000 | launch | 0.83 | 0.10 | yes | unmeasured (projection 0.83) | – | – |
-| draft n=1 | mtp_out [argmax] | argmax::argmax_bf16 | 1 | 1 | 0.103 | 0.000 | launch | 0.83 | 0.41 | yes | unmeasured (projection 0.83) | – | – |
-| draft n=1 | mtp_out [final_norm] | norm::rms_norm | 1 | 1 | 0.016 | 0.000 | launch | 0.83 | 0.07 | yes | unmeasured (projection 0.83) | – | – |
-| verify n=2 | head [final_norm] | norm::rms_norm | 1 | 1 | 0.033 | 0.000 | launch | 0.83 | 0.13 | yes | unmeasured (projection 0.83) | – | – |
-| draft n=1 | mtp_moe [blend] | (novel) | 1 | 0 | 0.082 | 0.000 | memory | 0.33 | 0.33 | yes | unmeasured (projection 0.33) | – | – |
-| draft n=1 | mtp_moe [experts_act] | (novel) | 1 | 0 | 0.034 | 0.000 | memory | 0.14 | 0.14 | yes | unmeasured (projection 0.14) | – | – |
-| verify n=2 | embed [embed] | (embed_copy) | 1 | 0 | 0.016 | 0.000 | memory | 0.07 | 0.07 | yes | unmeasured (projection 0.07) | – | – |
-| draft n=1 | mtp_in [embed] | (embed_copy) | 1 | 0 | 0.008 | 0.000 | memory | 0.03 | 0.03 | yes | unmeasured (projection 0.03) | – | – |
-| draft n=1 | mtp_moe [shared_act] | (novel) | 1 | 0 | 0.005 | 0.000 | memory | 0.02 | 0.02 | yes | unmeasured (projection 0.02) | – | – |
-| draft n=1 | mtp_moe [top_k] | (novel) | 1 | 0 | 0.001 | 0.000 | memory | 0.00 | 0.00 | yes | unmeasured (projection 0.00) | – | – |
-| draft n=1 | mtp_dsa [kv_write] | (novel) | 1 | 0 | 0.001 | 0.000 | memory | 0.00 | 0.00 | yes | unmeasured (projection 0.00) | – | – |
-| draft n=1 | mtp_dsa [idx_k_norm] | (novel) | 1 | 0 | 0.001 | 0.000 | memory | 0.00 | 0.00 | yes | unmeasured (projection 0.00) | – | – |
-| draft n=1 | mtp_dsa [pool] | (novel) | 1 | 0 | 0.001 | 0.000 | memory | 0.00 | 0.00 | yes | unmeasured (projection 0.00) | – | – |
+| draft n=1 | mtp_dsa [idx_w] | gemv::dense_gemv_bf16_fp32out | 1 | 1 | 0.270 | 0.000 | memory | 1.09 | 1.09 | yes | unmeasured (projection 1.09) | – | – |
+| draft n=1 | glm_mtp_in [embed_norm] | rms_norm_vanilla::rms_norm_vanilla | 1 | 1 | 0.016 | 0.000 | launch | 0.83 | 0.07 | yes | unmeasured (projection 0.83) | – | – |
+| draft n=1 | glm_mtp_out [argmax] | argmax::argmax_bf16 | 1 | 1 | 0.103 | 0.000 | launch | 0.83 | 0.41 | yes | unmeasured (projection 0.83) | – | – |
+| draft n=1 | glm_mtp_out [final_norm] | rms_norm_vanilla::rms_norm_vanilla | 1 | 1 | 0.016 | 0.000 | launch | 0.83 | 0.07 | yes | unmeasured (projection 0.83) | – | – |
+| draft n=1 | mtp_dsa [add] | bf16_add::bf16_add_inplace | 1 | 1 | 0.025 | 0.000 | launch | 0.83 | 0.10 | yes | unmeasured (projection 0.83) | – | – |
+| draft n=1 | mtp_dsa [idx_k_norm] | nllb_encoder::nllb_layernorm_bf16 | 1 | 1 | 0.001 | 0.000 | launch | 0.83 | 0.00 | yes | unmeasured (projection 0.83) | – | – |
+| draft n=1 | mtp_dsa [input_norm] | rms_norm_vanilla::rms_norm_vanilla | 1 | 1 | 0.016 | 0.000 | launch | 0.83 | 0.07 | yes | unmeasured (projection 0.83) | – | – |
+| draft n=1 | mtp_dsa [kv_norm,kv_write] | glm5next_mla_latent_write::glm5next_mla_latent_write_fp8 | 1 | 1 | 0.001 | 0.000 | launch | 0.83 | 0.01 | yes | unmeasured (projection 0.83) | – | – |
+| draft n=1 | mtp_dsa [q_a_norm] | rms_norm_vanilla::rms_norm_vanilla | 1 | 1 | 0.006 | 0.000 | launch | 0.83 | 0.02 | yes | unmeasured (projection 0.83) | – | – |
+| draft n=1 | mtp_moe [add] | bf16_add::bf16_add_inplace | 1 | 1 | 0.025 | 0.000 | launch | 0.83 | 0.10 | yes | unmeasured (projection 0.83) | – | – |
+| draft n=1 | mtp_moe [blend] | glm5next_ffn::glm5next_moe_combine | 1 | 1 | 0.082 | 0.000 | launch | 0.83 | 0.33 | yes | unmeasured (projection 0.83) | – | – |
+| draft n=1 | mtp_moe [post_norm] | rms_norm_vanilla::rms_norm_vanilla | 1 | 1 | 0.016 | 0.000 | launch | 0.83 | 0.07 | yes | unmeasured (projection 0.83) | – | – |
+| draft n=1 | mtp_moe [top_k] | glm5next_ffn::glm5next_router_topk_rank | 1 | 1 | 0.001 | 0.000 | launch | 0.83 | 0.00 | yes | unmeasured (projection 0.83) | – | – |
+| verify n=2 | head [final_norm] | rms_norm_vanilla::rms_norm_vanilla | 1 | 1 | 0.033 | 0.000 | launch | 0.83 | 0.13 | yes | unmeasured (projection 0.83) | – | – |
+| draft n=1 | glm_mtp_in [concat] | (glm_mtp_halves) | 1 | 0 | 0.033 | 0.000 | memory | 0.13 | 0.13 | yes | unmeasured (projection 0.13) | – | – |
+| draft n=1 | glm_mtp_in [embed] | (embed_copy) | 1 | 0 | 0.008 | 0.000 | memory | 0.03 | 0.03 | yes | unmeasured (projection 0.03) | – | – |
 
 ## Cross-check: bootstrap and delta method
 
@@ -231,10 +237,10 @@ The same 95% intervals by the moving-block bootstrap and by the delta method (Ne
 | quantity | bootstrap | delta method |
 |---|---:|---:|
 | residual us | [763.89, 804.83] | [761.29, 801.83] |
-| % of floor, verify n=2 · dsa [select] | [20.4%, 20.6%] | [20.4%, 20.6%] |
 | % of floor, verify n=2 · dsa [o] | [46.4%, 46.7%] | [46.4%, 46.7%] |
 | % of floor, verify n=2 · moe [xn_quant,experts_gate_up] | [87.8%, 89.0%] | [87.8%, 89.0%] |
-| % of floor, verify n=2 · moe [gate,top_k] | [30.1%, 30.4%] | [30.1%, 30.4%] |
+| % of floor, verify n=2 · dsa [select] | [26.1%, 26.3%] | [26.1%, 26.3%] |
+| % of floor, verify n=2 · moe [gate,top_k] | [30.4%, 30.7%] | [30.4%, 30.7%] |
 | % of floor, verify n=2 · kda [out_norm,o] | [52.4%, 52.9%] | [52.4%, 52.9%] |
 | % of floor, verify n=2 · moe [shared_gate_up,shared_clamp,shared_act,shared_down] | [10.9%, 11.1%] | [10.9%, 11.1%] |
 | % of floor, verify n=2 · dsa [q_b] | [42.4%, 42.8%] | [42.4%, 42.8%] |
@@ -251,23 +257,11 @@ The capture's lowering differs from the plan's at these sites (another kernel or
 - verify n=2 · moe [shared_gate_up,shared_clamp,shared_act,shared_down]: side stream: co-runs with the routed W4A4 sweep
 - verify n=2 · dsa [q_b]: q_b absorbed with kv_b_proj's key half: N = 22 heads x 512 latent, where the plan's q_b is 22 x 256 and its attend reads kv_b_proj
 - draft n=1 · mtp_dsa [o]: o_proj absorbed with kv_b_proj's value half
-- verify n=2 · moe [eact_quant,experts_down]: runs `w4a4_gemv_mx8_moe_union_sweep_k64_cs`, the plan names `w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_cs` (family `w4a4_mx_static`)
-- verify n=2 · moe [eact_quant,experts_down]: runs `w4a4_quant_rows_static_k64`, the plan names `w4a4_gemv_mx_moe::w4a4_quant_rows_static` (family `w4a4_mx_static`)
-- verify n=2 · dsa [q_a,kv_a,idx_k]: also the indexer's wk and gate projections (plan: dsa [idx_k], dsa [idx_gate])
 - verify n=2 · dsa [idx_w,idx_q]: also the indexer's weights_proj (plan: dsa [idx_w])
-- draft n=1 · mtp_dsa [q_b]: runs `dense_gemv_bf16` of family `dense_bf16`, another implementation of the site's op than the plan's `(novel)`; q_b absorbed with kv_b_proj's key half
-- draft n=1 · mtp_in [fc]: the catch-up eh_proj of the accepted token, a second fc launch per step
-- draft n=1 · mtp_dsa [idx_k]: runs `dense_gemv_bf16` of family `dense_bf16`, another implementation of the site's op than the plan's `(novel)`; the indexer's gate projection shares this shape (plan: mtp_dsa [idx_gate])
-- draft n=1 · mtp_dsa [kv_a]: runs `dense_gemv_bf16` of family `dense_bf16`, another implementation of the site's op than the plan's `(novel)`
-- draft n=1 · mtp_moe [shared_gate_up]: runs `dense_gemv_bf16` of family `dense_bf16`, another implementation of the site's op than the plan's `(novel)`
-- draft n=1 · mtp_moe [shared_down]: runs `dense_gemv_bf16` of family `dense_bf16`, another implementation of the site's op than the plan's `(novel)`
-- draft n=1 · mtp_dsa [q_a]: runs `dense_gemv_bf16` of family `dense_bf16`, another implementation of the site's op than the plan's `(novel)`
-- draft n=1 · mtp_dsa [idx_q]: runs `dense_gemv_bf16_fp32out` of family `dense_bf16`, another implementation of the site's op than the plan's `(novel)`
-- draft n=1 · mtp_moe [gate]: runs `dense_gemv_bf16_fp32out` of family `dense_bf16`, another implementation of the site's op than the plan's `(novel)`
-- draft n=1 · mtp_moe [experts_clamp]: runs `glm5next_swiglu_clamp` of family `glm_swiglu_clamp`, another implementation of the site's op than the plan's `(novel)`
-- draft n=1 · mtp_moe [shared_clamp]: runs `glm5next_swiglu_clamp` of family `glm_swiglu_clamp`, another implementation of the site's op than the plan's `(novel)`
+- draft n=1 · mtp_dsa [q_b]: q_b absorbed with kv_b_proj's key half
+- verify n=2 · dsa [q_a,kv_a,idx_k,idx_gate]: also the indexer's wk and gate projections (plan: dsa [idx_k], dsa [idx_gate])
+- draft n=1 · glm_mtp_in [fc]: the catch-up eh_proj of the accepted token, a second fc launch per step
+- draft n=1 · mtp_dsa [idx_k]: the indexer's gate projection shares this shape (plan: mtp_dsa [idx_gate])
 - verify n=2 · dsa [attend]: kv_b_proj is absorbed into q_b and o (dsa [q_b], dsa [o]): the plan's attend floor counts kv_b_proj, which this lowering does not read here
-- draft n=1 · mtp_dsa [attend]: runs `glm5next_dsa_mla_decode_hb_fp8` of family `glm_mla_decode_hb`, another implementation of the site's op than the plan's `(novel)`; kv_b_proj is absorbed into q_b and o: the plan's attend floor counts it
-- draft n=1 · mtp_dsa [attend]: runs `glm5next_dsa_mla_merge` of family `glm_mla_decode_hb`, another implementation of the site's op than the plan's `(novel)`
-- draft n=1 · mtp_dsa [select]: runs `dsa_index_scores_heads_paged` of family `dsa_indexer`, another implementation of the site's op than the plan's `(novel)`
+- draft n=1 · mtp_dsa [attend]: kv_b_proj is absorbed into q_b and o: the plan's attend floor counts it
 

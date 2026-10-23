@@ -6,8 +6,14 @@
 # 2026-10-23 that are not instantiations. Shrink-only: crates/circuit/tests/fused_instantiations.rs
 # fails on an entry that is no longer a violation and on a list longer than its seeded CEILING (103).
 # Do not add to it: instantiate a family template instead.
+# 2026-10-23 (P0-prereq, @human-review): +15 to CEILING 118. No new .cu: each is a kernel the served
+# GLM-5.3 TP=3 step already launches (f14a nsys), named by a fidelity rule over two or more ops that
+# describes it (the AR + post-mix, the screened and MTP heads, the device-row embed + expand, the
+# `_k64` twins of allowlisted entries). Owner sign-off pending (STATE.md P0-prereq).
 
 handwritten = [
+  "argmax::argmax_bf16",
+  "bf16_add::bf16_add_rank_sum",
   "causal_conv1d::causal_conv1d_update_l2norm",
   "causal_conv1d::causal_conv1d_update_l2norm_f32",
   "causal_conv1d::causal_conv1d_update_l2norm_f32_strided",
@@ -18,6 +24,7 @@ handwritten = [
   "dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few",
   "dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out",
   "dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out_pair",
+  "embed_from_argmax::batched_embed",
   "fp8_gemm_t_blockscaled::fp8_gemm_t_blockscaled",
   "gated_delta_rule::gated_delta_rule_decode_f32_norm",
   "gated_delta_rule_carry::gdn_carry_conv",
@@ -36,16 +43,21 @@ handwritten = [
   "gdn_verify_fused_k2::gdn_verify_fused_norm_k2",
   "gemm::dense_gemm_bf16_router",
   "gemv::dense_gemv_bf16",
+  "gemv_fp8w::dense_gemv_fp8w",
   "glm5next_dsa_mla_decode::glm5next_dsa_mla_decode_fp8",
   "glm5next_ffn::glm5next_router_topk",
   "glm5next_ffn::glm5next_router_topk_rank",
   "glm5next_ffn::glm5next_swiglu_clamp",
   "glm5next_ffn::glm5next_swiglu_clamp_zero",
+  "glm5next_hc_post_sum::glm5next_hc_post_rank_sum",
+  "glm5next_mhc::glm5next_hc_expand",
   "glm5next_mhc::glm5next_hc_finish",
   "glm5next_mhc::glm5next_hc_mix_bf16",
   "glm5next_mhc_c1::glm5next_hc_pre_norm_c1",
   "glm5next_mhc_fused::glm5next_hc_pre_norm",
   "glm5next_mla_latent_write::glm5next_mla_latent_write_fp8",
+  "glm5next_mtp_xchg::glm5next_mtp_xchg_pack",
+  "glm5next_mtp_xchg::glm5next_mtp_xchg_pick",
   "kda_conv_tokens::causal_conv1d_update_l2norm_tokens",
   "kda_conv_tokens::causal_conv1d_window_advance",
   "kda_conv_tokens::causal_conv1d_window_advance_to",
@@ -82,6 +94,9 @@ handwritten = [
   "rms_norm_act_quant::rms_norm_quant_fp8_g128",
   "rms_norm_act_quant::rms_norm_quant_fp8_row",
   "rms_norm_act_quant::rms_norm_quant_nvfp4",
+  "screen_head::screen_head_rescore",
+  "screen_head::screen_head_resolve",
+  "screen_head::screen_head_scan",
   "ssm_ba_gates_hopper::dense_gemm_ba_gates_prefill_hopper",
   "ssm_preprocess::dense_gemm_ba_gates_prefill",
   "ssm_preprocess::dense_gemv_ba_gates",
@@ -98,15 +113,19 @@ handwritten = [
   "w4a16_tc_rows_seg::w4a16_tc_rows_seg_16_k1",
   "w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep",
   "w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_cs",
+  "w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_k64_cs",
   "w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_sl",
   "w4a4_gemv_mx_moe::w4a4_gemv_mx16_moe_union_sweep_sl_cs",
   "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots_sweep",
   "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots_sweep_cs",
+  "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_slots_sweep_k64_cs",
   "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep",
   "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_cs",
+  "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_k64_cs",
   "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_sl",
   "w4a4_gemv_mx_moe::w4a4_gemv_mx8_moe_union_sweep_sl_cs",
   "w4a4_gemv_mx_moe::w4a4_quant_rows_static",
+  "w4a4_gemv_mx_moe::w4a4_quant_rows_static_k64",
   "w8a8_act_quant::w8a8_act_quant_silu_row",
   "w8a8_gemv::w8a8_gemv_rowscale_mb1_ku8_split4",
 ]

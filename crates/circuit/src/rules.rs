@@ -81,6 +81,54 @@ impl core::fmt::Display for KernelId {
     }
 }
 
+/// 2026-10-23: The communication library call a collective group issues.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub enum CommApi {
+    /// 2026-10-23: Every rank sends its partial to every peer and receives theirs (the one-shot
+    /// exchange, `metrale_comm` `exchange_partials` / the one-shot all-reduce); the sum is a kernel
+    /// of the group.
+    Exchange,
+    /// 2026-10-23: The library's ring all-reduce.
+    AllReduceRing,
+    /// 2026-10-23: A broadcast from one rank.
+    Broadcast,
+}
+
+impl CommApi {
+    /// 2026-10-23: The spelling in FUSIONS.toml.
+    pub fn name(self) -> &'static str {
+        match self {
+            CommApi::Exchange => "exchange",
+            CommApi::AllReduceRing => "all_reduce_ring",
+            CommApi::Broadcast => "broadcast",
+        }
+    }
+
+    /// 2026-10-23: Parse [`CommApi::name`].
+    pub fn parse(s: &str) -> Option<Self> {
+        [CommApi::Exchange, CommApi::AllReduceRing, CommApi::Broadcast]
+            .into_iter()
+            .find(|a| a.name() == s)
+    }
+}
+
+/// 2026-10-23: One collective launch of a group: the call and the device kernel the library runs
+/// for it (`ncclDevKernel_SendRecv` for the one-shot exchange), which a trace names.
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub struct CommLaunch {
+    /// 2026-10-23: The call.
+    pub api: CommApi,
+    /// 2026-10-23: The library kernel it launches.
+    pub kernel: String,
+    /// 2026-10-23: How many of the group's kernels launch before it (0: first; the screened head
+    /// exchanges its keys after its two scan kernels).
+    pub at: u64,
+}
+
 /// 2026-09-28: How a rule's output relates to the reference numerics.
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
@@ -123,6 +171,9 @@ pub struct PatternOp {
     pub layer_kind: Option<LayerKind>,
     /// 2026-09-28: The node's template-local id must be this, when set.
     pub local: Option<String>,
+    /// 2026-10-23: The node's block template must be this, when set (`mtp_dsa`): a rule for one
+    /// model's draft head, whose nodes have no layer kind, is never taken by another model's.
+    pub block: Option<String>,
     /// 2026-09-28: The node's weight format must be this, when set.
     pub weight: Option<Format>,
     /// 2026-09-28: The format the kernel reads its first input as. Checked after fusion
@@ -135,6 +186,11 @@ pub struct PatternOp {
     /// 2026-09-28: The kernel writes this element's outputs even though a later element
     /// reads them, so they may have readers outside the group.
     pub keep: bool,
+    /// 2026-10-23: The lowering does not produce this element's circuit outputs (a greedy
+    /// head that returns the token and never the full logits: the screened verify head, the
+    /// MTP head's shard argmax and exchange); legal only where every reader of them is in the
+    /// group, so nothing in the step reads what is not written.
+    pub elides: bool,
     /// 2026-09-30: The kernel stores this element's outputs in memory, where a later launch of
     /// the group reads them back (a per-run schedule's conv rows), so they are materialized even
     /// when every reader is in the group.
@@ -230,6 +286,9 @@ pub struct Rule {
     /// 2026-09-29: Copy-engine transfers the emitter issues besides its kernels, and how
     /// often; `None` for none (the verify conv's state snapshots are `per_row_but_last`).
     pub copies: Option<Repeat>,
+    /// 2026-10-23: Collective launches the emitter issues besides its kernels, each at its stated
+    /// place among them; empty for a rule that communicates nothing.
+    pub comm: Vec<CommLaunch>,
     /// 2026-09-28: The executor's emitter for this kernel.
     pub emitter: String,
     /// 2026-09-28: Inclusive row range.
@@ -240,6 +299,9 @@ pub struct Rule {
     pub requires: BTreeSet<String>,
     /// 2026-09-28: Policy settings that must hold (`kv_cache_dtype = "bf16"`).
     pub when: BTreeMap<String, String>,
+    /// 2026-10-23: Dims of the planned circuit that must pass these tests ([`dims`]): the shape a
+    /// kernel takes, e.g. a TP rank's expert slice; empty for a rule any shape takes.
+    pub dims: BTreeMap<String, dims::DimPred>,
     /// 2026-09-28: Numerics class.
     pub numerics: Numerics,
     /// 2026-09-28: Higher wins.
@@ -310,6 +372,8 @@ pub enum RuleError {
     },
 }
 
+#[path = "rules_dims.rs"]
+pub mod dims;
 #[path = "rules_parse.rs"]
 mod parse;
 pub(crate) use parse::parse_file;

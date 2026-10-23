@@ -40,6 +40,14 @@ schema = 1
 checkpoint = "nvidia/GLM-5.3-Flash-NVFP4"
 tier = "recipe"
 
+# 2026-10-23: The MTP layer's routed experts are re-quantized to NVFP4 at load and run W4A16
+# (crates/model-arch/src/weight_loader/glm5_next_mtp.rs:124-127, w4a16_gemv_sw_moe); the rest of
+# layer 45 stays BF16.
+[[linear]]
+match = "model.language_model.layers.45.mlp.experts.*"
+weight = "nvfp4/g16"
+activation = "bf16"
+
 [[linear]]
 match = "model.language_model.layers.45.*"
 weight = "bf16"
