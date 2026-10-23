@@ -43,7 +43,6 @@ mod render;
 mod render_matrix;
 mod render_routes;
 pub mod sources;
-pub mod stats;
 pub mod tc_policy;
 mod tc_policy_render;
 

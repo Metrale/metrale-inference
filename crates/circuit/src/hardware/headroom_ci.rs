@@ -19,7 +19,7 @@ use crate::prelude::*;
 use alloc::collections::BTreeMap;
 
 use super::headroom_trace::Trace;
-use super::stats::{
+use metrale_stats::mbb::{
     Interval, SplitMix64, block_len, block_resample, hac_variance_of_mean, median, percentile_ci,
 };
 

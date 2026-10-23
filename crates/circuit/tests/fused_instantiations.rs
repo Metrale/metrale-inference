@@ -8,7 +8,8 @@
 //! rule (`kernels/<class>/common/FUSED_HANDWRITTEN.toml`).
 //!
 //! A kernel `module::func` is an instantiation when its module's source (`<module>.cu`, every copy
-//! under `kernels/<class>/`) starts with `// metrale: instantiates <family> (<template>.cuh)`,
+//! under `kernels/<class>/`) starts (after its SPDX line) with
+//! `// metrale: instantiates <family> (<template>.cuh)`,
 //! `#include`s that template, holds no loop, shared memory or inline PTX of its own (the
 //! arithmetic and the memory schedule are the template's), and the family is registered in
 //! `KERNEL_FAMILIES.toml` with the kernel in its `kernels`.
@@ -29,7 +30,7 @@ const CLASSES: [&str; 1] = ["gb10"];
 /// 2026-10-23: The allowlist's seeded size per class: the hand-fused kernels FUSIONS.toml named
 /// on 2026-10-23 (megakernel branch @41654eeb1). It may only fall.
 const CEILING: [(&str, usize); 1] = [("gb10", 103)];
-/// 2026-10-23: The marker an instantiation's first line carries.
+/// 2026-10-23: The marker an instantiation's first line after the SPDX line carries.
 const MARKER: &str = "// metrale: instantiates ";
 /// 2026-10-23: Constructs an instantiation must not contain: they belong to the template.
 const FORBIDDEN: [&str; 6] = ["for (", "for(", "while (", "while(", "__shared__", "asm("];
@@ -103,7 +104,11 @@ fn not_instantiation(
     }
     for f in files {
         let text = std::fs::read_to_string(&f).expect("source");
-        let Some(rest) = text.lines().next().and_then(|l| l.strip_prefix(MARKER)) else {
+        let Some(rest) = text
+            .lines()
+            .find(|l| !l.starts_with("// SPDX-License-Identifier:"))
+            .and_then(|l| l.strip_prefix(MARKER))
+        else {
             return Some(format!("{} has no `{MARKER}...` first line", f.display()));
         };
         let Some((family, tpl)) = rest
@@ -218,7 +223,7 @@ fn the_instantiation_check_refuses_handwritten_arithmetic() {
     )]);
     let good = |name: &str| {
         format!(
-            "// metrale: instantiates fam (fam_body.cuh)\n#include \"fam_body.cuh\"\n\
+            "// SPDX-License-Identifier: MIT OR Apache-2.0\n// metrale: instantiates fam (fam_body.cuh)\n#include \"fam_body.cuh\"\n\
              extern \"C\" __global__ void {name}(float* y) {{ fam_body<Id>(y); }}\n"
         )
     };

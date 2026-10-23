@@ -402,7 +402,7 @@ pub fn pool(traces: &[Trace]) -> Result<Trace, String> {
         segments: traces.iter().map(|t| t.steps).collect(),
         tokens_per_step: first.tokens_per_step.clone(),
         launch_floor_us: (floors.len() == traces.len())
-            .then(|| super::stats::median(&floors))
+            .then(|| metrale_stats::mbb::median(&floors))
             .flatten()
             .map(|v| Stated {
                 value: v,

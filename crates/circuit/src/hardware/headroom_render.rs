@@ -12,7 +12,7 @@ use crate::prelude::*;
 use core::fmt::Write as _;
 
 use super::headroom::{Headroom, Outside, SiteRow, Upside};
-use super::stats::Interval;
+use metrale_stats::mbb::Interval;
 
 /// 2026-10-22: Rows of the "top sites" table.
 pub const TOP: usize = 10;

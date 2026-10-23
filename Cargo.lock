@@ -1955,6 +1955,7 @@ dependencies = [
  "metrale-kernel-root",
  "metrale-kv-codec",
  "metrale-precision",
+ "metrale-stats",
  "serde",
  "serde_json",
  "sha2 0.11.0",

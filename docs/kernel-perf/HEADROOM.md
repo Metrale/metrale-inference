@@ -169,18 +169,10 @@ a 95% interval, computed in `crates/circuit/src/hardware/headroom_ci.rs`:
 - **No series, no interval.** A capture without series is labelled "preliminary, n=1 (no CI)".
   Its interval cells read `–`, and no interval is ever invented.
 
-**Consolidation (one source of truth).** `crates/circuit/src/hardware/stats.rs` is interim. The
-shared crate `metrale-stats` (branch `kernel-energy`, a placeholder as of 2026-10-22) is to hold
-BCa and block bootstrap, HAC ESS, mixed effects, TOST and Holm/BH. `stats.rs` uses the names it
-is to export: `Interval`, `SplitMix64`, `median`, `block_len`, `block_resample`,
-`percentile_ci`, `hac_variance_of_mean`. The merge has five steps:
-
-1. Move these functions and their tests into `metrale-stats`, or map them onto its equivalents.
-2. Add the dependency to metrale-circuit (both are no_std).
-3. Change the `use super::stats::…` line in `headroom_ci.rs`.
-4. Delete `stats.rs`.
-5. Check that the golden headroom reports are byte-identical. With the same seed and RNG they
-   must be; if a different RNG is adopted, regenerate the reports deliberately.
+**Statistics (one source of truth).** Headroom's moving-block bootstrap, percentile intervals,
+median and HAC variance are `metrale_stats::mbb` (crate `crates/stats`, merged from `kernel-energy`
+on 2026-10-23; the interim `hardware/stats.rs` was deleted). Same SplitMix64 stream and seed, so
+the golden reports stayed byte-identical (`cargo test -p met circuit_headroom`).
 
 ## Tools that complement it, per platform, and how they feed `--trace`
 
