@@ -639,6 +639,14 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 |---|---|---|---|---|---|---|---|---|---|---|
 | gb10 | nvidia/GLM-5.3-Flash-NVFP4 | decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k · MTP routed gate or up slots=8 N=704 K=4096 | 65.78 | 52.19 | memory | 79.3% |  |  |  | nsys f13_p1k.sqlite @ c5b9a80e6 (fast13: binary f4735654, profile glm53-tp3-512k-fast13 = fast12 recipe), dgx1 rank 0, 2026-10-22 — MTP routed gate or up slots=8 N=704 K=4096; n=494 calls, 0.3% of regime kernel time; peak class bf16; W4A16 NVFP4 weight (E2M1 + UE4M3/16), BF16 act, 8 experts; median solo 61.30 us (after every earlier-launched kernel ended: PDL wait or concurrent fork excluded); TP=3 rank 0, W4A4 experts, w4a16 dense, w8a8 DSA, fp8_e4m3 KV, MTP 1 draft forced, shared fork 2; nsys --cuda-graph-trace=node, 8 s window of the warm repeat; kernel times include PDL/fork overlap waits (see solo time) |
 
+<a id="m-kernels-gb10-common-w4a16-gemv-pipe-cu-w4a16-gemv-pipe-m1"></a>
+
+### `w4a16_gemv_pipe_m1` — [kernels/gb10/common/w4a16_gemv_pipe.cu](../../kernels/gb10/common/w4a16_gemv_pipe.cu#L316)
+
+| HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
+|---|---|---|---|---|---|---|---|---|---|---|
+| gb10 | nvidia/GLM-5.3-Flash-NVFP4 | microbench steady-state R=1 · KDA in-proj q\|k\|v\|f_a\|b\|g_a M=1 N=8726 K=4096 | 83.97 | 80.84 | memory | 96.3% | 4.313 | 50.1 | 18.1% | kernel_energy_loop @ 958438318 (wt-kenergy), spark-28c2, 2026-10-22; trace docs/kernel-perf/energy/glm-5.3-flash__w4a16_gemv_pipe_m1__kda-in-proj__r1__spark-28c2__2026-10-22.trace.csv — energy microbench: CUDA graph of 16 launches over NVFP4 weights rotated across 128 MB, host sync per replay; 2 s warm-up then I L I L I L I, 10 s windows, 3 repeats; meters: NVML counter, NVML sensor, nvidia-smi (hwmon absent: no power inputs on GB10); clock64 2555 MHz before the run; full (unsharded) projection group, not the TP=3 rank shard |
+
 <a id="m-kernels-gb10-common-w4a16-gemv-pipe-cu-w4a16-gemv-pipe-m2"></a>
 
 ### `w4a16_gemv_pipe_m2` — [kernels/gb10/common/w4a16_gemv_pipe.cu](../../kernels/gb10/common/w4a16_gemv_pipe.cu#L317)
