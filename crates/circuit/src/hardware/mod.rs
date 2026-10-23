@@ -32,6 +32,7 @@ pub mod headroom;
 pub mod headroom_ci;
 mod headroom_model;
 mod headroom_render;
+mod headroom_shares;
 pub mod headroom_sites;
 mod headroom_svg;
 pub mod headroom_trace;
@@ -43,7 +44,6 @@ mod render;
 mod render_matrix;
 mod render_routes;
 pub mod sources;
-pub mod stats;
 pub mod tc_policy;
 mod tc_policy_render;
 
@@ -68,10 +68,10 @@ use crate::venn::Class;
 use crate::venn::roofline::CostError;
 
 pub use device::{Device, Registry, parse_devices};
-pub use model::{CircuitSource, InstancesSource, ModelSpec, ModelUnderPlan, PrecisionChoice};
-pub use model_checkpoint::CheckpointSource;
 pub use headroom_render::render_headroom;
 pub use headroom_svg::{Ceilings, roofline_svg, waterfall_svg};
+pub use model::{CircuitSource, InstancesSource, ModelSpec, ModelUnderPlan, PrecisionChoice};
+pub use model_checkpoint::CheckpointSource;
 pub use render::render_report;
 pub use render_matrix::{PortList, port_lists, summary_row};
 pub use render_routes::plan_text;
@@ -384,5 +384,11 @@ pub fn build_headroom(
             Ok(p)
         })
         .collect::<Result<Vec<_>, HwError>>()?;
-    headroom::headroom(&resolved, &model.circuit, &policy.settings, &planned, inputs)
+    headroom::headroom(
+        &resolved,
+        &model.circuit,
+        &policy.settings,
+        &planned,
+        inputs,
+    )
 }

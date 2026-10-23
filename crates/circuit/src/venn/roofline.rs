@@ -222,7 +222,11 @@ pub(crate) fn peak_tflops(c: &Circuit, n: &Node, r: &Roofline) -> f64 {
 
 /// 2026-10-22: The edges whose bytes [`node_cost`] counts for `n` at `rows` rows, each with its
 /// bytes: every input and output, except a contiguous split's (a view, no traffic).
-pub(crate) fn edge_traffic(c: &Circuit, n: &Node, rows: u64) -> Result<Vec<(usize, f64)>, CostError> {
+pub(crate) fn edge_traffic(
+    c: &Circuit,
+    n: &Node,
+    rows: u64,
+) -> Result<Vec<(usize, f64)>, CostError> {
     let contiguous_split =
         n.op == OpKind::Split && n.params.get("layout").map(String::as_str) == Some("contiguous");
     if contiguous_split {

@@ -122,6 +122,15 @@ fn pooling_keeps_captures_apart_and_refuses_different_configurations() {
         "{}",
         h.uncertainty
     );
+    b.plan.kv_basis = Some("the second capture's own usage file".into());
+    super::super::headroom_trace::pool(&[a.clone(), b.clone()]).expect("a basis is provenance");
+    let mut c = b.clone();
+    c.plan.execution.values_mut().for_each(|e| {
+        e.by = super::super::headroom_trace::ExecutedBy::Plan;
+        e.sites = vec!["*".into()];
+    });
+    let e = super::super::headroom_trace::pool(&[a.clone(), c]).unwrap_err();
+    assert!(e.contains("would mix configurations"), "{e}");
     b.plan.kv_tokens = Some(7);
     let e = super::super::headroom_trace::pool(&[a, b]).unwrap_err();
     assert!(e.contains("would mix configurations"), "{e}");

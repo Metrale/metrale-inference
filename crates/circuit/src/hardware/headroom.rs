@@ -244,6 +244,8 @@ pub fn headroom(
         });
         o
     });
+    let run_names: Vec<String> = runs.iter().map(run_name).collect();
+    let shares = super::headroom_shares::plan_shares(&rows, &run_names, trace)?;
     let mut totals = totals(&rows, &outside, step_us, tokens);
     totals.ci = step_ci.as_ref().map(|c| c.totals.clone());
     let uncertainty = match (trace, &step_ci) {
@@ -285,7 +287,7 @@ pub fn headroom(
             fp8_tflops: r.roofline.roofline.fp8_tflops,
             nvfp4_tflops: r.roofline.roofline.nvfp4_tflops,
         },
-        runs: runs.iter().map(run_name).collect(),
+        runs: run_names,
         kv_tokens: kv,
         tokens_per_step: inputs.tokens_per_step.clone(),
         launch_floor_us: inputs.launch_floor_us.clone(),
@@ -298,6 +300,7 @@ pub fn headroom(
         outside,
         curve,
         totals,
+        shares,
         uncertainty,
     })
 }

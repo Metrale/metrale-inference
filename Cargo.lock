@@ -1858,13 +1858,16 @@ dependencies = [
  "anyhow",
  "base64 0.23.1",
  "futures",
+ "metrale-abstract-io",
  "metrale-closure",
  "metrale-config",
  "metrale-governance",
  "metrale-host-probe",
  "metrale-io-host-mem",
  "metrale-io-host-std",
+ "metrale-power",
  "metrale-serve-identity",
+ "metrale-stats",
  "parking_lot",
  "ring",
  "serde",
@@ -1952,6 +1955,7 @@ dependencies = [
  "metrale-kernel-root",
  "metrale-kv-codec",
  "metrale-precision",
+ "metrale-stats",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -2035,19 +2039,24 @@ dependencies = [
  "anyhow",
  "half",
  "memmap2",
+ "metrale-abstract-io",
  "metrale-cache",
  "metrale-comm",
  "metrale-config",
  "metrale-cudarc",
  "metrale-gpu-runtime",
+ "metrale-io-host-power",
  "metrale-io-host-std",
  "metrale-kernels",
  "metrale-kv-codec",
  "metrale-kv-tq128",
  "metrale-model-arch",
  "metrale-model-layers",
+ "metrale-power",
  "metrale-settings",
+ "metrale-stats",
  "metrale-target-defaults",
+ "metrale-telemetry",
  "safetensors",
  "serde_json",
  "tokenizers",
@@ -2133,6 +2142,15 @@ version = "1.0.0-beta-preview"
 dependencies = [
  "metrale-abstract-io",
  "rand_chacha",
+]
+
+[[package]]
+name = "metrale-io-host-power"
+version = "1.0.0-beta-preview"
+dependencies = [
+ "metrale-abstract-io",
+ "metrale-error",
+ "metrale-power",
 ]
 
 [[package]]
@@ -2304,6 +2322,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "metrale-power"
+version = "1.0.0-beta-preview"
+dependencies = [
+ "libm",
+ "metrale-abstract-io",
+ "metrale-error",
+ "metrale-stats",
+ "sha2 0.11.0",
+]
+
+[[package]]
 name = "metrale-precision"
 version = "1.0.0-beta-preview"
 dependencies = [
@@ -2379,6 +2408,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "metrale-stats"
+version = "1.0.0-beta-preview"
+dependencies = [
+ "libm",
+ "metrale-error",
+ "serde",
+]
+
+[[package]]
 name = "metrale-storage"
 version = "1.0.0-beta-preview"
 dependencies = [
@@ -2416,7 +2454,11 @@ dependencies = [
 name = "metrale-telemetry"
 version = "1.0.0-beta-preview"
 dependencies = [
+ "libloading",
+ "metrale-abstract-io",
+ "metrale-error",
  "metrale-gpu-sys",
+ "metrale-power",
  "serde",
  "serde_json",
  "tracing",

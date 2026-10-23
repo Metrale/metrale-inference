@@ -41,6 +41,15 @@ def _load(path: Path) -> dict:
         return tomllib.load(f)
 
 
+def rooflines(root: Path) -> dict[str, dict]:
+    """hardware -> the [roofline] table of kernels/<hw>/common/KERNEL_FAMILIES.toml (SSOT for
+    the energy-floor constants), for every hardware directory that has one."""
+    out = {}
+    for f in sorted((root / "kernels").glob("*/common/KERNEL_FAMILIES.toml")):
+        out[f.parent.parent.name] = _load(f).get("roofline", {})
+    return out
+
+
 def build(root: Path) -> model.Model:
     inv = inventory.build(root)
     crates = {
@@ -54,6 +63,7 @@ def build(root: Path) -> model.Model:
         _load(root / DATA / "tradeoffs.toml"),
         _load(root / DATA / "measurements.toml"),
         crates,
+        rooflines(root),
     )
 
 

@@ -76,7 +76,16 @@ impl Arm {
             .collect();
         let slots = up(gpu, &slots)?;
         let ctx = fwd.ctx(gpu, false, false, None);
-        l.write_kv_rows_flat(h, m, self.st.as_mut(), &mut self.kv, pos, slots, &ctx, stream(gpu))
+        l.write_kv_rows_flat(
+            h,
+            m,
+            self.st.as_mut(),
+            &mut self.kv,
+            pos,
+            slots,
+            &ctx,
+            stream(gpu),
+        )
     }
 
     /// 2026-10-21: One row at `pos` without its output (`write_kv_row`).
@@ -110,7 +119,17 @@ impl Arm {
             .then(|| meta(gpu, &[(pos, self.bt.as_slice())]))
             .transpose()?;
         let ctx = fwd.ctx(gpu, capture, true, m);
-        l.decode_k(h, 1, self.st.as_mut(), &mut self.kv, pos, &mut self.bt, &ctx, stream(gpu), false)?;
+        l.decode_k(
+            h,
+            1,
+            self.st.as_mut(),
+            &mut self.kv,
+            pos,
+            &mut self.bt,
+            &ctx,
+            stream(gpu),
+            false,
+        )?;
         read(gpu, h, HIDDEN * 2)
     }
 }
@@ -170,7 +189,10 @@ fn gate(gpu: &dyn GpuBackend, fwd: &Fwd, l: &Glm5NextDsaLayer, rng: &mut Lcg) ->
     // differ from the plain arm's.
     let (pk, n) = {
         let s = b.state()?;
-        (s.pool_keys, (s.capacity() / cfg().index_kpool) * cfg().index_head_dim * 4)
+        (
+            s.pool_keys,
+            (s.capacity() / cfg().index_kpool) * cfg().index_head_dim * 4,
+        )
     };
     gpu.memset(pk, 0x3f, n)?;
     let x = rng.bf16_bytes(HIDDEN, 1.0);

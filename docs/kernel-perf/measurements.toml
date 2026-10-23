@@ -3927,3 +3927,52 @@ pct_of_floor = 84.24
 source = "nsys f13_p1k.sqlite @ c5b9a80e6 (fast13: binary f4735654, profile glm53-tp3-512k-fast13 = fast12 recipe), dgx1 rank 0, 2026-10-22"
 notes = "routed down union slots=16 N=4096 K=704; n=10343 calls, 9.3% of regime kernel time; peak class fp4; D=13.854 union experts (measured: mean distinct experts of the 2-row verify union over 27972 layer-calls (666 verify launches x 42 MoE layers), METRALE_GLM_LAYER_DUMP moe_ids, same p1k prompt, binary dcaefeec (e586b7c3a), dgx1, 2026-10-22) x down [4096,704] at compact scales; slot activations stored 768 wide; median solo 102.56 us (after every earlier-launched kernel ended: PDL wait or concurrent fork excluded); TP=3 rank 0, W4A4 experts, w4a16 dense, w8a8 DSA, fp8_e4m3 KV, MTP 1 draft forced, shared fork 2; nsys --cuda-graph-trace=node, 8 s window of the warm repeat; kernel times include PDL/fork overlap waits (see solo time)"
 
+[[m]]
+kernel = "glm-5.3-flash::w4a16_gemv_pipe_m1"
+file = "kernels/gb10/common/w4a16_gemv_pipe.cu"
+hardware = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4"
+regime = "microbench steady-state R=1 · KDA in-proj q|k|v|f_a|b|g_a M=1 N=8726 K=4096"
+time_us = 83.972
+bytes = 20130348
+flops = 71483392
+bound = "memory"
+floor_us = 80.845
+pct_of_floor = 96.28
+source = "kernel_energy_loop @ 958438318 (wt-kenergy), spark-28c2, 2026-10-22; trace docs/kernel-perf/energy/glm-5.3-flash__w4a16_gemv_pipe_m1__kda-in-proj__r1__spark-28c2__2026-10-22.trace.csv"
+notes = "energy microbench: CUDA graph of 16 launches over NVFP4 weights rotated across 128 MB, host sync per replay; 2 s warm-up then I L I L I L I, 10 s windows, 3 repeats; meters: NVML counter, NVML sensor, nvidia-smi (hwmon absent: no power inputs on GB10); clock64 2555 MHz before the run; full (unsharded) projection group, not the TP=3 rank shard"
+energy_j = 0.00431338
+energy_dyn_j = 0.0032588
+avg_w = 50.0639
+static_w = 12.24
+energy_ci_j = [0.00420799, 0.00441876]
+energy_dyn_ci_j = [0.00320655, 0.00331105]
+avg_w_ci = [48.9205, 51.2072]
+energy_ci_level = 0.95
+energy_ci_method = "envelope(varcomp-satterthwaite, bca-hierarchical-stationary-bootstrap)"
+energy_method = "steady_state"
+energy_samples = 3
+energy_boxes = 1
+energy_launches = 348224
+energy_window_ms = 30002.0
+energy_ess = 96.0876
+energy_outliers = 1
+energy_seed = 20261022
+energy_order = "abba:I L0 I L0 I L0 I"
+energy_label = "measured"
+sm_mhz = 2507.71
+temp_c = 59.0
+throttle_pct = 0.0
+power_source = "nvml_gpu_rail_counter"
+power_rail = "gpu_core"
+energy_by_source = { "nvidia_smi_power_draw_average" = 0.00492367, "nvml_gpu_rail_counter" = 0.00431338, "nvml_gpu_rail_sensor" = 0.00491651 }
+energy_dyn_by_source = { "nvidia_smi_power_draw_average" = 0.00362405, "nvml_gpu_rail_counter" = 0.0032588, "nvml_gpu_rail_sensor" = 0.00359349 }
+sensor_delta_pct = { "nvml_gpu_rail_counter~nvidia_smi_power_draw_average" = 14.1487, "nvml_gpu_rail_counter~nvml_gpu_rail_sensor" = 13.9828, "nvml_gpu_rail_sensor~nvidia_smi_power_draw_average" = 0.145532 }
+energy_flags = ["ci_methods_disagree:w", "ci_methods_disagree:j_total", "ci_methods_disagree:j_dyn", "sensor_delta>10%:nvml_gpu_rail_counter~nvml_gpu_rail_sensor", "sensor_delta>10%:nvml_gpu_rail_counter~nvidia_smi_power_draw_average", "warmup_detected:window=1:updates=45:untrimmed", "warmup_detected:window=3:updates=36:untrimmed", "warmup_detected:window=5:updates=44:untrimmed"]
+energy_agreement = { "nvml_gpu_rail_counter~nvidia_smi_power_draw_average" = { deming_slope = 1.11215, deming_intercept_w = 1.47048, ba_bias_w = 4.25723, ba_loa_w = [0.0706377, 8.44382], n = 9 }, "nvml_gpu_rail_counter~nvml_gpu_rail_sensor" = { deming_slope = 1.10271, deming_intercept_w = 1.85849, ba_bias_w = 4.41064, ba_loa_w = [0.597698, 8.22359], n = 9 }, "nvml_gpu_rail_sensor~nvidia_smi_power_draw_average" = { deming_slope = 1.00856, deming_intercept_w = -0.403738, ba_bias_w = -0.153415, ba_loa_w = [-0.907689, 0.600858], n = 9 } }
+energy_fingerprint = "gpu=NVIDIA GB10; driver=580.159.03; vbios=9A.0B.25.00.00; kernel=6.17.0-1026-nvidia; clock64=2555 MHz; box=spark-28c2; binary=wt-kenergy 958438318"
+energy_source = "kernel_energy_loop 958438318 on spark-28c2, 2026-10-22"
+trace_sha256 = "69f635cf0dc185af48c7450e56816c91c771ff46e874d0c485066011613bca7c"
+energy_floor_class = "cuda_core_fp32"
+energy_floor_j = 0.00058854584
+pct_of_energy_floor = 18.06

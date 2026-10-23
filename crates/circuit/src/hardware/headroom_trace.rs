@@ -42,6 +42,86 @@ pub struct TracePlan {
     pub kv_tokens: Option<u64>,
     /// 2026-10-22: Where the KV length comes from.
     pub kv_basis: Option<String>,
+    /// 2026-10-23: How the captured serve launched each run (`mode n=rows`): from the plan or by
+    /// the hand-written layer code. Required by [`Trace::check`]: the plan-executed share is a
+    /// fact about the serve, never assumed.
+    #[serde(default)]
+    pub execution: BTreeMap<String, RunExecution>,
+}
+
+impl TracePlan {
+    /// 2026-10-23: What makes two captures one configuration: the dims, the KV length and who
+    /// executed each run. The bases and reasons are provenance (they name each capture's own usage
+    /// file), so they may differ between captures that pool.
+    fn configuration(
+        &self,
+    ) -> (
+        &BTreeMap<String, u64>,
+        Option<u64>,
+        Vec<(&String, ExecutedBy, &[String])>,
+    ) {
+        let exec = self
+            .execution
+            .iter()
+            .map(|(r, e)| (r, e.by, e.sites.as_slice()))
+            .collect();
+        (&self.dims, self.kv_tokens, exec)
+    }
+}
+
+/// 2026-10-23: Who issued a run's launches in the captured serve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutedBy {
+    /// 2026-10-23: The circuit executor, from the fused plan.
+    Plan,
+    /// 2026-10-23: The model's own layer code (its hand-written dispatch).
+    Legacy,
+}
+
+impl ExecutedBy {
+    /// 2026-10-23: The spelling in reports.
+    pub fn name(self) -> &'static str {
+        match self {
+            ExecutedBy::Plan => "plan",
+            ExecutedBy::Legacy => "legacy",
+        }
+    }
+}
+
+/// 2026-10-23: How one run was executed: by whom, which of its sites the executor issued when
+/// it issued only some (`["*"]` is every site), and why (the mode flag, or the reason no
+/// executor exists).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunExecution {
+    /// 2026-10-23: Plan or legacy.
+    pub by: ExecutedBy,
+    /// 2026-10-23: The sites (`block [locals]` as the headroom names them) the executor issued:
+    /// non-empty under `plan`, empty under `legacy`.
+    #[serde(default)]
+    pub sites: Vec<String>,
+    /// 2026-10-23: Why: the serve's declared mode, or the missing capability.
+    pub why: String,
+}
+
+impl RunExecution {
+    /// 2026-10-23: Refuse a statement that cannot be true of a serve.
+    fn check(&self, run: &str) -> Result<(), String> {
+        if self.why.trim().is_empty() {
+            return Err(format!("trace execution of `{run}` states no `why`"));
+        }
+        match (self.by, self.sites.is_empty()) {
+            (ExecutedBy::Plan, true) => Err(format!(
+                "trace execution of `{run}` is `plan` but names no sites (`[\"*\"]` is every site)"
+            )),
+            (ExecutedBy::Legacy, false) => Err(format!(
+                "trace execution of `{run}` is `legacy` but names executed sites {:?}",
+                self.sites
+            )),
+            _ => Ok(()),
+        }
+    }
 }
 
 /// 2026-10-22: One kernel function's time in the window.
@@ -121,6 +201,16 @@ impl Trace {
         }
         if self.source.trim().is_empty() {
             return Err("trace has no `source` fingerprint".into());
+        }
+        if self.plan.execution.is_empty() {
+            return Err(
+                "trace states no `[plan.execution]`: which runs the captured serve executed from \
+                 the plan (scripts/headroom_trace.py --execution)"
+                    .into(),
+            );
+        }
+        for (run, e) in &self.plan.execution {
+            e.check(run)?;
         }
         if self.steps == 0 || self.window_us.is_nan() || self.window_us <= 0.0 {
             return Err(format!(
@@ -223,7 +313,7 @@ pub fn pool(traces: &[Trace]) -> Result<Trace, String> {
     for t in traces {
         t.check()?;
         let same = t.step_kernel == first.step_kernel
-            && t.plan == first.plan
+            && t.plan.configuration() == first.plan.configuration()
             && t.tokens_per_step.as_ref().map(|x| x.value)
                 == first.tokens_per_step.as_ref().map(|x| x.value);
         if !same {
@@ -312,7 +402,7 @@ pub fn pool(traces: &[Trace]) -> Result<Trace, String> {
         segments: traces.iter().map(|t| t.steps).collect(),
         tokens_per_step: first.tokens_per_step.clone(),
         launch_floor_us: (floors.len() == traces.len())
-            .then(|| super::stats::median(&floors))
+            .then(|| metrale_stats::mbb::median(&floors))
             .flatten()
             .map(|v| Stated {
                 value: v,

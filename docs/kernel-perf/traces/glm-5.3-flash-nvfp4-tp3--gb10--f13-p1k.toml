@@ -14,6 +14,10 @@ dims_basis = "rank 0 of TP=3: head split 22/22/20 (glm5next_kda/tp.rs), shared 7
 kv_tokens = 1646
 kv_basis = "prompt 1038 + ~608 tokens decoded by the window midpoint (12 s into the request at its mean 51.1 tok/s; prof/f13-p1k.usage)"
 
+[plan.execution]
+"verify n=2" = { by = "legacy", why = "no GLM emitters in the circuit executor (crates/model-layers/src/circuit_exec/emitters/mod.rs), and the circuit plans the whole model, not a TP rank (kernels/circuits/INSTANCES.toml:176)" }
+"draft n=1" = { by = "legacy", why = "no GLM emitters in the circuit executor (crates/model-layers/src/circuit_exec/emitters/mod.rs), and the circuit plans the whole model, not a TP rank (kernels/circuits/INSTANCES.toml:176)" }
+
 [[kernel]]
 kernel = "w4a4_gemv_mx8_moe_union_sweep_sl_cs"
 site = "moe.experts_gate_up"

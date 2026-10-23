@@ -113,12 +113,17 @@ pub fn new_launch(
 /// both signs (overflow to inf, inf - inf), sparse large values among zeros.
 fn inputs(rng: &mut Rng, m: usize, k: usize) -> Vec<(&'static str, Vec<u8>)> {
     let fill = |rng: &mut Rng, f: &dyn Fn(u32) -> u16| -> Vec<u8> {
-        (0..m * k).flat_map(|_| f(rng.next()).to_le_bytes()).collect()
+        (0..m * k)
+            .flat_map(|_| f(rng.next()).to_le_bytes())
+            .collect()
     };
     vec![
         ("random", bf16_rows(rng, m, k)),
         ("signed zeros", fill(rng, &|u| ((u & 1) << 15) as u16)),
-        ("max magnitude", fill(rng, &|u| (((u & 1) << 15) | 0x7F7F) as u16)),
+        (
+            "max magnitude",
+            fill(rng, &|u| (((u & 1) << 15) | 0x7F7F) as u16),
+        ),
         (
             "sparse large",
             fill(rng, &|u| {
@@ -179,7 +184,9 @@ pub fn byte_gate(
         for m in [1u32, 2] {
             for (case, a_host) in inputs(rng, m as usize, *k as usize) {
                 for adversarial in [false, true] {
-                    let mut ws: Vec<_> = (0..ns.len()).map(|i| pool.weight(gi + i, ns[i], *k)).collect();
+                    let mut ws: Vec<_> = (0..ns.len())
+                        .map(|i| pool.weight(gi + i, ns[i], *k))
+                        .collect();
                     if adversarial {
                         ws[0].weight_scale = adv;
                     }

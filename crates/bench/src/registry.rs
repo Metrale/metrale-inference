@@ -10,8 +10,8 @@
 use crate::benchmark::BenchmarkDescriptor;
 use crate::benchmarks::{
     agentic, bfcl, concurrency, contamination, decode_floor, default_tier_boot, kat_equality,
-    mlperf_agentic, quick_speed, scheduler_equivalence, serve_matrix, spec_cost, ssm_poison, ttft,
-    video, vision,
+    kernel_energy, mlperf_agentic, quick_speed, scheduler_equivalence, serve_matrix, spec_cost,
+    ssm_poison, ttft, video, vision,
 };
 
 /// 2026-09-26: Every benchmark, in list order. A compile-time table of
@@ -26,6 +26,9 @@ const ALL: &[&BenchmarkDescriptor] = &[
     // 2026-10-04: A measurement tool for the speculative cost model, excused from the PR gate
     // set in `gate::coverage::NOT_REQUIRED`.
     &spec_cost::DESCRIPTOR,
+    // 2026-10-22: A measurement tool (per-kernel J/launch and W, no serve), excused from the PR
+    // gate set in `gate::coverage::NOT_REQUIRED`.
+    &kernel_energy::DESCRIPTOR,
     &concurrency::DESCRIPTOR,
     &concurrency::DFLASH2_DESCRIPTOR,
     // 2026-09-26: The MoE flagship's concurrency ladder, listed in

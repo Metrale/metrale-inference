@@ -21,13 +21,15 @@
 
 #[path = "common/w4a16_seg_fixture.rs"]
 mod fixture;
-#[path = "common/graph_timing.rs"]
-mod timing;
 #[path = "common/w4a16_pipe_gate.rs"]
 mod gate;
+#[path = "common/graph_timing.rs"]
+mod timing;
 
 use anyhow::Result;
-use fixture::{GROUPS, Pool, ROUNDS, Rng, STREAM_BYTES, bf16_rows, nvfp4_bytes, segs, stat, upload};
+use fixture::{
+    GROUPS, Pool, ROUNDS, Rng, STREAM_BYTES, bf16_rows, nvfp4_bytes, segs, stat, upload,
+};
 use gate::{Arm, old_launch};
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
@@ -41,7 +43,9 @@ fn main() -> Result<()> {
     let kernels = gate::Kernels::load(&g)?;
     let mut rng = Rng(0x7069_7065_6265_6e63);
     let pool = Pool::new(&g, &mut rng)?;
-    let outs: Vec<DevicePtr> = (0..6).map(|_| g.alloc(4 * 11264 * 2)).collect::<Result<_>>()?;
+    let outs: Vec<DevicePtr> = (0..6)
+        .map(|_| g.alloc(4 * 11264 * 2))
+        .collect::<Result<_>>()?;
 
     gate::byte_gate(&g, s, &kernels, &pool, &outs, &mut rng)?;
     gate::negative_controls(&g, s, &kernels, &pool, &outs, &mut rng)?;
@@ -62,7 +66,10 @@ fn main() -> Result<()> {
             }
             tot.resize(arms.len(), 0.0f64);
             let bytes = nvfp4_bytes(ns, k);
-            let per = ns.iter().map(|&n| n as usize * k as usize / 2).sum::<usize>();
+            let per = ns
+                .iter()
+                .map(|&n| n as usize * k as usize / 2)
+                .sum::<usize>();
             let copies = STREAM_BYTES.div_ceil(per).clamp(4, 2048);
             let mut med: Vec<Vec<f64>> = vec![Vec::new(); arms.len()];
             for _ in 0..ROUNDS {
@@ -91,7 +98,10 @@ fn main() -> Result<()> {
             }
             println!(
                 "M={m} {name:<20} K={k:<5} old    {:7.2} us [{:.2}..{:.2}] {:4.0} GB/s",
-                old.0, old.1, old.2, bytes / old.0 / 1e3
+                old.0,
+                old.1,
+                old.2,
+                bytes / old.0 / 1e3
             );
             for (ai, &arm) in arms.iter().enumerate() {
                 let t = stat(&mut med[ai]);
@@ -103,7 +113,11 @@ fn main() -> Result<()> {
                     "{:<34} {:<26} {:7.2} us [{:.2}..{:.2}] {:4.0} GB/s  x{:.3}",
                     "",
                     gate::arm_name(arm, sms),
-                    t.0, t.1, t.2, bytes / t.0 / 1e3, old.0 / t.0
+                    t.0,
+                    t.1,
+                    t.2,
+                    bytes / t.0 / 1e3,
+                    old.0 / t.0
                 );
             }
         }

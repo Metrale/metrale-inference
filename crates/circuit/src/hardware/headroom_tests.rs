@@ -13,7 +13,9 @@ use std::collections::BTreeMap;
 
 use super::hardware_tests::W4A16;
 use super::headroom::{Bound, Headroom, HeadroomError, Inputs, Measured, Outside, saved_us};
-use super::headroom_trace::{Stated, Trace, TraceKernel, TracePlan, parse_trace};
+use super::headroom_trace::{
+    ExecutedBy, RunExecution, Stated, Trace, TraceKernel, TracePlan, parse_trace,
+};
 use super::test_fixture as fx;
 use crate::rules::Mode;
 use crate::venn::Run;
@@ -57,8 +59,20 @@ fn trace(kernels: Vec<TraceKernel>) -> Trace {
         segments: Vec::new(),
         tokens_per_step: None,
         launch_floor_us: None,
-        plan: TracePlan::default(),
+        plan: TracePlan {
+            execution: BTreeMap::from([("decode n=1".to_string(), legacy())]),
+            ..TracePlan::default()
+        },
         kernels,
+    }
+}
+
+/// 2026-10-23: The toy serve's statement: decode ran on the layer code.
+fn legacy() -> RunExecution {
+    RunExecution {
+        by: ExecutedBy::Legacy,
+        sites: Vec::new(),
+        why: "test: no executor".into(),
     }
 }
 
@@ -369,6 +383,8 @@ source = "nsys x.sqlite @ abc, box, date"
 step_kernel = "lm_head"
 steps = 2
 window_us = 200.0
+[plan.execution]
+"decode n=1" = { by = "legacy", why = "test" }
 [[kernel]]
 kernel = "lm_head"
 calls = 2
@@ -397,12 +413,33 @@ exclusive_us = 20.0
             good.replace("calls = 2", "calls = 2\nguess = 1"),
             "unknown field",
         ),
+        // 2026-10-23: The execution is a statement about the serve: required, and coherent.
+        (
+            good.replace(
+                "[plan.execution]\n\"decode n=1\" = { by = \"legacy\", why = \"test\" }\n",
+                "",
+            ),
+            "no `[plan.execution]`",
+        ),
+        (
+            good.replace("by = \"legacy\"", "by = \"plan\""),
+            "names no sites",
+        ),
+        (
+            good.replace("why = \"test\"", "sites = [\"*\"], why = \"test\""),
+            "is `legacy` but names executed sites",
+        ),
+        (good.replace("why = \"test\"", "why = \" \""), "no `why`"),
     ];
     for (text, why) in bad {
         let e = parse_trace(&text).unwrap_err();
         assert!(e.contains(why), "{why}: {e}");
     }
 }
+
+/// 2026-10-23: The plan-share tests (headroom_shares) share these fixtures.
+#[path = "headroom_shares_tests.rs"]
+mod shares;
 
 /// 2026-10-22: The interval tests (headroom_ci) share these fixtures.
 #[path = "headroom_ci_tests.rs"]
