@@ -24,6 +24,7 @@ use crate::prelude::*;
 pub mod avail;
 mod avail_paste;
 pub mod class;
+pub mod critical;
 pub mod critical_hw;
 pub mod device;
 pub mod estimate;
@@ -361,16 +362,15 @@ pub fn build_report(
     })
 }
 
-/// 2026-10-22: The headroom of `model` on `device_id` for the step that runs `runs`
-/// ([`headroom::headroom`]), each run planned as [`plan_one`] plans it.
-pub fn build_headroom(
+/// 2026-10-23: `model` resolved on `device_id`, its class policy, and each of `runs` planned as
+/// [`plan_one`] plans it: what the headroom and the what-if both cost.
+fn plan_runs(
     registry: &Registry,
     device_id: &str,
     tree: &dyn KernelTree,
     model: &ModelUnderPlan,
     runs: &[crate::venn::Run],
-    inputs: &headroom::Inputs<'_>,
-) -> Result<headroom::Headroom, headroom::HeadroomError> {
+) -> Result<(plan::Resolved, crate::fuser::Policy, Vec<plan::Planned>), HwError> {
     let resolved = plan::resolve(registry, device_id, tree, model)?;
     let (policy, _) = model::policy_on_class(
         &model.policy,
@@ -385,6 +385,20 @@ pub fn build_headroom(
             Ok(p)
         })
         .collect::<Result<Vec<_>, HwError>>()?;
+    Ok((resolved, policy, planned))
+}
+
+/// 2026-10-22: The headroom of `model` on `device_id` for the step that runs `runs`
+/// ([`headroom::headroom`]), each run planned as [`plan_one`] plans it.
+pub fn build_headroom(
+    registry: &Registry,
+    device_id: &str,
+    tree: &dyn KernelTree,
+    model: &ModelUnderPlan,
+    runs: &[crate::venn::Run],
+    inputs: &headroom::Inputs<'_>,
+) -> Result<headroom::Headroom, headroom::HeadroomError> {
+    let (resolved, policy, planned) = plan_runs(registry, device_id, tree, model, runs)?;
     headroom::headroom(
         &resolved,
         &model.circuit,
@@ -392,4 +406,31 @@ pub fn build_headroom(
         &planned,
         inputs,
     )
+}
+
+/// 2026-10-23: The headroom of the step (as [`build_headroom`]) and, for every launch group of
+/// an event capture, the `(run, site)` of the headroom row it is attributed to (`None`: outside
+/// the plan): the inputs of [`critical::analyze`].
+pub fn build_whatif_sites(
+    registry: &Registry,
+    device_id: &str,
+    tree: &dyn KernelTree,
+    model: &ModelUnderPlan,
+    runs: &[crate::venn::Run],
+    inputs: &headroom::Inputs<'_>,
+    groups: &[critical::capture::Group],
+) -> Result<(headroom::Headroom, Vec<Option<(String, String)>>), headroom::HeadroomError> {
+    let (resolved, policy, planned) = plan_runs(registry, device_id, tree, model, runs)?;
+    let h = headroom::headroom(&resolved, &model.circuit, &policy.settings, &planned, inputs)?;
+    let kv = inputs
+        .kv_tokens
+        .as_ref()
+        .map(|k| crate::num::sat_u64(k.value.max(1.0)));
+    let mut sites = Vec::new();
+    for p in &planned {
+        sites.extend(headroom_sites::launch_sites(&resolved, &model.circuit, &policy.settings, p, kv)?);
+    }
+    let of = critical::sites::group_sites(&resolved, &sites, groups)
+        .map_err(headroom::HeadroomError::Mismatch)?;
+    Ok((h, of))
 }

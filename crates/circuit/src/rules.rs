@@ -108,9 +108,13 @@ impl CommApi {
 
     /// 2026-10-23: Parse [`CommApi::name`].
     pub fn parse(s: &str) -> Option<Self> {
-        [CommApi::Exchange, CommApi::AllReduceRing, CommApi::Broadcast]
-            .into_iter()
-            .find(|a| a.name() == s)
+        [
+            CommApi::Exchange,
+            CommApi::AllReduceRing,
+            CommApi::Broadcast,
+        ]
+        .into_iter()
+        .find(|a| a.name() == s)
     }
 }
 
@@ -211,6 +215,11 @@ pub struct PatternOp {
     /// rule for one policy point of an op (a KDA recurrence, a gated delta rule with per-channel
     /// decay) is never taken by a node of another point that states it. Empty: any params.
     pub params: BTreeMap<String, String>,
+    /// 2026-10-23: For a collective element only: the size of the node's communicator group
+    /// (its `group` param) must pass this ([`dims::DimPred`]), so a rule for the engine's one-shot
+    /// path at three or more ranks is never taken by a two-rank group, which runs another path
+    /// (`metrale_comm::ar_path`). `None`: any group size.
+    pub ranks: Option<dims::DimPred>,
 }
 
 /// 2026-09-28: How many times a group's kernels launch per step.

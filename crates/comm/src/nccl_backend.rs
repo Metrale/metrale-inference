@@ -480,6 +480,5 @@ impl Drop for NcclBackend {
     }
 }
 
-mod ar_path;
 mod comm_impl;
 mod sendrecv;

@@ -32,6 +32,8 @@ pub mod install;
 pub mod kda;
 pub mod mhc;
 pub mod moe;
+#[cfg(test)]
+mod world_tests;
 
 /// 2026-10-23: The compile target the GLM emitters fill: one block instance's steps.
 #[derive(Debug, Default)]

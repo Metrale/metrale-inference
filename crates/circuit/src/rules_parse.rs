@@ -115,6 +115,7 @@ struct PatternFile {
     steps: BTreeMap<String, String>,
     #[serde(default)]
     params: BTreeMap<String, String>,
+    ranks: Option<super::dims::DimPredFile>,
 }
 
 /// 2026-09-28: Parse FUSIONS.toml text into rules, in file order. 2026-09-30: A file that
@@ -397,6 +398,22 @@ fn pattern_op(rule: &str, p: &PatternFile) -> Result<PatternOp, RuleError> {
             .map_err(|e| err(format!("step `{name}`: {e}")))?;
         steps.insert(kind, value);
     }
+    // 2026-10-23: `ranks` tests a collective's group size; on any other op it is a load error.
+    let ranks = match &p.ranks {
+        None => None,
+        Some(_)
+            if !matches!(
+                op,
+                OpKind::AllReduce | OpKind::AllGather | OpKind::Broadcast
+            ) =>
+        {
+            return Err(err(format!(
+                "`ranks` on `{}`, which is no collective",
+                op.name()
+            )));
+        }
+        Some(f) => Some(super::dims::parse_one("ranks", f).map_err(err)?),
+    };
     Ok(PatternOp {
         op,
         roles,
@@ -413,5 +430,6 @@ fn pattern_op(rule: &str, p: &PatternFile) -> Result<PatternOp, RuleError> {
         holds: fmt(&p.holds)?,
         steps,
         params: p.params.clone(),
+        ranks,
     })
 }

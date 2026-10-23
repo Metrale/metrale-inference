@@ -253,9 +253,19 @@ error_registry! {
         /// target) its host could not complete: (the host's reason, verbatim, since reports
         /// quote it).
         KernelTreeResolve = 0x0711 => "{}",
+        /// 2026-10-23: An event capture (`critical-trace/v1`) the critical-path model refuses:
+        /// (the capture's source, why).
+        CriticalCaptureInvalid = 0x0712 => "event capture {}: {}",
+        /// 2026-10-23: A what-if rewrite or backtest row that cannot be applied to the event
+        /// graph: (the rewrite or row, why).
+        WhatIfInvalid = 0x0713 => "what-if {}: {}",
         /// 2026-10-23: A shape the serve runs that no plan-executed site of this rank covers
         /// under `--forward circuit` on a tensor-parallel rank: (mode, rows, why).
         CircuitPlanUncovered = 0x0720 => "{} at {} rows has no plan coverage: {}",
+        /// 2026-10-23: A device count the circuit cannot be instantiated at: the engine splits
+        /// every declared part over all N ranks, and this part cannot run at N: (N, the part, the
+        /// dim, why: its degree bounds, unit or remainder policy).
+        CircuitRanksRefused = 0x0721 => "{} ranks: part `{}` (dim `{}`) cannot split: {}",
     }
     /// 2026-10-22: `0x0900–0x09FF`: power and energy (DESIGN-kernel-energy.md): the power port
     /// and its meters `0x0900–0x090F`, energy attribution `0x0910–0x091F`, power traces
