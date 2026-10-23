@@ -105,10 +105,14 @@ pub struct Verdict {
     pub id: String,
     /// 2026-10-23: Ledger rows.
     pub depends_on: Vec<String>,
-    /// 2026-10-23: Simulated step change, microseconds.
+    /// 2026-10-23: The prediction scored: the simulation with SM residency, the model that
+    /// passes the baseline gate (within 1% of the measured step), microseconds.
     pub predicted_us: f64,
     /// 2026-10-23: Max-plus step change (no contention), microseconds.
     pub maxplus_us: f64,
+    /// 2026-10-23: The simulation with SM residency and shared DRAM (not scored: its baseline
+    /// misses the measured step by more than 1%), microseconds.
+    pub dram_us: f64,
     /// 2026-10-23: Measured, interval.
     pub measured_us: f64,
     /// 2026-10-23: Interval low.
@@ -135,7 +139,7 @@ pub fn verdicts(spec: &Spec, w: &WhatIf, tag: &str) -> Vec<Verdict> {
         ) else {
             continue;
         };
-        let p = r.sim_delta_us;
+        let p = r.sim_sm_delta_us;
         let sign_ok = if m.lo > 0.0 {
             p > 0.0
         } else if m.hi < 0.0 {
@@ -149,6 +153,7 @@ pub fn verdicts(spec: &Spec, w: &WhatIf, tag: &str) -> Vec<Verdict> {
             depends_on: set.depends_on.clone(),
             predicted_us: p,
             maxplus_us: r.maxplus_delta_us,
+            dram_us: r.sim_delta_us,
             measured_us: m.us,
             lo: m.lo,
             hi: m.hi,

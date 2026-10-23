@@ -85,6 +85,14 @@ pub enum Rewrite {
         window_us: f64,
         basis: String,
     },
+    /// 2026-10-23: Confine every `select` kernel to `sms` SMs (a side-stream SM budget): one
+    /// wanting more holds at most `sms` and its work stretches by `wanted / sms`, its SM-time
+    /// unchanged (linear in SMs: pessimistic for a kernel that is bandwidth-bound below that).
+    Confine {
+        select: Vec<Sel>,
+        sms: f64,
+        basis: String,
+    },
 }
 
 /// 2026-10-23: What PDL-off adds to a successor's work beyond the ordinary launch latency.
@@ -272,6 +280,7 @@ impl Scenario {
             Rewrite::After {
                 select, wait_for, ..
             } => vec![select, wait_for],
+            Rewrite::Confine { select, .. } => select.iter().collect(),
         };
         if sels.iter().any(|s| s.site.is_none() && s.kernel.is_none()) {
             return Err(bad(
@@ -344,6 +353,7 @@ impl Scenario {
                 window_us,
                 ..
             } => self.after(select, wait_for, *window_us, lat)?,
+            Rewrite::Confine { select, sms, .. } => self.confine(select, *sms, r)?,
         };
         if n == 0 {
             return Err(bad(

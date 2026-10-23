@@ -12,6 +12,7 @@ use alloc::collections::BTreeMap;
 use super::graph::{Edge, EdgeKind, Node, NodeKind, f_of, ix, node_of, s_of};
 use super::maxplus::{Latency, median};
 use super::scenario::{PdlOffStats, Prologue, Scenario, Sel, bad};
+use super::sim::{Resources, cap_of};
 
 impl Scenario {
     pub(super) fn add(
@@ -245,5 +246,34 @@ impl Scenario {
             self.over.insert(ix(k), join);
         }
         Ok(n)
+    }
+
+    /// 2026-10-23: [`super::scenario::Rewrite::Confine`]; returns the kernels it confined.
+    pub(super) fn confine(
+        &mut self,
+        select: &[Sel],
+        sms: f64,
+        r: &Resources,
+    ) -> metrale_error::Result<usize> {
+        if !(sms.is_finite() && sms > 0.0 && sms <= r.sms) {
+            return Err(bad(
+                "confine",
+                format!("{sms} SMs is not in (0, {}]", r.sms),
+            ));
+        }
+        let hit: Vec<usize> = (0..self.g.nodes.len())
+            .filter(|&i| self.g.nodes[i].kind == NodeKind::Kernel)
+            .filter(|&i| select.iter().any(|s| self.matches(i, s)))
+            .collect();
+        for &i in &hit {
+            let want = cap_of(&self.g, i, r);
+            if want > sms {
+                let stretch = want / sms;
+                self.work[i] *= stretch;
+                self.solo[i] *= stretch;
+                self.cap.push((i, sms));
+            }
+        }
+        Ok(hit.len())
     }
 }

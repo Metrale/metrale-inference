@@ -86,6 +86,8 @@ pub struct RewriteResult {
     pub maxplus_delta_us: f64,
     /// 2026-10-23: Simulated step change, microseconds (+: slower).
     pub sim_delta_us: f64,
+    /// 2026-10-23: Simulated step change with SM residency only, microseconds (+: slower).
+    pub sim_sm_delta_us: f64,
     /// 2026-10-23: The five labels whose critical-chain time per step moved most (max-plus):
     /// `(label, before, after)`.
     pub shifts: Vec<(String, f64, f64)>,
@@ -309,14 +311,11 @@ pub fn analyze(c: &Capture, inp: &Inputs<'_>) -> metrale_error::Result<WhatIf> {
     let at = longest(g, &w);
     let model = step_us(g, &at);
     let sim = sim_step(&b.sc, &b.lat, &b.res);
-    let sim_sm = sim_step(
-        &b.sc,
-        &b.lat,
-        &Resources {
-            dram_bytes_per_us: f64::INFINITY,
-            ..b.res
-        },
-    );
+    let sm_only = Resources {
+        dram_bytes_per_us: f64::INFINITY,
+        ..b.res
+    };
+    let sim_sm = sim_step(&b.sc, &b.lat, &sm_only);
     let chain = critical_chain(g, &w, &at);
     let late = latest(g, &w, &at);
     let mut by_kind: BTreeMap<EdgeKind, f64> = BTreeMap::new();
@@ -429,6 +428,7 @@ pub fn analyze(c: &Capture, inp: &Inputs<'_>) -> metrale_error::Result<WhatIf> {
             places,
             maxplus_delta_us: maxplus_step(&sc, &b.lat) - model,
             sim_delta_us: sim_step(&sc, &b.lat, &b.res) - sim,
+            sim_sm_delta_us: sim_step(&sc, &b.lat, &sm_only) - sim_sm,
         });
     }
     Ok(WhatIf {

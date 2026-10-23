@@ -14,7 +14,7 @@ use super::dag::build;
 use super::fixture::diamond;
 use super::maxplus::{Latency, fit_latency, longest, step_us, work_in_context};
 use super::scenario::{Rewrite, Scenario, Sel};
-use super::sim::{DramCalibration, Resources, SmLimits};
+use super::sim::{DramCalibration, Resources, SmLimits, simulate, solo_work};
 
 fn scenario(c: &Capture) -> (Scenario, Latency) {
     let g = build(c, 1_000, 3_000).unwrap();
@@ -151,6 +151,7 @@ fn whatif(step: f64, id: &str, delta: f64) -> WhatIf {
         places: vec![1],
         maxplus_delta_us: delta,
         sim_delta_us: delta,
+        sim_sm_delta_us: delta,
         shifts: vec![],
     }];
     WhatIf {
@@ -233,4 +234,54 @@ fn a_spec_with_unknown_fields_or_schema_is_refused() {
             .code(),
         ErrorCode::WhatIfInvalid
     );
+}
+
+/// 2026-10-23: The simulated step of `sc` (SM residency, no DRAM: the diamond reads nothing).
+fn sim(sc: &Scenario, lat: &Latency) -> f64 {
+    let w = sc.sim_weights(lat);
+    step_us(
+        &sc.g,
+        &simulate(&sc.g, &w, &sc.solo, &sc.bytes, &sc.cap, &res()),
+    )
+}
+
+#[test]
+fn confining_an_off_path_kernel_frees_sms_for_the_critical_one() {
+    // One window step: over several, a 20 us a1 overlaps the next step's a1 and the two
+    // confined grids hold all 48 SMs again (the simulation gives 16.5 us there).
+    let c = diamond(1, 11_000);
+    let (base, lat) = scenario(&c);
+    let mut sc = base.clone();
+    sc.solo = solo_work(&sc.g, &sc.work, &sc.bytes, &res());
+    let before = sim(&sc, &lat);
+    assert!((before - 23.0).abs() < 1e-9, "{before}");
+    let a1 = |sms: f64| Rewrite::Confine {
+        select: vec![Sel {
+            site: None,
+            kernel: Some("a1".into()),
+        }],
+        sms,
+        basis: "test".into(),
+    };
+    let mut half = sc.clone();
+    assert_eq!(half.apply(&a1(24.0), &lat, &res()).unwrap(), 1);
+    for i in (0..c.ops.len()).filter(|&i| c.ops[i].name() == "a1" && c.ops[i].start() >= 0) {
+        assert!(
+            (half.work[i] - 20.0).abs() < 1e-9,
+            "48 wanted / 24 held: twice the work"
+        );
+    }
+    let s = sim(&half, &lat);
+    assert!(
+        (s - 13.5).abs() < 1e-9,
+        "b1 runs beside a1 at 2.0, ends 10.5, a3 11.5..12.5: {s}"
+    );
+    assert!(
+        step(&half, &lat) >= 23.0 - 1e-9,
+        "max-plus sees only a1 stretched (20 us, still off the chain), not the SMs it frees"
+    );
+    for bad in [0.0, 49.0, f64::NAN] {
+        let e = sc.clone().apply(&a1(bad), &lat, &res()).unwrap_err();
+        assert_eq!(e.code(), ErrorCode::WhatIfInvalid);
+    }
 }

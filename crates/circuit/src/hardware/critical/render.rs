@@ -187,15 +187,16 @@ pub fn render_whatif(
     if !w.rewrites.is_empty() {
         let _ = writeln!(
             o,
-            "\n## Rewrites\n\n| set | places | max-plus Δ µs | simulated Δ µs | simulated Δ % |\n|---|---|---:|---:|---:|"
+            "\n## Rewrites\n\n| set | places | max-plus Δ µs | simulated (SM only) Δ µs | simulated (SM + DRAM) Δ µs | SM + DRAM Δ % |\n|---|---|---:|---:|---:|---:|"
         );
         for r in &w.rewrites {
             let _ = writeln!(
                 o,
-                "| {} | {:?} | {:+.1} | {:+.1} | {:+.3}% |",
+                "| {} | {:?} | {:+.1} | {:+.1} | {:+.1} | {:+.3}% |",
                 r.id,
                 r.places,
                 r.maxplus_delta_us,
+                r.sim_sm_delta_us,
                 r.sim_delta_us,
                 100.0 * r.sim_delta_us / w.measured_step_us
             );
@@ -216,15 +217,16 @@ pub fn render_whatif(
     if !verdicts.is_empty() {
         let _ = writeln!(
             o,
-            "\n## Backtest (+ = step slower)\n\n| set | ledger | predicted µs (sim) | max-plus µs | measured µs [interval] | error % of step | sign | error ≤ 0.3% |\n|---|---|---:|---:|---|---:|---|---|"
+            "\n## Backtest (+ = step slower)\n\n| set | ledger | predicted µs (sim, SM residency) | sim + shared DRAM µs (unscored) | max-plus µs | measured µs [interval] | error % of step | sign | error ≤ 0.3% |\n|---|---|---:|---:|---:|---|---:|---|---|"
         );
         for v in verdicts {
             let _ = writeln!(
                 o,
-                "| {} | {} | {:+.1} | {:+.1} | {:+.1} [{:+.1}, {:+.1}] | {:.3} | {} | {} |",
+                "| {} | {} | {:+.1} | {:+.1} | {:+.1} | {:+.1} [{:+.1}, {:+.1}] | {:.3} | {} | {} |",
                 v.id,
                 v.depends_on.join(", "),
                 v.predicted_us,
+                v.dram_us,
                 v.maxplus_us,
                 v.measured_us,
                 v.lo,
@@ -236,7 +238,7 @@ pub fn render_whatif(
         }
         let _ = writeln!(
             o,
-            "\nNothing was fitted on these outcomes (the latencies and the DRAM constant come from the capture alone), so leave-one-out does not apply. Measurement bases:\n"
+            "\nNothing was fitted on these outcomes (the latencies and the DRAM constant come from the capture alone), so leave-one-out does not apply. The scored prediction is the SM-residency simulation because it is the simulation that reproduces the measured step within 1%; the shared-DRAM column misses it by more than 1% and is shown unscored. Measurement bases:\n"
         );
         for v in verdicts {
             let _ = writeln!(o, "- {}: {}", v.id, v.basis);
