@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use metrale_circuit::hardware::headroom::{Headroom, Inputs};
-use metrale_circuit::hardware::headroom_trace::{Stated, Trace, parse_trace};
+use metrale_circuit::hardware::headroom_trace::{Stated, Trace, parse_trace, pool};
 use metrale_circuit::hardware::{self, PrecisionChoice};
 use metrale_circuit::venn::{Repo, Run};
 use metrale_circuit::{Mode, parse_instances};
@@ -46,9 +46,11 @@ pub struct CircuitHeadroomArgs {
     /// Another forward the same step runs, `<mode>:<rows>` (e.g. `draft:1` for the MTP head).
     #[arg(long = "also", value_parser = parse_run)]
     pub also: Vec<Run>,
-    /// A capture: a trace TOML (`scripts/headroom_trace.py`) or an nsys SQLite export.
+    /// A capture: a trace TOML (`scripts/headroom_trace.py`) or an nsys SQLite export. Repeat it
+    /// to pool captures of one configuration (their steps are bootstrapped together, blocks never
+    /// crossing captures).
     #[arg(long)]
-    pub trace: Option<PathBuf>,
+    pub trace: Vec<PathBuf>,
     /// With an nsys SQLite `--trace`: the kernel launched once per step.
     #[arg(long)]
     pub step_kernel: Option<String>,
@@ -107,7 +109,9 @@ fn parse_run(s: &str) -> Result<Run, String> {
         .into_iter()
         .find(|x| x.name() == m)
         .ok_or_else(|| format!("unknown mode `{m}`"))?;
-    let rows: u64 = r.parse().map_err(|_| format!("rows `{r}` is not a count"))?;
+    let rows: u64 = r
+        .parse()
+        .map_err(|_| format!("rows `{r}` is not a count"))?;
     if rows == 0 {
         return Err("rows must be at least 1".into());
     }
@@ -170,15 +174,23 @@ pub(crate) fn compute(root: &Path, a: &CircuitHeadroomArgs) -> Result<Headroom> 
         .into_iter()
         .find(|i| i.recipe == a.recipe)
         .with_context(|| format!("no circuit instance for recipe `{}`", a.recipe))?;
-    let trace = a
+    let captures = a
         .trace
-        .as_ref()
+        .iter()
         .map(|p| read_trace(root, a, &root.join(p)))
-        .transpose()?;
+        .collect::<Result<Vec<_>>>()?;
+    let trace = if captures.is_empty() {
+        None
+    } else {
+        Some(pool(&captures).map_err(anyhow::Error::msg)?)
+    };
     let tp = trace.as_ref().map(|t| t.plan.clone()).unwrap_or_default();
     for (k, v) in &tp.dims {
         let Some(slot) = inst.shape.dims.get_mut(k) else {
-            bail!("the capture states dim `{k}`, which recipe {} does not have", a.recipe);
+            bail!(
+                "the capture states dim `{k}`, which recipe {} does not have",
+                a.recipe
+            );
         };
         *slot = *v;
     }
@@ -199,9 +211,16 @@ pub(crate) fn compute(root: &Path, a: &CircuitHeadroomArgs) -> Result<Headroom> 
     runs.extend(a.also.iter().copied());
     let kv_captured = tp.kv_tokens.map(|v| Stated {
         value: v as f64,
-        basis: tp.kv_basis.clone().unwrap_or_else(|| "the capture's".into()),
+        basis: tp
+            .kv_basis
+            .clone()
+            .unwrap_or_else(|| "the capture's".into()),
     });
-    let kv = agree(a.kv_tokens.map(|v| v as f64), kv_captured.as_ref(), "kv-tokens")?;
+    let kv = agree(
+        a.kv_tokens.map(|v| v as f64),
+        kv_captured.as_ref(),
+        "kv-tokens",
+    )?;
     let tokens = agree(
         a.tokens_per_step,
         trace.as_ref().and_then(|t| t.tokens_per_step.as_ref()),
@@ -229,7 +248,10 @@ pub(crate) fn compute(root: &Path, a: &CircuitHeadroomArgs) -> Result<Headroom> 
         tokens_per_step: tokens,
         launch_floor_us: launch,
         dims: (
-            tp.dims.iter().map(|(k, v)| (k.clone(), *v)).collect::<BTreeMap<_, _>>(),
+            tp.dims
+                .iter()
+                .map(|(k, v)| (k.clone(), *v))
+                .collect::<BTreeMap<_, _>>(),
             tp.dims_basis.clone(),
         ),
         target_pct: a.target_pct,
@@ -260,7 +282,7 @@ pub(crate) fn command(a: &CircuitHeadroomArgs) -> String {
     for r in &a.also {
         c.push_str(&format!(" --also {}:{}", r.mode.name(), r.rows));
     }
-    if let Some(t) = &a.trace {
+    for t in &a.trace {
         c.push_str(&format!(" --trace {}", t.display()));
     }
     c.push_str(&format!(" --target-pct {}", a.target_pct));

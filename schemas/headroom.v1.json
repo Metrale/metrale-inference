@@ -104,6 +104,23 @@
       ],
       "type": "object"
     },
+    "Interval": {
+      "additionalProperties": false,
+      "description": "A 95% interval.",
+      "properties": {
+        "hi": {
+          "type": "number"
+        },
+        "lo": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "hi",
+        "lo"
+      ],
+      "type": "object"
+    },
     "Measured": {
       "additionalProperties": false,
       "description": "Captured time of a site per step: launches, summed durations, non-overlapped time, the kernels and where the capture's lowering differs from the plan.",
@@ -204,9 +221,58 @@
       ],
       "type": "object"
     },
+    "SiteCi": {
+      "additionalProperties": false,
+      "description": "95% intervals of a measured site: moving-block bootstrap over the capture's steps; pct_of_floor_delta is the delta-method cross-check.",
+      "properties": {
+        "exclusive_us": {
+          "$ref": "#/$defs/Interval"
+        },
+        "median_total_ci": {
+          "$ref": "#/$defs/Interval"
+        },
+        "median_total_us": {
+          "type": "number"
+        },
+        "pct_of_floor": {
+          "$ref": "#/$defs/Interval"
+        },
+        "pct_of_floor_delta": {
+          "$ref": "#/$defs/Interval"
+        },
+        "saved_full_us": {
+          "$ref": "#/$defs/Interval"
+        },
+        "saved_target_us": {
+          "$ref": "#/$defs/Interval"
+        },
+        "tok_s_full": {
+          "$ref": "#/$defs/Interval"
+        },
+        "tok_s_target": {
+          "$ref": "#/$defs/Interval"
+        },
+        "total_us": {
+          "$ref": "#/$defs/Interval"
+        }
+      },
+      "required": [
+        "exclusive_us",
+        "median_total_ci",
+        "median_total_us",
+        "pct_of_floor",
+        "pct_of_floor_delta",
+        "saved_full_us",
+        "saved_target_us",
+        "tok_s_full",
+        "tok_s_target",
+        "total_us"
+      ],
+      "type": "object"
+    },
     "SiteRow": {
       "additionalProperties": false,
-      "description": "One launch site (a plan group template across its layers). measured is null when nothing was captured for it: its projection is floor_us.",
+      "description": "One launch site (a plan group template across its layers). measured is null when nothing was captured for it: its projection is floor_us. ci is null without per-step series (never invented); tied: its upside interval overlaps a ranked neighbour's.",
       "properties": {
         "bound": {
           "enum": [
@@ -217,6 +283,16 @@
         },
         "bytes": {
           "type": "number"
+        },
+        "ci": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SiteCi"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "energy": {
           "$ref": "#/$defs/EnergyCols"
@@ -286,6 +362,9 @@
         "site": {
           "type": "string"
         },
+        "tied": {
+          "type": "boolean"
+        },
         "upside_full": {
           "anyOf": [
             {
@@ -310,6 +389,7 @@
       "required": [
         "bound",
         "bytes",
+        "ci",
         "energy",
         "floor_us",
         "flops",
@@ -324,6 +404,7 @@
         "rules",
         "run",
         "site",
+        "tied",
         "upside_full",
         "upside_target"
       ],
@@ -355,6 +436,16 @@
         },
         "ceiling_us": {
           "type": "number"
+        },
+        "ci": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TotalsCi"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "measured_floor_us": {
           "anyOf": [
@@ -443,6 +534,7 @@
       "required": [
         "ceiling_tok_s",
         "ceiling_us",
+        "ci",
         "measured_floor_us",
         "outside_exclusive_us",
         "overlap_us",
@@ -452,6 +544,31 @@
         "step_tok_s",
         "step_us",
         "unmeasured_projection_us"
+      ],
+      "type": "object"
+    },
+    "TotalsCi": {
+      "additionalProperties": false,
+      "description": "95% intervals of the step, tok/s and the residual (residual_delta: delta method).",
+      "properties": {
+        "residual_delta": {
+          "$ref": "#/$defs/Interval"
+        },
+        "residual_us": {
+          "$ref": "#/$defs/Interval"
+        },
+        "step_tok_s": {
+          "$ref": "#/$defs/Interval"
+        },
+        "step_us": {
+          "$ref": "#/$defs/Interval"
+        }
+      },
+      "required": [
+        "residual_delta",
+        "residual_us",
+        "step_tok_s",
+        "step_us"
       ],
       "type": "object"
     },
@@ -581,6 +698,10 @@
           "type": "null"
         }
       ]
+    },
+    "uncertainty": {
+      "description": "What the intervals cover (method, steps, captures, block, replicates, seed), or why there are none (\"preliminary, n=1 (no CI)\").",
+      "type": "string"
     }
   },
   "required": [
@@ -601,7 +722,8 @@
     "target_pct",
     "tokens_per_step",
     "totals",
-    "trace"
+    "trace",
+    "uncertainty"
   ],
   "title": "headroom/v1",
   "type": "object"

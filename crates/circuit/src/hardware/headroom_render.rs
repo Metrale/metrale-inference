@@ -12,6 +12,7 @@ use crate::prelude::*;
 use core::fmt::Write as _;
 
 use super::headroom::{Headroom, Outside, SiteRow, Upside};
+use super::stats::Interval;
 
 /// 2026-10-22: Rows of the "top sites" table.
 pub const TOP: usize = 10;
@@ -39,17 +40,13 @@ fn share(x: f64, of: Option<f64>) -> String {
     }
 }
 
-fn up(u: Option<Upside>) -> (String, String) {
-    u.map_or_else(
-        || ("–".into(), "–".into()),
-        |u| (ms(u.step_us), format!("{:.1}", u.tok_s)),
-    )
-}
-
 fn measured_cells(r: &SiteRow) -> (String, String) {
     match &r.measured {
         Some(m) => (us(m.total_us), us(m.exclusive_us)),
-        None => (format!("unmeasured (projection {})", us(r.floor_us)), "–".into()),
+        None => (
+            format!("unmeasured (projection {})", us(r.floor_us)),
+            "–".into(),
+        ),
     }
 }
 
@@ -69,10 +66,7 @@ pub fn render_headroom(h: &Headroom, command: &str) -> String {
             "No capture: every site is unmeasured and shows its roofline projection; no upside, residual or measured step is computed.\n"
         );
     } else {
-        let _ = writeln!(
-            s,
-            "**Preliminary, single capture**: one profiled window of one run; the numbers carry its fingerprint below and are not a cross-validated measurement.\n"
-        );
+        let _ = writeln!(s, "**Uncertainty**: {}\n", h.uncertainty);
     }
     inputs(&mut s, h);
     budget(&mut s, h);
@@ -80,8 +74,21 @@ pub fn render_headroom(h: &Headroom, command: &str) -> String {
     cumulative(&mut s, h);
     outside(&mut s, h);
     all_sites(&mut s, h);
+    cross_check(&mut s, h);
     drift(&mut s, h);
     s
+}
+
+/// 2026-10-22: `x [lo, hi]` with `f`, or `x` alone without an interval.
+fn with(x: f64, ci: Option<Interval>, f: fn(f64) -> String) -> String {
+    match ci {
+        Some(c) => format!("{} [{}, {}]", f(x), f(c.lo), f(c.hi)),
+        None => f(x),
+    }
+}
+
+fn one(x: f64) -> String {
+    format!("{:.1}", x + 0.0)
 }
 
 fn inputs(s: &mut String, h: &Headroom) {
@@ -114,11 +121,7 @@ fn inputs(s: &mut String, h: &Headroom) {
         )
     };
     let _ = writeln!(s, "| dims | {dims} |");
-    let _ = writeln!(
-        s,
-        "| capture | {} |",
-        h.trace.as_deref().unwrap_or("none")
-    );
+    let _ = writeln!(s, "| capture | {} |", h.trace.as_deref().unwrap_or("none"));
     let _ = writeln!(
         s,
         "| energy | {} |",
@@ -138,25 +141,76 @@ fn budget(s: &mut String, h: &Headroom) {
     let step = t.step_us;
     let _ = writeln!(
         s,
-        "## Step budget\n\nMicroseconds per step. Exclusive time is the part of a kernel no earlier-launched kernel overlaps; the residual is the time no kernel runs (host work, syncs, waits, launch gaps): measured step = sites + outside the plan + residual.\n\n| | us/step | share of step | tok/s |\n|---|---:|---:|---:|"
+        "## Step budget\n\nMicroseconds per step. Exclusive time is the part of a kernel no earlier-launched kernel overlaps; the residual is the time no kernel runs (host work, syncs, waits, launch gaps): measured step = sites + outside the plan + residual.\n\n| | us/step | 95% interval | share of step | tok/s |\n|---|---:|---:|---:|---:|"
     );
-    let row = |s: &mut String, name: &str, v: Option<f64>, tok: Option<f64>| {
-        let _ = writeln!(
-            s,
-            "| {name} | {} | {} | {} |",
-            opt(v, us),
-            v.map_or_else(|| "–".into(), |v| share(v, step)),
-            tok.map_or_else(|| "–".into(), |x| format!("{x:.1}"))
-        );
-    };
-    row(s, "measured step", step, t.step_tok_s);
-    row(s, "Σ launch sites, exclusive", t.sites_exclusive_us, None);
-    row(s, "Σ kernels outside the plan, exclusive", t.outside_exclusive_us, None);
-    row(s, "residual: no kernel running", t.residual_us, None);
-    row(s, "overlap: two kernels at once (not added)", t.overlap_us, None);
-    row(s, "step ceiling: Σ site floors", Some(t.ceiling_us), Some(t.ceiling_tok_s));
-    row(s, "of which measured sites' floors", t.measured_floor_us, None);
-    row(s, "of which unmeasured sites' projections", Some(t.unmeasured_projection_us), None);
+    let ci = t.ci.as_ref();
+    let row =
+        |s: &mut String, name: &str, v: Option<f64>, iv: Option<Interval>, tok: Option<String>| {
+            let _ = writeln!(
+                s,
+                "| {name} | {} | {} | {} | {} |",
+                opt(v, us),
+                iv.map_or_else(|| "–".into(), |c| format!("[{}, {}]", us(c.lo), us(c.hi))),
+                v.map_or_else(|| "–".into(), |v| share(v, step)),
+                tok.unwrap_or_else(|| "–".into())
+            );
+        };
+    row(
+        s,
+        "measured step",
+        step,
+        ci.map(|c| c.step_us),
+        t.step_tok_s.map(|x| with(x, ci.map(|c| c.step_tok_s), one)),
+    );
+    row(
+        s,
+        "Σ launch sites, exclusive",
+        t.sites_exclusive_us,
+        None,
+        None,
+    );
+    row(
+        s,
+        "Σ kernels outside the plan, exclusive",
+        t.outside_exclusive_us,
+        None,
+        None,
+    );
+    row(
+        s,
+        "residual: no kernel running",
+        t.residual_us,
+        ci.map(|c| c.residual_us),
+        None,
+    );
+    row(
+        s,
+        "overlap: two kernels at once (not added)",
+        t.overlap_us,
+        None,
+        None,
+    );
+    row(
+        s,
+        "step ceiling: Σ site floors",
+        Some(t.ceiling_us),
+        None,
+        Some(one(t.ceiling_tok_s)),
+    );
+    row(
+        s,
+        "of which measured sites' floors",
+        t.measured_floor_us,
+        None,
+        None,
+    );
+    row(
+        s,
+        "of which unmeasured sites' projections",
+        Some(t.unmeasured_projection_us),
+        None,
+        None,
+    );
     let _ = writeln!(s);
 }
 
@@ -164,7 +218,7 @@ fn top(s: &mut String, h: &Headroom) {
     let p = h.target_pct;
     let _ = writeln!(
         s,
-        "## Top sites by upside\n\nEach row alone: the step if that site fell to its floor (100%) or to {p}% of it, every other site unchanged. A site saves at most its exclusive time.\n\n| # | run | site | bound | floor us | measured us | exclusive us | % of floor | headroom us | step ms @100% | tok/s @100% | step ms @{p}% | tok/s @{p}% | uJ/launch | % of E floor | E upside uJ |\n|---:|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+        "## Top sites by upside\n\nEach row alone: the time the step saves, and its tok/s, if that site fell to its floor (100%) or to {p}% of it, every other site unchanged. A site saves at most its exclusive time. Brackets are 95% intervals; `≈` marks a site whose upside interval overlaps a neighbour's (their order is not resolved).\n\n| # | run | site | bound | floor us | measured us | % of floor | saved us @100% | tok/s @100% | saved us @{p}% | tok/s @{p}% | uJ/launch | % of E floor | E upside uJ |\n|---:|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
     );
     for (i, r) in h
         .sites
@@ -173,23 +227,75 @@ fn top(s: &mut String, h: &Headroom) {
         .take(TOP)
         .enumerate()
     {
-        let (m, x) = measured_cells(r);
-        let (s1, t1) = up(r.upside_full);
-        let (s2, t2) = up(r.upside_target);
+        let c = r.ci.as_ref();
+        let m = r.measured.as_ref().map_or(0.0, |m| m.total_us);
+        let cell = |u: Option<Upside>, sv: Option<Interval>, tk: Option<Interval>| {
+            u.map_or_else(
+                || ("–".to_string(), "–".to_string()),
+                |u| (with(u.saved_us, sv, us), with(u.tok_s, tk, one)),
+            )
+        };
+        let (s1, t1) = cell(
+            r.upside_full,
+            c.map(|c| c.saved_full_us),
+            c.map(|c| c.tok_s_full),
+        );
+        let (s2, t2) = cell(
+            r.upside_target,
+            c.map(|c| c.saved_target_us),
+            c.map(|c| c.tok_s_target),
+        );
         let _ = writeln!(
             s,
-            "| {} | {} | {} | {} | {} | {m} | {x} | {} | {} | {s1} | {t1} | {s2} | {t2} | {} | {} | {} |",
+            "| {}{} | {} | {} | {} | {} | {} | {} | {s1} | {t1} | {s2} | {t2} | {} | {} | {} |",
             i + 1,
+            if r.tied { " ≈" } else { "" },
             r.run,
             r.site,
             r.bound.name(),
             us(r.floor_us),
-            opt(r.pct_of_floor, pct),
-            opt(r.headroom_us, us),
+            with(m, c.map(|c| c.total_us), us),
+            r.pct_of_floor
+                .map_or_else(|| "–".into(), |x| with(x, c.map(|c| c.pct_of_floor), pct)),
             opt(r.energy.uj_per_launch, us),
             opt(r.energy.pct_of_floor, pct),
             opt(r.energy.upside_uj, us),
         );
+    }
+    let _ = writeln!(s);
+}
+
+fn cross_check(s: &mut String, h: &Headroom) {
+    let Some(t) = h.totals.ci.as_ref() else {
+        return;
+    };
+    let _ = writeln!(
+        s,
+        "## Cross-check: bootstrap and delta method\n\nThe same 95% intervals by the moving-block bootstrap and by the delta method (Newey-West variance of the mean). Agreement says the bootstrap is not an artefact of its resampling; a delta interval much narrower than the bootstrap's means the statistic is far from linear in the mean there.\n\n| quantity | bootstrap | delta method |\n|---|---:|---:|"
+    );
+    let iv = |c: Interval, f: fn(f64) -> String| format!("[{}, {}]", f(c.lo), f(c.hi));
+    let _ = writeln!(
+        s,
+        "| residual us | {} | {} |",
+        iv(t.residual_us, us),
+        iv(t.residual_delta, us)
+    );
+    for r in h
+        .sites
+        .iter()
+        .filter(|r| r.upside_full.is_some_and(|u| u.saved_us > 0.0))
+        .take(TOP)
+    {
+        if let Some(c) = &r.ci {
+            let _ = writeln!(
+                s,
+                "| % of floor, {} · {} | {} | {} |",
+                r.run,
+                r.site,
+                iv(c.pct_of_floor, pct),
+                iv(c.pct_of_floor_delta, pct)
+            );
+        }
     }
     let _ = writeln!(s);
 }
@@ -280,7 +386,11 @@ fn drift(s: &mut String, h: &Headroom) {
         .sites
         .iter()
         .filter_map(|r| r.measured.as_ref().map(|m| (r, m)))
-        .flat_map(|(r, m)| m.drift.iter().map(move |d| format!("- {} · {}: {d}", r.run, r.site)))
+        .flat_map(|(r, m)| {
+            m.drift
+                .iter()
+                .map(move |d| format!("- {} · {}: {d}", r.run, r.site))
+        })
         .collect();
     if notes.is_empty() {
         return;

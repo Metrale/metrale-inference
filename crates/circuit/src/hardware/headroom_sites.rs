@@ -90,7 +90,11 @@ pub fn launch_sites(
         .flat_map(|b| b.first..b.end)
         .collect();
     let mut sites: BTreeMap<(String, String), LaunchSite> = BTreeMap::new();
-    for g in plan.groups.iter().filter(|g| in_section.contains(&g.nodes[0])) {
+    for g in plan
+        .groups
+        .iter()
+        .filter(|g| in_section.contains(&g.nodes[0]))
+    {
         let single = g.launch_count(rows) <= 1;
         let (mut bytes, mut flops, mut compute, mut node_sum) = (0.0, 0.0, 0.0, 0.0);
         for &n in &g.nodes {
@@ -205,7 +209,11 @@ pub fn attribute(
         let Some(site) = &row.site else {
             let hits: Vec<usize> = (0..sites.len()).filter(|&i| runs(i, &row.kernel)).collect();
             match hits.as_slice() {
-                [i] => a.measured.entry(*i).or_default().push((row.clone(), row.note.clone())),
+                [i] => a
+                    .measured
+                    .entry(*i)
+                    .or_default()
+                    .push((row.clone(), row.note.clone())),
                 [] => a.outside.push((row.clone(), Outside::Unknown)),
                 many => {
                     let names = many.iter().map(|&i| sites[i].label.clone()).collect();
@@ -251,7 +259,10 @@ pub fn attribute(
                     })
                     .max_by_key(|(k, _)| prefix(k))
                     .map(|(k, f)| {
-                        (i, format!("runs `{}`, the plan names `{k}` (family `{f}`)", row.kernel))
+                        (
+                            i,
+                            format!("runs `{}`, the plan names `{k}` (family `{f}`)", row.kernel),
+                        )
                     })
             })
             .collect();
@@ -283,7 +294,11 @@ pub fn attribute(
         let kin = if kin.is_empty() { same_op } else { kin };
         match (exact.as_slice(), kin.as_slice(), novel.as_slice()) {
             ([i], _, _) => a.measured.entry(*i).or_default().push(with(None)),
-            ([], [(i, note)], _) => a.measured.entry(*i).or_default().push(with(Some(note.clone()))),
+            ([], [(i, note)], _) => a
+                .measured
+                .entry(*i)
+                .or_default()
+                .push(with(Some(note.clone()))),
             ([], [], [i]) => a.measured.entry(*i).or_default().push(with(Some(format!(
                 "runs `{}` where the plan has no rule (a placeholder)",
                 row.kernel

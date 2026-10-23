@@ -104,6 +104,16 @@ def main() -> int:
     # The shortest never-overlapped kernel launched every step: `step` (100 ns).
     assert t["launch_floor_us"]["value"] == 0.1, t["launch_floor_us"]
     assert t["plan"]["dims"] == {"q_heads": 22} and t["plan"]["kv_tokens"] == 100
+    # Per-step series: two 1 us steps; each kernel's series sums to its totals, and no step's
+    # exclusive time exceeds the step.
+    assert t["step_us"] == [1.0, 1.0], t["step_us"]
+    assert big["step_total_us"] == [0.5, 0.5] and big["step_exclusive_us"] == [0.5, 0.5], big
+    assert tail["step_exclusive_us"] == [0.0, 0.1], tail
+    for k in t["kernel"]:
+        assert abs(sum(k["step_total_us"]) - k["total_us"]) < 1e-9, k
+        assert abs(sum(k["step_exclusive_us"]) - k["exclusive_us"]) < 1e-9, k
+    for i, step in enumerate(t["step_us"]):
+        assert sum(k["step_exclusive_us"][i] for k in t["kernel"]) <= step + 1e-9, i
     print("headroom_trace_test: ok")
     return 0
 

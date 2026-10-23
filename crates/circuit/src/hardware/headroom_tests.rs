@@ -11,9 +11,9 @@
 
 use std::collections::BTreeMap;
 
+use super::hardware_tests::W4A16;
 use super::headroom::{Bound, Headroom, HeadroomError, Inputs, Measured, Outside, saved_us};
 use super::headroom_trace::{Stated, Trace, TraceKernel, TracePlan, parse_trace};
-use super::hardware_tests::W4A16;
 use super::test_fixture as fx;
 use crate::rules::Mode;
 use crate::venn::Run;
@@ -40,6 +40,8 @@ fn kernel(name: &str, site: Option<&str>, calls: u64, total: f64, excl: f64) -> 
         total_us: total,
         exclusive_us: excl,
         energy_uj: None,
+        step_total_us: Vec::new(),
+        step_exclusive_us: Vec::new(),
     }
 }
 
@@ -51,6 +53,8 @@ fn trace(kernels: Vec<TraceKernel>) -> Trace {
         step_kernel: "lm_head".into(),
         steps: 2,
         window_us: 200.0,
+        step_us: Vec::new(),
+        segments: Vec::new(),
         tokens_per_step: None,
         launch_floor_us: None,
         plan: TracePlan::default(),
@@ -83,10 +87,12 @@ fn run(device: &str, mode: Mode, rows: u64, i: &Inputs<'_>) -> Result<Headroom, 
 }
 
 fn site<'h>(h: &'h Headroom, label: &str) -> &'h super::headroom::SiteRow {
-    h.sites
-        .iter()
-        .find(|r| r.site == label)
-        .unwrap_or_else(|| panic!("no site `{label}` in {:?}", h.sites.iter().map(|r| &r.site).collect::<Vec<_>>()))
+    h.sites.iter().find(|r| r.site == label).unwrap_or_else(|| {
+        panic!(
+            "no site `{label}` in {:?}",
+            h.sites.iter().map(|r| &r.site).collect::<Vec<_>>()
+        )
+    })
 }
 
 #[test]
@@ -118,10 +124,17 @@ fn the_floor_is_bytes_over_bandwidth_and_the_upside_is_amdahl() {
     assert_eq!(r.bytes, LM_HEAD_BYTES);
     assert_eq!(r.flops, 2.0 * 64.0 * 256.0);
     let floor = LM_HEAD_BYTES / BW;
-    assert!((r.floor_us - floor).abs() < 1e-12, "{} vs {floor}", r.floor_us);
+    assert!(
+        (r.floor_us - floor).abs() < 1e-12,
+        "{} vs {floor}",
+        r.floor_us
+    );
     assert_eq!(r.bound, Bound::Memory);
     let m = r.measured.as_ref().expect("captured");
-    assert_eq!((m.total_us, m.exclusive_us, m.calls_per_step), (10.0, 10.0, 1.0));
+    assert_eq!(
+        (m.total_us, m.exclusive_us, m.calls_per_step),
+        (10.0, 10.0, 1.0)
+    );
     assert!((r.pct_of_floor.unwrap() - 100.0 * floor / 10.0).abs() < 1e-9);
     assert!((r.headroom_us.unwrap() - (10.0 - floor)).abs() < 1e-12);
     // Alone at its floor the 100 us step loses 10 - floor; at 80% of it, 10 - floor / 0.8.
@@ -139,7 +152,10 @@ fn a_fused_launch_does_not_pay_for_the_edges_it_keeps_on_chip() {
     // A rule that runs final_norm and lm_head in one launch keeps `xn` (64 BF16 values) on chip:
     // the fused floor is the two nodes' bytes less xn's write and read.
     let mut tree = fx::tree();
-    let rules = tree.files.get_mut("kernels/base/common/FUSIONS.toml").unwrap();
+    let rules = tree
+        .files
+        .get_mut("kernels/base/common/FUSIONS.toml")
+        .unwrap();
     rules.push_str(
         r#"
 [[rule]]
@@ -156,7 +172,10 @@ cite = "test"
 "#,
     );
     // The fused kernel's family declares both ops (crate::pipeline refuses it otherwise).
-    let fams = tree.files.get_mut("kernels/base/common/KERNEL_FAMILIES.toml").unwrap();
+    let fams = tree
+        .files
+        .get_mut("kernels/base/common/KERNEL_FAMILIES.toml")
+        .unwrap();
     let head = r#"op = [{ op = "lm_head" }]"#;
     assert_eq!(fams.matches(head).count(), 1);
     *fams = fams.replace(
@@ -171,7 +190,10 @@ cite = "test"
         "fp4dev",
         &tree,
         &fx::model(W4A16),
-        &[Run { mode: Mode::Decode, rows: 1 }],
+        &[Run {
+            mode: Mode::Decode,
+            rows: 1,
+        }],
         &inputs(None, None),
     )
     .unwrap();
@@ -183,7 +205,11 @@ cite = "test"
     let unfused = LM_HEAD_BYTES + (64.0 + 64.0) * 2.0;
     assert_eq!(r.bytes, unfused - 2.0 * 64.0 * 2.0);
     assert_eq!(r.bytes, (256.0 * 64.0 + 64.0 + 256.0) * 2.0);
-    assert!((r.node_sum_us - unfused / BW).abs() < 1e-12, "{}", r.node_sum_us);
+    assert!(
+        (r.node_sum_us - unfused / BW).abs() < 1e-12,
+        "{}",
+        r.node_sum_us
+    );
     assert!((r.floor_us - r.bytes / BW).abs() < 1e-12);
 }
 
@@ -218,11 +244,22 @@ fn the_step_budget_closes_exactly_with_the_residual() {
     assert_eq!(tt.sites_exclusive_us, Some(10.0 + 3.0));
     assert_eq!(tt.outside_exclusive_us, Some(12.0));
     assert_eq!(tt.residual_us, Some(100.0 - 13.0 - 12.0));
-    let sum = tt.sites_exclusive_us.unwrap() + tt.outside_exclusive_us.unwrap() + tt.residual_us.unwrap();
-    assert_eq!(sum, tt.step_us.unwrap(), "sites + outside + residual = measured step");
-    assert_eq!(tt.overlap_us, Some((10.0 + 4.0 + 15.0) - (10.0 + 3.0 + 12.0)));
+    let sum =
+        tt.sites_exclusive_us.unwrap() + tt.outside_exclusive_us.unwrap() + tt.residual_us.unwrap();
+    assert_eq!(
+        sum,
+        tt.step_us.unwrap(),
+        "sites + outside + residual = measured step"
+    );
+    assert_eq!(
+        tt.overlap_us,
+        Some((10.0 + 4.0 + 15.0) - (10.0 + 3.0 + 12.0))
+    );
     assert_eq!(h.outside.len(), 1);
-    assert_eq!((h.outside[0].kernel.as_str(), &h.outside[0].why), ("mystery", &Outside::Unknown));
+    assert_eq!(
+        (h.outside[0].kernel.as_str(), &h.outside[0].why),
+        ("mystery", &Outside::Unknown)
+    );
 }
 
 #[test]
@@ -235,8 +272,16 @@ fn a_capture_that_does_not_match_the_plan_is_refused_with_every_mismatch() {
     match run("fp4dev", Mode::Decode, 1, &inputs(Some(&t), None)) {
         Err(HeadroomError::Mismatch(m)) => {
             assert_eq!(m.len(), 2, "{m:?}");
-            assert!(m[0].contains("`lm_head` is attributed to site `ffn.up`"), "{}", m[0]);
-            assert!(m[1].contains("`nowhere.x`, which no launch site"), "{}", m[1]);
+            assert!(
+                m[0].contains("`lm_head` is attributed to site `ffn.up`"),
+                "{}",
+                m[0]
+            );
+            assert!(
+                m[1].contains("`nowhere.x`, which no launch site"),
+                "{}",
+                m[1]
+            );
         }
         other => panic!("expected a refusal, got {other:?}"),
     }
@@ -251,7 +296,10 @@ fn a_kernel_of_the_planned_family_is_measured_with_a_drift_note() {
     let t = trace(vec![kernel("final_norm", Some("ffn.norm"), 4, 8.0, 8.0)]);
     let h = run("fp4dev", Mode::Decode, 1, &inputs(Some(&t), None)).unwrap();
     let m = site(&h, "ffn [norm]").measured.as_ref().unwrap();
-    assert_eq!(m.drift, vec!["runs `final_norm`, the plan names `m::norm` (family `f_norm`)".to_string()]);
+    assert_eq!(
+        m.drift,
+        vec!["runs `final_norm`, the plan names `m::norm` (family `f_norm`)".to_string()]
+    );
 }
 
 #[test]
@@ -269,11 +317,21 @@ fn unmeasured_sites_are_never_shown_as_measured() {
     // counts as a measured site's.
     let t = trace(vec![kernel("lm_head", None, 2, 20.0, 20.0)]);
     let h = run("fp4dev", Mode::Decode, 1, &inputs(Some(&t), None)).unwrap();
-    let measured: Vec<&str> = h.sites.iter().filter(|r| r.measured.is_some()).map(|r| r.site.as_str()).collect();
+    let measured: Vec<&str> = h
+        .sites
+        .iter()
+        .filter(|r| r.measured.is_some())
+        .map(|r| r.site.as_str())
+        .collect();
     assert_eq!(measured, vec!["head [lm_head]"]);
     let lm = site(&h, "head [lm_head]").floor_us;
     assert!((h.totals.measured_floor_us.unwrap() - lm).abs() < 1e-12);
-    let others: f64 = h.sites.iter().filter(|r| r.measured.is_none()).map(|r| r.floor_us).sum();
+    let others: f64 = h
+        .sites
+        .iter()
+        .filter(|r| r.measured.is_none())
+        .map(|r| r.floor_us)
+        .sum();
     assert!((h.totals.unmeasured_projection_us - others).abs() < 1e-12);
     assert!((h.totals.ceiling_us - (lm + others)).abs() < 1e-12);
 }
@@ -286,7 +344,10 @@ fn energy_columns_are_blank_without_energy_and_filled_from_captured_energy() {
         assert_eq!(r.energy, Default::default(), "{}", r.site);
     }
     let md = super::render_headroom(&h, "test");
-    let row = md.lines().find(|l| l.starts_with("| 1 | decode n=1 | head [lm_head]")).expect("top row");
+    let row = md
+        .lines()
+        .find(|l| l.starts_with("| 1 | decode n=1 | head [lm_head]"))
+        .expect("top row");
     assert!(row.ends_with("| – | – | – |"), "{row}");
     // 500 uJ over 2 steps of one launch: 250 uJ per launch; no energy roofline, so no floor.
     let mut k = kernel("lm_head", None, 2, 20.0, 20.0);
@@ -294,7 +355,10 @@ fn energy_columns_are_blank_without_energy_and_filled_from_captured_energy() {
     let t = trace(vec![k]);
     let h = run("fp4dev", Mode::Decode, 1, &inputs(Some(&t), None)).unwrap();
     let e = site(&h, "head [lm_head]").energy;
-    assert_eq!((e.uj_per_launch, e.floor_uj, e.pct_of_floor), (Some(250.0), None, None));
+    assert_eq!(
+        (e.uj_per_launch, e.floor_uj, e.pct_of_floor),
+        (Some(250.0), None, None)
+    );
 }
 
 #[test]
@@ -313,14 +377,33 @@ exclusive_us = 20.0
 "#;
     assert_eq!(parse_trace(good).unwrap().step_us(), 100.0);
     let bad = [
-        (good.replace("exclusive_us = 20.0", "exclusive_us = 30.0"), "must lie in"),
-        (good.replace("window_us = 200.0", "window_us = 10.0"), "exceeds its window"),
+        (
+            good.replace("exclusive_us = 20.0", "exclusive_us = 30.0"),
+            "must lie in",
+        ),
+        (
+            good.replace("window_us = 200.0", "window_us = 10.0"),
+            "exceeds its window",
+        ),
         (good.replace("steps = 2", "steps = 0"), "no whole step"),
-        (good.replace("source = \"nsys x.sqlite @ abc, box, date\"", "source = \" \""), "no `source`"),
-        (good.replace("calls = 2", "calls = 2\nguess = 1"), "unknown field"),
+        (
+            good.replace(
+                "source = \"nsys x.sqlite @ abc, box, date\"",
+                "source = \" \"",
+            ),
+            "no `source`",
+        ),
+        (
+            good.replace("calls = 2", "calls = 2\nguess = 1"),
+            "unknown field",
+        ),
     ];
     for (text, why) in bad {
         let e = parse_trace(&text).unwrap_err();
         assert!(e.contains(why), "{why}: {e}");
     }
 }
+
+/// 2026-10-22: The interval tests (headroom_ci) share these fixtures.
+#[path = "headroom_ci_tests.rs"]
+mod ci;

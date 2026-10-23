@@ -23,6 +23,7 @@ use crate::prelude::*;
 
 use alloc::collections::BTreeMap;
 
+use super::headroom_ci::{LEVEL, REPS, SEED, Series, SiteFloor, has_series, step_ci, sum_series};
 pub use super::headroom_model::*;
 pub use super::headroom_sites::LaunchSite;
 use super::headroom_sites::{attribute, launch_sites};
@@ -36,7 +37,11 @@ fn run_name(p: &Planned) -> String {
 }
 
 fn tok_s(tokens: f64, step_us: f64) -> f64 {
-    if step_us > 0.0 { tokens * 1e6 / step_us } else { 0.0 }
+    if step_us > 0.0 {
+        tokens * 1e6 / step_us
+    } else {
+        0.0
+    }
 }
 
 fn per_step(rows: &[(TraceKernel, Option<String>)], steps: f64) -> Measured {
@@ -119,17 +124,53 @@ pub fn headroom(
     let tokens = inputs.tokens_per_step.value;
     let p_target = inputs.target_pct / 100.0;
     let launch = inputs.launch_floor_us.as_ref().map(|l| l.value);
+    let floors: Vec<(f64, Bound)> = sites
+        .iter()
+        .map(|s| {
+            let launch_us = launch.map(|l| l * s.launches as f64);
+            let roof = s.mem_us.max(s.compute_us);
+            match launch_us {
+                Some(l) if l > roof => (l, Bound::Launch),
+                _ if s.compute_us > s.mem_us => (roof, Bound::Compute),
+                _ => (roof, Bound::Memory),
+            }
+        })
+        .collect();
+    let step_ci = match (trace, &attr) {
+        (Some(t), Some(a)) if has_series(t) => {
+            let n = t.step_us.len();
+            let series = Series {
+                segments: t.segment_lengths(),
+                step: t.step_us.clone(),
+                sites: a
+                    .measured
+                    .iter()
+                    .map(|(&i, rows)| (i, sum_series(rows.iter().map(|(k, _)| k), n)))
+                    .collect(),
+                outside: sum_series(a.outside.iter().map(|(k, _)| k), n).1,
+            };
+            let fl = a
+                .measured
+                .keys()
+                .map(|&i| {
+                    (
+                        i,
+                        SiteFloor {
+                            floor_us: floors[i].0,
+                            p: p_target,
+                        },
+                    )
+                })
+                .collect();
+            Some(step_ci(&series, &fl, tokens))
+        }
+        _ => None,
+    };
     let mut rows: Vec<SiteRow> = sites
         .iter()
         .enumerate()
         .map(|(i, s)| {
-            let launch_us = launch.map(|l| l * s.launches as f64);
-            let roof = s.mem_us.max(s.compute_us);
-            let (floor_us, bound) = match launch_us {
-                Some(l) if l > roof => (l, Bound::Launch),
-                _ if s.compute_us > s.mem_us => (roof, Bound::Compute),
-                _ => (roof, Bound::Memory),
-            };
+            let (floor_us, bound) = floors[i];
             let captured = attr.as_ref().and_then(|a| a.measured.get(&i));
             let measured = captured.map(|rows| per_step(rows, steps));
             let upside = |p: f64| {
@@ -169,6 +210,8 @@ pub fn headroom(
                     inputs.energy.as_ref(),
                 ),
                 measured,
+                ci: step_ci.as_ref().and_then(|c| c.sites.get(&i).cloned()),
+                tied: false,
             }
         })
         .collect();
@@ -180,6 +223,7 @@ pub fn headroom(
             .then_with(|| a.run.cmp(&b.run))
             .then_with(|| a.site.cmp(&b.site))
     });
+    flag_ties(&mut rows);
     let outside = attr.as_ref().map_or_else(Vec::new, |a| {
         let mut o: Vec<OutsideRow> = a
             .outside
@@ -200,7 +244,35 @@ pub fn headroom(
         });
         o
     });
-    let totals = totals(&rows, &outside, step_us, tokens);
+    let mut totals = totals(&rows, &outside, step_us, tokens);
+    totals.ci = step_ci.as_ref().map(|c| c.totals.clone());
+    let uncertainty = match (trace, &step_ci) {
+        (None, _) => "no capture".to_string(),
+        (Some(_), None) => {
+            "preliminary, n=1 (no CI): the capture carries no per-step series".into()
+        }
+        (Some(t), Some(c)) => format!(
+            "{}: {}% intervals by the moving-block bootstrap over {} steps (block {}, {} replicates, \
+             seed {:#x}; blocks never cross captures), the delta method (Newey-West, lag {}) as a \
+             cross-check on pct of floor and the residual. {}",
+            if t.captures() == 1 {
+                "preliminary, n=1 capture".to_string()
+            } else {
+                format!("n={} captures pooled", t.captures())
+            },
+            LEVEL * 100.0,
+            t.steps,
+            c.block,
+            REPS,
+            SEED,
+            c.block,
+            if t.captures() == 1 {
+                "The intervals cover step-to-step variation inside the capture, not run-to-run variation, which one capture cannot measure."
+            } else {
+                "The intervals cover step variation across the pooled captures."
+            }
+        ),
+    };
     let curve = curve(&rows, step_us, tokens, p_target);
     Ok(Headroom {
         schema: "headroom/v1".into(),
@@ -226,7 +298,25 @@ pub fn headroom(
         outside,
         curve,
         totals,
+        uncertainty,
     })
+}
+
+/// 2026-10-22: Flag each ranked site whose upside interval overlaps the next or the previous
+/// ranked site's: their order is not resolved by the capture.
+fn flag_ties(rows: &mut [SiteRow]) {
+    let ranked: Vec<usize> = (0..rows.len())
+        .filter(|&i| rows[i].upside_full.is_some_and(|u| u.saved_us > 0.0) && rows[i].ci.is_some())
+        .collect();
+    let iv = |r: &SiteRow| r.ci.as_ref().map(|c| c.saved_full_us);
+    for w in ranked.windows(2) {
+        if let (Some(a), Some(b)) = (iv(&rows[w[0]]), iv(&rows[w[1]]))
+            && a.overlaps(&b)
+        {
+            rows[w[0]].tied = true;
+            rows[w[1]].tied = true;
+        }
+    }
 }
 
 fn totals(rows: &[SiteRow], outside: &[OutsideRow], step: Option<f64>, tokens: f64) -> Totals {
@@ -258,6 +348,7 @@ fn totals(rows: &[SiteRow], outside: &[OutsideRow], step: Option<f64>, tokens: f
         outside_exclusive_us: gate(out_excl),
         overlap_us: gate(sites_total + out_total - sites_excl - out_excl),
         residual_us: step.map(|s| s - sites_excl - out_excl),
+        ci: None,
     }
 }
 
