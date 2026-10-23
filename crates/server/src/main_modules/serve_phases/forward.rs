@@ -26,6 +26,15 @@ pub(crate) fn circuit_target(t: &metrale_core::target::KernelTarget) -> Result<S
     Ok(format!("{hw}/{}/{}", t.model, t.quant))
 }
 
+/// 2026-10-23: Whether `e` is the circuit's refusal of this rank count (a part that cannot split
+/// at N): an unset `--forward` then runs legacy and says why; an explicit one is refused.
+fn refused_at(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| {
+        c.downcast_ref::<metrale_error::Error>()
+            .is_some_and(|x| x.code() == metrale_error::ErrorCode::CircuitRanksRefused)
+    })
+}
+
 /// 2026-10-23: The forward boot runs, why, and (for a circuit mode) its instance.
 #[derive(Debug)]
 pub(crate) struct ResolvedForward {
@@ -51,8 +60,8 @@ pub(crate) fn resolve_forward(
     match explicit {
         Some(ForwardArg::Legacy) => Ok(legacy("--forward legacy (explicit)".into())),
         Some(mode) => {
-            let checkpoint =
-                checkpoint.context("--forward circuit needs the checkpoint id as the model argument")?;
+            let checkpoint = checkpoint
+                .context("--forward circuit needs the checkpoint id as the model argument")?;
             let target = match target {
                 Ok(t) => t,
                 Err(why) => bail!("--forward {}: {why}", mode.name()),
@@ -73,9 +82,20 @@ pub(crate) fn resolve_forward(
             };
             let target = match target {
                 Ok(t) => t,
-                Err(why) => return Ok(legacy(format!("--forward unset; no circuit target: {why}"))),
+                Err(why) => {
+                    return Ok(legacy(format!("--forward unset; no circuit target: {why}")));
+                }
             };
-            Ok(match sources::find_instance(checkpoint, target, ranks)? {
+            let found = match sources::find_instance(checkpoint, target, ranks) {
+                Err(e) if refused_at(&e) => {
+                    return Ok(legacy(format!(
+                        "--forward unset; the circuit cannot run `{checkpoint}` at {ranks} rank(s): \
+                         {e:#}"
+                    )));
+                }
+                other => other?,
+            };
+            Ok(match found {
                 Some(i) => ResolvedForward {
                     mode: ForwardArg::Circuit,
                     reason: format!(
@@ -115,7 +135,9 @@ pub(crate) fn forward_select(
         ForwardArg::Circuit => Fusions::All,
         ForwardArg::CircuitReference => Fusions::ReferenceOnly,
     };
-    let instance = r.instance.context("a circuit forward resolves with its instance")?;
+    let instance = r
+        .instance
+        .context("a circuit forward resolves with its instance")?;
     Ok(ForwardSelect::Circuit {
         instance: Box::new(instance),
         fusions,
