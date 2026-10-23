@@ -102,14 +102,7 @@ pub fn node_cost(
     };
     let seqs = if mode == Mode::MultiSeq { rows } else { 1 } as f64;
     let t = rows as f64;
-    let mut bytes = 0.0;
-    let contiguous_split =
-        n.op == OpKind::Split && n.params.get("layout").map(String::as_str) == Some("contiguous");
-    if !contiguous_split {
-        for &e in n.inputs.iter().chain(&n.outputs) {
-            bytes += edge_bytes(c, n, e, rows)?;
-        }
-    }
+    let mut bytes: f64 = edge_traffic(c, n, rows)?.iter().map(|(_, b)| b).sum();
     let (out, k) = c.weight_shape(n).ok_or_else(|| CostError::Edge {
         node: n.id.clone(),
         edge: "<weight>".into(),
@@ -209,17 +202,37 @@ pub fn node_cost(
         }
         _ => {}
     }
-    let peak = match n.inputs.first().map(|&e| c.edges[e].format) {
-        Some(Format::Fp8E4m3 { .. }) if n.op.reads_linear_weight() => r.fp8_tflops,
-        _ if nvfp4_mma(c, n) => r.nvfp4_tflops,
-        _ => r.bf16_tflops,
-    };
+    let peak = peak_tflops(c, n, r);
     let time_us = (bytes / (r.dram_gbps * 1e3)).max(flops / (peak * 1e6));
     Ok(Cost {
         bytes,
         flops,
         time_us,
     })
+}
+
+/// 2026-10-22: The tensor peak `n` is costed at: the MMA class of its input activation.
+pub(crate) fn peak_tflops(c: &Circuit, n: &Node, r: &Roofline) -> f64 {
+    match n.inputs.first().map(|&e| c.edges[e].format) {
+        Some(Format::Fp8E4m3 { .. }) if n.op.reads_linear_weight() => r.fp8_tflops,
+        _ if nvfp4_mma(c, n) => r.nvfp4_tflops,
+        _ => r.bf16_tflops,
+    }
+}
+
+/// 2026-10-22: The edges whose bytes [`node_cost`] counts for `n` at `rows` rows, each with its
+/// bytes: every input and output, except a contiguous split's (a view, no traffic).
+pub(crate) fn edge_traffic(c: &Circuit, n: &Node, rows: u64) -> Result<Vec<(usize, f64)>, CostError> {
+    let contiguous_split =
+        n.op == OpKind::Split && n.params.get("layout").map(String::as_str) == Some("contiguous");
+    if contiguous_split {
+        return Ok(Vec::new());
+    }
+    n.inputs
+        .iter()
+        .chain(&n.outputs)
+        .map(|&e| Ok((e, edge_bytes(c, n, e, rows)?)))
+        .collect()
 }
 
 /// 2026-10-08: Bytes of one unit (one token) of the first state `n` reads: its elements times

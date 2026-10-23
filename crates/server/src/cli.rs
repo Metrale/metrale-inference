@@ -41,6 +41,7 @@ pub mod blueprint_args;
 mod blueprint_build;
 pub(crate) mod circuit;
 mod circuit_diff;
+pub(crate) mod circuit_headroom;
 pub(crate) mod circuit_hw;
 pub(crate) mod circuit_hw_tree;
 mod circuit_memory;
@@ -180,6 +181,9 @@ pub enum CircuitAction {
     /// precision) and its output formats, as the plan on a device requires them and its kernels
     /// declare them (KERNEL_FAMILIES.toml `pipeline`).
     Precision(Box<CircuitPrecisionArgs>),
+    /// How far each launch site of a step is from its roofline floor, what the step and tok/s
+    /// would be at that floor (Amdahl), and the time no kernel runs; from a capture when given.
+    Headroom(Box<circuit_headroom::CircuitHeadroomArgs>),
 }
 
 /// `met circuit memory` options. Serve settings come from `--recipe` (`recipes/<id>.yaml`) and the

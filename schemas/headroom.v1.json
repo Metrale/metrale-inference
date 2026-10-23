@@ -1,0 +1,608 @@
+{
+  "$defs": {
+    "Ceilings": {
+      "additionalProperties": false,
+      "description": "The roofline's bandwidth (GB/s) and compute ceilings (TFLOPS) per MMA class.",
+      "properties": {
+        "bf16_tflops": {
+          "type": "number"
+        },
+        "dram_gbps": {
+          "type": "number"
+        },
+        "fp8_tflops": {
+          "type": "number"
+        },
+        "nvfp4_tflops": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "bf16_tflops",
+        "dram_gbps",
+        "fp8_tflops",
+        "nvfp4_tflops"
+      ],
+      "type": "object"
+    },
+    "CurvePoint": {
+      "additionalProperties": false,
+      "description": "The top N sites at 100% and at target_pct of their floors.",
+      "properties": {
+        "full": {
+          "$ref": "#/$defs/Upside"
+        },
+        "n": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "site": {
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/Upside"
+        }
+      },
+      "required": [
+        "full",
+        "n",
+        "site",
+        "target"
+      ],
+      "type": "object"
+    },
+    "EnergyCols": {
+      "additionalProperties": false,
+      "description": "Energy per step; null without captured energy or an energy roofline, never 0.",
+      "properties": {
+        "floor_uj": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pct_of_floor": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "uj_per_launch": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "upside_uj": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "floor_uj",
+        "pct_of_floor",
+        "uj_per_launch",
+        "upside_uj"
+      ],
+      "type": "object"
+    },
+    "Measured": {
+      "additionalProperties": false,
+      "description": "Captured time of a site per step: launches, summed durations, non-overlapped time, the kernels and where the capture's lowering differs from the plan.",
+      "properties": {
+        "calls_per_step": {
+          "type": "number"
+        },
+        "drift": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "exclusive_us": {
+          "type": "number"
+        },
+        "kernels": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "total_us": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "calls_per_step",
+        "drift",
+        "exclusive_us",
+        "kernels",
+        "total_us"
+      ],
+      "type": "object"
+    },
+    "Outside": {
+      "anyOf": [
+        {
+          "enum": [
+            "unknown"
+          ]
+        },
+        {
+          "additionalProperties": false,
+          "description": "Several launch sites run the kernel.",
+          "properties": {
+            "ambiguous": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "ambiguous"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "OutsideRow": {
+      "additionalProperties": false,
+      "description": "A captured kernel no launch site of the step runs.",
+      "properties": {
+        "calls_per_step": {
+          "type": "number"
+        },
+        "exclusive_us": {
+          "type": "number"
+        },
+        "kernel": {
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "total_us": {
+          "type": "number"
+        },
+        "why": {
+          "$ref": "#/$defs/Outside"
+        }
+      },
+      "required": [
+        "calls_per_step",
+        "exclusive_us",
+        "kernel",
+        "label",
+        "total_us",
+        "why"
+      ],
+      "type": "object"
+    },
+    "SiteRow": {
+      "additionalProperties": false,
+      "description": "One launch site (a plan group template across its layers). measured is null when nothing was captured for it: its projection is floor_us.",
+      "properties": {
+        "bound": {
+          "enum": [
+            "memory",
+            "compute",
+            "launch"
+          ]
+        },
+        "bytes": {
+          "type": "number"
+        },
+        "energy": {
+          "$ref": "#/$defs/EnergyCols"
+        },
+        "floor_us": {
+          "type": "number"
+        },
+        "flops": {
+          "type": "number"
+        },
+        "fused": {
+          "type": "boolean"
+        },
+        "groups": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "headroom_us": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kernels": {
+          "type": "string"
+        },
+        "launches": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "measured": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Measured"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "node_sum_us": {
+          "type": "number"
+        },
+        "pct_of_floor": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rules": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "run": {
+          "type": "string"
+        },
+        "site": {
+          "type": "string"
+        },
+        "upside_full": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Upside"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "upside_target": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Upside"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "bound",
+        "bytes",
+        "energy",
+        "floor_us",
+        "flops",
+        "fused",
+        "groups",
+        "headroom_us",
+        "kernels",
+        "launches",
+        "measured",
+        "node_sum_us",
+        "pct_of_floor",
+        "rules",
+        "run",
+        "site",
+        "upside_full",
+        "upside_target"
+      ],
+      "type": "object"
+    },
+    "Stated": {
+      "additionalProperties": false,
+      "description": "A stated quantity and where it comes from.",
+      "properties": {
+        "basis": {
+          "type": "string"
+        },
+        "value": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "basis",
+        "value"
+      ],
+      "type": "object"
+    },
+    "Totals": {
+      "additionalProperties": false,
+      "description": "Step totals, us per step; the measured ones are null without a capture. step_us = sites_exclusive_us + outside_exclusive_us + residual_us.",
+      "properties": {
+        "ceiling_tok_s": {
+          "type": "number"
+        },
+        "ceiling_us": {
+          "type": "number"
+        },
+        "measured_floor_us": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outside_exclusive_us": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "overlap_us": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "residual_us": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sites_exclusive_us": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sites_total_us": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "step_tok_s": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "step_us": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unmeasured_projection_us": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "ceiling_tok_s",
+        "ceiling_us",
+        "measured_floor_us",
+        "outside_exclusive_us",
+        "overlap_us",
+        "residual_us",
+        "sites_exclusive_us",
+        "sites_total_us",
+        "step_tok_s",
+        "step_us",
+        "unmeasured_projection_us"
+      ],
+      "type": "object"
+    },
+    "Upside": {
+      "additionalProperties": false,
+      "description": "The step after one change: time saved, step and tok/s.",
+      "properties": {
+        "saved_us": {
+          "type": "number"
+        },
+        "step_us": {
+          "type": "number"
+        },
+        "tok_s": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "saved_us",
+        "step_us",
+        "tok_s"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://metrale.ai/schemas/headroom.v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The headroom of one step of a plan on a device (met circuit headroom --format json).",
+  "properties": {
+    "ceilings": {
+      "$ref": "#/$defs/Ceilings"
+    },
+    "curve": {
+      "items": {
+        "$ref": "#/$defs/CurvePoint"
+      },
+      "type": "array"
+    },
+    "device": {
+      "type": "string"
+    },
+    "dims": {
+      "additionalProperties": {
+        "minimum": 0,
+        "type": "integer"
+      },
+      "type": "object"
+    },
+    "dims_basis": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "energy": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "kv_tokens": {
+      "$ref": "#/$defs/Stated"
+    },
+    "launch_floor_us": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Stated"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "model": {
+      "type": "string"
+    },
+    "outside": {
+      "items": {
+        "$ref": "#/$defs/OutsideRow"
+      },
+      "type": "array"
+    },
+    "roofline": {
+      "type": "string"
+    },
+    "runs": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "schema": {
+      "enum": [
+        "headroom/v1"
+      ]
+    },
+    "sites": {
+      "items": {
+        "$ref": "#/$defs/SiteRow"
+      },
+      "type": "array"
+    },
+    "target_pct": {
+      "type": "number"
+    },
+    "tokens_per_step": {
+      "$ref": "#/$defs/Stated"
+    },
+    "totals": {
+      "$ref": "#/$defs/Totals"
+    },
+    "trace": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "ceilings",
+    "curve",
+    "device",
+    "dims",
+    "dims_basis",
+    "energy",
+    "kv_tokens",
+    "launch_floor_us",
+    "model",
+    "outside",
+    "roofline",
+    "runs",
+    "schema",
+    "sites",
+    "target_pct",
+    "tokens_per_step",
+    "totals",
+    "trace"
+  ],
+  "title": "headroom/v1",
+  "type": "object"
+}

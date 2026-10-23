@@ -260,7 +260,7 @@ pub(crate) fn report_text(
     })
 }
 
-fn write_or_check(root: &Path, rel: &str, text: &str, check: bool) -> Result<()> {
+pub(crate) fn write_or_check(root: &Path, rel: &str, text: &str, check: bool) -> Result<()> {
     let path = root.join(rel);
     if check {
         let on_disk = std::fs::read_to_string(&path)
