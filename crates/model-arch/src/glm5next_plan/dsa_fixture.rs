@@ -259,9 +259,7 @@ pub(crate) fn rig(gpu: &RecordingGpu, st: &Stack) -> Rig {
         num_kv_heads: 1,
         head_dim: st.cfg.kv_lora_rank,
         num_layers: 12,
-        dtype: metrale_kv_codec::KvPair::named("fp8")
-            .expect("fp8 is a registered KV format")
-            .into(),
+        dtype: metrale_kv_codec::KvPair::named("fp8").unwrap().into(),
         layer_dtypes: vec![],
         layer_dims: vec![],
         cache_blocks_per_seq: None,
