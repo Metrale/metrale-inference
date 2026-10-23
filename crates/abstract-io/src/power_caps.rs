@@ -24,10 +24,13 @@ use crate::power_record::{PowerSample, Rail};
 /// recorded with, so a recompute is byte-identical (HPAR).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SourceKind {
-    /// 2026-10-22: `nvmlDeviceGetTotalEnergyConsumption`: an integral, no sampling lag.
-    NvmlCounter,
-    /// 2026-10-22: `nvmlDeviceGetPowerUsage`: a sensor value, integrated by the caller.
-    NvmlSensor,
+    /// 2026-10-22: The GPU driver's cumulative energy counter (NVIDIA:
+    /// `nvmlDeviceGetTotalEnergyConsumption`): an integral, no sampling lag. Vendor-neutral name
+    /// (VBOP); the stored spelling names the instrument.
+    GpuDriverCounter,
+    /// 2026-10-22: The GPU driver's power reading (NVIDIA: `nvmlDeviceGetPowerUsage`), integrated
+    /// by the caller.
+    GpuDriverSensor,
     /// 2026-10-22: An `nvidia-smi -lms` child's `power.draw.average` lines.
     NvidiaSmi,
     /// 2026-10-22: Read-only Linux hwmon `power*_input`/`power*_average`/`energy*_input`.
@@ -43,8 +46,8 @@ pub enum SourceKind {
 impl SourceKind {
     /// 2026-10-22: Every kind, in declaration order.
     pub const ALL: [SourceKind; 7] = [
-        SourceKind::NvmlCounter,
-        SourceKind::NvmlSensor,
+        SourceKind::GpuDriverCounter,
+        SourceKind::GpuDriverSensor,
         SourceKind::NvidiaSmi,
         SourceKind::Hwmon,
         SourceKind::AmdSmi,
@@ -56,8 +59,8 @@ impl SourceKind {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::NvmlCounter => "nvml_gpu_rail_counter",
-            Self::NvmlSensor => "nvml_gpu_rail_sensor",
+            Self::GpuDriverCounter => "nvml_gpu_rail_counter",
+            Self::GpuDriverSensor => "nvml_gpu_rail_sensor",
             Self::NvidiaSmi => "nvidia_smi_power_draw_average",
             Self::Hwmon => "hwmon",
             Self::AmdSmi => "amdsmi",
@@ -115,6 +118,12 @@ impl Field {
             Self::UtilMem => "util_mem".to_string(),
             Self::DriverTimestamp => "driver_timestamp".to_string(),
         }
+    }
+
+    /// 2026-10-22: Inverse of [`Field::name`].
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::universe().into_iter().find(|f| f.name() == s)
     }
 
     /// 2026-10-22: Every field a meter on any platform could report: each rail's four power
@@ -362,8 +371,11 @@ impl CapsBuilder {
         let bad_counter = c
             .counters
             .iter()
-            .find(|(_, s)| !(s.unit_j > 0.0 && s.update_period_ms > 0.0));
-        let bad_sensor = c.sensors.iter().find(|(_, s)| !(s.update_period_ms > 0.0));
+            .find(|(_, s)| !(positive(s.unit_j) && positive(s.update_period_ms)));
+        let bad_sensor = c
+            .sensors
+            .iter()
+            .find(|(_, s)| !positive(s.update_period_ms));
         if let Some((r, _)) = bad_counter {
             return Err(error!(
                 ErrorCode::PowerCapabilitiesIncomplete,
@@ -380,4 +392,9 @@ impl CapsBuilder {
         }
         Ok(c)
     }
+}
+
+/// 2026-10-22: Strictly positive and not NaN.
+fn positive(x: f64) -> bool {
+    x > 0.0
 }

@@ -15,7 +15,7 @@ use crate::MonoNs;
 fn gb10_counter() -> PowerCapabilities {
     PowerCapabilities::builder(
         SourceId("nvml0.counter".to_string()),
-        SourceKind::NvmlCounter,
+        SourceKind::GpuDriverCounter,
         "580.159.03".to_string(),
     )
     .counter(
@@ -118,15 +118,15 @@ fn the_preference_picks_the_first_present_and_refuses_when_none_is() {
         platform: "gb10",
         scope: Scope::GpuRail,
         order: vec![
-            SourceKind::NvmlCounter,
-            SourceKind::NvmlSensor,
+            SourceKind::GpuDriverCounter,
+            SourceKind::GpuDriverSensor,
             SourceKind::NvidiaSmi,
         ],
     };
     assert_eq!(
-        p.resolve(&[SourceKind::NvidiaSmi, SourceKind::NvmlSensor])
+        p.resolve(&[SourceKind::NvidiaSmi, SourceKind::GpuDriverSensor])
             .unwrap(),
-        (1, SourceKind::NvmlSensor)
+        (1, SourceKind::GpuDriverSensor)
     );
     let e = p.resolve(&[SourceKind::External]).unwrap_err();
     assert_eq!(e.code(), ErrorCode::EnergyNoPreferredSource);
@@ -140,4 +140,8 @@ fn spellings_round_trip() {
     for r in Rail::ALL {
         assert_eq!(Rail::parse(r.as_str()), Some(r));
     }
+    for f in Field::universe() {
+        assert_eq!(Field::parse(&f.name()), Some(f));
+    }
+    assert_eq!(Field::parse("energy(nowhere)"), None);
 }

@@ -115,7 +115,8 @@ pub struct PowerSample {
     pub energy: BTreeMap<Rail, EnergyCount>,
     pub clocks: Clocks,
     pub temps: Temps,
-    /// 2026-10-22: The raw throttle (clocks-event) reason mask; 0 is none.
+    /// 2026-10-22: The vendor's throttle (clocks-event) reason mask with its idle and "none" bits
+    /// cleared by the meter, so any non-zero value means the clocks are being held down.
     pub throttle: Option<u64>,
     pub util: Util,
 }
