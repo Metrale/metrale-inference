@@ -38,8 +38,11 @@ fn the_fixture_plans_are_the_reported_ones() {
 /// row over 16 blocks; compact scales everywhere; the shared expert is the one legacy site.
 #[test]
 fn every_moe_site_compiles_into_the_served_steps() {
-    let (c, rules, policy) = ranks();
-    for rank in 0..3 {
+    for (world, rank) in worlds()
+        .into_iter()
+        .flat_map(|w| (0..w).map(move |r| (w, r)))
+    {
+        let (c, rules, policy) = ranks_at(world).unwrap();
         let layers = moe_layers(&c[rank]);
         assert_eq!(
             layers.len(),
@@ -56,9 +59,18 @@ fn every_moe_site_compiles_into_the_served_steps() {
                     ["moe [shared_gate_up,shared_clamp,shared_act,shared_down]"]
                 );
                 let s = site.steps;
-                let k64 = rank < 2;
-                assert_eq!(s.moe_inter, if k64 { 704 } else { 640 });
-                assert_eq!(s.down.k_store, if k64 { 768 } else { 640 }, "rank {rank}");
+                let slice = mlp_config_at(rank, world).moe_intermediate;
+                let k64 = !slice.is_multiple_of(128);
+                if world == served_world() {
+                    assert_eq!(slice, [704, 704, 640][rank], "the served split");
+                }
+                assert_eq!(s.moe_inter, slice, "world {world} rank {rank}");
+                let stored = if k64 {
+                    slice.next_multiple_of(128)
+                } else {
+                    slice
+                };
+                assert_eq!(s.down.k_store, stored, "world {world} rank {rank}");
                 assert_eq!(s.down.quant.func.ends_with("_k64"), k64, "rank {rank}");
                 assert_eq!(s.gate_up.k_store, 4096);
                 assert_eq!(s.blend.blocks_per_row, 16);
@@ -166,4 +178,28 @@ fn an_emitter_refuses_another_block() {
         .expect("the draft head routes its MoE through moe_router");
     let e = reg.emit(&g, &mut GlmBlock::default()).err().unwrap();
     assert!(format!("{e:#}").contains("`moe` block"), "{e:#}");
+}
+
+/// 2026-10-23: `glm_w4a16` refuses a six-projection group naming another row count's pipelined
+/// entry and a group outside the KDA block (the shared expert's), naming each.
+#[test]
+fn the_w4a16_emitter_refuses_another_entry_and_block() {
+    let (c, rules, policy) = ranks();
+    let mut p = plan(&c, &rules, &policy, 0, Mode::Decode, 1);
+    let i = PlanGroup::all(&c[0], &p)
+        .position(|g| g.layer() == Some(4) && g.locals() == ["q", "k", "v", "f_a", "b", "g_a"])
+        .unwrap();
+    p.groups[i].kernels[0].func = "w4a16_gemv_pipe_m2".into();
+    let e = compile_kda(&c[0], &p, 4).err().unwrap();
+    assert!(format!("{e:#}").contains("w4a16_gemv_pipe_m1"), "{e:#}");
+    let p = plan(&c, &rules, &policy, 0, Mode::Decode, 1);
+    let g = PlanGroup::all(&c[0], &p)
+        .find(|g| g.layer() == Some(4) && g.block() == "moe" && g.group.emitter == "glm_w4a16")
+        .expect("the shared expert is a glm_w4a16 group");
+    let e = registry()
+        .unwrap()
+        .emit(&g, &mut GlmBlock::default())
+        .err()
+        .unwrap();
+    assert!(format!("{e:#}").contains("`kda` block"), "{e:#}");
 }

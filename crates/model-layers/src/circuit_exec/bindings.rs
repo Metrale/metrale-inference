@@ -222,6 +222,12 @@ pub trait CircuitBindings {
     fn plan_sites(&self) -> Vec<String> {
         Vec::new()
     }
+
+    /// 2026-10-23: The `(mode, rows)` shapes [`Self::install_plans`] installs sites at: what the
+    /// rank fuses (`rank_shapes::rank_plan_shapes`). Default: none.
+    fn plan_shapes(&self) -> Vec<(metrale_circuit::Mode, u64)> {
+        Vec::new()
+    }
 }
 
 /// 2026-09-29: The MTP draft head as the executor binds it: its one layer (weights by slot,

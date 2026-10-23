@@ -155,17 +155,31 @@ pub fn instance(recipe: &str) -> Result<Instance> {
 /// serve one checkpoint on one target; they must then agree on the circuit and the precision
 /// source, the only parts the executor takes from an instance (the policy, and 2026-09-30 a
 /// policy precision's tier and kernel capabilities, are read live: `CircuitExec::build`).
-pub fn instance_for(checkpoint: &str, target: &str) -> Result<Instance> {
+/// 2026-10-23: And that serves `ranks` tensor-parallel ranks: at one rank a recipe without a
+/// deployment, at N >= 2 a multi-device recipe (`[instance.parallel]`) with its deployment
+/// derived for N (`metrale_circuit::deploy::deployed`), refused with
+/// `ErrorCode::CircuitRanksRefused` where a part cannot split at N. A TP recipe and a one-GPU
+/// recipe of one checkpoint are two circuits; the TP recipe serves any N its parts admit.
+pub fn instance_for(checkpoint: &str, target: &str, ranks: u64) -> Result<Instance> {
+    find_instance(checkpoint, target, ranks)?.ok_or_else(|| {
+        anyhow!(
+            "no circuit instance serves checkpoint `{checkpoint}` on target `{target}` at \
+             {ranks} tensor-parallel rank(s) (kernels/circuits/INSTANCES.toml)"
+        )
+    })
+}
+
+/// 2026-10-23: [`instance_for`] with `None` where no instance serves `checkpoint` on `target`
+/// (an unset `--forward` then resolves to legacy); recipes that disagree are still an error.
+pub fn find_instance(checkpoint: &str, target: &str, ranks: u64) -> Result<Option<Instance>> {
     let all = metrale_circuit::parse_instances(INSTANCES)?;
     let hits: Vec<Instance> = all
         .into_iter()
         .filter(|i| i.checkpoint == checkpoint && i.target == target)
+        .filter(|i| i.parallel.is_some() == (ranks > 1))
         .collect();
     let Some(first) = hits.first() else {
-        bail!(
-            "no circuit instance serves checkpoint `{checkpoint}` on target `{target}` \
-             (kernels/circuits/INSTANCES.toml)"
-        );
+        return Ok(None);
     };
     if let Some(other) = hits
         .iter()
@@ -178,7 +192,14 @@ pub fn instance_for(checkpoint: &str, target: &str) -> Result<Instance> {
             other.recipe
         );
     }
-    Ok(first.clone())
+    if ranks == 1 {
+        return Ok(Some(first.clone()));
+    }
+    Ok(Some(metrale_circuit::deploy::deployed(
+        first,
+        sources(first)?,
+        ranks,
+    )?))
 }
 
 /// 2026-09-30: `a` and `b` read the same precision table, or the same checkpoint plan with the
@@ -296,11 +317,49 @@ mod served_shape_tests {
 mod instance_for_tests {
     use super::*;
 
+    /// 2026-10-23: GLM-5.3 has a TP recipe and a one-GPU recipe with different precision tables:
+    /// one rank picks the one-GPU recipe; any N >= 2 the TP recipe's parts admit picks the TP
+    /// recipe with its deployment derived for N; an N a part cannot split at is refused naming
+    /// the part; a checkpoint with no multi-device recipe finds none at N >= 2.
+    #[test]
+    fn the_rank_count_picks_one_of_two_deployments_of_a_checkpoint() {
+        let (c, t) = ("nvidia/GLM-5.3-Flash-NVFP4", "gb10/glm-5.3-flash/nvfp4");
+        for n in [2, 3, 4] {
+            let tp = instance_for(c, t, n).unwrap();
+            assert_eq!(tp.recipe, "glm-5.3/glm-5.3-flash-nvfp4-tp3-512k");
+            let d = tp.parallel.unwrap();
+            assert_eq!(d.ranks, n);
+            assert!(
+                d.degree.values().all(|&k| k == n),
+                "every part over all {n} ranks"
+            );
+        }
+        assert_eq!(
+            instance_for(c, t, 1).unwrap().recipe,
+            "glm-5.3/glm-5.3-flash-nvfp4"
+        );
+        let e = find_instance(c, t, 5).unwrap_err();
+        let code = e.downcast_ref::<metrale_error::Error>().map(|x| x.code());
+        assert_eq!(
+            code,
+            Some(metrale_error::ErrorCode::CircuitRanksRefused),
+            "{e:#}"
+        );
+        assert!(format!("{e:#}").contains("part `vocab`"), "{e:#}");
+        let dense = ("unsloth/Qwen3.8-27B-NVFP4", "gb10/qwen3.8-27b/nvfp4");
+        assert!(find_instance(dense.0, dense.1, 2).unwrap().is_none());
+        let e = instance_for(dense.0, dense.1, 2).unwrap_err();
+        assert!(
+            format!("{e:#}").contains("at 2 tensor-parallel rank(s)"),
+            "{e:#}"
+        );
+    }
+
     /// 2026-09-30: The dense checkpoint has an instance per tier; the executor takes the tier
     /// from the process, so either serves it. Before `same_source` the pair was refused.
     #[test]
     fn two_tiers_of_one_checkpoint_plan_serve_one_checkpoint() {
-        let got = instance_for("unsloth/Qwen3.8-27B-NVFP4", "gb10/qwen3.8-27b/nvfp4").unwrap();
+        let got = instance_for("unsloth/Qwen3.8-27B-NVFP4", "gb10/qwen3.8-27b/nvfp4", 1).unwrap();
         assert_eq!(got.recipe, "qwen3.8/qwen3.8-27b-nvfp4-unsloth");
     }
 

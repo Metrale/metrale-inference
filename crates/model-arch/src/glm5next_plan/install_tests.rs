@@ -13,16 +13,19 @@ use metrale_circuit::{AvailableKernels, Mode};
 
 use super::*;
 use crate::glm5next_plan::compile_moe;
-use crate::glm5next_plan::fixture::{plan, ranks};
-use crate::glm5next_plan::fixture_site::{OUT, STREAM, X, site, weights};
+use crate::glm5next_plan::fixture::{plan, ranks, worlds};
+use crate::glm5next_plan::fixture_site::{OUT, STREAM, X, site, site_at, weights};
 
 /// 2026-10-23: Every rank's live policy under the served recipe's levers is the instance's: the
 /// instance states the recipe, so the installed plan is the one the reports describe.
 #[test]
 fn the_served_levers_fuse_under_the_instance_policy() {
     let (_, _, policy) = ranks();
-    for rank in 0..3 {
-        let s = site(rank);
+    for (world, rank) in worlds()
+        .into_iter()
+        .flat_map(|w| (0..w).map(move |r| (w, r)))
+    {
+        let s = site_at(rank, world);
         assert!(unmodelled(&s.k).is_empty(), "{:?}", unmodelled(&s.k));
         let live = live_policy(&policy, &s.k, &s.cfg).unwrap();
         assert_eq!(live.settings, policy.settings, "rank {rank}");
@@ -138,5 +141,41 @@ fn an_unmodelled_lever_refuses_installation() {
     assert_eq!(
         unmodelled(&s.k),
         ["METRALE_GLM_DENSE_SEGMENT (the rules name the shared expert's separate launches)"]
+    );
+}
+
+/// 2026-10-23: The boot's shapes for GLM TP=3 with one draft (`--num-drafts 1`): from the shapes
+/// the GLM sites install (`plan_shapes`: `GATED` on a text layer, `DRAFT_GATED` on the draft
+/// block) and the serve's verify widths, decode 1, verify 2 and draft 1, and every rank fuses
+/// each. Three drafts (verify 2..=4) are refused naming verify 3 and the depth; the widths the
+/// boot used to fuse whenever a drafter existed (2, 3, 4) do not all fuse on these rules.
+#[test]
+fn one_draft_fuses_only_the_covered_shapes_on_every_rank() {
+    use metrale_model_layers::circuit_exec::rank_shapes::{
+        rank_plan_shapes, speculative_verify_rows,
+    };
+    let (c, rules, policy) = ranks();
+    let installed: Vec<(Mode, u64)> = GATED.iter().chain(&DRAFT_GATED).copied().collect();
+    let shapes = rank_plan_shapes(&installed, &speculative_verify_rows(1)).unwrap();
+    assert_eq!(
+        shapes,
+        [(Mode::Decode, 1), (Mode::Verify, 2), (Mode::Draft, 1)]
+    );
+    let avail = AvailableKernels::all_named_by(&rules);
+    for (rank, circuit) in c.iter().enumerate() {
+        for &(mode, rows) in &shapes {
+            metrale_circuit::fuse(circuit, &rules, &avail, &policy, mode, rows)
+                .unwrap_or_else(|e| panic!("rank {rank} {mode:?} {rows}: {e}"));
+        }
+    }
+    let e = rank_plan_shapes(&installed, &speculative_verify_rows(3)).unwrap_err();
+    assert_eq!(e.code(), metrale_error::ErrorCode::CircuitPlanUncovered);
+    assert!(e.to_string().contains("verify at 3 rows"), "{e}");
+    let fixed_widths = [2, 3, 4].iter().all(|&rows| {
+        metrale_circuit::fuse(&c[0], &rules, &avail, &policy, Mode::Verify, rows).is_ok()
+    });
+    assert!(
+        !fixed_widths,
+        "the GLM rules cover every verify width up to 4"
     );
 }

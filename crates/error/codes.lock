@@ -81,6 +81,8 @@
 0x0703 ActQuantInvalid
 0x0710 CircuitSource
 0x0711 KernelTreeResolve
+0x0720 CircuitPlanUncovered
+0x0721 CircuitRanksRefused
 0x0800 KgDanglingRef
 0x0801 KgDuplicateId
 0x0802 KgIdCollision

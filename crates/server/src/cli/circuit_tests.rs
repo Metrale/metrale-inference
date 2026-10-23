@@ -31,7 +31,18 @@ fn plan_args(args: &[&str]) -> CircuitPlanArgs {
         CircuitAction::Memory(_) => panic!("parsed memory"),
         CircuitAction::Precision(_) => panic!("parsed precision"),
         CircuitAction::Headroom(_) => panic!("parsed headroom"),
+        CircuitAction::Rules(_) => panic!("parsed rules"),
     }
+}
+
+// 2026-10-23: `met circuit rules` names what it checks; bare it is a usage error.
+#[test]
+fn circuit_rules_needs_critical_pairs() {
+    assert!(matches!(
+        parse(&["rules", "--critical-pairs", "--check"]).action,
+        CircuitAction::Rules(r) if r.critical_pairs && r.check
+    ));
+    assert!(Cli::try_parse_from(["met", "circuit", "rules"]).is_err());
 }
 
 #[test]

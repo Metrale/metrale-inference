@@ -259,13 +259,27 @@ fn every_reference_rule_is_used_by_a_golden_plan_and_every_lever_moves_one() {
         .map(|i| common::load(i).circuit)
         .collect();
     // 2026-10-23: With each non-golden deployment's rank circuits, whose derived collectives
-    // only a rank circuit has.
+    // only a rank circuit has: the stated deployment and every N in 2..=8 the derivation admits
+    // (`metrale_circuit::deploy`), so a rule for another group size (the 2-rank exchange) waits
+    // for its N rather than for a golden plan.
     let pending: Vec<metrale_circuit::Circuit> = common::instances()
         .iter()
         .filter(|i| !i.golden)
         .flat_map(|i| {
             let l = common::load(i);
-            std::iter::once(l.circuit).chain(l.ranks)
+            let t = common::Texts::of(i);
+            let blocks: Vec<(&str, &str)> =
+                t.blocks.iter().map(|(n, s)| (n.as_str(), s.as_str())).collect();
+            let spec = metrale_circuit::parallel_spec(&t.circuit, &blocks).unwrap();
+            let derived: Vec<metrale_circuit::Circuit> = (2..=8)
+                .filter_map(|n| metrale_circuit::deploy::tensor_parallel(&spec, &i.shape.dims, n).ok().flatten())
+                .flat_map(|d| {
+                    let mut at = i.clone();
+                    at.parallel = Some(d);
+                    common::load_texts(&at, &t).unwrap().ranks
+                })
+                .collect();
+            std::iter::once(l.circuit).chain(l.ranks).chain(derived)
         })
         .collect();
     let heads = |r: &metrale_circuit::Rule, cs: &[metrale_circuit::Circuit]| {

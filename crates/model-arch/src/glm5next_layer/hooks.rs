@@ -306,6 +306,15 @@ impl metrale_model_layers::circuit_exec::CircuitBindings for Glm5NextLayer {
         Ok(sites)
     }
 
+    /// 2026-10-23: A text layer's gated shapes (`install::GATED`); the MTP block's draft row
+    /// (`install::DRAFT_GATED`).
+    fn plan_shapes(&self) -> Vec<(metrale_circuit::Mode, u64)> {
+        match self.mhc {
+            Some(_) => crate::glm5next_plan::install::GATED.to_vec(),
+            None => crate::glm5next_plan::install::DRAFT_GATED.to_vec(),
+        }
+    }
+
     fn plan_sites(&self) -> Vec<String> {
         let mut s = self.plans.mhc.sites();
         s.extend(self.plans.kda.sites());

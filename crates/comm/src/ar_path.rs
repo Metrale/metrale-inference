@@ -3,6 +3,9 @@
 //! 2026-10-16: Which path an all-reduce takes on `NcclBackend`, as a pure function of the
 //! communicator's state, so the choice is tested without a communicator.
 //!
+//! 2026-10-23: Public and outside the NCCL gate (pure), so the circuit's collective rules are
+//! checked against it (`tp_all_reduce_*`, model-arch `world_tests`).
+//!
 //! Owner: metrale-comm.
 //! Invariants:
 //! - At two ranks the 2-rank exchange (`bf16_add_inplace`) keeps priority whenever its kernel is
@@ -15,7 +18,7 @@
 
 /// 2026-10-16: The path an all-reduce takes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum ArPath {
+pub enum ArPath {
     /// 2026-10-17: The 2-rank exchange plus `bf16_add_inplace` (`__hadd`).
     TwoRank,
     /// 2026-10-17: The one-shot exchange plus `bf16_add_rank_sum`.
@@ -26,7 +29,7 @@ pub(super) enum ArPath {
 
 /// 2026-10-16: Choose the path (see the module invariants). `oneshot_applies` is whether the
 /// payload fits an enabled one-shot bound on this communicator.
-pub(super) fn ar_path(
+pub fn ar_path(
     world_size: usize,
     add_kernel_set: bool,
     oneshot_applies: bool,

@@ -20,7 +20,9 @@ use super::*;
 use crate::glm5next_layer::{Glm5NextMhc, GlmLevers, LayerIo, MhcSite};
 use crate::glm5next_mhc::{Glm5NextMhcKernels, Glm5NextMhcSiteWeights};
 use crate::glm5next_mhc_plan::InstalledMhc;
-use crate::glm5next_plan::fixture::{RUNS, model_config, plan, ranks, served_levers};
+use crate::glm5next_plan::fixture::{
+    RUNS, model_config_at, plan, ranks, ranks_at, served_levers, served_world, worlds,
+};
 use crate::glm5next_plan::fixture_site::{RecordingComm, SMS, STREAM, gate};
 
 const HIDDEN: usize = 4096;
@@ -35,6 +37,7 @@ const NORMS: [DevicePtr; 2] = [DevicePtr(0x6600_0000), DevicePtr(0x6700_0000)];
 
 struct Layer {
     gpu: RecordingGpu,
+    world: usize,
     levers: GlmLevers,
     mhc: Glm5NextMhc,
     rms_eps: f32,
@@ -53,9 +56,9 @@ fn site_weights(tag: u64, bf16: bool) -> Glm5NextMhcSiteWeights {
     }
 }
 
-fn layer(rank: usize, levers: GlmLevers) -> Layer {
+fn layer(rank: usize, world: usize, levers: GlmLevers) -> Layer {
     let gpu = RecordingGpu::new(SMS);
-    let c = model_config(rank);
+    let c = model_config_at(rank, world);
     let mhc = Glm5NextMhc {
         kernels: Glm5NextMhcKernels::resolve(&gpu, levers.mhc).unwrap(),
         attn: site_weights(1, true),
@@ -68,6 +71,7 @@ fn layer(rank: usize, levers: GlmLevers) -> Layer {
     gpu.take();
     Layer {
         gpu,
+        world,
         levers,
         mhc,
         rms_eps: c.rms_norm_eps as f32,
@@ -98,7 +102,7 @@ fn run(
     let comm = RecordingComm {
         gpu: &l.gpu,
         rank,
-        world: 3,
+        world: l.world,
         oneshot,
     };
     let io = LayerIo {
@@ -149,10 +153,13 @@ fn installed(
 /// the c1 pre-norm, the exchange ordered on the compute stream, and the rank-sum post-mix.
 #[test]
 fn every_plan_executed_mhc_site_launches_what_the_layer_launches() {
-    let (c, rules, policy) = ranks();
-    let mut sites = 0;
-    for rank in 0..3 {
-        let l = layer(rank, served_levers());
+    let (mut sites, mut want) = (0, 0);
+    for (world, rank) in worlds()
+        .into_iter()
+        .flat_map(|w| (0..w).map(move |r| (w, r)))
+    {
+        let (c, rules, policy) = ranks_at(world).unwrap();
+        let l = layer(rank, world, served_levers());
         let plans: Vec<_> = RUNS
             .iter()
             .map(|&(m, r)| plan(&c, &rules, &policy, rank, m, r))
@@ -199,8 +206,10 @@ fn every_plan_executed_mhc_site_launches_what_the_layer_launches() {
                 sites += 2;
             }
         }
+        want += 45 * 2 * 2;
     }
-    assert_eq!(sites, 3 * 45 * 2 * 2);
+    assert_eq!(sites, want);
+    assert!(sites > 3 * 45 * 2 * 2, "more than the served world's sites");
 }
 
 /// 2026-10-23: One changed plan field turns the gate red at its launch: the pre-norm grid, the
@@ -209,7 +218,7 @@ fn every_plan_executed_mhc_site_launches_what_the_layer_launches() {
 #[test]
 fn a_one_field_sabotage_turns_the_mhc_gate_red() {
     let (c, rules, policy) = ranks();
-    let l = layer(0, served_levers());
+    let l = layer(0, served_world(), served_levers());
     let plans = [plan(
         &c,
         &rules,
@@ -259,7 +268,7 @@ fn installed_one(
 #[test]
 fn uninstalled_rows_run_the_layer_and_a_declined_exchange_is_an_error() {
     let (c, rules, policy) = ranks();
-    let l = layer(0, served_levers());
+    let l = layer(0, served_world(), served_levers());
     let plans = [plan(
         &c,
         &rules,
@@ -296,7 +305,7 @@ fn installation_refuses_unmodelled_levers_and_unfusable_sites() {
     )];
     let mut levers = served_levers();
     levers.mhc.pre_c1 = false;
-    let l = layer(0, levers);
+    let l = layer(0, served_world(), levers);
     let inst = InstalledMhc::default();
     let rp = RankPlans {
         circuit: &c[0],
@@ -307,7 +316,7 @@ fn installation_refuses_unmodelled_levers_and_unfusable_sites() {
         .err()
         .unwrap();
     assert!(format!("{e:#}").contains("PRE_C1=0"), "{e:#}");
-    let mut l = layer(0, served_levers());
+    let mut l = layer(0, served_world(), served_levers());
     l.mhc.ffn.hc_fn_bf16 = false;
     let e = install(&l.gpu, 4, Some(rp), &l.levers, &l.mhc, HIDDEN, &inst)
         .err()

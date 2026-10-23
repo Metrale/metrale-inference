@@ -32,6 +32,8 @@ pub mod install;
 pub mod kda;
 pub mod mhc;
 pub mod moe;
+#[cfg(test)]
+mod world_tests;
 
 /// 2026-10-23: The compile target the GLM emitters fill: one block instance's steps.
 #[derive(Debug, Default)]
@@ -49,12 +51,14 @@ static MOE_BLEND: moe::MoeBlend = moe::MoeBlend { split: false };
 static MOE_BLEND_SPLIT: moe::MoeBlend = moe::MoeBlend { split: true };
 static GLM_HC: mhc::GlmHc = mhc::GlmHc;
 static KDA: kda::Kda = kda::Kda;
+static GLM_W4A16: kda::GlmW4a16 = kda::GlmW4a16;
 static DSA: dsa::Dsa = dsa::Dsa;
 
 /// 2026-10-23: Every GLM emitter.
-static EMITTERS: [&dyn GroupEmitter<GlmBlock>; 8] = [
+static EMITTERS: [&dyn GroupEmitter<GlmBlock>; 9] = [
     &GLM_HC,
     &KDA,
+    &GLM_W4A16,
     &DSA,
     &MOE_ROUTER,
     &GLM_MOE_W4A4,
@@ -66,7 +70,7 @@ static EMITTERS: [&dyn GroupEmitter<GlmBlock>; 8] = [
 /// 2026-10-23: The plan-executed sites, `(block, template-local ids of a group)`, as the plan
 /// reports name them: the groups the emitters above compile. A group of a listed block whose
 /// locals are not here is a legacy site of that block.
-pub const DONE: [(&str, &[&str]); 30] = [
+pub const DONE: [(&str, &[&str]); 33] = [
     ("dsa", &["mix", "pre", "input_norm"]),
     ("kda", &["mix", "pre", "input_norm"]),
     ("dsa", &["o@all_reduce", "post"]),
@@ -80,6 +84,9 @@ pub const DONE: [(&str, &[&str]); 30] = [
     ("kda", &["fa_quant", "f_b", "gates", "ga_quant", "g_b"]),
     ("kda", &["recur"]),
     ("kda", &["out_norm"]),
+    ("kda", &["q", "k", "v", "f_a", "b", "g_a"]),
+    ("kda", &["o"]),
+    ("kda", &["out_norm", "o"]),
     ("dsa", &["kv_norm", "kv_write"]),
     ("dsa", &["idx_k_norm"]),
     ("dsa", &["pool"]),
@@ -211,7 +218,8 @@ pub fn compile_mhc(
 }
 
 /// 2026-10-23: Layer `layer`'s KDA mixer in `plan` (over the rank circuit `circuit`): its own
-/// groups through the `kda` emitter, its projection groups declared legacy sites.
+/// groups through the `kda` emitter, its W4A16 projection groups through `glm_w4a16`; a
+/// projection group of another emitter would be a declared legacy site.
 pub fn compile_kda(
     circuit: &Circuit,
     plan: &FusionPlan,
