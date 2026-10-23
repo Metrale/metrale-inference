@@ -165,6 +165,25 @@ fn agree(flag: Option<f64>, captured: Option<&Stated>, what: &str) -> Result<Opt
 
 /// 2026-10-22: The headroom `a` asks for, and the command that regenerates it.
 pub(crate) fn compute(root: &Path, a: &CircuitHeadroomArgs) -> Result<Headroom> {
+    with_inputs(root, a, |reg, tree, model, runs, inputs| {
+        Ok(hardware::build_headroom(reg, &a.hardware, tree, model, runs, inputs)?)
+    })
+}
+
+/// 2026-10-23: Everything `a` states, resolved (the instance with the capture's shard dims, the
+/// runs, the inputs whose flags agree with the capture), handed to `f`: the headroom and the
+/// what-if plan from the same statement.
+pub(crate) fn with_inputs<T>(
+    root: &Path,
+    a: &CircuitHeadroomArgs,
+    f: impl FnOnce(
+        &hardware::Registry,
+        &FsTree,
+        &hardware::ModelUnderPlan,
+        &[Run],
+        &Inputs<'_>,
+    ) -> Result<T>,
+) -> Result<T> {
     let tree = FsTree::new(root.to_path_buf());
     let reg = registry(&tree)?;
     let text = tree
@@ -258,14 +277,7 @@ pub(crate) fn compute(root: &Path, a: &CircuitHeadroomArgs) -> Result<Headroom> 
         trace: trace.as_ref(),
         energy: None,
     };
-    Ok(hardware::build_headroom(
-        &reg,
-        &a.hardware,
-        &tree,
-        &model,
-        &runs,
-        &inputs,
-    )?)
+    f(&reg, &tree, &model, &runs, &inputs)
 }
 
 /// 2026-10-22: The command line that regenerates `a`'s output.

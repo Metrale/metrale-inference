@@ -81,6 +81,8 @@
 0x0703 ActQuantInvalid
 0x0710 CircuitSource
 0x0711 KernelTreeResolve
+0x0712 CriticalCaptureInvalid
+0x0713 WhatIfInvalid
 0x0720 CircuitPlanUncovered
 0x0721 CircuitRanksRefused
 0x0900 PowerSourceUnavailable
