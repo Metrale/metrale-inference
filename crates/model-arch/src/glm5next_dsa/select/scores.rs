@@ -143,6 +143,14 @@ pub(super) fn launch_scores(
         // index head, one block per SM with every row in it.
         let (k, grid) = match heads_kernel(kernels, geom, inputs, scratch) {
             Some(k) => (k, [kernels.rows.sm_count, 1, 1]),
+            None if kernels.rows.pool_keys_bf16 => bail!(
+                "METRALE_GLM_DSA_POOL_KEYS_BF16: a persisted pass of {} rows the lane-per-head \
+                 kernels do not take (heads {}, head dim {}); dsa_index_scores_warp_paged reads \
+                 FP32 keys",
+                geom.q_rows,
+                geom.index_heads,
+                d
+            ),
             None => (
                 kernels.rows.scores_warp_paged,
                 [scores_warp_grid_x(npools_a), geom.q_rows as u32, 1],

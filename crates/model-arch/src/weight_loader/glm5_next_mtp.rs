@@ -73,7 +73,7 @@ pub fn load_glm5next_mtp_module(
     let mlp_cfg = Glm5NextMlpConfig::from_config(config)?;
     let dsa_plan = crate::glm5next_dsa::tp::DsaTpPlan::from_config(config, &dsa_cfg)?;
     let dsa_layer_kernels = Glm5NextDsaLayerKernels::resolve(gpu)?;
-    let dsa_kernels = Glm5NextDsaKernels::resolve(gpu)?;
+    let dsa_kernels = Glm5NextDsaKernels::resolve_for(gpu, lc.settings)?;
     let drafter_format = crate::glm5next_dsa::fp8_rows::IndexerRowFormat::drafter(
         lc.settings.kernels.glm_dsa_pool_keys,
         dsa_kernels.rows.pool_keys_ready(),

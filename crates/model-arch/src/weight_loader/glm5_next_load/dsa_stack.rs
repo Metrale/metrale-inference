@@ -48,7 +48,7 @@ impl DsaStack {
         dsa_layers: usize,
     ) -> Result<Self> {
         let cfg = Glm5NextDsaConfig::from_config(config)?;
-        let kernels = Glm5NextDsaKernels::resolve(gpu)?;
+        let kernels = Glm5NextDsaKernels::resolve_for(gpu, settings)?;
         let indexer_cache = crate::glm5next_dsa::paged::text_stack_indexer_cache(settings);
         let indexer_format = IndexerRowFormat::text_stack(
             config,

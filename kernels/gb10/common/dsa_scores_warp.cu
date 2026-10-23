@@ -197,15 +197,8 @@ extern "C" __global__ void dsa_pool_keys_store_rows(
     unsigned int blk_elems,
     unsigned int pk_blk
 ) {
-    const unsigned int row = blockIdx.y;
-    const int x = pos ? pos[row] : pos0 + (int)row;
-    if (x < 0 || ((unsigned int)x + 1u) % KP != 0u) return;
-    const unsigned int p = (unsigned int)x / KP;
-    const int* btr = bt ? bt + (size_t)row * bt_stride : nullptr;
-    float* dst = btr ? dsa_pk_ptr(pk, btr, bs, pk_blk, KP, D, p) : pk + (size_t)p * D;
-    for (unsigned int d = threadIdx.x; d < D; d += blockDim.x)
-        dst[d] = dsa_pool_key(k_pool, gate_pool, nullptr, ape, (unsigned int)x + 1u, D, KP, 0,
-                              btr, bs, blk_elems, p, d);
+    dsa_pool_keys_store_body<false>(pos, pos0, k_pool, gate_pool, pk, ape, D, KP, bt, bt_stride, bs,
+                                    blk_elems, pk_blk);
 }
 
 // 2026-10-21: dsa_index_scores_warp_paged's bytes with one lane per index head
@@ -243,86 +236,5 @@ extern "C" __global__ void __launch_bounds__(256, 1) dsa_index_scores_heads_page
     float scale,
     const int* __restrict__ geom
 ) {
-    // 2026-10-21: The walk's key ring, head terms and pool ids; before the walk the same bytes
-    // stage each row's [H, D] query once per block (row stride DSA_SH_QLD, so the 8 lanes of a
-    // float4 phase read distinct banks).
-    __shared__ __align__(16) unsigned char smem[DSA_SH_SMEM];
-    auto sring = reinterpret_cast<float4(*)[DSA_SH_RING][32]>(smem);
-    auto sterm = reinterpret_cast<float(*)[DSA_SH_BATCH][33]>(smem + DSA_SH_RING_BYTES);
-    auto spool = reinterpret_cast<unsigned int(*)[DSA_SH_BATCH]>(
-        smem + DSA_SH_RING_BYTES + DSA_SH_TERM_BYTES);
-    float* const sq = reinterpret_cast<float*>(smem);
-    const unsigned int tid = threadIdx.x, lane = tid & 31u, warp = tid >> 5;
-    if (Q == 0u || Q > DSA_SW_WARPS || H > 32u || D != DSA_SH_D || blockDim.x != 256u) return;
-    const unsigned int groups = DSA_SW_WARPS / Q;
-    const bool active = warp < groups * Q;
-    const unsigned int r = warp % Q;
-    const bool head = lane < H;
-    float qr[DSA_SH_D];
-    float wh = 0.0f;
-    dsa_sh_stage_q(sq, q, weights, Q, H, r, active && head, qr, wh);
-    if (!active) return;
-    const DsaSwPersistedKeys keys{pk, bt, bs, pk_blk, KP};
-    const unsigned int stride = P;
-    unsigned int n = P;
-    if (geom) {
-        const int* g = geom + (size_t)r * DSA_GEOM_SLOTS;
-        S = (unsigned int)g[DSA_GEOM_S];
-        n = min((unsigned int)g[DSA_GEOM_NPOOLS], n);
-    }
-    const int qp = q_pos[r];
-    const unsigned int first = blockIdx.x * groups + warp / Q, step = gridDim.x * groups;
-    float* const orow = out + (size_t)r * stride;
-    unsigned char* const crow = valid_cand + (size_t)r * stride;
-    // 2026-10-21: Pool j of this warp's walk is first + j * step; its key goes to ring slot
-    // j % RING as one cp.async group (empty past the walk or for a non-candidate). Lane l holds
-    // the key address of pool 32 w + l of window w (NULL past the walk or for a non-candidate)
-    // for the current and the next window, so the block-table reads are made a window ahead of
-    // the copies that need them.
-    auto win = [&](unsigned int j0) -> const float* {
-        const unsigned int p = first + (j0 + lane) * step;
-        return (p < n && keys.cand(p, S, qp)) ? keys.key(p, DSA_SH_D) : nullptr;
-    };
-    const float* cur = win(0u);
-    const float* nxt = win(32u);
-    auto issue = [&](unsigned int j) {
-        if (j % 32u == 0u && j != 0u) {
-            cur = nxt;
-            nxt = win(j + 32u);
-        }
-        const float* from = (const float*)__shfl_sync(
-            0xffffffffu, (unsigned long long)cur, (int)(j % 32u));
-        if (from)
-            e4m3g::cp16(dsa_sh_smem(&sring[warp][j % DSA_SH_RING][lane]), from + 4u * lane, true);
-        e4m3g::cp_commit();
-    };
-#pragma unroll
-    for (unsigned int j = 0; j + 1u < DSA_SH_RING; ++j) issue(j);
-    unsigned int nb = 0;
-    for (unsigned int i = 0;; ++i) {
-        const unsigned int p = first + i * step;
-        const bool live = p < n;
-        const bool c = live && keys.cand(p, S, qp);
-        issue(i + DSA_SH_RING - 1u);
-        e4m3g::cp_wait<DSA_SH_RING - 1u>();
-        __syncwarp();
-        if (c && head)
-            sterm[warp][nb][lane] = dsa_sh_pool_term(qr, sring[warp][i % DSA_SH_RING], wh, scale);
-        if (c && lane == 0u) spool[warp][nb] = p;
-        if (live && !c && lane == 0u) {
-            crow[p] = 0;
-            orow[p] = -FLT_MAX;
-        }
-        nb += c ? 1u : 0u;
-        // 2026-10-21: Every 16 scored pools (and at the end) lane j adds pool j's head terms.
-        if (nb == DSA_SH_BATCH || (!live && nb != 0u)) {
-            __syncwarp();
-            dsa_sh_flush(sterm[warp], spool[warp], nb, H, lane, crow, orow);
-            nb = 0u;
-        }
-        // 2026-10-21: Every lane is past slot i % RING (and the batch) before it is rewritten.
-        __syncwarp();
-        if (!live) break;
-    }
-    e4m3g::cp_wait<0>();
+    dsa_sh_paged_walk<false>(q, pk, weights, bt, q_pos, out, valid_cand, Q, P, H, D, KP, S, bs, pk_blk, scale, geom);
 }

@@ -7,6 +7,10 @@
 //! (262,144 pools as the row stride), the live pools in each row's device geometry.
 //! 2026-10-22: And `dsa_index_scores_heads_window` (its straight-line walk,
 //! `METRALE_GLM_DSA_SCORES_HEADS_WINDOW`) against the same reference.
+//! 2026-10-23: And their BF16-key instances (`dsa_scores_heads_bf16`,
+//! `METRALE_GLM_DSA_POOL_KEYS_BF16`) over the keys rounded to BF16 (RN) in the same slots,
+//! against `dsa_index_scores_warp_paged` over those keys widened back to FP32: the same bytes.
+//! And `dsa_pool_keys_store_rows_bf16` against the RN rounding of `dsa_pool_keys_store_rows`.
 //!
 //! 1. Identity: for each context and row count, scores and candidacy bytes over the whole
 //!    ceiling rows (untouched slots included, both prefilled with the same sentinel) must be
@@ -24,6 +28,9 @@
 //! Run (GB10, < 1 GB of device memory):
 //!   cargo run --release -p metrale-gpu-examples --features cuda,gpu-examples \
 //!     --example glm5next_dsa_ceiling_scores_gate
+
+#[path = "common/dsa_pool_keys_store_gate.rs"]
+mod store;
 
 use anyhow::{Result, ensure};
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
@@ -82,6 +89,10 @@ struct Case {
     /// 2026-10-21: Copies of `pk` the timed launches rotate over, so the keys come from DRAM as
     /// in the serve (11 layers' keys do not stay in L2), not from L2.
     pk_copies: Vec<DevicePtr>,
+    /// 2026-10-23: The keys rounded to BF16 in the same slots, and widened back to FP32.
+    pk16: DevicePtr,
+    pk16_copies: Vec<DevicePtr>,
+    pkw: DevicePtr,
     w: DevicePtr,
     bt: DevicePtr,
     qpos: DevicePtr,
@@ -110,6 +121,42 @@ fn key(rng: &mut Rng, p: usize, d: usize) -> f32 {
         (_, 5) => rng.unit() * 1.0e-20,
         _ => rng.unit(),
     }
+}
+
+/// 2026-10-23: `__float2bfloat16_rn`'s bits of `x` (round to nearest even; a NaN stays a quiet
+/// NaN of its sign).
+fn bf16_rn(x: f32) -> u16 {
+    let b = x.to_bits();
+    if x.is_nan() {
+        return ((b >> 16) | 0x40) as u16;
+    }
+    ((b + 0x7FFF + ((b >> 16) & 1)) >> 16) as u16
+}
+
+/// 2026-10-23: The persisted keys `pk` as `dsa_pool_keys_store_rows_bf16` lays them out (each
+/// key slot of each block (`PK_BLK` f32 apart, `BS / KP` slots of `D`) holds its key rounded
+/// to BF16 in its first half, the rest zero), and those keys widened back to FP32 in the FP32
+/// layout (the block padding kept).
+fn bf16_slots(pk: &[f32]) -> (Vec<f32>, Vec<f32>) {
+    let mut packed = vec![0f32; pk.len()];
+    let mut wide = pk.to_vec();
+    for blk in 0..pk.len() / PK_BLK {
+        for slot in 0..BS / KP {
+            let base = blk * PK_BLK + slot * D;
+            for d in 0..D {
+                let h = bf16_rn(pk[base + d]);
+                wide[base + d] = f32::from_bits((h as u32) << 16);
+                let word = &mut packed[base + d / 2];
+                let bits = word.to_bits();
+                *word = f32::from_bits(if d % 2 == 0 {
+                    (bits & 0xFFFF_0000) | h as u32
+                } else {
+                    (bits & 0xFFFF) | ((h as u32) << 16)
+                });
+            }
+        }
+    }
+    (packed, wide)
 }
 
 fn build(gpu: &dyn GpuBackend, rng: &mut Rng, s: usize, rows: usize, short: bool) -> Result<Case> {
@@ -168,10 +215,18 @@ fn build(gpu: &dyn GpuBackend, rng: &mut Rng, s: usize, rows: usize, short: bool
     for _ in 0..copies {
         pk_copies.push(up(gpu, &pk)?);
     }
+    let (pk16, pkw) = bf16_slots(&pk);
+    let mut pk16_copies = Vec::new();
+    for _ in 0..copies {
+        pk16_copies.push(up(gpu, &pk16)?);
+    }
     Ok(Case {
         q: up(gpu, &q)?,
         pk: pk_dev,
         pk_copies,
+        pk16: up(gpu, &pk16)?,
+        pk16_copies,
+        pkw: up(gpu, &pkw)?,
         w: up(gpu, &w)?,
         bt: up(gpu, &bt)?,
         qpos: up(gpu, &qpos)?,
@@ -217,9 +272,20 @@ fn launch(
 /// 2026-10-21: Scores and candidacy of a launch over the whole ceiling rows, from the same
 /// sentinel fill.
 fn run(gpu: &dyn GpuBackend, k: KernelHandle, c: &Case, grid: [u32; 3]) -> Result<Vec<u8>> {
+    run_on(gpu, k, c, c.pk, grid)
+}
+
+/// 2026-10-23: [`run`] over the keys at `pk`.
+fn run_on(
+    gpu: &dyn GpuBackend,
+    k: KernelHandle,
+    c: &Case,
+    pk: DevicePtr,
+    grid: [u32; 3],
+) -> Result<Vec<u8>> {
     gpu.memset(c.out, 0x5a, c.rows * MAX_POOLS * 4)?;
     gpu.memset(c.cand, 0xa5, c.rows * MAX_POOLS)?;
-    launch(gpu, k, c, c.pk, grid, 0)?;
+    launch(gpu, k, c, pk, grid, 0)?;
     let mut v = read(gpu, c.out, c.rows * MAX_POOLS * 4)?;
     v.extend(read(gpu, c.cand, c.rows * MAX_POOLS)?);
     Ok(v)
@@ -273,10 +339,24 @@ fn main() -> Result<()> {
     let heads = gpu.kernel("dsa_scores_warp", "dsa_index_scores_heads_paged")?;
     let window = gpu.kernel("dsa_scores_heads_window", "dsa_index_scores_heads_window")?;
     let news = [("heads", heads), ("window", window)];
+    let news16 = [
+        (
+            "heads_bf16",
+            gpu.kernel("dsa_scores_heads_bf16", "dsa_index_scores_heads_paged_bf16")?,
+        ),
+        (
+            "window_bf16",
+            gpu.kernel(
+                "dsa_scores_heads_bf16",
+                "dsa_index_scores_heads_window_bf16",
+            )?,
+        ),
+    ];
     let sms = gpu.sm_count()?;
     let grid_new = |_c: &Case| [sms, 1, 1];
     let grid_old = |c: &Case| [c.pools.div_ceil(8).clamp(1, 192) as u32, c.rows as u32, 1];
     let mut rng = Rng(0x6a09_e667_f3bc_c908);
+    store::gate(&gpu, &mut rng)?;
     println!("{sms} SMs");
     let ctxs: Vec<usize> = std::env::var("GLM_CTX")
         .ok()
@@ -302,8 +382,20 @@ fn main() -> Result<()> {
                     );
                 }
             }
+            let aw = run_on(&gpu, old, &c, c.pkw, grid_old(&c))?;
+            for (name, new) in news16 {
+                for g in [grid_new(&c), [1, 1, 1], [3 * sms, 1, 1]] {
+                    let b = run_on(&gpu, new, &c, c.pk16, g)?;
+                    ensure!(
+                        aw == b,
+                        "S={s} rows={rows} short={short} grid {g:?}: {name} scores differ from \
+                         dsa_index_scores_warp_paged over the widened keys at {}",
+                        first_diff(&aw, &b, rows)
+                    );
+                }
+            }
             println!(
-                "S={s:7} rows={rows} short={short:5}: identical (grids {sms}, 1, {})",
+                "S={s:7} rows={rows} short={short:5}: identical (grids {sms}, 1, {}; FP32 and BF16 keys)",
                 3 * sms
             );
             if ctxs.contains(&s) && rows <= 2 && !short {
@@ -317,6 +409,11 @@ fn main() -> Result<()> {
                 let tw = graph_us(&gpu, &|i, st| {
                     launch(&gpu, window, &c, pk(i), grid_new(&c), st)
                 })?;
+                let pk16 = |i: usize| c.pk16_copies[i % c.pk16_copies.len()];
+                let k16 = news16[if rows == 1 { 0 } else { 1 }];
+                let t16 = graph_us(&gpu, &|i, st| {
+                    launch(&gpu, k16.1, &c, pk16(i), grid_new(&c), st)
+                })?;
                 let gb = (c.pools * D * 4) as f64 / 1e3;
                 println!(
                     "  TIME S={s:7} rows={rows}: warp_paged {to:8.1} us ({:5.1} GB/s) | heads {tn:8.1} us ({:5.1} GB/s) | window {tw:8.1} us ({:5.1} GB/s) | window/heads {:.3}",
@@ -325,10 +422,20 @@ fn main() -> Result<()> {
                     gb / tw,
                     tw / tn
                 );
+                println!(
+                    "  TIME S={s:7} rows={rows}: {} {t16:8.1} us ({:5.1} GB/s of BF16 keys) | vs {} {:.3}",
+                    k16.0,
+                    gb / 2.0 / t16,
+                    if rows == 1 { "heads" } else { "window" },
+                    t16 / if rows == 1 { tn } else { tw }
+                );
             }
-            for p in [c.q, c.pk, c.w, c.bt, c.qpos, c.geom, c.out, c.cand]
-                .into_iter()
-                .chain(c.pk_copies.iter().copied())
+            for p in [
+                c.q, c.pk, c.pk16, c.pkw, c.w, c.bt, c.qpos, c.geom, c.out, c.cand,
+            ]
+            .into_iter()
+            .chain(c.pk_copies.iter().copied())
+            .chain(c.pk16_copies.iter().copied())
             {
                 gpu.free(p)?;
             }
@@ -336,7 +443,8 @@ fn main() -> Result<()> {
     }
     println!(
         "PASS: dsa_index_scores_heads_paged and dsa_index_scores_heads_window are \
-         dsa_index_scores_warp_paged's bytes"
+         dsa_index_scores_warp_paged's bytes; their BF16-key instances are its bytes over the \
+         widened keys"
     );
     Ok(())
 }

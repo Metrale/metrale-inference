@@ -2556,6 +2556,11 @@ kernels = [
   # 2026-10-22: dsa_index_scores_heads_paged's bytes with a straight-line pool step
   # (METRALE_GLM_DSA_SCORES_HEADS_WINDOW, default on; the captured decode's ceiling scores).
   "dsa_scores_heads_window::dsa_index_scores_heads_window",
+  # 2026-10-23: the persisted keys stored as BF16 and their two lane-per-head readers
+  # (METRALE_GLM_DSA_POOL_KEYS_BF16, default off): the FP32 kernels' bytes over the rounded keys.
+  "dsa_scores_heads_bf16::dsa_pool_keys_store_rows_bf16",
+  "dsa_scores_heads_bf16::dsa_index_scores_heads_paged_bf16",
+  "dsa_scores_heads_bf16::dsa_index_scores_heads_window_bf16",
   # 2026-10-21: dsa_topk_pools_radix's selection over C CTAs per row (METRALE_GLM_DSA_TOPK_MC,
   # default on; the captured decode's ceiling top-k): four histogram passes and a collect.
   "dsa_topk_mc::dsa_topk_mc_pass",
@@ -2598,7 +2603,7 @@ values = {}
 how = "instantiation"
 # 2026-10-09: The bodies live in dsa_indexer_body.cuh; dsa_indexer_rows.cu runs them for one
 # sequence per grid row (the batched decode's paged rows, METRALE_GLM_DSA_INDEXER_ROWS).
-files = ["kernels/gb10/common/dsa_indexer.cu", "kernels/gb10/common/dsa_indexer_body.cuh", "kernels/gb10/common/dsa_indexer_pools.cuh", "kernels/gb10/common/dsa_indexer_rows.cu", "kernels/gb10/common/dsa_scores_warp.cu", "kernels/gb10/common/dsa_scores_heads.cuh", "kernels/gb10/common/dsa_scores_heads_window.cu", "kernels/gb10/common/dsa_indexer_fp8.cu", "kernels/gb10/common/dsa_scores_mma.cuh", "kernels/gb10/common/dsa_index_scores_pipe.cu", "kernels/gb10/common/dsa_sel_fold.cu", "kernels/gb10/common/dsa_topk_stream.cuh", "kernels/gb10/common/dsa_topk_radix.cuh", "kernels/gb10/common/dsa_topk_mc.cu"]
+files = ["kernels/gb10/common/dsa_indexer.cu", "kernels/gb10/common/dsa_indexer_body.cuh", "kernels/gb10/common/dsa_indexer_pools.cuh", "kernels/gb10/common/dsa_indexer_rows.cu", "kernels/gb10/common/dsa_scores_warp.cu", "kernels/gb10/common/dsa_scores_heads.cuh", "kernels/gb10/common/dsa_scores_heads_window.cu", "kernels/gb10/common/dsa_scores_heads_bf16.cu", "kernels/gb10/common/dsa_indexer_fp8.cu", "kernels/gb10/common/dsa_scores_mma.cuh", "kernels/gb10/common/dsa_index_scores_pipe.cu", "kernels/gb10/common/dsa_sel_fold.cu", "kernels/gb10/common/dsa_topk_stream.cuh", "kernels/gb10/common/dsa_topk_radix.cuh", "kernels/gb10/common/dsa_topk_mc.cu"]
 # 2026-10-22: GLM-5.3-Flash NVFP4, TP=3 rank 0, nsys: rows [2] are the MTP verify launches, rows [1] the MTP drafter's.
 [[family.evidence]]
 point = {}
