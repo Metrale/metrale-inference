@@ -10,7 +10,7 @@
 
 use crate::app::derive_once;
 use crate::store::Store;
-use anyhow::{Result, bail};
+use anyhow::Result;
 use metrale_abstract_io::Clock;
 use metrale_io_host_kg::fs::{FsSources, read_config};
 use metrale_io_host_kg::ledger_py::LedgerPy;
@@ -23,6 +23,19 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// 2026-10-23: `derive`: the bundle JSONL to stdout or a file.
+/// 2026-10-23: A gate whose report is already on stdout failed; `main` exits 1 without printing a
+/// second JSON document.
+#[derive(Debug)]
+pub struct GateFailed(pub &'static str);
+
+impl std::fmt::Display for GateFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} failed (report on stdout)", self.0)
+    }
+}
+
+impl std::error::Error for GateFailed {}
+
 pub fn derive_cmd(cfg_path: &Path, out: Option<&Path>) -> Result<()> {
     let cfg = read_config(cfg_path)?;
     let (_, b, _) = derive_once(&cfg, &FsSources::new(&cfg))?;
@@ -92,7 +105,7 @@ pub async fn check_cmd(cfg_path: &Path, roundtrip: bool) -> Result<()> {
     }
     println!("{}", serde_json::to_string_pretty(&v)?);
     if !ok {
-        bail!("metrale-kg check failed");
+        return Err(GateFailed("metrale-kg check").into());
     }
     Ok(())
 }
@@ -163,7 +176,7 @@ pub fn parity_cmd(cfg_path: &Path, campaign: &str, ledger_file: Option<&Path>) -
     });
     println!("{}", serde_json::to_string_pretty(&v)?);
     if !v["mismatches"].as_array().is_some_and(Vec::is_empty) {
-        bail!("ledger.py parity failed");
+        return Err(GateFailed("ledger.py parity").into());
     }
     Ok(())
 }

@@ -43,10 +43,11 @@ pub struct App {
 pub fn derive_once(cfg: &Config, host: &FsSources) -> Result<(SourceSet, Bundle, Option<String>)> {
     let src = host.read(cfg)?;
     let facts = match &cfg.sources.lkb {
-        Some(t) => Some(metrale_io_host_kg::lkb::facts(
+        Some(t) => Some(metrale_io_host_kg::lkb::facts_cached(
             Path::new(&cfg.sources.root),
             &LkbSources::parse(t)?,
             &cfg.validator.python,
+            &Path::new(&cfg.store.scratch_dir).join("lkb-facts"),
         )?),
         None => None,
     };

@@ -68,7 +68,10 @@ pub fn parse_name_log(log: &str) -> BTreeMap<String, (String, String)> {
 fn head(repo: &Path) -> Result<String> {
     Ok(run(
         "git rev-parse",
-        Command::new("git").arg("-C").arg(repo).args(["rev-parse", "HEAD"]),
+        Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["rev-parse", "HEAD"]),
     )?
     .trim()
     .to_string())
@@ -81,10 +84,11 @@ pub fn refresh(root: &Path, cfg: &LkbSources) -> Result<(String, String)> {
     let repo = root.join(&cfg.repo);
     let dirty = run(
         "git status",
-        Command::new("git")
-            .arg("-C")
-            .arg(&repo)
-            .args(["status", "--porcelain", "--untracked-files=no"]),
+        Command::new("git").arg("-C").arg(&repo).args([
+            "status",
+            "--porcelain",
+            "--untracked-files=no",
+        ]),
     )?;
     if !dirty.trim().is_empty() {
         return Err(error!(
@@ -109,12 +113,10 @@ pub fn refresh(root: &Path, cfg: &LkbSources) -> Result<(String, String)> {
     let target = format!("refs/remotes/{}/{}", cfg.remote, cfg.branch);
     run(
         "git checkout",
-        Command::new("git").arg("-C").arg(&repo).args([
-            "checkout",
-            "--quiet",
-            "--detach",
-            &target,
-        ]),
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["checkout", "--quiet", "--detach", &target]),
     )?;
     Ok((old, head(&repo)?))
 }
@@ -145,6 +147,102 @@ pub fn repo_stamp(root: &Path, cfg: &LkbSources) -> Result<(String, u64, u128)> 
     let mut b = [0u8; 16];
     b.copy_from_slice(&d.0[..16]);
     Ok((format!("{}@git", cfg.repo), 0, u128::from_le_bytes(b)))
+}
+
+/// 2026-10-23: [`facts`] through a cache in `cache_dir`, keyed by everything the facts are a
+/// function of: the checkout's HEAD, its full `git status` (tracked changes and untracked files)
+/// and every ref (a fetch adds commits that date measurements). The cache is derived and
+/// rebuildable; only the newest entry is kept. A first derive after a refresh pays the inventory.
+pub fn facts_cached(
+    root: &Path,
+    cfg: &LkbSources,
+    python: &str,
+    cache_dir: &Path,
+) -> Result<LkbFacts> {
+    let repo = root.join(&cfg.repo);
+    let git =
+        |what: &str, args: &[&str]| run(what, Command::new("git").arg("-C").arg(&repo).args(args));
+    let key_src = format!(
+        "{}\n{}\n{}\n{}\n{}",
+        head(&repo)?,
+        git(
+            "git status",
+            &["status", "--porcelain", "--untracked-files=all"]
+        )?,
+        git(
+            "git for-each-ref",
+            &["for-each-ref", "--format=%(objectname) %(refname)"]
+        )?,
+        cfg.inventory,
+        cfg.hardware
+    );
+    let key = metrale_kg_derive::hash::sha256(key_src.as_bytes()).hex();
+    let path = cache_dir.join(format!("lkb-facts-{key}.json"));
+    if let Some(f) = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| from_json(&t))
+    {
+        return Ok(f);
+    }
+    let f = facts(root, cfg, python)?;
+    let shown = cache_dir.display().to_string();
+    let werr = |e: std::io::Error| error!(ErrorCode::KgStore, shown.clone(), e.kind().to_string());
+    std::fs::create_dir_all(cache_dir).map_err(werr)?;
+    let tmp = cache_dir.join(format!(".lkb-facts-{key}.{}", std::process::id()));
+    std::fs::write(&tmp, to_json(&f)).map_err(werr)?;
+    std::fs::rename(&tmp, &path).map_err(werr)?;
+    if let Ok(rd) = std::fs::read_dir(cache_dir) {
+        for e in rd.flatten() {
+            let n = e.file_name().to_string_lossy().into_owned();
+            if n.starts_with("lkb-facts-") && e.path() != path {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+    Ok(f)
+}
+
+fn to_json(f: &LkbFacts) -> String {
+    use serde_json::{Value, json};
+    let pairs = |m: &BTreeMap<String, (String, String)>| -> Value {
+        m.iter()
+            .map(|(k, (a, b))| (k.clone(), json!([a, b])))
+            .collect::<serde_json::Map<_, _>>()
+            .into()
+    };
+    let inv = match &f.inventory {
+        Ok(s) => json!({"ok": s}),
+        Err(s) => json!({"refused": s}),
+    };
+    json!({"head": f.head, "inventory": inv, "file_last": pairs(&f.file_last), "commit_date": f.commit_date}).to_string()
+}
+
+fn from_json(t: &str) -> Option<LkbFacts> {
+    use serde_json::Value;
+    let v: Value = serde_json::from_str(t).ok()?;
+    let inv = &v["inventory"];
+    let inventory = match (inv["ok"].as_str(), inv["refused"].as_str()) {
+        (Some(s), None) => Ok(s.to_string()),
+        (None, Some(s)) => Err(s.to_string()),
+        _ => return None,
+    };
+    let mut file_last = BTreeMap::new();
+    for (k, p) in v["file_last"].as_object()? {
+        file_last.insert(
+            k.clone(),
+            (p[0].as_str()?.to_string(), p[1].as_str()?.to_string()),
+        );
+    }
+    let mut commit_date = BTreeMap::new();
+    for (k, d) in v["commit_date"].as_object()? {
+        commit_date.insert(k.clone(), d.as_str()?.to_string());
+    }
+    Some(LkbFacts {
+        head: v["head"].as_str()?.to_string(),
+        inventory,
+        file_last,
+        commit_date,
+    })
 }
 
 /// 2026-10-23: Gather the facts for `cfg` under `root`.
@@ -194,6 +292,23 @@ pub fn facts(root: &Path, cfg: &LkbSources, python: &str) -> Result<LkbFacts> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cached_facts_round_trip_both_inventory_outcomes() {
+        for inventory in [
+            Ok("{\"kernels\":[]}".to_string()),
+            Err("exit status: 2".to_string()),
+        ] {
+            let f = LkbFacts {
+                head: "abc".into(),
+                inventory,
+                file_last: [("k.cu".to_string(), ("s".to_string(), "1".to_string()))].into(),
+                commit_date: [("s".to_string(), "1".to_string())].into(),
+            };
+            assert_eq!(from_json(&to_json(&f)), Some(f));
+        }
+        assert_eq!(from_json("{\"head\":\"x\"}"), None);
+    }
 
     #[test]
     fn the_newest_commit_naming_a_file_is_its_last_change() {

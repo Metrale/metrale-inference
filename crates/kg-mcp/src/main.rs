@@ -103,6 +103,10 @@ async fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     match run(cli).await {
         Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) if e.downcast_ref::<gates::GateFailed>().is_some() => {
+            eprintln!("metrale-kg: {e}");
+            std::process::ExitCode::FAILURE
+        }
         Err(e) => {
             // 2026-10-23: stdout stays JSON on every path (a caller parses it); the human line
             // goes to stderr.
