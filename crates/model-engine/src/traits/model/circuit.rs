@@ -29,6 +29,10 @@ pub enum ForwardSelect {
         /// 2026-09-30: The checkpoint's `config.json` as the server read it; the executor maps it
         /// to the served shape through the circuit's config map.
         config_json: String,
+        /// 2026-10-23: The one-sequence verify widths the serve's speculation runs
+        /// (`speculative_verify_rows` of its draft depth; empty when it does not speculate):
+        /// the verify shapes the forward compiles, from this one source.
+        verify_rows: Vec<u64>,
     },
 }
 

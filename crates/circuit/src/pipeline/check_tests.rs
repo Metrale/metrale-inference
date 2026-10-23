@@ -33,7 +33,7 @@ fn families(extra: &str, swap: (&str, &str)) -> Families {
         ("lm_head", "lm_head"),
     ] {
         s.push_str(&format!(
-            "[[family]]\nid = \"{kernel}\"\ndescription = \"toy\"\ncompute = \"cuda_core\"\nkernels = [\"m::{kernel}\"]\nrows = [1, 128]\n{}\nop = [{{ op = \"{op}\" }}]\n[[family.point]]\nvalues = {{}}\nhow = \"instantiation\"\nfiles = [\"t.cu\"]\n",
+            "[[family]]\nid = \"{kernel}\"\ndescription = \"toy\"\nexplain.about = \"toy\"\nexplain.numerics = \"toy\"\nexplain.math = [\"x\"]\ncompute = \"cuda_core\"\nkernels = [\"m::{kernel}\"]\nrows = [1, 128]\n{}\nop = [{{ op = \"{op}\" }}]\n[[family.point]]\nvalues = {{}}\nhow = \"instantiation\"\nfiles = [\"t.cu\"]\n",
             test_toy::pipelines(&[op])
         ));
     }
@@ -118,6 +118,9 @@ fn fused_case(holds: &str, out_act: &str) -> Result<super::PlanPipelines, Pipeli
         r#"[[family]]
 id = "act_down"
 description = "toy"
+explain.about = "toy"
+explain.numerics = "toy"
+explain.math = ["x"]
 compute = "cuda_core"
 kernels = ["m::act_down"]
 rows = [1, 128]
@@ -191,6 +194,9 @@ cite = "test"
         r#"[[family]]
 id = "gemv"
 description = "toy"
+explain.about = "toy"
+explain.numerics = "toy"
+explain.math = ["x"]
 compute = "cuda_core"
 kernels = ["m::gemv"]
 rows = [1, 128]
@@ -204,6 +210,9 @@ files = ["t.cu"]
 [[family]]
 id = "act_after"
 description = "toy"
+explain.about = "toy"
+explain.numerics = "toy"
+explain.math = ["x"]
 compute = "cuda_core"
 kernels = ["m::act_after"]
 rows = [1, 128]

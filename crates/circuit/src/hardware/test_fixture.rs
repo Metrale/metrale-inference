@@ -276,6 +276,9 @@ context_tokens = 4096
 [[family]]
 id = "{id}"
 description = "test"
+explain.about = "toy"
+explain.numerics = "toy"
+explain.math = ["x"]
 compute = "cuda_core"
 kernels = ["m::{func}"{extra}]
 rows = [1, 128]

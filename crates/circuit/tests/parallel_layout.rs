@@ -10,13 +10,15 @@
 //! Invariants: nothing is written except by the ignored `regenerate`.
 
 mod common;
+#[path = "parallel_layout/rotate.rs"]
+mod rotate;
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use metrale_circuit::ir::{Circuit, OpKind};
 use metrale_circuit::parallel::{self, ParallelSpec};
-use metrale_circuit::parallel_cost::{Link, parse_link, rank_cost, step_us};
+use metrale_circuit::parallel_cost::{Link, parse_link, rank_cost, segmented, step_us};
 use metrale_circuit::{Deployment, Instance};
 
 const DIR: &str = "kernels/circuits/plans/parallel";
@@ -118,12 +120,14 @@ fn report(inst: &Instance) -> String {
     let _ = writeln!(
         s,
         "\n## Cost model (decode n=1)\n\nPer rank: main-section weight bytes / {bw} GB/s (kernels/DEVICES.toml) + each \
-         collective at {} us + payload / {} GB/s ({basis}); the step is the slowest rank \
-         (crates/circuit/src/parallel_cost.rs). It ranks layouts and predicts no step time: a lower row is a \
+         collective at {} us + payload / {} GB/s ({basis}). Ranks wait for each other at every \
+         collective (over its group), so the step is the sum over segments of the slowest rank in each, not \
+         the slowest rank's whole-step total (crates/circuit/src/parallel_cost.rs). It ranks layouts and predicts no step time: a lower row is a \
          **candidate to measure**, not a change to the serve.\n",
         lk.latency_us, lk.gbps
     );
-    let base = step_us(&today, bw, lk).unwrap();
+    let seg = segmented(&today, bw, lk).unwrap();
+    let base = seg.step_us;
     let costs: Vec<String> = today
         .iter()
         .map(|c| {
@@ -131,11 +135,64 @@ fn report(inst: &Instance) -> String {
             format!("{:.1} + {:.1}", rc.weight_us, rc.comm_us)
         })
         .collect();
+    let whole = today.iter().map(|c| rank_cost(c, bw, lk).unwrap().total_us()).fold(0.0f64, f64::max);
+    let waits: Vec<String> = seg.wait_per_rank().iter().map(|w| format!("{w:.1}")).collect();
     let _ = writeln!(
         s,
-        "Today: **{base:.1} us** (weight + collectives per rank: {}).\n\n| change (one part) | model us | vs today |\n|---|---:|---:|",
-        costs.join(", ")
+        "Today: **{base:.1} us** over {} segments (weight + collectives per rank, as if it never waited: {}; \
+         the slowest of those, {whole:.1} us, is the whole-step form). Each rank waits at collectives for \
+         {} us.\n",
+        seg.segments.len() + 1,
+        costs.join(", "),
+        waits.join(", ")
     );
+    let _ = writeln!(s, "### Per-segment imbalance\n\nPer closing block: Σ over its segments of the slowest rank's work less the fastest's, and of each rank's wait.\n");
+    let _ = writeln!(s, "| closes in | segments | Σ (max − min) us | {} |", head.iter().map(|h| format!("{h} waits us")).collect::<Vec<_>>().join(" | "));
+    let _ = writeln!(s, "|---|---:|---:|{}", "---:|".repeat(head.len()));
+    let mut by_block: BTreeMap<String, (usize, f64, Vec<f64>)> = BTreeMap::new();
+    for sg in &seg.segments {
+        let r0 = &today[sg.group[0]];
+        let block = r0.nodes[r0.node(&sg.collective).unwrap()].block.clone();
+        let e = by_block.entry(block).or_insert_with(|| (0, 0.0, vec![0.0; today.len()]));
+        let (mx, mn) = sg.work_us.iter().fold((f64::MIN, f64::MAX), |(a, b), x| (a.max(*x), b.min(*x)));
+        e.0 += 1;
+        e.1 += mx - mn;
+        for (&r, w) in sg.group.iter().zip(&sg.wait_us) {
+            e.2[r] += w;
+        }
+    }
+    for (block, (k, spread, w)) in &by_block {
+        let w: Vec<String> = w.iter().map(|x| format!("{x:.1}")).collect();
+        let _ = writeln!(s, "| `{block}` | {k} | {spread:.1} | {} |", w.join(" | "));
+    }
+    let tail: Vec<String> = seg.tail_us.iter().map(|x| format!("{x:.1}")).collect();
+    let _ = writeln!(s, "\nAfter the last collective each rank works {} us.\n", tail.join(", "));
+    let replicated: BTreeMap<String, Circuit> = parallel::parts(&spec)
+        .filter(|p| d.degree[*p] > 1)
+        .map(|p| {
+            let mut degree = d.degree.clone();
+            degree.insert(p.clone(), 1);
+            let mut i = inst.clone();
+            i.parallel = Some(Deployment { degree, ..d.clone() });
+            (p.clone(), ranks(&i, &t).unwrap().swap_remove(0))
+        })
+        .collect();
+    let parts_of = rotate::attribute(&today[0], &replicated).unwrap();
+    let pr = rotate::price(&today, &parts_of, bw).unwrap();
+    let _ = writeln!(
+        s,
+        "### `Remainder::Rotate` (priced, not built)\n\nEach segment's split parts rotate which rank takes which \
+         slice, the offsets chosen per segment to minimise its slowest rank: Σ slowest work {:.1} us today, {:.1} us \
+         rotated, **{:.1} us/step recoverable** (an upper bound: an offset per segment, ignoring that a state's \
+         slicing must stay one across steps).\n\n| closes in | segments | improved | us saved |\n|---|---:|---:|---:|",
+        pr.today_us,
+        pr.rotated_us,
+        pr.today_us - pr.rotated_us
+    );
+    for (block, (k, better, us)) in &pr.per_block {
+        let _ = writeln!(s, "| `{block}` | {k} | {better} | {us:.1} |");
+    }
+    let _ = writeln!(s, "\n| change (one part) | model us | vs today |\n|---|---:|---:|");
     for part in parallel::parts(&spec) {
         let sp = &spec[part];
         let now = d.degree[part];

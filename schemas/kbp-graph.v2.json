@@ -1,0 +1,531 @@
+{
+  "$defs": {
+    "Graph": {
+      "additionalProperties": false,
+      "properties": {
+        "arm": {
+          "$ref": "#/$defs/GraphArm"
+        },
+        "blueprint_id": {
+          "type": "string"
+        },
+        "collapsed": {
+          "$ref": "#/$defs/GraphCollapsed"
+        },
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/GraphEdge"
+          },
+          "type": "array"
+        },
+        "explain": {
+          "$ref": "#/$defs/GraphExplain"
+        },
+        "exported_by": {
+          "type": "string"
+        },
+        "groups": {
+          "items": {
+            "$ref": "#/$defs/GraphGroup"
+          },
+          "type": "array"
+        },
+        "layers": {
+          "items": {
+            "$ref": "#/$defs/GraphLayer"
+          },
+          "type": "array"
+        },
+        "lineage": {
+          "type": "string"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/GraphNode"
+          },
+          "type": "array"
+        },
+        "revision": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "schema": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema",
+        "blueprint_id",
+        "lineage",
+        "revision",
+        "exported_by",
+        "arm",
+        "layers",
+        "nodes",
+        "edges",
+        "groups",
+        "collapsed",
+        "explain"
+      ],
+      "type": "object"
+    },
+    "GraphArm": {
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "rows": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "mode",
+        "rows",
+        "digest"
+      ],
+      "type": "object"
+    },
+    "GraphCollapsed": {
+      "additionalProperties": false,
+      "properties": {
+        "layout": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "templates": {
+          "additionalProperties": {
+            "$ref": "#/$defs/GraphTemplate"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "layout",
+        "templates"
+      ],
+      "type": "object"
+    },
+    "GraphEdge": {
+      "additionalProperties": false,
+      "properties": {
+        "bytes_per_token": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dim": {
+          "type": "string"
+        },
+        "dim_value": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "format": {
+          "type": "string"
+        },
+        "from": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "fused": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "requant": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GraphRequant"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rows": {
+          "type": "string"
+        },
+        "to": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "from",
+        "to",
+        "format",
+        "rows",
+        "dim",
+        "fused",
+        "dim_value",
+        "bytes_per_token",
+        "requant"
+      ],
+      "type": "object"
+    },
+    "GraphExplain": {
+      "additionalProperties": false,
+      "properties": {
+        "families": {
+          "additionalProperties": {
+            "$ref": "#/$defs/GraphFamilyMath"
+          },
+          "type": "object"
+        },
+        "formats": {
+          "additionalProperties": {
+            "$ref": "#/$defs/GraphFormatMath"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "families",
+        "formats"
+      ],
+      "type": "object"
+    },
+    "GraphFamilyMath": {
+      "additionalProperties": false,
+      "properties": {
+        "about": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "math": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "numerics": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "description",
+        "about",
+        "numerics",
+        "math"
+      ],
+      "type": "object"
+    },
+    "GraphFormatMath": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "encode": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "math": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "description",
+        "math",
+        "encode"
+      ],
+      "type": "object"
+    },
+    "GraphGroup": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kernels": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "nodes": {
+          "items": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        },
+        "numerics": {
+          "type": "string"
+        },
+        "repeat": {
+          "type": "string"
+        },
+        "rule": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "rule",
+        "kernels",
+        "repeat",
+        "numerics",
+        "nodes"
+      ],
+      "type": "object"
+    },
+    "GraphLayer": {
+      "additionalProperties": false,
+      "properties": {
+        "index": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "template": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "index",
+        "kind",
+        "template"
+      ],
+      "type": "object"
+    },
+    "GraphNode": {
+      "additionalProperties": false,
+      "properties": {
+        "block": {
+          "type": "string"
+        },
+        "compute": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "family": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "group": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "type": "string"
+        },
+        "index": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kernel": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "numerics": {
+          "type": "string"
+        },
+        "op": {
+          "type": "string"
+        },
+        "order": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "precision": {
+          "$ref": "#/$defs/GraphPrecision"
+        },
+        "state": {
+          "items": {
+            "$ref": "#/$defs/GraphState"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "index",
+        "id",
+        "order",
+        "layer",
+        "block",
+        "kind",
+        "op",
+        "precision",
+        "group",
+        "kernel",
+        "family",
+        "compute",
+        "numerics",
+        "state"
+      ],
+      "type": "object"
+    },
+    "GraphPrecision": {
+      "additionalProperties": false,
+      "properties": {
+        "activation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "output": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "weight": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "weight",
+        "activation",
+        "output"
+      ],
+      "type": "object"
+    },
+    "GraphRequant": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "type": "object"
+    },
+    "GraphState": {
+      "additionalProperties": false,
+      "properties": {
+        "access": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "state",
+        "access"
+      ],
+      "type": "object"
+    },
+    "GraphTemplate": {
+      "additionalProperties": false,
+      "properties": {
+        "nodes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "ops": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "nodes",
+        "ops"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://metrale.ai/schemas/kbp-graph.v2.json",
+  "$ref": "#/$defs/Graph",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "kbp-graph/v2"
+}

@@ -1,0 +1,138 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# 2026-10-23: The rule pairs whose critical pairs are settled by rule priority alone
+# (`met circuit rules --critical-pairs`, report kernels/circuits/plans/critical/CRITICAL-PAIRS.md):
+# the two resolution orders give plans of different headroom floor, so the plan depends on which
+# rule the greedy tries first. Each entry states why the priority is the intended resolution.
+# Shrink-only: the gate (crates/server/src/cli/circuit_rules.rs) fails on a gated pair without an
+# entry, on an entry no plan gates any more, and on a list longer than its CEILING. Seeded with 32
+# entries on 2026-10-23 (critpairs @ origin/megakernel e824f8b98); in every one today's plan takes
+# the cheaper side. Prefer making a pair joinable (or deleting the dominated rule) to adding one.
+
+[[pair]]
+rules = ["deinterleave_qg", "w4a16_qg_batch2"]
+why = "the q projection with the q/gate split folded in (batch 2) covers the split; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["gdn_ba_gates_gemm_batched", "gdn_ba_gates_gemv_per_row"]
+why = "alternate kernels over the same nodes: priority encodes the serve's dispatch (the batched launch above one row), the cheaper side in every plan"
+
+[[pair]]
+rules = ["gdn_ba_gates_gemm_batched_twin", "gdn_ba_gates_gemv_per_row"]
+why = "alternate kernels over the same nodes: priority encodes the serve's dispatch (the batched launch above one row), the cheaper side in every plan (the Hopper-tuned twin at 96-128 rows)"
+
+[[pair]]
+rules = ["gdn_conv_l2_f32_batched", "gdn_conv_l2_f32_per_row"]
+why = "alternate kernels over the same nodes: priority encodes the serve's dispatch (the batched launch above one row), the cheaper side in every plan"
+
+[[pair]]
+rules = ["glm_hc_pre", "glm_hc_pre_norm_c1_input"]
+why = "mHC pre-mix with its RMS norm in one launch (glm_mhc_fused): the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["glm_hc_pre", "glm_hc_pre_norm_c1_post"]
+why = "mHC pre-mix with its RMS norm in one launch (glm_mhc_fused): the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["glm_hc_pre", "glm_hc_pre_norm_rows_input"]
+why = "mHC pre-mix with its RMS norm in one launch (glm_mhc_fused): the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["glm_hc_pre", "glm_hc_pre_norm_rows_post"]
+why = "mHC pre-mix with its RMS norm in one launch (glm_mhc_fused): the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["glm_hc_pre_norm_c1_input", "glm_rms_norm_plain_dsa"]
+why = "mHC pre-mix with its RMS norm in one launch (glm_mhc_fused): the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["glm_hc_pre_norm_c1_input", "glm_rms_norm_plain_kda"]
+why = "mHC pre-mix with its RMS norm in one launch (glm_mhc_fused): the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["glm_hc_pre_norm_c1_input", "input_norm_residual"]
+why = "mHC pre-mix with its RMS norm in one launch (glm_mhc_fused): the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["glm_hc_pre_norm_c1_post", "glm_rms_norm_plain_dsa"]
+why = "mHC pre-mix with its RMS norm in one launch (glm_mhc_fused): the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["glm_hc_pre_norm_c1_post", "glm_rms_norm_plain_kda"]
+why = "mHC pre-mix with its RMS norm in one launch (glm_mhc_fused): the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["glm_hc_pre_norm_rows_input", "glm_rms_norm_plain_dsa"]
+why = "mHC pre-mix with its RMS norm in one launch (glm_mhc_fused): the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["glm_hc_pre_norm_rows_input", "glm_rms_norm_plain_kda"]
+why = "mHC pre-mix with its RMS norm in one launch (glm_mhc_fused): the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["glm_hc_pre_norm_rows_input", "input_norm_residual"]
+why = "mHC pre-mix with its RMS norm in one launch (glm_mhc_fused): the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["glm_hc_pre_norm_rows_post", "glm_rms_norm_plain_dsa"]
+why = "mHC pre-mix with its RMS norm in one launch (glm_mhc_fused): the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["glm_hc_pre_norm_rows_post", "glm_rms_norm_plain_kda"]
+why = "mHC pre-mix with its RMS norm in one launch (glm_mhc_fused): the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["glm_kda_conv_l2_rows", "glm_kda_conv_l2_seq_rows"]
+why = "alternate kernels over the same nodes: priority encodes the serve's dispatch (the batched launch above one row), the cheaper side in every plan (glm_kda_seq_rows = decode)"
+
+[[pair]]
+rules = ["glm_kda_gates", "glm_kda_gates_w8a8_rows_1row"]
+why = "the KDA gate chain (quantize, f_b/g_b GEMV, gates) in one W8A8 launch: the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["glm_kda_gates", "glm_kda_gates_w8a8_rows_2rows"]
+why = "the KDA gate chain (quantize, f_b/g_b GEMV, gates) in one W8A8 launch: the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["glm_kda_gates", "glm_kda_gates_w8a8_rows_seg"]
+why = "the KDA gate chain (quantize, f_b/g_b GEMV, gates) in one W8A8 launch: the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["glm_kda_gates_w8a8_rows_1row", "glm_w8a8_kda_mb1_ku8"]
+why = "the KDA gate chain (quantize, f_b/g_b GEMV, gates) in one W8A8 launch: the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["glm_kda_gates_w8a8_rows_1row", "w8a8_act_quant_row"]
+why = "the KDA gate chain (quantize, f_b/g_b GEMV, gates) in one W8A8 launch: the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["glm_kda_gates_w8a8_rows_2rows", "glm_w8a8_kda_mb1_ku8"]
+why = "the KDA gate chain (quantize, f_b/g_b GEMV, gates) in one W8A8 launch: the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["glm_kda_gates_w8a8_rows_2rows", "w8a8_act_quant_row"]
+why = "the KDA gate chain (quantize, f_b/g_b GEMV, gates) in one W8A8 launch: the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["glm_kda_gates_w8a8_rows_seg", "glm_w8a8_kda_mb1_ku8"]
+why = "the KDA gate chain (quantize, f_b/g_b GEMV, gates) in one W8A8 launch: the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["glm_kda_gates_w8a8_rows_seg", "w8a8_act_quant_row"]
+why = "the KDA gate chain (quantize, f_b/g_b GEMV, gates) in one W8A8 launch: the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["silu_mul_rows", "w8a8_act_quant_silu_row"]
+why = "the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["silu_mul_split_1row", "w8a8_act_quant_silu_row"]
+why = "the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"
+
+[[pair]]
+rules = ["w4a16_qg_batch2", "w4a16_tc8_multi_seq"]
+why = "at 2 rows the q projection with the split folded in beats the plain tc8 GEMV plus a separate split; cheaper side in every plan"
+
+[[pair]]
+rules = ["w8a8_act_quant_row", "w8a8_act_quant_silu_row"]
+why = "the fused rule covers the union and saves the intermediate's round trip; priority takes it first and it is the cheaper side in every plan"

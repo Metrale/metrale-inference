@@ -165,6 +165,7 @@ pub fn blueprint() -> Blueprint {
                     kernels: vec![kid("add", "add_one")],
                     repeat: Repeat::Once,
                     copies: None,
+                    comm: vec![],
                     emitter: "add".into(),
                     numerics: Numerics::Reference,
                     nodes: vec![0],
@@ -175,6 +176,7 @@ pub fn blueprint() -> Blueprint {
                     kernels: vec![kid("scale", "scale")],
                     repeat: Repeat::PerRow,
                     copies: None,
+                    comm: vec![],
                     emitter: "gemv".into(),
                     numerics: Numerics::BitIdentical {
                         microtest: "t".into(),

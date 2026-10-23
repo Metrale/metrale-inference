@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-22: `kbp-graph/v1`: what the store's 3D view renders, for one plan arm
-//! (DESIGN.md §10).
+//! 2026-10-22: `kbp-graph/v2`: what the store's 3D view renders, for one plan arm
+//! (DESIGN.md §10). v2 adds the kernel-math table ([`super::explain`]) and each edge's width,
+//! bytes per token and requantisation; v1 (`schemas/kbp-graph.v1.json`) stays as published.
 //!
 //! Owner: blueprint.
 //! Invariants:
@@ -17,14 +18,17 @@ use alloc::vec::Vec;
 use metrale_error::{Error, ErrorCode, error};
 
 use metrale_circuit::EdgeState;
+use metrale_circuit::explain::{bytes_per_token, kernel_math, requant};
+use metrale_circuit::venn::Families;
 
 use super::ExportContext;
+use super::explain::{GraphExplain, GraphRequant};
 use super::schema::json_struct;
 use crate::frame::Opened;
 use crate::types::Mode;
 
 /// 2026-10-22: The graph schema id.
-pub const GRAPH_SCHEMA: &str = "kbp-graph/v1";
+pub const GRAPH_SCHEMA: &str = "kbp-graph/v2";
 
 json_struct! {
     /// 2026-10-22: The arm.
@@ -123,6 +127,13 @@ json_struct! {
         pub dim: String,
         /// 2026-10-22: Kept inside a group.
         pub fused: bool,
+        /// 2026-10-22: The dim's value in this circuit.
+        pub dim_value: u64,
+        /// 2026-10-22: Bytes per token in `format`, scales included; `None` where the rows
+        /// are not derivable or the width is not a multiple of the scale group.
+        pub bytes_per_token: Option<u64>,
+        /// 2026-10-22: Set when the producer quantized into `format`.
+        pub requant: Option<GraphRequant>,
     }
 }
 
@@ -165,9 +176,9 @@ json_struct! {
 }
 
 json_struct! {
-    /// 2026-10-22: `kbp-graph/v1`.
+    /// 2026-10-22: `kbp-graph/v2`.
     pub struct Graph {
-        /// 2026-10-22: `kbp-graph/v1`.
+        /// 2026-10-22: `kbp-graph/v2`.
         pub schema: String,
         /// 2026-10-22: `sha256:<hex>`.
         pub blueprint_id: String,
@@ -189,6 +200,8 @@ json_struct! {
         pub groups: Vec<GraphGroup>,
         /// 2026-10-22: Collapsed view.
         pub collapsed: GraphCollapsed,
+        /// 2026-10-22: The math of every family and format named above, once each.
+        pub explain: GraphExplain,
     }
 }
 
@@ -196,8 +209,15 @@ fn idx(i: usize) -> u32 {
     u32::try_from(i).unwrap_or(u32::MAX)
 }
 
-/// 2026-10-22: The graph of `arm` in a verified file.
-pub fn graph(o: &Opened, arm: (Mode, u64), ctx: &ExportContext) -> Result<Graph, Error> {
+/// 2026-10-22: The graph of `arm` in a verified file, its math from `families` (the exporting
+/// engine's manifest for the blueprint's class); a family it names that `families` lacks
+/// refuses the export.
+pub fn graph(
+    o: &Opened,
+    arm: (Mode, u64),
+    ctx: &ExportContext,
+    families: &Families,
+) -> Result<Graph, Error> {
     let bp = &o.blueprint;
     let c = &bp.circuit;
     let plan = bp
@@ -235,7 +255,8 @@ pub fn graph(o: &Opened, arm: (Mode, u64), ctx: &ExportContext) -> Result<Graph,
             template: layout.get(i).cloned().unwrap_or_default(),
         })
         .collect();
-    let fmt = |e: usize| plan.edge_formats.get(e).map(|f| f.name());
+    let format = |e: usize| plan.edge_formats.get(e).copied();
+    let fmt = |e: usize| format(e).map(|f| f.name());
     let mut nodes = Vec::new();
     let mut in_arm = BTreeMap::new();
     for (gi, g) in plan.groups.iter().enumerate() {
@@ -288,6 +309,12 @@ pub fn graph(o: &Opened, arm: (Mode, u64), ctx: &ExportContext) -> Result<Graph,
         let Some(from) = e.producer.filter(|p| in_arm.contains_key(p)) else {
             continue;
         };
+        let stored = format(ei).unwrap_or(e.format);
+        let read = c
+            .nodes
+            .get(from)
+            .and_then(|p| p.inputs.first())
+            .and_then(|&i| format(i).or_else(|| c.edges.get(i).map(|x| x.format)));
         for &to in e.consumers.iter().filter(|t| in_arm.contains_key(t)) {
             edges.push(GraphEdge {
                 id: e.id.clone(),
@@ -297,6 +324,12 @@ pub fn graph(o: &Opened, arm: (Mode, u64), ctx: &ExportContext) -> Result<Graph,
                 rows: String::from(e.rows.text()),
                 dim: String::from(e.dim.text()),
                 fused: matches!(plan.edge_states.get(ei), Some(Some(EdgeState::Fused(_)))),
+                dim_value: e.dim_value,
+                bytes_per_token: bytes_per_token(c, e, stored),
+                requant: requant(read, stored).map(|(f, t)| GraphRequant {
+                    from: f.name(),
+                    to: t.name(),
+                }),
             });
         }
     }
@@ -313,6 +346,12 @@ pub fn graph(o: &Opened, arm: (Mode, u64), ctx: &ExportContext) -> Result<Graph,
             nodes: g.nodes.iter().copied().map(idx).collect(),
         })
         .collect();
+    let named = nodes.iter().filter_map(|n| n.family.as_deref());
+    let stored = edges
+        .iter()
+        .filter_map(|e| metrale_circuit::Format::parse(&e.format).ok());
+    let explain = kernel_math(families, named, stored)
+        .map_err(|why| error!(ErrorCode::InvalidArgument, "families", why))?;
     Ok(Graph {
         schema: String::from(GRAPH_SCHEMA),
         blueprint_id: alloc::format!("{}", o.id),
@@ -329,5 +368,6 @@ pub fn graph(o: &Opened, arm: (Mode, u64), ctx: &ExportContext) -> Result<Graph,
         edges,
         groups,
         collapsed: GraphCollapsed { layout, templates },
+        explain: explain.into(),
     })
 }

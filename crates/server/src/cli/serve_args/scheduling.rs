@@ -16,17 +16,13 @@ use clap::Args;
 // 2026-09-26: `ServeArgs` reaches these fields through `Deref`.
 #[derive(Args, Debug, Clone, PartialEq)]
 pub struct ServeSchedulingArgs {
-    /// Which forward decode runs: `legacy`, the hand-written layer loops, or `circuit`, the
-    /// program compiled at boot from the model's circuit plan (`met circuit show`);
-    /// `circuit-reference` compiles the plan without its bit-identical fusions. The circuit
-    /// covers single-sequence decode so far; boot refuses a model, recipe or switch it does not
-    /// model. On a tensor-parallel rank `circuit` runs from the rank's plan the sites the model's
-    /// emitters compile (GLM-5.3: the routed MoE) and reports them at boot. No environment
-    /// fallback.
-    // 2026-10-23: @human-review: legacy stays the default; the owner may make `circuit` the
-    // default once the plan-executed sites are bit-gated on the GPU.
-    #[arg(long, value_enum, default_value_t = ForwardArg::Legacy)]
-    pub forward: ForwardArg,
+    /// Which forward runs: `legacy` (the hand-written layer loops, the kill switch), `circuit` (the
+    /// program compiled at boot from the model's circuit plan; boot refuses a model, recipe or
+    /// switch it does not model) or `circuit-reference` (the plan without its bit-identical
+    /// fusions). Unset: `circuit` where a circuit instance serves the checkpoint (positional
+    /// MODEL) on this build's target, else `legacy`; boot logs the mode and why.
+    #[arg(long, value_enum)]
+    pub forward: Option<ForwardArg>,
 
     /// Global kill-switch for chain-of-thought / reasoning output.
     /// When set, the server forces thinking off regardless of what the

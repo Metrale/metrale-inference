@@ -10,7 +10,6 @@ crates/gpu-runtime/cuda/cutlass_nvfp4_gemm.cu 543
 crates/gpu-runtime/cuda/cutlass_nvfp4_grouped_gemm.cu 750
 crates/gpu-runtime/src/buffers/sizes.rs 511
 crates/gpu-runtime/src/buffers/tests.rs 501
-crates/model-arch/src/glm5next_layer/mod.rs 581
 crates/model-arch/src/glm5next_mhc_fused.rs 632
 crates/model-engine/src/model/trait_impl/device_step.rs 525
 crates/model-engine/src/model/trait_impl/prefill_a.rs 501

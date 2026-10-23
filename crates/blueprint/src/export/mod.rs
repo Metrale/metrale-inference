@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-22: The store's data contract: `kbp-card/v1` and `kbp-graph/v1`, derived from a
+//! 2026-10-22: The store's data contract: `kbp-card/v1` and `kbp-graph/v2`, derived from a
 //! verified file by pure functions, and their JSON Schemas generated from the same types.
 //!
 //! Owner: blueprint.
 //! Invariants: the `.kbp` stays the SSOT; a card or graph is never hand-edited, and the
-//! committed `schemas/kbp-*.v1.json` equal [`card_schema`] and [`graph_schema`] (golden test).
+//! committed `schemas/kbp-card.v1.json` and `schemas/kbp-graph.v2.json` equal [`card_schema`]
+//! and [`graph_schema`] (golden test); `kbp-graph.v1.json` is kept as published.
 
 pub mod card;
+pub mod explain;
 pub mod graph;
 pub mod schema;
 
@@ -67,10 +69,10 @@ pub fn card_schema() -> Value {
     )
 }
 
-/// 2026-10-22: The `kbp-graph/v1` JSON Schema.
+/// 2026-10-22: The `kbp-graph/v2` JSON Schema (v1 stays committed as published, never edited).
 pub fn graph_schema() -> Value {
     schema::document::<graph::Graph>(
-        "https://metrale.ai/schemas/kbp-graph.v1.json",
+        "https://metrale.ai/schemas/kbp-graph.v2.json",
         graph::GRAPH_SCHEMA,
     )
 }

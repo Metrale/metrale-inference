@@ -14,10 +14,14 @@
 //! - Only `circuit` (every rule) is accepted: `circuit-reference` is refused under TP.
 //! - A drafter with a circuit block (the GLM MTP block) installs its sites from the rank's draft
 //!   plan (draft n=1), fused under the same policy, which its block must derive too.
+//! - 2026-10-23: The fused shapes are the ones the sites install (`plan_shapes`) that the serve
+//!   runs: decode n=1, the serve's verify widths (`ForwardSelect::Circuit::verify_rows`, one
+//!   source; a width no site covers is refused, `rank_plan_shapes`), and the draft row.
 
 use anyhow::{Context, Result, bail, ensure};
 use metrale_circuit::Mode;
 use metrale_model_layers::circuit_exec::family::RankPlans;
+use metrale_model_layers::circuit_exec::rank_shapes::rank_plan_shapes;
 use metrale_model_layers::circuit_exec::{Fusions, TargetModules, kernels, load_served};
 
 use super::super::types::TransformerModel;
@@ -37,6 +41,7 @@ impl TransformerModel {
         fusions: Fusions,
         modules: &TargetModules,
         config_json: &str,
+        verify_rows: &[u64],
     ) -> Result<Vec<String>> {
         ensure!(
             fusions == Fusions::All,
@@ -69,15 +74,18 @@ impl TransformerModel {
             );
         }
         let available = kernels::available_in(&loaded.rules, &modules.0)?;
-        let shapes = std::iter::once((Mode::Decode, 1))
-            .chain(
-                self.proposer
-                    .is_some()
-                    .then_some([2, 3, 4].map(|r| (Mode::Verify, r)))
-                    .into_iter()
-                    .flatten(),
-            )
-            .chain(drafter.map(|_| (Mode::Draft, 1)));
+        // 2026-10-23: The shapes the sites install, checked against the serve's verify widths.
+        let mut installed: Vec<(Mode, u64)> =
+            self.layers.iter().flat_map(|l| l.plan_shapes()).collect();
+        installed.extend(drafter.into_iter().flat_map(|b| b.plan_shapes()));
+        let verify = if self.proposer.is_some() {
+            verify_rows
+        } else {
+            &[]
+        };
+        let shapes = rank_plan_shapes(&installed, verify)
+            .map_err(anyhow::Error::from)
+            .with_context(|| format!("--forward circuit on TP rank {rank}/{world}"))?;
         let mut plans = Vec::new();
         for (mode, rows) in shapes {
             let p = metrale_circuit::fuse(circuit, &loaded.rules, &available, &policy, mode, rows)

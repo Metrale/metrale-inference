@@ -434,6 +434,7 @@ mod tests;
 /// 2026-09-28: `--forward`: which forward decode runs. `legacy` is the hand-written layer
 /// loops; `circuit` runs the program compiled from the model's circuit plan
 /// (`metrale_model_layers::circuit_exec`), and boot refuses a model the circuit does not model.
+/// 2026-10-23: Unset, boot resolves it (`serve_phases::forward::resolve_forward`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum ForwardArg {
     #[value(help = "the hand-written layer loops")]

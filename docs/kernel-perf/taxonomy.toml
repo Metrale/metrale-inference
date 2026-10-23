@@ -507,7 +507,7 @@ files = ["kernels/metal/*"]
 [[rule]]
 component = "moe"
 kind = "routing / top-k"
-names = ["moe_topk*", "moe_gate_topk*", "moe_hash_route*", "moe_router_*", "moe_v41_route_*", "moe_v41_router_*", "glm5next_router_topk*", "nemotron_moe_topk_*", "dense_gemm_bf16_router"]
+names = ["moe_topk*", "moe_gate_topk*", "moe_hash_route*", "moe_router_*", "moe_v41_route_*", "moe_v41_router_*", "glm5next_router_topk*", "glm5next_router_gemv*", "nemotron_moe_topk_*", "dense_gemm_bf16_router"]
 
 [[rule]]
 component = "moe"
@@ -559,7 +559,7 @@ names = ["w8a8_gemv*", "w8a16_gemm*", "w8a16_gemv*", "w8a16_tc_rows_*", "fp8_gem
 [[rule]]
 component = "gemm-nvfp4"
 kind = "NVFP4 W4A16 GEMM/GEMV"
-names = ["w4a16_*"]
+names = ["w4a16_*", "glm5next_dense_seg_*"]
 
 [[rule]]
 component = "gemm-bf16"
