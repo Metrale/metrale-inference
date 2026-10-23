@@ -17,7 +17,7 @@ use metrale_blueprint::frame::{
 };
 use metrale_blueprint::resolve::{self, no_store};
 use metrale_blueprint::resolve_sealed::{resolve_unsealed, unseal};
-use metrale_blueprint::sealing::Placement;
+use metrale_blueprint::sealing::CiphertextPlacement;
 use metrale_error::ErrorCode;
 use metrale_seal::{ArtifactKey, Cek, hex};
 
@@ -144,7 +144,7 @@ fn stripping_the_sealed_section_leaves_ciphertext_that_fails_its_hash() {
         &w.signed(),
         &[&recipient(7)],
         "acme",
-        Placement::Remote { base: "https://s" },
+        CiphertextPlacement::Remote { base: "https://s" },
         0,
     );
     let o = open(&w, &splice(&remote.file, Part::Sealed, &[], 0));
@@ -212,7 +212,7 @@ fn another_customers_or_another_blueprints_ciphertext_is_refused() {
         &w.signed(),
         &[&recipient(9)],
         "globex",
-        Placement::Inline,
+        CiphertextPlacement::Inline,
         50,
     )
     .file;
@@ -231,7 +231,15 @@ fn another_customers_or_another_blueprints_ciphertext_is_refused() {
         MEM,
     )
     .unwrap();
-    let other_sealed = seal_for(&w, &other, &[&recipient(7)], "acme", Placement::Inline, 0).file;
+    let other_sealed = seal_for(
+        &w,
+        &other,
+        &[&recipient(7)],
+        "acme",
+        CiphertextPlacement::Inline,
+        0,
+    )
+    .file;
     let cross = with_ciphertext(&w, &f, open(&w, &other_sealed).payload[0].bytes.clone());
     assert_eq!(
         resolve_code(&w, &cross).0,
@@ -257,7 +265,7 @@ fn a_non_recipient_and_an_altered_wrap_are_refused_and_yield_no_bytes() {
         &w.signed(),
         &[&recipient(7)],
         "acme",
-        Placement::Inline,
+        CiphertextPlacement::Inline,
         99,
     )
     .file;

@@ -26,7 +26,7 @@ use metrale_blueprint::ids::Sha256;
 use metrale_blueprint::resolve_sealed::{
     full_sealed, lite_sealed, resolve_unsealed, unseal, verify_ciphertexts,
 };
-use metrale_blueprint::sealing::{Placement, SealRequest, seal};
+use metrale_blueprint::sealing::{CiphertextPlacement, SealRequest, seal};
 use metrale_blueprint::types::ArtifactKind;
 use metrale_blueprint::{frame::InlineArtifact, frame::Unsigned, resolve};
 use metrale_blueprint_sign::read_signer;
@@ -142,8 +142,8 @@ pub(crate) fn seal_cmd<E: Entropy, W: Write>(
         .collect::<Result<Vec<_>, _>>()?;
     let (signer, cert) = read_signer(&a.key, &a.cert)?;
     let placement = match &a.remote_base {
-        Some(base) => Placement::Remote { base },
-        None => Placement::Inline,
+        Some(base) => CiphertextPlacement::Remote { base },
+        None => CiphertextPlacement::Inline,
     };
     if let Some(dir) = &a.ciphertext_dir {
         std::fs::create_dir(dir).with_context(|| format!("creating {}", dir.display()))?;
