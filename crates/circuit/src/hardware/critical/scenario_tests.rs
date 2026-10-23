@@ -14,7 +14,7 @@ use super::dag::build;
 use super::fixture::diamond;
 use super::maxplus::{Latency, fit_latency, longest, step_us, work_in_context};
 use super::scenario::{Rewrite, Scenario, Sel};
-use super::sim::{DramCalibration, Resources, SmLimits, simulate, solo_work};
+use super::sim::{DramCalibration, SimResources, SmLimits, simulate, solo_work};
 
 fn scenario(c: &Capture) -> (Scenario, Latency) {
     let g = build(c, 1_000, 3_000).unwrap();
@@ -50,8 +50,8 @@ fn scenario(c: &Capture) -> (Scenario, Latency) {
     )
 }
 
-fn res() -> Resources {
-    Resources {
+fn res() -> SimResources {
+    SimResources {
         sms: 48.0,
         sm: SmLimits {
             regs: 65_536,

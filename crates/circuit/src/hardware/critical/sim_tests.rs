@@ -6,14 +6,14 @@
 use super::capture::Capture;
 use super::dag::build;
 use super::fixture::{OpRow, capture, diamond};
-use super::graph::Graph;
+use super::graph::CriticalGraph;
 use super::maxplus::{fit_latency, longest, step_us, weights, work_in_context};
-use super::sim::{Resources, SmLimits, calibrate_dram, per_sm, simulate, solo_work};
+use super::sim::{SimResources, SmLimits, calibrate_dram, per_sm, simulate, solo_work};
 
 /// 2026-10-23: GB10 (DEVICES.toml: 48 SMs, 256 KB registers, 1536 threads, 100 KB shared
 /// memory); 32 resident CTAs is the `--max-ctas-per-sm` the serve report passes.
-fn gb10(dram: f64) -> Resources {
-    Resources {
+fn gb10(dram: f64) -> SimResources {
+    SimResources {
         sms: 48.0,
         sm: SmLimits {
             regs: 65_536,
@@ -32,7 +32,7 @@ fn named(c: &Capture, name: &str) -> Vec<usize> {
         .collect()
 }
 
-fn sim_step(g: &Graph, solo: &[f64], bytes: &[f64], r: &Resources) -> f64 {
+fn sim_step(g: &CriticalGraph, solo: &[f64], bytes: &[f64], r: &SimResources) -> f64 {
     let w = weights(g, &work_in_context(g), Some(&fit_latency(g)));
     step_us(g, &simulate(g, &w, solo, bytes, &[], r))
 }

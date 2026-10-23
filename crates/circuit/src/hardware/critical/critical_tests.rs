@@ -10,12 +10,12 @@ use metrale_error::ErrorCode;
 use super::capture::parse_capture;
 use super::dag::build;
 use super::fixture::{diamond, event_wait};
-use super::graph::{EdgeKind, Graph, node_of};
+use super::graph::{CriticalGraph, EdgeKind, node_of};
 use super::maxplus::{
     critical_chain, fit_latency, latest, longest, step_us, weights, work_in_context,
 };
 
-fn node(g: &Graph, c: &super::capture::Capture, name: &str, nth: usize) -> usize {
+fn node(g: &CriticalGraph, c: &super::capture::Capture, name: &str, nth: usize) -> usize {
     (0..c.ops.len())
         .filter(|&i| c.ops[i].name() == name && c.ops[i].start() >= 0)
         .nth(nth)
@@ -23,7 +23,7 @@ fn node(g: &Graph, c: &super::capture::Capture, name: &str, nth: usize) -> usize
         .min(g.nodes.len())
 }
 
-fn kinds_into(g: &Graph, i: usize) -> Vec<EdgeKind> {
+fn kinds_into(g: &CriticalGraph, i: usize) -> Vec<EdgeKind> {
     let s = u32::try_from(2 * i).unwrap();
     let mut v: Vec<EdgeKind> = g
         .incoming(s)

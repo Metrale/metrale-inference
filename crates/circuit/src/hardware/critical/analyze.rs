@@ -26,7 +26,7 @@ use super::maxplus::{
     work_in_context,
 };
 use super::scenario::{Rewrite, Scenario};
-use super::sim::{DramCalibration, Resources, calibrate_dram, simulate, solo_work};
+use super::sim::{DramCalibration, SimResources, calibrate_dram, simulate, solo_work};
 use crate::hardware::headroom::Headroom;
 
 /// 2026-10-23: What the analysis needs besides the capture.
@@ -37,7 +37,7 @@ pub struct Inputs<'a> {
     /// 2026-10-23: The headroom of the same capture (floors, bytes, Amdahl upside).
     pub headroom: &'a Headroom,
     /// 2026-10-23: SMs and per-SM limits; its DRAM field is replaced by the calibration.
-    pub resources: Resources,
+    pub resources: SimResources,
     /// 2026-10-23: An unexplained graph-node start beyond this gets an inferred fork/join, ns.
     pub tau_ns: i64,
     /// 2026-10-23: A graph node launched this soon after a running node on another stream
@@ -144,11 +144,11 @@ pub struct WhatIf {
 struct Base {
     sc: Scenario,
     lat: Latency,
-    res: Resources,
+    res: SimResources,
     row: Vec<Option<usize>>,
 }
 
-fn sim_step(sc: &Scenario, lat: &Latency, res: &Resources) -> f64 {
+fn sim_step(sc: &Scenario, lat: &Latency, res: &SimResources) -> f64 {
     let w = sc.sim_weights(lat);
     step_us(
         &sc.g,
@@ -311,7 +311,7 @@ pub fn analyze(c: &Capture, inp: &Inputs<'_>) -> metrale_error::Result<WhatIf> {
     let at = longest(g, &w);
     let model = step_us(g, &at);
     let sim = sim_step(&b.sc, &b.lat, &b.res);
-    let sm_only = Resources {
+    let sm_only = SimResources {
         dram_bytes_per_us: f64::INFINITY,
         ..b.res
     };
