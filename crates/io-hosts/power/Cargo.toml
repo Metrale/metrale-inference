@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-io-host-power"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: process hosts for the power port: a threaded issue/complete adapter, the nvidia-smi child, read-only hwmon, Apple IOReport, and external meter transports."
+
+[package.metadata.metrale]
+role = "host-std"
+
+[dependencies]
+metrale-abstract-io = { workspace = true }
+metrale-error = { workspace = true }
+metrale-power = { workspace = true }
+
+[lints]
+workspace = true

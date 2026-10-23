@@ -45,6 +45,9 @@ members = [
     "crates/kernel-target",
     "crates/kzx",
     "crates/seal",
+    "crates/stats",
+    "crates/power",
+    "crates/io-hosts/power",
 ]
 
 # 2026-10-17: A bare `cargo build` builds `met` only; CI and scripts name `--workspace` or `-p`.
@@ -219,6 +222,7 @@ metrale-host-probe = { path = "crates/host-probe", version = "1.0.0-beta-preview
 metrale-io-host-mem = { path = "crates/io-hosts/mem", version = "1.0.0-beta-preview", default-features = false }
 metrale-io-host-fs-repo = { path = "crates/io-hosts/fs-repo", version = "1.0.0-beta-preview", default-features = false }
 metrale-io-host-std = { path = "crates/io-hosts/std", version = "1.0.0-beta-preview", default-features = false }
+metrale-io-host-power = { path = "crates/io-hosts/power", version = "1.0.0-beta-preview", default-features = false }
 metrale-kernel-root = { path = "crates/kernel-root", version = "1.0.0-beta-preview", default-features = false }
 metrale-kernel-tree = { path = "crates/kernel-tree", version = "1.0.0-beta-preview", default-features = false }
 metrale-kernels = { path = "crates/kernels", version = "1.0.0-beta-preview", default-features = false }
@@ -232,11 +236,13 @@ metrale-seal = { path = "crates/seal", version = "1.0.0-beta-preview", default-f
 metrale-serve-identity = { path = "crates/serve-identity", version = "1.0.0-beta-preview", default-features = false }
 kzx = { path = "crates/kzx", version = "0.1.0", default-features = false }
 metrale-kv-codec = { path = "crates/kv-codec", version = "1.0.0-beta-preview", default-features = false }
+metrale-power = { path = "crates/power", version = "1.0.0-beta-preview", default-features = false }
 metrale-precision = { path = "crates/precision", version = "1.0.0-beta-preview", default-features = false }
 metrale-kernel-target = { path = "crates/kernel-target", version = "1.0.0-beta-preview", default-features = false }
 metrale-kv-tq128 = { path = "crates/kv-tq128", version = "1.0.0-beta-preview", default-features = false }
 metrale-settings = { path = "crates/settings", version = "1.0.0-beta-preview", default-features = false }
 metrale-speculative = { path = "crates/speculative", version = "1.0.0-beta-preview", default-features = false }
+metrale-stats = { path = "crates/stats", version = "1.0.0-beta-preview", default-features = false }
 metrale-storage = { path = "crates/storage", version = "1.0.0-beta-preview", default-features = false }
 metrale-target-defaults = { path = "crates/target-defaults", version = "1.0.0-beta-preview", default-features = false }
 metrale-telemetry = { path = "crates/telemetry", version = "1.0.0-beta-preview", default-features = false }

@@ -15,6 +15,11 @@ nvtx = ["metrale-gpu-sys/nvtx"]
 
 [dependencies]
 metrale-gpu-sys = { workspace = true }
+# 2026-10-22: The power port (`PowerProbe`) the NVML and amdsmi probes implement, and the counter
+# tracker they share with the attribution core.
+metrale-abstract-io = { workspace = true }
+metrale-error = { workspace = true }
+metrale-power = { workspace = true }
 serde = { workspace = true, features = ["std", "derive"] }
 serde_json = { workspace = true, features = ["std", "preserve_order"] }
 tracing = { workspace = true, features = ["std", "attributes"] }

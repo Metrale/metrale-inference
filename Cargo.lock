@@ -2136,6 +2136,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "metrale-io-host-power"
+version = "1.0.0-beta-preview"
+dependencies = [
+ "metrale-abstract-io",
+ "metrale-error",
+ "metrale-power",
+]
+
+[[package]]
 name = "metrale-io-host-std"
 version = "1.0.0-beta-preview"
 dependencies = [
@@ -2304,6 +2313,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "metrale-power"
+version = "1.0.0-beta-preview"
+dependencies = [
+ "libm",
+ "metrale-abstract-io",
+ "metrale-error",
+ "metrale-stats",
+ "sha2 0.11.0",
+]
+
+[[package]]
 name = "metrale-precision"
 version = "1.0.0-beta-preview"
 dependencies = [
@@ -2379,6 +2399,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "metrale-stats"
+version = "1.0.0-beta-preview"
+dependencies = [
+ "libm",
+ "metrale-error",
+]
+
+[[package]]
 name = "metrale-storage"
 version = "1.0.0-beta-preview"
 dependencies = [
@@ -2416,7 +2444,10 @@ dependencies = [
 name = "metrale-telemetry"
 version = "1.0.0-beta-preview"
 dependencies = [
+ "metrale-abstract-io",
+ "metrale-error",
  "metrale-gpu-sys",
+ "metrale-power",
  "serde",
  "serde_json",
  "tracing",

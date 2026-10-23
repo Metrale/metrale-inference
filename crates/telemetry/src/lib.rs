@@ -36,6 +36,8 @@ pub mod kernel;
 pub mod kernel_audit;
 pub mod launch_trace;
 pub mod level;
+pub mod power_amdsmi;
+pub mod power_nvml;
 pub mod prefix_cache;
 pub mod progress;
 pub mod request;
