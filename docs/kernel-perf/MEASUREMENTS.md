@@ -102,7 +102,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-dense-gemv-bf16-batchm-few-cu-dense-gemv-bf16-batchm-few-fp32out"></a>
 
-### `dense_gemv_bf16_batchm_few_fp32out` — [kernels/gb10/common/dense_gemv_bf16_batchm_few.cu](../../kernels/gb10/common/dense_gemv_bf16_batchm_few.cu#L195)
+### `dense_gemv_bf16_batchm_few_fp32out` — [kernels/gb10/common/dense_gemv_bf16_batchm_few.cu](../../kernels/gb10/common/dense_gemv_bf16_batchm_few.cu#L43)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -111,7 +111,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-dense-gemv-bf16-batchm-few-cu-dense-gemv-bf16-batchm-few-fp32out-pair"></a>
 
-### `dense_gemv_bf16_batchm_few_fp32out_pair` — [kernels/gb10/common/dense_gemv_bf16_batchm_few.cu](../../kernels/gb10/common/dense_gemv_bf16_batchm_few.cu#L213)
+### `dense_gemv_bf16_batchm_few_fp32out_pair` — [kernels/gb10/common/dense_gemv_bf16_batchm_few.cu](../../kernels/gb10/common/dense_gemv_bf16_batchm_few.cu#L61)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -243,6 +243,14 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
 | gb10 | unsloth/Qwen3.8-27B-NVFP4 | decode C=16 (R=32, MTP k=1) | 38.50 | 13.49 | memory | 35.0% |  |  |  | nsys kernel-perf/prof/dense-tp-c16.sqlite @ f1fa41f4 (= main 246f71bf + gate registry; kernels as e37e3cb2), dgx1, 2026-09-28 — GDN verify conv seqs=16 rows=32; n=1118 calls, 1.7% of regime kernel time; peak class mem; conv state (3 taps) read + qkv rows in/out; concurrency-sweep recipe flags (qwen3.8-27b-nvfp4-throughput: fp8 KV, f16-pool SSM state, fifo, prefill-codispatch; METRALE_MTP_K_LADDER=1:3,2:2,4:1,8:1,16:1); step 129 ms under nsys vs ~120 ms unprofiled (certified c16 216.7 tok/s at accept 1.62): ~8% inflation |
+
+<a id="m-kernels-gb10-common-glm5next-dense-seg-cu-glm5next-dense-seg-pipe-m2"></a>
+
+### `glm5next_dense_seg_pipe_m2` — [kernels/gb10/common/glm5next_dense_seg.cu](../../kernels/gb10/common/glm5next_dense_seg.cu#L21)
+
+| HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
+|---|---|---|---|---|---|---|---|---|---|---|
+| gb10 | nvidia/GLM-5.3-Flash-NVFP4 | microbench steady-state R=2 · shared expert segment gate\|up+swiglu+down M=2 N=768+768 K=4096 / N=4096 K=768 | 32.30 | 21.49 | memory | 66.5% |  |  |  | glm5next_dense_seg_microtest @ ec5326efb (wt-mk megakernel), dgx1, 2026-10-23 — shared expert segment M=2 inter=768 (TP=3 rank shard), P3 persistent segment (3 phases, ticket loop, 64 ns backoff cap); CUDA graph over NVFP4 weights rotated across 128 MB, 5 rounds alternating with the 3-launch control, median of round medians; control (w4a16_gemv_pipe_m2 gate\|up + glm5next_swiglu_clamp + w4a16_gemv_pipe_m2 down) 27.7 us = x0.86; bit-identical to the control; in serve (paired arm dense_seg) -1.5..-1.7% of the step: the shared expert co-runs with the routed sweep on a side stream (separate-launch down median solo 0.00 us), the persistent grid removes that overlap |
 
 <a id="m-kernels-gb10-common-glm5next-ffn-cu-glm5next-moe-combine"></a>
 
@@ -641,7 +649,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-w4a16-gemv-pipe-cu-w4a16-gemv-pipe-m1"></a>
 
-### `w4a16_gemv_pipe_m1` — [kernels/gb10/common/w4a16_gemv_pipe.cu](../../kernels/gb10/common/w4a16_gemv_pipe.cu#L316)
+### `w4a16_gemv_pipe_m1` — [kernels/gb10/common/w4a16_gemv_pipe.cu](../../kernels/gb10/common/w4a16_gemv_pipe.cu#L15)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -649,7 +657,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-w4a16-gemv-pipe-cu-w4a16-gemv-pipe-m2"></a>
 
-### `w4a16_gemv_pipe_m2` — [kernels/gb10/common/w4a16_gemv_pipe.cu](../../kernels/gb10/common/w4a16_gemv_pipe.cu#L317)
+### `w4a16_gemv_pipe_m2` — [kernels/gb10/common/w4a16_gemv_pipe.cu](../../kernels/gb10/common/w4a16_gemv_pipe.cu#L21)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
