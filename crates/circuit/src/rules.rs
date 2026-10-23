@@ -186,6 +186,11 @@ pub struct PatternOp {
     /// 2026-09-28: The kernel writes this element's outputs even though a later element
     /// reads them, so they may have readers outside the group.
     pub keep: bool,
+    /// 2026-10-23: The lowering does not produce this element's circuit outputs (a greedy
+    /// head that returns the token and never the full logits: the screened verify head, the
+    /// MTP head's shard argmax and exchange); legal only where every reader of them is in the
+    /// group, so nothing in the step reads what is not written.
+    pub elides: bool,
     /// 2026-09-30: The kernel stores this element's outputs in memory, where a later launch of
     /// the group reads them back (a per-run schedule's conv rows), so they are materialized even
     /// when every reader is in the group.

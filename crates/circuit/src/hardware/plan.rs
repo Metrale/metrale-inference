@@ -296,6 +296,7 @@ fn placeholder(op: &crate::ir::OpKind, input: Option<crate::format::Format>) -> 
             input,
             writes: None,
             keep: false,
+            elides: false,
             stored: false,
             sibling: false,
             holds: None,

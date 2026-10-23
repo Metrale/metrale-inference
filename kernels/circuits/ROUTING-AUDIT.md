@@ -351,7 +351,7 @@ class and exact citation.
 | `glm_mtp_norm_moe` | reference | crates/model-arch/src/glm5next_layer/steps.rs:452 (post_attention_layernorm) |
 | `glm_mtp_bf16_gemv_dsa` | reference | crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:37-49 (q_a), :62-74 (q_absorb), :76-88 (kv_a), :140-164 (o_absorb); crates/model-arch/src/glm5next_dsa/layer.rs:206-218 (wk), :231-243 (compress gate); METRALE_GLM_DSA_PROJ_IN_MERGED needs FP8 projections, so the BF16 MTP layer runs them one by one |
 | `glm_mtp_mla_attend_hb` | reference | crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:367 -> crates/model-arch/src/glm5next_dsa/layer/attend_rows.rs:26; crates/model-arch/src/glm5next_dsa/attend.rs:118-151 (METRALE_GLM_DSA_DECODE_HB=8: the head-batched kernel and its merge, as the text layers) |
-| `glm_mtp_residual_add_dsa` | reference | crates/model-arch/src/glm5next_layer/steps.rs:450,391-411 (add_inplace after the attention's all-reduce) |
+| `glm_mtp_residual_add_dsa` | reference | crates/model-arch/src/glm5next_layer/steps.rs:450,391-411 (add_inplace after the attention's all-reduce); 2026-10-23: above residual_add_post_norm (100), which fused this add with the next block's norm the draft path runs as its own launch (:453) |
 | `glm_mtp_residual_add_moe` | reference | crates/model-arch/src/glm5next_layer/steps.rs:455-456 (add_inplace after the MoE's all-reduce) |
 | `glm_mtp_router_topk_rank` | reference | crates/model-arch/src/glm5next_mlp/forward.rs:374 -> crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:65-80 (METRALE_GLM_ROUTER_TOPK_RANK=1) |
 | `glm_mtp_shared_gate_up` | reference | crates/model-arch/src/glm5next_mlp/forward.rs:366-367 (the shared expert on the fork stream, METRALE_GLM_SHARED_FORK default 2) -> crates/model-arch/src/glm5next_mlp/forward/dense.rs (gate and up, one BF16 GEMV each) |
@@ -361,6 +361,9 @@ class and exact citation.
 | `glm_mtp_moe_combine` | reference | crates/model-arch/src/glm5next_mlp/forward.rs:442 -> crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:191-205 (METRALE_GLM_MOE_COMBINE_SPLIT=1) |
 | `glm_mtp_final_norm` | reference | crates/model-arch/src/glm5next_mtp_head.rs:319 (shared_head.norm) |
 | `glm_mtp_head_fp8_xchg` | reference | crates/model-arch/src/glm5next_mtp_head/head_sweep.rs:148-158,184 (the FP8 shard GEMV, then argmax_bf16); crates/model-arch/src/glm5next_mtp_head.rs:376-414 (xchg_pack, all_reduce_async of xchg_bytes(3) = 24 bytes, crates/model-arch/src/glm5next_mtp_head/head_xchg.rs:28-36, then xchg_pick) |
+| `glm_dense_w4a4_quant_static` | reference | crates/model-arch/src/glm5next_mlp/forward/w4a4_dense.rs:68-136 (forward_dense_w4a4: quant_static before gate/up and before down, every path); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:40-60 (quant_static under the static global scale) |
+| `final_norm_vanilla` | reference | crates/model-engine/src/model/impl_a1.rs:88-94 (rms_norm_kernel = rms_norm_vanilla where ships_vanilla_norm_weights, crates/model-layers/src/lib.rs:53-66); crates/model-engine/src/model/impl_a3_norm.rs:23-50 (final_norm_apply); crates/model-engine/src/model/trait_impl/verify_b.rs:416 |
+| `glm_verify_embed_device_row` | reference | crates/model-engine/src/model/trait_impl/verify_b.rs:240-251 (token upload, then verify_device_row); crates/model-engine/src/model/trait_impl/device_step.rs:425-452 (verify_device_row: the draft id into token_ids row 1, batched_embed of one row); :131-145 (wants_device_draft under glm_mtp_device_step); crates/model-arch/src/glm5next_mtp_head/proposer.rs:239 (the only propose_device) |
 
 ## Bit-identical fusions
 

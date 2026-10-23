@@ -109,7 +109,8 @@ impl Matcher<'_> {
                 || rule.pattern[j].keep
                 || c.nodes[m].outputs.iter().all(|&e| {
                     let edge = &c.edges[e];
-                    !edge.is_output && edge.consumers.iter().all(|x| chain.contains(x))
+                    (!edge.is_output || rule.pattern[j].elides)
+                        && edge.consumers.iter().all(|x| chain.contains(x))
                 })
         })
     }

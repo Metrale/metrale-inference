@@ -304,11 +304,12 @@ impl Builder<'_> {
             });
         }
         let formats = match nf.unquantized {
-            true => edges::unquantized(
-                &id,
-                &op,
-                inputs.first().map(|&x| self.circuit.edges[x].format),
-            )?,
+            true => {
+                let input = inputs.first().map(|&x| self.circuit.edges[x].format);
+                let bf16 = edges::unquantized(&id, &op, input)?;
+                let named = binding.first().and_then(|m| self.precision.named(&m.replace('*', "0")));
+                named.or(bf16)
+            }
             false => self.resolve(&id, &op, &binding, &inputs)?,
         };
         if let Some(f) = formats {

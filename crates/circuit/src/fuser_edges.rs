@@ -64,7 +64,7 @@ pub(super) fn edge_states(
     circuit: &Circuit,
     in_scope: &[bool],
     owner: &[Option<usize>],
-    stored: &BTreeSet<EdgeIdx>,
+    (stored, elided): (&BTreeSet<EdgeIdx>, &BTreeSet<EdgeIdx>),
 ) -> Vec<Option<EdgeState>> {
     circuit
         .edges
@@ -78,7 +78,7 @@ pub(super) fn edge_states(
             }
             let g = e.producer.filter(|&p| in_scope[p]).and_then(|p| owner[p]);
             let internal = g.is_some()
-                && !e.is_output
+                && (!e.is_output || elided.contains(&i))
                 && !stored.contains(&i)
                 && !e.consumers.is_empty()
                 && e.consumers.iter().all(|&c| owner[c] == g);

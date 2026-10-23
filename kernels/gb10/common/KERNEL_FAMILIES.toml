@@ -76,6 +76,21 @@ values = {}
 how = "instantiation"
 files = ["crates/model-engine/src/model/trait_impl/decode_a2.rs"]
 
+# 2026-10-23: An embedding row gathered on the device from an id in device memory (the fed
+# decode, a device-drafted verify row).
+[[family]]
+id = "embed_gather"
+description = "Embedding rows gathered by a kernel from device-resident ids"
+compute = "memory"
+kernels = ["embed_from_argmax::batched_embed"]
+rows = [1, 65536]
+pipeline.embed = { in = [], gather = "bf16", out = ["bf16"] }
+op = [{ op = "embed" }]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = ["kernels/gb10/common/embed_from_argmax.cu"]
+
 [[family]]
 id = "argmax_host"
 description = "Greedy token on the host from copied logits (no kernel)"
@@ -2911,7 +2926,7 @@ rows = [2, 2]
 pipeline.lm_head = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["bf16"] }
 pipeline.all_gather = { in = ["bf16"], move = "bf16", out = ["bf16"] }
 pipeline.argmax = { in = ["bf16"], compare = "bf16", out = ["i32"] }
-op = [{ op = "lm_head" }, { op = "all_gather" }, { op = "argmax" }]
+op = [{ op = "lm_head", weight = ["bf16"], activation = ["bf16"] }, { op = "all_gather" }, { op = "argmax" }]
 [[family.point]]
 values = {}
 how = "instantiation"
@@ -2930,7 +2945,7 @@ rows = [1, 1]
 pipeline.lm_head = { in = ["bf16"], act = "bf16", weight = "fp8/channel->f32", mma = "bf16*f32", accumulate = "f32", scale = "f32", out = ["bf16"] }
 pipeline.all_gather = { in = ["bf16"], move = "bf16", out = ["bf16"] }
 pipeline.argmax = { in = ["bf16"], compare = "bf16", out = ["i32"] }
-op = [{ op = "lm_head" }, { op = "all_gather" }, { op = "argmax" }]
+op = [{ op = "lm_head", weight = ["bf16"], activation = ["bf16"] }, { op = "all_gather" }, { op = "argmax" }]
 [[family.point]]
 values = {}
 how = "instantiation"

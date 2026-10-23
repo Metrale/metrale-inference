@@ -105,6 +105,8 @@ struct PatternFile {
     #[serde(default)]
     keep: bool,
     #[serde(default)]
+    elides: bool,
+    #[serde(default)]
     stored: bool,
     #[serde(default)]
     sibling: bool,
@@ -405,6 +407,7 @@ fn pattern_op(rule: &str, p: &PatternFile) -> Result<PatternOp, RuleError> {
         input: fmt(&p.input)?,
         writes: fmt(&p.writes)?,
         keep: p.keep,
+        elides: p.elides,
         stored: p.stored,
         sibling: p.sibling,
         holds: fmt(&p.holds)?,

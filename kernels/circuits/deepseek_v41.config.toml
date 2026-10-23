@@ -112,3 +112,8 @@ dspark_target_layer_ids = { ignore = "the DSpark drafter; the circuit models no 
 dspark_markov_rank = { ignore = "the DSpark drafter; the circuit models no draft layer" }
 dspark_n_routed_experts = { ignore = "the DSpark drafter; the circuit models no draft layer" }
 dspark_num_experts_per_tok = { ignore = "the DSpark drafter; the circuit models no draft layer" }
+
+# 2026-10-23: The engine code default of each setting a rule over this circuit reads.
+[policy]
+final_norm_vanilla = { value = "on", why = "deepseek_v41 is listed: crates/model-layers/src/lib.rs:53-66 (ships_vanilla_norm_weights by model_type), read at crates/model-engine/src/model/impl_a1.rs:88-94 (rms_norm_kernel, the final norm only, impl_a3_norm.rs:23-50)" }
+glm_mtp_device_step = { value = "off", why = "only GLM-5's MTP proposer drafts on the device (crates/model-arch/src/glm5next_mtp_head/proposer.rs:239; the trait default, crates/model-layers/src/speculative.rs:296)" }

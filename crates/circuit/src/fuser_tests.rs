@@ -469,3 +469,21 @@ fn a_predicate_over_an_undefined_dim_is_refused() {
         }
     );
 }
+
+/// 2026-10-23: A circuit output read inside the chain (the toy head's normed row, made an output)
+/// refuses the chain unless the element states `elides`, and the elided output stays in the group.
+#[test]
+fn a_circuit_output_is_swallowed_only_by_an_element_that_elides_it() {
+    let text = crate::test_toy::CIRCUIT.replace(r#"outputs = ["logits"]"#, r#"outputs = ["xn", "logits"]"#);
+    let table = crate::precision::PrecisionTable::parse(crate::test_toy::PRECISION).unwrap();
+    let c = crate::instantiate(&text, &[], &crate::test_toy::shape(1), &table).unwrap();
+    let xn = c.edge("head.xn").unwrap();
+    assert!(c.edges[xn].is_output);
+    let pat = r#"{ op = "final_norm" }, { op = "lm_head" }"#;
+    let refused = plan(&c, &rules(&fused("head_fused", pat, 100)), &policy(), 1);
+    assert!(refused.groups.iter().all(|g| g.rule != "head_fused"), "an output escapes the group");
+    let elides = r#"{ op = "final_norm", elides = true }, { op = "lm_head" }"#;
+    let p = plan(&c, &rules(&fused("head_fused", elides, 100)), &policy(), 1);
+    assert_eq!(rule_of_node(&c, &p, "head.final_norm"), "head_fused");
+    assert!(matches!(p.edge_states[xn], Some(EdgeState::Fused(_))), "{:?}", p.edge_states[xn]);
+}

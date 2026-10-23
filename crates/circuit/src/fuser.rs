@@ -387,7 +387,18 @@ fn fuse_inner(
                 .flat_map(|(_, &n)| circuit.nodes[n].outputs.iter().copied())
         })
         .collect();
-    let edge_states = edge_states(circuit, &in_scope, &owner, &stored);
+    // 2026-10-23: Circuit outputs an `elides` element swallows are never written.
+    let elided: BTreeSet<EdgeIdx> = found
+        .iter()
+        .flat_map(|(rule, nodes)| {
+            rule.pattern
+                .iter()
+                .zip(nodes)
+                .filter(|(p, _)| p.elides)
+                .flat_map(|(_, &n)| circuit.nodes[n].outputs.iter().copied())
+        })
+        .collect();
+    let edge_states = edge_states(circuit, &in_scope, &owner, (&stored, &elided));
     let mut plan = FusionPlan {
         arch: circuit.arch.clone(),
         mode,

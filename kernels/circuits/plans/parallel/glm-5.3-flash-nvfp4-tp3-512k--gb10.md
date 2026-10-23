@@ -37,21 +37,21 @@ Every other dim is replicated on every rank.
 
 Per rank: main-section weight bytes / 273 GB/s (kernels/DEVICES.toml) + each collective at 17.57 us + payload / 25 GB/s (f14a_p1k rank 0: 95 ncclDevKernel_SendRecv/step, median 13.47 [13.22, 13.79] us + idle-before 4.10 [4.06, 4.13] us (P1-MEASUREMENTS.md); bandwidth: ConnectX-7 200 Gb/s datasheet); the step is the slowest rank (crates/circuit/src/parallel_cost.rs). It ranks layouts and predicts no step time: a lower row is a **candidate to measure**, not a change to the serve.
 
-Today: **17080.0 us** (weight + collectives per rank: 15355.6 + 1724.4, 15276.3 + 1724.4, 14155.1 + 1724.4).
+Today: **17059.5 us** (weight + collectives per rank: 15335.1 + 1724.4, 15255.9 + 1724.4, 14134.7 + 1724.4).
 
 | change (one part) | model us | vs today |
 |---|---:|---:|
-| `hidden` 3 -> 1 | 17062.1 | -0.10% |
-| `hidden` 3 -> 2 | 17097.9 | +0.10% |
-| `inter` 3 -> 1 | 17648.5 | +3.33% |
-| `inter` 3 -> 2 | 17289.2 | +1.23% |
-| `lin_k_heads` 3 -> 1 | 22825.4 | +33.64% |
-| `lin_k_heads` 3 -> 2 | 19201.3 | +12.42% |
-| `moe_inter` 3 -> 1 | 28513.5 | +66.94% |
-| `moe_inter` 3 -> 2 | 21341.4 | +24.95% |
-| `q_heads` 3 -> 1 | 20194.2 | +18.23% |
-| `q_heads` 3 -> 2 | 18087.4 | +5.90% |
-| `shared_inter` 3 -> 1 | 18441.1 | +7.97% |
-| `shared_inter` 3 -> 2 | 18891.4 | +10.61% |
-| `vocab` 3 -> 1 | 20117.8 | +17.79% |
-| `vocab` 3 -> 2 | 17913.9 | +4.88% |
+| `hidden` 3 -> 1 | 17041.6 | -0.10% |
+| `hidden` 3 -> 2 | 17077.4 | +0.10% |
+| `inter` 3 -> 1 | 17628.1 | +3.33% |
+| `inter` 3 -> 2 | 17268.8 | +1.23% |
+| `lin_k_heads` 3 -> 1 | 22804.9 | +33.68% |
+| `lin_k_heads` 3 -> 2 | 19180.9 | +12.44% |
+| `moe_inter` 3 -> 1 | 28493.0 | +67.02% |
+| `moe_inter` 3 -> 2 | 21321.0 | +24.98% |
+| `q_heads` 3 -> 1 | 20173.7 | +18.25% |
+| `q_heads` 3 -> 2 | 18066.9 | +5.91% |
+| `shared_inter` 3 -> 1 | 18420.6 | +7.98% |
+| `shared_inter` 3 -> 2 | 18870.9 | +10.62% |
+| `vocab` 3 -> 1 | 20097.3 | +17.81% |
+| `vocab` 3 -> 2 | 17893.4 | +4.89% |

@@ -141,6 +141,11 @@ fn fp8_act(a: Option<Operand>) -> Format {
 }
 
 impl EdgePrecision for PolicyPrecision<'_> {
+    /// 2026-10-23: Only a format the engine chooses itself names a module.
+    fn named(&self, module: &str) -> Option<LinearFormats> {
+        self.engine.iter().find(|(p, _)| glob(p, module)).map(|(_, f)| *f)
+    }
+
     fn linear(&self, module: &str) -> LinearFormats {
         if let Some((_, f)) = self.engine.iter().find(|(p, _)| glob(p, module)) {
             return *f;

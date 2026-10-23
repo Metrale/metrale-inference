@@ -4685,7 +4685,8 @@ id = "glm_w8a8_dsa_proj_in_split4_idx_verify"
 pattern = [
   { op = "linear", role = "mla_q_a", weight = "fp8/channel", input = "fp8/token", keep = true, layer_kind = "deepseek_sparse_attention" },
   { op = "linear", role = "mla_kv_a", weight = "fp8/channel", input = "fp8/token", keep = true, sibling = true, layer_kind = "deepseek_sparse_attention" },
-  { op = "linear", role = "index_k", weight = "fp8/channel", input = "fp8/token", sibling = true, layer_kind = "deepseek_sparse_attention" },
+  { op = "linear", role = "index_k", weight = "fp8/channel", input = "fp8/token", keep = true, sibling = true, layer_kind = "deepseek_sparse_attention" },
+  { op = "linear", role = "index_gate", weight = "fp8/channel", input = "fp8/token", sibling = true, layer_kind = "deepseek_sparse_attention" },
 ]
 kernels = [{ module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb1_ku8_split4" }]
 repeat = "once"
@@ -4991,7 +4992,7 @@ cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-164 (2026-10-23: 
 
 [[rule]]
 id = "glm_ar_fused_post"
-pattern = [{ op = "all_reduce" }, { op = "hc_post" }]
+pattern = [{ op = "all_reduce" }, { op = "hc_post", writes = "f32" }]
 comm = [{ api = "exchange", kernel = "ncclDevKernel_SendRecv", at = 0 }]
 kernels = [{ module = "glm5next_hc_post_sum", func = "glm5next_hc_post_rank_sum" }]
 repeat = "once"
@@ -5043,7 +5044,7 @@ cite = "crates/model-arch/src/glm5next_mtp_head.rs:229-243 (METRALE_GLM_MTP_EH_T
 id = "glm_screen_head_k2"
 pattern = [
   { op = "lm_head", block = "head" },
-  { op = "all_gather", block = "head" },
+  { op = "all_gather", block = "head", elides = true },
   { op = "argmax", block = "head" },
 ]
 comm = [{ api = "exchange", kernel = "ncclDevKernel_SendRecv", at = 2 }]
@@ -5173,8 +5174,8 @@ emitter = "residual_add"
 rows = [1, 1]
 modes = ["draft"]
 numerics = "reference"
-priority = 20
-cite = "crates/model-arch/src/glm5next_layer/steps.rs:450,391-411 (add_inplace after the attention's all-reduce)"
+priority = 105
+cite = "crates/model-arch/src/glm5next_layer/steps.rs:450,391-411 (add_inplace after the attention's all-reduce); 2026-10-23: above residual_add_post_norm (100), which fused this add with the next block's norm the draft path runs as its own launch (:453)"
 
 [[rule]]
 id = "glm_mtp_residual_add_moe"
@@ -5286,7 +5287,7 @@ cite = "crates/model-arch/src/glm5next_mtp_head.rs:319 (shared_head.norm)"
 id = "glm_mtp_head_fp8_xchg"
 pattern = [
   { op = "lm_head", block = "glm_mtp_out", steps = { weight = "fp8/channel->f32", mma = "bf16*f32", scale = "f32" } },
-  { op = "all_gather", block = "glm_mtp_out" },
+  { op = "all_gather", block = "glm_mtp_out", elides = true },
   { op = "argmax", block = "glm_mtp_out" },
 ]
 comm = [{ api = "exchange", kernel = "ncclDevKernel_SendRecv", at = 3 }]
@@ -5304,3 +5305,56 @@ modes = ["draft"]
 numerics = "reference"
 priority = 30
 cite = "crates/model-arch/src/glm5next_mtp_head/head_sweep.rs:148-158,184 (the FP8 shard GEMV, then argmax_bf16); crates/model-arch/src/glm5next_mtp_head.rs:376-414 (xchg_pack, all_reduce_async of xchg_bytes(3) = 24 bytes, crates/model-arch/src/glm5next_mtp_head/head_xchg.rs:28-36, then xchg_pick)"
+
+# 2026-10-23 (P0-prereq, verify n=2 fidelity against f14a): sites the served GLM-5.3 TP=3 step
+# launches differently from the general rules above.
+
+# 2026-10-23: GLM-5's dense MLP (layers 0-2) quantizes each W4A4 input under the checkpoint's
+# static input scale, not the dynamic per-row scale `w4a4_act_quant` plans. `mlp` is GLM's dense
+# FFN block only.
+[[rule]]
+id = "glm_dense_w4a4_quant_static"
+pattern = [{ op = "act_quant", format = "nvfp4/g16", block = "mlp" }]
+kernels = [{ module = "w4a4_gemv_mx_moe", func = "w4a4_quant_rows_static" }]
+repeat = "once"
+emitter = "w4a4_act_quant"
+rows = [1, 32]
+modes = ["decode", "multi_seq", "verify"]
+numerics = "reference"
+priority = 15
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4_dense.rs:68-136 (forward_dense_w4a4: quant_static before gate/up and before down, every path); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:40-60 (quant_static under the static global scale)"
+
+# 2026-10-23: The final norm of a model whose checkpoint ships plain RMSNorm weights runs the
+# vanilla kernel (the engine decides by model_type; the arch config's `final_norm_vanilla`
+# states it per circuit).
+[[rule]]
+id = "final_norm_vanilla"
+pattern = [{ op = "final_norm", params = { weight_form = "plain" } }]
+kernels = [{ module = "rms_norm_vanilla", func = "rms_norm_vanilla" }]
+repeat = "once"
+emitter = "rms_norm"
+rows = [1, 128]
+modes = ["decode", "multi_seq", "verify", "draft", "verify_batch"]
+when = { final_norm_vanilla = "on" }
+numerics = "reference"
+priority = 15
+cite = "crates/model-engine/src/model/impl_a1.rs:88-94 (rms_norm_kernel = rms_norm_vanilla where ships_vanilla_norm_weights, crates/model-layers/src/lib.rs:53-66); crates/model-engine/src/model/impl_a3_norm.rs:23-50 (final_norm_apply); crates/model-engine/src/model/trait_impl/verify_b.rs:416"
+
+# 2026-10-23: A K=2 verify whose draft is on the device: row 0's host id is copied, row 1's id
+# is gathered from the drafter's device cell by `batched_embed`; then the hyper-connection
+# expand over both rows. Only GLM's MTP proposer drafts on the device (`propose_device`).
+[[rule]]
+id = "glm_verify_embed_device_row"
+pattern = [{ op = "embed" }, { op = "hc_expand", writes = "f32" }]
+kernels = [
+  { module = "embed_from_argmax", func = "batched_embed" },
+  { module = "glm5next_mhc", func = "glm5next_hc_expand" },
+]
+repeat = "once"
+emitter = "glm_hc"
+rows = [2, 2]
+modes = ["verify"]
+when = { glm_mtp_device_step = "on" }
+numerics = "reference"
+priority = 20
+cite = "crates/model-engine/src/model/trait_impl/verify_b.rs:240-251 (token upload, then verify_device_row); crates/model-engine/src/model/trait_impl/device_step.rs:425-452 (verify_device_row: the draft id into token_ids row 1, batched_embed of one row); :131-145 (wants_device_draft under glm_mtp_device_step); crates/model-arch/src/glm5next_mtp_head/proposer.rs:239 (the only propose_device)"

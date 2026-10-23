@@ -188,6 +188,9 @@ settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "nvf
 #   into glm5next_hc_post_rank_sum; screen_head (METRALE_SCREEN_HEAD, code default on:
 #   crates/settings/src/groups/speculative.rs:129) lowers the verify head's vocab all-reduce into the
 #   screened key exchange. Both read only by rules over a rank circuit's derived collectives.
+# - 2026-10-23: glm_mtp_device_step (recipe :159 METRALE_GLM_MTP_DEVICE_STEP=1): a K=2 verify gathers
+#   the device draft's embedding row (batched_embed). final_norm_vanilla: the arch config's value
+#   (glm5_next ships plain RMSNorm weights), pinned like the other settings.
 [[instance]]
 recipe = "glm-5.3/glm-5.3-flash-nvfp4-tp3-512k"
 checkpoint = "nvidia/GLM-5.3-Flash-NVFP4"
@@ -201,7 +204,7 @@ plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], 
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", glm_mhc_fused = "on", glm_router_rows = "on", glm_router_topk_rank = "on", glm_moe_w4a4_grouped = "on", glm_moe_expert_layout = "tp", glm_kda_row_reg = "on", glm_kda_rows_reg = "on", glm_kda_seq_rows = "decode", glm_kda_verify_tokens = "on", glm_w4a16_gemv_seg = "on", glm_w4a16_gemv_rows = "2", glm_w4a16_seg = "fuse", glm_dsa_decode_hb = "8", glm_dsa_verify_rows = "on", glm_dsa_indexer_rows = "on", glm_ar_fused_post = "on", screen_head = "on" }
+settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", glm_mhc_fused = "on", glm_router_rows = "on", glm_router_topk_rank = "on", glm_moe_w4a4_grouped = "on", glm_moe_expert_layout = "tp", glm_kda_row_reg = "on", glm_kda_rows_reg = "on", glm_kda_seq_rows = "decode", glm_kda_verify_tokens = "on", glm_w4a16_gemv_seg = "on", glm_w4a16_gemv_rows = "2", glm_w4a16_seg = "fuse", glm_dsa_decode_hb = "8", glm_dsa_verify_rows = "on", glm_dsa_indexer_rows = "on", glm_ar_fused_post = "on", screen_head = "on", glm_mtp_device_step = "on", final_norm_vanilla = "on" }
 
 # 2026-10-23: The recipe serves --tp-size 3 (one GB10 per rank) with every split part of the
 # circuit's `[parallel]` spec (kernels/circuits/glm5_next.toml) over all three ranks; `hidden` is
