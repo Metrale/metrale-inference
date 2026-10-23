@@ -15,7 +15,7 @@ use metrale_gpu_runtime::gpu::recording::Op;
 use super::*;
 use crate::glm5next_plan::compile_moe;
 use crate::glm5next_plan::fixture::{RUNS, moe_layers, plan, ranks};
-use crate::glm5next_plan::fixture_site::{OUT, STREAM, Site, X, site, weights};
+use crate::glm5next_plan::fixture_site::{OUT, STREAM, Site, X, gate, site, weights};
 
 fn legacy(s: &Site, w: &Glm5NextMoeWeights, rows: usize) -> Vec<Op> {
     super::super::forward_moe(&s.gpu, &s.k, &s.cfg, w, X, OUT, rows, &s.ws, true, STREAM).unwrap();
@@ -27,21 +27,6 @@ fn planned(s: &Site, w: &Glm5NextMoeWeights, steps: MoeSteps<KernelId>) -> Vec<O
     let p = bind(&s.gpu, steps, &s.cfg, w, &s.ws).unwrap();
     run_with_legacy_shared(&p, &s.gpu, &s.k, &s.cfg, w, &s.ws, X, OUT, rows, STREAM).unwrap();
     s.gpu.take()
-}
-
-/// 2026-10-23: `None` when the two logs are equal, else the first differing operation of each.
-fn first_difference(a: &[Op], b: &[Op]) -> Option<String> {
-    if a == b {
-        return None;
-    }
-    let i = a.iter().zip(b).take_while(|(x, y)| x == y).count();
-    Some(format!(
-        "op {i} of {} / {}:\n  legacy {:?}\n  plan   {:?}",
-        a.len(),
-        b.len(),
-        a.get(i),
-        b.get(i)
-    ))
 }
 
 /// 2026-10-23: Every routed MoE site of every rank, at decode n=1 and verify n=2, launches from
@@ -59,7 +44,7 @@ fn every_plan_executed_moe_site_launches_what_the_legacy_site_launches() {
                 let w = weights(l, false);
                 let steps = compile_moe(&c[rank], &p, l).unwrap().steps;
                 let (a, b) = (legacy(&s, &w, rows as usize), planned(&s, &w, steps));
-                if let Some(d) = first_difference(&a, &b) {
+                if let Some(d) = gate(&a, &b) {
                     panic!("rank {rank} {mode:?} n={rows} layer {l}: {d}");
                 }
                 // 2026-10-23: the fork (record, side waits), the shared expert's 4 launches and
@@ -98,19 +83,19 @@ fn one_site(rank: usize, mode: Mode, rows: u64) -> (Site, Glm5NextMoeWeights, Mo
 fn a_one_field_sabotage_turns_the_gate_red_at_its_launch() {
     let (s, w, steps) = one_site(0, Mode::Verify, 2);
     let a = legacy(&s, &w, 2);
-    assert_eq!(first_difference(&a, &planned(&s, &w, steps.clone())), None);
+    assert_eq!(gate(&a, &planned(&s, &w, steps.clone())), None);
     let plan_side = |d: &str| d.lines().nth(2).unwrap().to_string();
     let mut blend = steps.clone();
     blend.blend.blocks_per_row = 1;
-    let d = first_difference(&a, &planned(&s, &w, blend)).expect("a changed combine grid is red");
+    let d = gate(&a, &planned(&s, &w, blend)).expect("a changed combine grid is red");
     assert!(plan_side(&d).contains("glm5next_moe_combine"), "{d}");
     let mut topk = steps.clone();
     topk.topk.block = 256;
-    let d = first_difference(&a, &planned(&s, &w, topk)).expect("a changed top-k block is red");
+    let d = gate(&a, &planned(&s, &w, topk)).expect("a changed top-k block is red");
     assert!(plan_side(&d).contains("glm5next_router_topk_rank"), "{d}");
     let mut down = steps;
     down.down.quant.func = "w4a4_quant_rows_static".into();
-    let d = first_difference(&a, &planned(&s, &w, down)).expect("the plain down quantizer is red");
+    let d = gate(&a, &planned(&s, &w, down)).expect("the plain down quantizer is red");
     assert!(
         plan_side(&d).contains("w4a4_gemv_mx_moe::w4a4_quant_rows_static\""),
         "{d}"

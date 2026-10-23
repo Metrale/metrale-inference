@@ -2,7 +2,9 @@
 
 //! 2026-10-10: The all-reduce and post-mix steps of an mHC site (moved unchanged from `steps.rs`,
 //! with the decode's post fold): which post path a site takes, the exchange that hands the
-//! partials to a fused post, and the post-mix itself.
+//! partials to a fused post, and the post-mix itself. 2026-10-23: The bodies moved to
+//! `steps/mhc_site.rs` ([`MhcSite`], [`LayerIo`]); these methods build the site from the layer
+//! and the forward context and delegate.
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants: as `steps.rs`'s.
@@ -10,42 +12,95 @@
 use super::*;
 
 impl Glm5NextLayer {
-    /// 2026-10-10: Whether the one-token decode folds the attention site's post-mix into the FFN
-    /// site's pre-norm (`METRALE_GLM_MHC_POST_FOLD=1`); an error when the lever is on without the
-    /// fused pre-norm, the kernel or the layer's `fold_streams`.
+    /// 2026-10-23: The layer's norm and all-reduce inputs under `comm` / `graph_capture`.
+    pub(in crate::glm5next_layer) fn layer_io<'a>(
+        &'a self,
+        comm: Option<&'a dyn metrale_comm::CommBackend>,
+        graph_capture: bool,
+    ) -> LayerIo<'a> {
+        LayerIo {
+            levers: &self.levers,
+            rms_norm_k: self.rms_norm_k,
+            hidden: self.hidden,
+            rms_eps: self.rms_eps,
+            layer_idx: self.layer_idx,
+            comm,
+            graph_capture,
+            plans: Some(&self.mhc_plans),
+        }
+    }
+
+    /// 2026-10-23: The mHC site of `mhc` with the layer's inputs.
+    pub(in crate::glm5next_layer) fn mhc_site<'a>(
+        &'a self,
+        mhc: &'a Glm5NextMhc,
+        comm: Option<&'a dyn metrale_comm::CommBackend>,
+        graph_capture: bool,
+    ) -> MhcSite<'a> {
+        MhcSite {
+            io: self.layer_io(comm, graph_capture),
+            mhc,
+        }
+    }
+
+    /// 2026-10-23: [`LayerIo::norm`].
+    pub(in crate::glm5next_layer) fn norm(
+        &self,
+        gpu: &dyn GpuBackend,
+        x: DevicePtr,
+        w: DevicePtr,
+        out: DevicePtr,
+        rows: usize,
+        stream: u64,
+    ) -> Result<()> {
+        self.layer_io(None, false).norm(gpu, x, w, out, rows, stream)
+    }
+
+    /// 2026-10-23: [`MhcSite::mhc_pre_norm_one`].
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::glm5next_layer) fn mhc_pre_norm_one(
+        &self,
+        gpu: &dyn GpuBackend,
+        mhc: &Glm5NextMhc,
+        site: &Glm5NextMhcSiteWeights,
+        norm_w: DevicePtr,
+        streams: DevicePtr,
+        y: DevicePtr,
+        post: DevicePtr,
+        comb: DevicePtr,
+        normed: DevicePtr,
+        k: usize,
+        t_mhc: Option<std::time::Instant>,
+        stream: u64,
+    ) -> Result<()> {
+        self.mhc_site(mhc, None, false).mhc_pre_norm_one(
+            gpu, site, norm_w, streams, y, post, comb, normed, k, t_mhc, stream,
+        )
+    }
+
+    /// 2026-10-23: [`LayerIo::reduce_partial`].
+    pub(in crate::glm5next_layer) fn reduce_partial(
+        &self,
+        p: DevicePtr,
+        rows: usize,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        self.layer_io(ctx.comm, ctx.graph_capture)
+            .reduce_partial(p, rows, stream)
+    }
+
+    /// 2026-10-23: [`MhcSite::post_fold`].
     pub(in crate::glm5next_layer) fn post_fold(&self, mhc: &Glm5NextMhc) -> Result<bool> {
-        if !self.levers.mhc_post_fold {
-            return Ok(false);
-        }
-        if !self.levers.mhc_fused || mhc.kernels.hc_post_pre_norm.0 == 0 || mhc.fold_streams.0 == 0
-        {
-            bail!(
-                "GLM layer {}: METRALE_GLM_MHC_POST_FOLD=1 needs METRALE_GLM_MHC_FUSED=1, \
-                 glm5next_hc_post_pre_norm and the layer's fold streams",
-                self.layer_idx
-            );
-        }
-        Ok(true)
+        self.mhc_site(mhc, None, false).post_fold()
     }
 
+    /// 2026-10-23: [`MhcSite::fused_post`].
     pub(in crate::glm5next_layer) fn fused_post(&self, mhc: &Glm5NextMhc) -> Result<bool> {
-        if !self.levers.ar_fused_post {
-            return Ok(false);
-        }
-        if mhc.kernels.hc_post_rank_sum.0 == 0 {
-            bail!(
-                "GLM layer {}: METRALE_GLM_AR_FUSED_POST=1 but glm5next_hc_post_rank_sum is not \
-                 loaded on this target",
-                self.layer_idx
-            );
-        }
-        Ok(true)
+        self.mhc_site(mhc, None, false).fused_post()
     }
 
-    /// 2026-10-10: The all-reduce before an mHC post-mix. With `fused` and one piece, asks the
-    /// communicator for the exchange alone and returns where the partials landed, for
-    /// [`Self::hc_post_reduced`] to sum; otherwise (or when the payload does not take the one-shot
-    /// path) runs [`Self::reduce_pieces`] and returns `None`.
+    /// 2026-10-23: [`LayerIo::reduce_or_exchange`]: no mHC weights are read.
     pub(in crate::glm5next_layer) fn reduce_or_exchange(
         &self,
         p: DevicePtr,
@@ -54,25 +109,11 @@ impl Glm5NextLayer {
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<Option<metrale_comm::PeerPartials>> {
-        if let (true, [rows], Some(comm)) = (fused, row_pieces, ctx.comm) {
-            let bytes = rows * self.hidden * 2;
-            let order = (!ctx.graph_capture).then_some(stream);
-            if let Some(partials) = comm.exchange_partials(p.0, bytes, order)? {
-                return Ok(Some(partials));
-            }
-        }
-        self.reduce_pieces(p, row_pieces, ctx, stream)?;
-        Ok(None)
+        self.layer_io(ctx.comm, ctx.graph_capture)
+            .reduce_or_exchange(p, row_pieces, fused, stream)
     }
 
-    /// 2026-10-10: `glm_hc_post` of `k` rows of `x` and the streams at `residual` into the
-    /// highway at `streams` (the same buffer except after a folded post, `forward_one`), or, when
-    /// `partials` is set, `glm_hc_post_rank_sum`, which first sums `x` with the peers' partials
-    /// (writing the sum back to `x`), with the same bits as the all-reduce sum then `glm_hc_post`.
-    /// 2026-10-16: One exception at two ranks, where the all-reduce is `__hadd` and the rank sum
-    /// starts its FP32 accumulator at +0: an element whose two partials are both -0 sums to +0
-    /// here and -0 in the all-reduce (every other pair is the same bits, `world2_sum_tests`). At
-    /// three or more ranks the all-reduce is the same rank sum, so there is no exception.
+    /// 2026-10-23: [`MhcSite::hc_post_reduced`].
     #[allow(clippy::too_many_arguments)]
     pub(in crate::glm5next_layer) fn hc_post_reduced(
         &self,
@@ -87,35 +128,8 @@ impl Glm5NextLayer {
         k: usize,
         stream: u64,
     ) -> Result<()> {
-        let (kt, ht, hct) = (k as u32, self.hidden as u32, mhc.hc_mult as u32);
-        match partials {
-            Some(p) => glm_hc_post_rank_sum(
-                gpu,
-                &mhc.kernels,
-                x,
-                &p,
-                residual,
-                post,
-                comb,
-                streams,
-                kt,
-                ht,
-                hct,
-                stream,
-            ),
-            None => glm_hc_post(
-                gpu,
-                mhc.kernels.hc_post,
-                x,
-                residual,
-                post,
-                comb,
-                streams,
-                kt,
-                ht,
-                hct,
-                stream,
-            ),
-        }
+        self.mhc_site(mhc, None, false).hc_post_reduced(
+            gpu, x, partials, residual, streams, post, comb, k, stream,
+        )
     }
 }

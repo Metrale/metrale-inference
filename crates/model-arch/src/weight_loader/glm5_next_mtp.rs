@@ -187,6 +187,7 @@ pub fn load_glm5next_mtp_module(
             dump: crate::glm5next_layer_dump::config(lc.settings)?.map(std::sync::Arc::new),
             levers,
             moe_plans: Default::default(),
+            mhc_plans: Default::default(),
         },
         eh_proj: DenseWeight {
             weight: store.get(&format!("{prefix}eh_proj.weight"))?.ptr,

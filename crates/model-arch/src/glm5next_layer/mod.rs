@@ -63,6 +63,8 @@ mod types;
 pub(crate) mod wide_gemv;
 pub use levers::{GlmLevers, arena_lean};
 pub(crate) use levers::{PREFILL_ROWS, multi_seq_chunks};
+#[cfg(test)]
+pub(crate) use steps::{LayerIo, MhcSite};
 pub use steps::{GroupSpan, SpanPiece, group_spans, prefill_span_groups};
 pub use types::{Glm5NextLayer, Glm5NextMhc, Glm5NextMixer, Glm5NextMlpSite};
 

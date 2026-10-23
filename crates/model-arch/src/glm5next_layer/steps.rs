@@ -8,7 +8,6 @@
 
 use super::*;
 use crate::glm5next_layer_dump::tap as dump;
-use crate::glm5next_mhc_levers::fused_runs;
 
 mod drafter;
 mod forward;
@@ -17,7 +16,9 @@ mod forward_sp;
 mod forward_sp_pipe;
 mod mhc_slice;
 mod mix;
+mod mhc_site;
 mod mlp;
+pub(crate) use mhc_site::{LayerIo, MhcSite};
 mod multi_seq;
 mod prefill_capture;
 pub use multi_seq::{GroupSpan, group_spans};
@@ -78,99 +79,6 @@ impl Glm5NextLayer {
             dump::put(tap, dump::Point::MlpRed, ffn_out)?;
         }
         dump::put(tap, dump::Point::StreamsOut, streams)
-    }
-
-    /// 2026-09-25: `rms_norm_vanilla` over `rows` contiguous `[hidden]` rows in one launch. The
-    /// kernel runs one block per row (`token = blockIdx.x`) and the blocks share nothing, so the
-    /// result equals `rows` single-row launches.
-    fn norm(
-        &self,
-        gpu: &dyn GpuBackend,
-        x: DevicePtr,
-        w: DevicePtr,
-        out: DevicePtr,
-        rows: usize,
-        stream: u64,
-    ) -> Result<()> {
-        KernelLaunch::new(gpu, self.rms_norm_k)
-            .grid([rows as u32, 1, 1])
-            .block([(self.hidden.min(1024)) as u32, 1, 1])
-            .arg_ptr(x)
-            .arg_ptr(w)
-            .arg_ptr(out)
-            .arg_u32(self.hidden as u32)
-            .arg_f32(self.rms_eps)
-            .launch(stream)?;
-        Ok(())
-    }
-
-    /// 2026-10-09: One mHC site's pre-mix of `k` rows into `y` (with `post` and `comb`), then
-    /// the RMS norm of `y` with `norm_w` into `normed`: `glm_hc_pre` and `norm`, or with
-    /// `mhc_fused()` the single `glm_hc_pre_norm` launch that writes the same bytes (2026-10-22:
-    /// where `fused_runs` holds, else the two launches). Ends the caller's `profile::MHC` span
-    /// `t_mhc`; the unfused norm keeps its `profile::NORM` span.
-    #[allow(clippy::too_many_arguments)]
-    pub(in crate::glm5next_layer) fn mhc_pre_norm_one(
-        &self,
-        gpu: &dyn GpuBackend,
-        mhc: &Glm5NextMhc,
-        site: &Glm5NextMhcSiteWeights,
-        norm_w: DevicePtr,
-        streams: DevicePtr,
-        y: DevicePtr,
-        post: DevicePtr,
-        comb: DevicePtr,
-        normed: DevicePtr,
-        k: usize,
-        t_mhc: Option<std::time::Instant>,
-        stream: u64,
-    ) -> Result<()> {
-        let (kt, ht, hct) = (k as u32, self.hidden as u32, mhc.hc_mult as u32);
-        let iters = mhc.sinkhorn_iters as u32;
-        if self.levers.mhc_fused && fused_runs(&mhc.kernels, site, self.hidden, mhc.hc_mult) {
-            crate::glm5next_mhc_fused::glm_hc_pre_norm(
-                gpu,
-                &mhc.kernels,
-                streams,
-                site,
-                norm_w,
-                y,
-                normed,
-                post,
-                comb,
-                kt,
-                ht,
-                hct,
-                iters,
-                self.rms_eps,
-                mhc.hc_eps,
-                self.rms_eps,
-                stream,
-            )?;
-            profile::end(profile::MHC, t_mhc, gpu, stream);
-            return Ok(());
-        }
-        glm_hc_pre(
-            gpu,
-            &mhc.kernels,
-            streams,
-            site,
-            y,
-            post,
-            comb,
-            kt,
-            ht,
-            hct,
-            iters,
-            self.rms_eps,
-            mhc.hc_eps,
-            stream,
-        )?;
-        profile::end(profile::MHC, t_mhc, gpu, stream);
-        let t_norm = self.levers.profile.start();
-        self.norm(gpu, y, norm_w, normed, k, stream)?;
-        profile::end(profile::NORM, t_norm, gpu, stream);
-        Ok(())
     }
 
     /// 2026-09-25: Run the mixer on `normed`; returns the pointer that holds its output.
@@ -242,47 +150,6 @@ impl Glm5NextLayer {
         );
     }
 
-    /// 2026-09-25: All-reduce `rows` contiguous `[hidden]` BF16 rows in one collective when
-    /// `ctx.comm` is set: blocking under graph capture, asynchronous otherwise. No-op without a
-    /// communicator.
-    fn reduce_partial(
-        &self,
-        p: DevicePtr,
-        rows: usize,
-        ctx: &ForwardContext,
-        stream: u64,
-    ) -> Result<()> {
-        // 2026-10-11: Sliced under `METRALE_GLM_BATCH_INVARIANT` (`glm5next_batch_inv`).
-        let Some(comm) = ctx.comm else { return Ok(()) };
-        let (h, cap) = (self.hidden * 2, ctx.graph_capture);
-        crate::glm5next_batch_inv::all_reduce_rows(
-            comm,
-            self.levers.dense.batch_invariant,
-            p,
-            rows,
-            h,
-            cap,
-            stream,
-        )
-    }
-
-    /// 2026-10-09: [`Self::reduce_partial`] once per piece of `row_pieces`, so each piece's
-    /// collective has the size its own pass gives it (NCCL may order an element's sum by the
-    /// message size); `[rows]` is one collective, as before.
-    fn reduce_pieces(
-        &self,
-        p: DevicePtr,
-        row_pieces: &[usize],
-        ctx: &ForwardContext,
-        stream: u64,
-    ) -> Result<()> {
-        let mut r0 = 0usize;
-        for &n in row_pieces {
-            self.reduce_partial(p.offset(r0 * self.hidden * 2), n, ctx, stream)?;
-            r0 += n;
-        }
-        Ok(())
-    }
     /// 2026-09-25: `dst += src` over `n` BF16 elements (`bf16_add_inplace`); errors when the
     /// target lacks the kernel.
     fn add_inplace(

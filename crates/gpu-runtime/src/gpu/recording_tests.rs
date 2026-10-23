@@ -81,3 +81,33 @@ fn side_streams_are_distinct_and_not_the_default() {
     let (a, b) = (gpu.create_stream().unwrap(), gpu.create_stream().unwrap());
     assert!(a != 0 && b != 0 && a != b, "{a} {b}");
 }
+
+/// 2026-10-23: The stream graph keeps streams, events and collectives and drops kernels: two
+/// logs that launch different kernels on the same streams have equal graphs, a moved launch or
+/// a missing wait does not.
+#[test]
+fn the_stream_graph_sees_streams_events_and_collectives_only() {
+    let gpu = RecordingGpu::new(1);
+    let (a, b) = (gpu.kernel("m", "a").unwrap(), gpu.kernel("m", "b").unwrap());
+    let run = |k, side: u64, wait: bool| {
+        gpu.record_event(9, 7).unwrap();
+        if wait {
+            gpu.stream_wait_event(side, 9).unwrap();
+        }
+        KernelLaunch::new(&gpu, k)
+            .grid([1, 1, 1])
+            .block([1, 1, 1])
+            .launch(side)
+            .unwrap();
+        gpu.record_comm("exchange", Some(7));
+        stream_graph(&gpu.take())
+    };
+    let base = run(a, 5, true);
+    assert_eq!(
+        base,
+        ["record e9@7", "wait 5<-e9", "launch@5", "comm@Some(7)"]
+    );
+    assert_eq!(run(b, 5, true), base);
+    assert_ne!(run(a, 7, true), base);
+    assert_ne!(run(a, 5, false), base);
+}

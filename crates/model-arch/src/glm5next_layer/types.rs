@@ -89,6 +89,8 @@ pub struct Glm5NextLayer {
     /// 2026-10-23: The routed MoE plans `--forward circuit` installs (`install_plans`); empty
     /// runs the hand-written site.
     pub moe_plans: crate::glm5next_plan::install::InstalledMoe,
+    /// 2026-10-23: The mHC site plans `--forward circuit` installs; empty runs the layer's own.
+    pub mhc_plans: crate::glm5next_mhc_plan::InstalledMhc,
 }
 
 impl Glm5NextLayer {

@@ -102,13 +102,18 @@ pub(crate) fn served_levers() -> GlmLevers {
 /// 2026-10-23: Rank `rank`'s MLP config under the recipe's `tensor_parallel: 3`, `ep_size: 1`,
 /// `moe_expert_layout: tp`.
 pub(crate) fn mlp_config(rank: usize) -> Glm5NextMlpConfig {
+    Glm5NextMlpConfig::from_config(&model_config(rank)).unwrap()
+}
+
+/// 2026-10-23: Rank `rank`'s model config under the recipe's parallel layout.
+pub(crate) fn model_config(rank: usize) -> metrale_config::ModelConfig {
     let json = std::fs::read_to_string(root().join(CONFIG)).unwrap();
     let mut c = metrale_config::parse_config(&json).unwrap();
     c.tp_world_size = 3;
     c.tp_rank = rank;
     c.ep_world_size = 1;
     c.moe_expert_layout = metrale_config::MoeExpertLayout::Tp;
-    Glm5NextMlpConfig::from_config(&c).unwrap()
+    c
 }
 
 /// 2026-10-23: The routed MoE layers of `c` (every layer with a `moe` block).

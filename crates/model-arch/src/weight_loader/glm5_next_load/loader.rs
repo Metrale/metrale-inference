@@ -385,6 +385,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                 dump: dump.clone(),
                 levers,
                 moe_plans: Default::default(),
+                mhc_plans: Default::default(),
             }));
         }
         if let Some(l2) = &l2 {

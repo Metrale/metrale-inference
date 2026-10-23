@@ -21,12 +21,14 @@ pub(crate) mod fixture;
 #[cfg(test)]
 pub(crate) mod fixture_site;
 pub mod install;
+pub mod mhc;
 pub mod moe;
 
 /// 2026-10-23: The compile target the GLM emitters fill: one block instance's steps.
 #[derive(Debug, Default)]
 pub struct GlmBlock {
     pub moe: moe::MoeSlots,
+    pub mhc: mhc::MhcSlots,
 }
 
 static MOE_ROUTER: moe::MoeRouter = moe::MoeRouter;
@@ -34,9 +36,11 @@ static GLM_MOE_W4A4: moe::GlmMoeW4a4 = moe::GlmMoeW4a4;
 static GLM_SWIGLU: moe::GlmSwiglu = moe::GlmSwiglu;
 static MOE_BLEND: moe::MoeBlend = moe::MoeBlend { split: false };
 static MOE_BLEND_SPLIT: moe::MoeBlend = moe::MoeBlend { split: true };
+static GLM_HC: mhc::GlmHc = mhc::GlmHc;
 
 /// 2026-10-23: Every GLM emitter.
-static EMITTERS: [&dyn GroupEmitter<GlmBlock>; 5] = [
+static EMITTERS: [&dyn GroupEmitter<GlmBlock>; 6] = [
+    &GLM_HC,
     &MOE_ROUTER,
     &GLM_MOE_W4A4,
     &GLM_SWIGLU,
@@ -47,7 +51,15 @@ static EMITTERS: [&dyn GroupEmitter<GlmBlock>; 5] = [
 /// 2026-10-23: The plan-executed sites, `(block, template-local ids of a group)`, as the plan
 /// reports name them: the groups the emitters above compile. A group of a listed block whose
 /// locals are not here is a legacy site of that block.
-pub const DONE: [(&str, &[&str]); 7] = [
+pub const DONE: [(&str, &[&str]); 15] = [
+    ("dsa", &["mix", "pre", "input_norm"]),
+    ("kda", &["mix", "pre", "input_norm"]),
+    ("dsa", &["o@all_reduce", "post"]),
+    ("kda", &["o@all_reduce", "post"]),
+    ("moe", &["mix", "pre", "post_norm"]),
+    ("mlp", &["mix", "pre", "post_norm"]),
+    ("moe", &["f@all_reduce", "post"]),
+    ("mlp", &["f@all_reduce", "post"]),
     ("moe", &["gate"]),
     ("moe", &["top_k"]),
     ("moe", &["gate", "top_k"]),
@@ -128,6 +140,31 @@ pub fn compile_moe(
         steps: block.moe.finish(&g)?,
         executed,
         legacy,
+    })
+}
+
+/// 2026-10-23: Layer `layer`'s mHC sites in `plan` (over the rank circuit `circuit`): the pre-norm
+/// and the exchanged post-mix of its mixer and FFN sites, one step for both.
+pub fn compile_mhc(
+    circuit: &Circuit,
+    plan: &FusionPlan,
+    layer: usize,
+) -> Result<CompiledSite<crate::glm5next_mhc_plan::MhcSteps<metrale_circuit::KernelId>>> {
+    let reg = registry()?;
+    let mut block = GlmBlock::default();
+    let mut executed = Vec::new();
+    let mut last = None;
+    for g in PlanGroup::all(circuit, plan).filter(|g| g.layer() == Some(layer) && mhc::is_site_group(g)) {
+        reg.emit(&g, &mut block)?;
+        let kernels: Vec<String> = g.group.kernels.iter().map(|k| k.to_string()).collect();
+        executed.push(format!("{}: {}", g.site(), kernels.join(",")));
+        last = Some(g);
+    }
+    let g = last.with_context(|| format!("layer {layer} has no mHC site in this plan"))?;
+    Ok(CompiledSite {
+        steps: block.mhc.finish(&g)?,
+        executed,
+        legacy: Vec::new(),
     })
 }
 

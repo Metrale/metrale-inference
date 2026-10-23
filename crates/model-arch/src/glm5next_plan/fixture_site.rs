@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-23: One rank's routed MoE site on the recording device for the CPU launch gates: the
-//! served levers' kernels, the rank's MLP config and workspace, and synthetic layer weights.
-//! Moved here from `plan_moe_tests.rs` (exact copy) so the install gate shares it.
+//! 2026-10-23: One rank's routed MoE and mHC sites on the recording device for the CPU launch
+//! gates: the served levers' kernels, the rank's MLP config and workspace, synthetic layer
+//! weights, a recording communicator, and the gate comparison itself (stream and event graph
+//! first, then every operation). The MoE part moved here from `plan_moe_tests.rs` (exact copy).
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants: none beyond the types.
 
 use metrale_config::{ActivationQuantization, Nvfp4Act, ProjFamily};
 use metrale_gpu_runtime::gpu::DevicePtr;
-use metrale_gpu_runtime::gpu::recording::RecordingGpu;
+use metrale_gpu_runtime::gpu::recording::{Op, RecordingGpu, stream_graph};
 
 use super::fixture::{mlp_config, served_levers};
 use crate::glm5next_mlp::forward::Glm5NextMlpWorkspace;
@@ -99,5 +100,102 @@ pub(crate) fn weights(l: usize, plain: bool) -> Glm5NextMoeWeights {
         )
         .unwrap(),
         act_scales: Some(SCALES),
+    }
+}
+
+/// 2026-10-23: `None` when the two logs are equal, else what differs first: the stream and event
+/// graph (which stream each operation is ordered on, every fork, join and collective), then the
+/// first differing operation of each.
+pub(crate) fn gate(a: &[Op], b: &[Op]) -> Option<String> {
+    let (ga, gb) = (stream_graph(a), stream_graph(b));
+    if ga != gb {
+        let i = ga.iter().zip(&gb).take_while(|(x, y)| x == y).count();
+        return Some(format!(
+            "stream graph differs at {i} of {} / {}:\n  legacy {:?}\n  plan   {:?}",
+            ga.len(),
+            gb.len(),
+            ga.get(i),
+            gb.get(i)
+        ));
+    }
+    if a == b {
+        return None;
+    }
+    let i = a.iter().zip(b).take_while(|(x, y)| x == y).count();
+    Some(format!(
+        "op {i} of {} / {}:\n  legacy {:?}\n  plan   {:?}",
+        a.len(),
+        b.len(),
+        a.get(i),
+        b.get(i)
+    ))
+}
+
+/// 2026-10-23: A communicator that logs its calls into the recording device's log, in order
+/// with the launches. The one-shot exchange answers with peer slots at `recv` when `oneshot`
+/// (the served payloads at decode rows), else declines as a backend without the path does.
+pub(crate) struct RecordingComm<'a> {
+    pub gpu: &'a RecordingGpu,
+    pub rank: usize,
+    pub world: usize,
+    pub oneshot: bool,
+}
+
+/// 2026-10-23: Where the recording communicator says the peers' partials landed, and its slot.
+pub(crate) const PEER_RECV: u64 = 0x7700_0000;
+pub(crate) const PEER_SLOT_ELEMS: usize = 16 * 4096;
+
+impl metrale_comm::CommBackend for RecordingComm<'_> {
+    fn all_reduce(&self, ptr: u64, bytes: usize) -> anyhow::Result<()> {
+        self.gpu
+            .record_comm(format!("all_reduce({ptr:#x}, {bytes})"), None);
+        Ok(())
+    }
+    fn all_reduce_async(&self, ptr: u64, bytes: usize, stream: u64) -> anyhow::Result<()> {
+        self.gpu
+            .record_comm(format!("all_reduce({ptr:#x}, {bytes})"), Some(stream));
+        Ok(())
+    }
+    fn exchange_partials(
+        &self,
+        ptr: u64,
+        bytes: usize,
+        stream: Option<u64>,
+    ) -> anyhow::Result<Option<metrale_comm::PeerPartials>> {
+        if !self.oneshot {
+            return Ok(None);
+        }
+        self.gpu
+            .record_comm(format!("exchange({ptr:#x}, {bytes})"), stream);
+        Ok(Some(metrale_comm::PeerPartials {
+            recv: PEER_RECV,
+            slot_elems: PEER_SLOT_ELEMS,
+            world_size: self.world,
+            rank: self.rank,
+        }))
+    }
+    fn all_gather(&self, _: u64, _: u64, _: usize) -> anyhow::Result<()> {
+        anyhow::bail!("the mHC site does not all-gather")
+    }
+    fn reduce_scatter(&self, _: u64, _: u64, _: usize) -> anyhow::Result<()> {
+        anyhow::bail!("the mHC site does not reduce-scatter")
+    }
+    fn broadcast(&self, _: u64, _: usize, _: usize) -> anyhow::Result<()> {
+        anyhow::bail!("the mHC site does not broadcast")
+    }
+    fn barrier(&self) -> anyhow::Result<()> {
+        anyhow::bail!("the mHC site does not barrier")
+    }
+    fn send_to(&self, _: u64, _: usize, _: usize, _: u64) -> anyhow::Result<()> {
+        anyhow::bail!("the mHC site does not send")
+    }
+    fn recv_from(&self, _: u64, _: usize, _: usize, _: u64) -> anyhow::Result<()> {
+        anyhow::bail!("the mHC site does not receive")
+    }
+    fn rank(&self) -> usize {
+        self.rank
+    }
+    fn world_size(&self) -> usize {
+        self.world
     }
 }

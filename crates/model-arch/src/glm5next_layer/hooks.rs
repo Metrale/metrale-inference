@@ -244,31 +244,42 @@ impl metrale_model_layers::circuit_exec::CircuitBindings for Glm5NextLayer {
         crate::glm5next_plan::install::live_policy(policy, &self.mlp_kernels, &self.mlp_cfg)
     }
 
-    /// 2026-10-23: The routed MoE site of a text layer; a dense site and the MTP block execute
-    /// nothing from a plan.
+    /// 2026-10-23: A text layer's mHC sites and, on a routed layer, its MoE site; the MTP block
+    /// executes nothing from a plan.
     fn install_plans(
         &self,
         gpu: &dyn GpuBackend,
         plans: Option<metrale_model_layers::circuit_exec::family::RankPlans<'_>>,
     ) -> Result<Vec<String>> {
-        let Glm5NextMlpSite::Moe(w) = &self.mlp else {
+        let Some(mhc) = &self.mhc else {
             return Ok(Vec::new());
         };
-        if self.mhc.is_none() {
-            return Ok(Vec::new());
-        }
-        self.moe_plans.install(
+        let mut sites = crate::glm5next_plan::mhc::install(
             gpu,
             self.layer_idx,
             plans,
-            &self.mlp_kernels,
-            &self.mlp_cfg,
-            w,
-            &self.mlp_ws,
-        )
+            &self.levers,
+            mhc,
+            self.hidden,
+            &self.mhc_plans,
+        )?;
+        if let Glm5NextMlpSite::Moe(w) = &self.mlp {
+            sites.extend(self.moe_plans.install(
+                gpu,
+                self.layer_idx,
+                plans,
+                &self.mlp_kernels,
+                &self.mlp_cfg,
+                w,
+                &self.mlp_ws,
+            )?);
+        }
+        Ok(sites)
     }
 
     fn plan_sites(&self) -> Vec<String> {
-        self.moe_plans.sites()
+        let mut s = self.mhc_plans.sites();
+        s.extend(self.moe_plans.sites());
+        s
     }
 }

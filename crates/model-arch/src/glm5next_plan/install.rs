@@ -29,12 +29,12 @@ use crate::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels};
 /// 2026-10-23: The shapes the plan-vs-legacy launch gate covers.
 pub const GATED: [(Mode, u64); 2] = [(Mode::Decode, 1), (Mode::Verify, 2)];
 
-/// 2026-10-23: The policy settings the MoE rules read that come from this layer's levers and
-/// layout, as `(key, value)`.
-pub fn moe_settings(
+/// 2026-10-23: The policy settings the MoE and mHC rules read that come from this layer's
+/// levers and layout, as `(key, value)`.
+pub fn plan_settings(
     k: &Glm5NextMlpKernels,
     cfg: &Glm5NextMlpConfig,
-) -> [(&'static str, String); 5] {
+) -> [(&'static str, String); 7] {
     let on = |b: bool| if b { "on" } else { "off" }.to_string();
     let l = &k.levers;
     let layout = match cfg.expert_shard {
@@ -47,10 +47,12 @@ pub fn moe_settings(
         ("glm_moe_combine_split", on(l.moe_combine_split)),
         ("glm_moe_w4a4_grouped", on(l.mlp.w4a4_grouped)),
         ("glm_moe_expert_layout", layout.to_string()),
+        ("glm_mhc_fused", on(l.mhc_fused)),
+        ("glm_ar_fused_post", on(l.ar_fused_post)),
     ]
 }
 
-/// 2026-10-23: `base` with [`moe_settings`] set live. Errors on a key `base` does not declare:
+/// 2026-10-23: `base` with [`plan_settings`] set live. Errors on a key `base` does not declare:
 /// the instance states every setting a rule reads (PCND).
 pub fn live_policy(
     base: &Policy,
@@ -58,7 +60,7 @@ pub fn live_policy(
     cfg: &Glm5NextMlpConfig,
 ) -> Result<Policy> {
     let mut p = base.clone();
-    for (key, value) in moe_settings(k, cfg) {
+    for (key, value) in plan_settings(k, cfg) {
         let Some(v) = p.settings.get_mut(key) else {
             bail!("GLM plan: the instance's policy does not declare `{key}`");
         };
@@ -68,7 +70,8 @@ pub fn live_policy(
 }
 
 /// 2026-10-23: The MoE levers the rules do not model, at a value other than the one the rules
-/// name (the `_sl` gate/up sweep, the zeroing SwiGLU, the scalar combine): installation refuses them.
+/// name (the `_sl` gate/up sweep, the zeroing SwiGLU); the vec8 combine takes 1024 rows or more
+/// only, so it does not reach a gated site: installation refuses them.
 pub fn unmodelled(k: &Glm5NextMlpKernels) -> Vec<&'static str> {
     let m = &k.levers.mlp;
     [
@@ -79,10 +82,6 @@ pub fn unmodelled(k: &Glm5NextMlpKernels) -> Vec<&'static str> {
         (
             !m.zero_in_swiglu,
             "METRALE_GLM_MOE_ZERO_IN_SWIGLU=0 (the rules zero expert_out in the SwiGLU)",
-        ),
-        (
-            k.levers.moe_combine_vec8,
-            "METRALE_GLM_MOE_COMBINE_VEC8 (the rules name the scalar combine)",
         ),
     ]
     .into_iter()

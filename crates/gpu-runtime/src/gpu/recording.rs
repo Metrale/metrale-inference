@@ -56,6 +56,26 @@ pub enum Op {
     RecordEvent { event: u64, stream: u64 },
     /// 2026-10-23: `stream_wait_event(stream, event)`.
     WaitEvent { stream: u64, event: u64 },
+    /// 2026-10-23: A collective or exchange a recording communicator logged
+    /// ([`RecordingGpu::record_comm`]): its call with arguments, and the stream it was ordered
+    /// on (`None`: host-ordered).
+    Comm { call: String, stream: Option<u64> },
+}
+
+/// 2026-10-23: The stream and event graph of a log: each operation reduced to the stream it is
+/// ordered on and the events it records or waits, in order (a launch's kernel and arguments
+/// dropped). Two paths with equal graphs fork, join and order collectives the same way.
+pub fn stream_graph(ops: &[Op]) -> Vec<String> {
+    ops.iter()
+        .map(|o| match o {
+            Op::Launch { stream, .. } => format!("launch@{stream}"),
+            Op::Memset { stream, .. } | Op::CopyD2d { stream, .. } => format!("copy@{stream:?}"),
+            Op::Copy2d { stream, .. } => format!("copy@{stream}"),
+            Op::RecordEvent { event, stream } => format!("record e{event}@{stream}"),
+            Op::WaitEvent { stream, event } => format!("wait {stream}<-e{event}"),
+            Op::Comm { stream, .. } => format!("comm@{stream:?}"),
+        })
+        .collect()
 }
 
 impl Op {
@@ -114,6 +134,15 @@ impl RecordingGpu {
 
     fn push(&self, op: Op) {
         self.ops.lock().push(op);
+    }
+
+    /// 2026-10-23: Log a communicator call in order with the device operations (a recording
+    /// `CommBackend` built over this device calls it).
+    pub fn record_comm(&self, call: impl Into<String>, stream: Option<u64>) {
+        self.push(Op::Comm {
+            call: call.into(),
+            stream,
+        });
     }
 
     fn label(&self, h: KernelHandle) -> String {

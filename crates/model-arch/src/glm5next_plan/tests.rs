@@ -84,16 +84,19 @@ fn every_moe_site_compiles_into_the_served_steps() {
     }
 }
 
-/// 2026-10-23: [`DONE`] is exactly the sites the emitters compile over both runs: every compiled
-/// group's locals are listed, and every listed entry is compiled by some run.
+/// 2026-10-23: [`DONE`] is exactly the sites the emitters compile over both runs (a dense layer,
+/// a DSA and a KDA layer): every compiled group's locals are listed, and every listed entry is
+/// compiled by some run.
 #[test]
 fn the_done_list_is_what_compiles() {
     let (c, rules, policy) = ranks();
     let mut seen = BTreeSet::new();
     for (mode, rows) in RUNS {
         let p = plan(&c, &rules, &policy, 0, mode, rows);
-        for g in PlanGroup::all(&c[0], &p).filter(|g| g.layer() == Some(3) && moe_site_group(g)) {
-            if !g.locals().iter().all(|l| l.starts_with("shared_")) {
+        let layers = [Some(0), Some(3), Some(4)];
+        for g in PlanGroup::all(&c[0], &p).filter(|g| layers.contains(&g.layer())) {
+            let moe = moe_site_group(&g) && !g.locals().iter().all(|l| l.starts_with("shared_"));
+            if moe || mhc::is_site_group(&g) {
                 seen.insert((g.block().to_string(), g.locals().join(",")));
             }
         }

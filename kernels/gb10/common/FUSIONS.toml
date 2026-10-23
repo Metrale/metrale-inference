@@ -2633,7 +2633,7 @@ rows = [1, 16]
 modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 100
-cite = "crates/model-arch/src/glm5next_mhc.rs:153-214 (hc_mix_bf16 for the BF16 hc_fn the loader uploads, then hc_finish); crates/model-arch/src/glm5next_layer/steps/forward.rs:87,144; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); glm_mhc_fused off (crates/settings/src/groups/kernels.rs:134; crates/model-arch/src/glm5next_layer/steps.rs:124), so the unfused site at crates/model-arch/src/glm5next_layer/steps/forward.rs:,409 (crates/model-arch/src/glm5next_mhc.rs:308-337: hc_mix_bf16 grid [rows, 24]; the `_rows` mix only from 32 tokens, :316-318)"
+cite = "crates/model-arch/src/glm5next_mhc.rs:153-214 (hc_mix_bf16 for the BF16 hc_fn the loader uploads, then hc_finish); crates/model-arch/src/glm5next_layer/steps/forward.rs:87,144; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); glm_mhc_fused off (crates/settings/src/groups/kernels.rs:134; crates/model-arch/src/glm5next_layer/steps/mhc_site.rs:161), so the unfused site at crates/model-arch/src/glm5next_layer/steps/forward.rs:,409 (crates/model-arch/src/glm5next_mhc.rs:308-337: hc_mix_bf16 grid [rows, 24]; the `_rows` mix only from 32 tokens, :316-318)"
 
 # 2026-10-22: The recipe arm of glm_mhc_fused (METRALE_GLM_MHC_FUSED=1, the served recipe): each
 # mHC site's pre-mix and the RMSNorm after it as one launch. At 1..=2 tokens the decode-step entry
@@ -2657,7 +2657,7 @@ modes = ["decode", "multi_seq", "verify"]
 when = { glm_mhc_fused = "on" }
 numerics = "reference"
 priority = 105
-cite = "glm_mhc_fused on (METRALE_GLM_MHC_FUSED=1; crates/settings/src/groups/kernels.rs:134): crates/model-arch/src/glm5next_layer/steps.rs:128 runs glm_hc_pre_norm, the mix, Sinkhorn, collapse and the site's norm (input_layernorm, post_attention_layernorm: crates/model-arch/src/glm5next_layer/steps/forward.rs:90,167) in one launch over the rows; crates/model-arch/src/glm5next_mhc_fused.rs:280-287 (splitk off, then c1, then pre_norm_kernel); crates/model-arch/src/glm5next_mhc_c1.rs:21,27-36 (c1_kernel: 1..=HC_PRE_C1_MAX_TOKENS tokens at hc 4, H 4096; glm_mhc_pre_c1 default on, crates/settings/src/groups/kernels.rs:139); ROUTING-AUDIT.md `glm_hc_pre` (the unfused default arm)"
+cite = "glm_mhc_fused on (METRALE_GLM_MHC_FUSED=1; crates/settings/src/groups/kernels.rs:134): crates/model-arch/src/glm5next_layer/steps/mhc_site.rs:173 runs glm_hc_pre_norm, the mix, Sinkhorn, collapse and the site's norm (input_layernorm, post_attention_layernorm: crates/model-arch/src/glm5next_layer/steps/forward.rs:90,167) in one launch over the rows; crates/model-arch/src/glm5next_mhc_fused.rs:280-287 (splitk off, then c1, then pre_norm_kernel); crates/model-arch/src/glm5next_mhc_c1.rs:21,27-36 (c1_kernel: 1..=HC_PRE_C1_MAX_TOKENS tokens at hc 4, H 4096; glm_mhc_pre_c1 default on, crates/settings/src/groups/kernels.rs:139); ROUTING-AUDIT.md `glm_hc_pre` (the unfused default arm)"
 
 [[rule]]
 id = "glm_hc_pre_norm_rows_input"
@@ -2674,7 +2674,7 @@ modes = ["decode", "multi_seq", "verify"]
 when = { glm_mhc_fused = "on" }
 numerics = "reference"
 priority = 105
-cite = "glm_mhc_fused on (METRALE_GLM_MHC_FUSED=1; crates/settings/src/groups/kernels.rs:134): crates/model-arch/src/glm5next_layer/steps.rs:128 runs glm_hc_pre_norm, the mix, Sinkhorn, collapse and the site's norm (input_layernorm, post_attention_layernorm: crates/model-arch/src/glm5next_layer/steps/forward.rs:90,167) in one launch over the rows; crates/model-arch/src/glm5next_mhc_fused.rs:280-287 (splitk off, then c1, then pre_norm_kernel); crates/model-arch/src/glm5next_mhc_fused.rs:164-186 (pre_norm_kernel above the c1 tokens; glm_mhc_pre_prefetch off); tok4/tile4 need 64+ tokens (crates/model-arch/src/glm5next_mhc_tile.rs:56-74); ROUTING-AUDIT.md `glm_hc_pre` (the unfused default arm)"
+cite = "glm_mhc_fused on (METRALE_GLM_MHC_FUSED=1; crates/settings/src/groups/kernels.rs:134): crates/model-arch/src/glm5next_layer/steps/mhc_site.rs:173 runs glm_hc_pre_norm, the mix, Sinkhorn, collapse and the site's norm (input_layernorm, post_attention_layernorm: crates/model-arch/src/glm5next_layer/steps/forward.rs:90,167) in one launch over the rows; crates/model-arch/src/glm5next_mhc_fused.rs:280-287 (splitk off, then c1, then pre_norm_kernel); crates/model-arch/src/glm5next_mhc_fused.rs:164-186 (pre_norm_kernel above the c1 tokens; glm_mhc_pre_prefetch off); tok4/tile4 need 64+ tokens (crates/model-arch/src/glm5next_mhc_tile.rs:56-74); ROUTING-AUDIT.md `glm_hc_pre` (the unfused default arm)"
 
 [[rule]]
 id = "glm_hc_pre_norm_c1_post"
@@ -2691,7 +2691,7 @@ modes = ["decode", "multi_seq", "verify"]
 when = { glm_mhc_fused = "on" }
 numerics = "reference"
 priority = 105
-cite = "glm_mhc_fused on (METRALE_GLM_MHC_FUSED=1; crates/settings/src/groups/kernels.rs:134): crates/model-arch/src/glm5next_layer/steps.rs:128 runs glm_hc_pre_norm, the mix, Sinkhorn, collapse and the site's norm (input_layernorm, post_attention_layernorm: crates/model-arch/src/glm5next_layer/steps/forward.rs:90,167) in one launch over the rows; crates/model-arch/src/glm5next_mhc_fused.rs:280-287 (splitk off, then c1, then pre_norm_kernel); crates/model-arch/src/glm5next_mhc_c1.rs:21,27-36 (c1_kernel: 1..=HC_PRE_C1_MAX_TOKENS tokens at hc 4, H 4096; glm_mhc_pre_c1 default on, crates/settings/src/groups/kernels.rs:139); ROUTING-AUDIT.md `glm_hc_pre` (the unfused default arm)"
+cite = "glm_mhc_fused on (METRALE_GLM_MHC_FUSED=1; crates/settings/src/groups/kernels.rs:134): crates/model-arch/src/glm5next_layer/steps/mhc_site.rs:173 runs glm_hc_pre_norm, the mix, Sinkhorn, collapse and the site's norm (input_layernorm, post_attention_layernorm: crates/model-arch/src/glm5next_layer/steps/forward.rs:90,167) in one launch over the rows; crates/model-arch/src/glm5next_mhc_fused.rs:280-287 (splitk off, then c1, then pre_norm_kernel); crates/model-arch/src/glm5next_mhc_c1.rs:21,27-36 (c1_kernel: 1..=HC_PRE_C1_MAX_TOKENS tokens at hc 4, H 4096; glm_mhc_pre_c1 default on, crates/settings/src/groups/kernels.rs:139); ROUTING-AUDIT.md `glm_hc_pre` (the unfused default arm)"
 
 [[rule]]
 id = "glm_hc_pre_norm_rows_post"
@@ -2708,7 +2708,7 @@ modes = ["decode", "multi_seq", "verify"]
 when = { glm_mhc_fused = "on" }
 numerics = "reference"
 priority = 105
-cite = "glm_mhc_fused on (METRALE_GLM_MHC_FUSED=1; crates/settings/src/groups/kernels.rs:134): crates/model-arch/src/glm5next_layer/steps.rs:128 runs glm_hc_pre_norm, the mix, Sinkhorn, collapse and the site's norm (input_layernorm, post_attention_layernorm: crates/model-arch/src/glm5next_layer/steps/forward.rs:90,167) in one launch over the rows; crates/model-arch/src/glm5next_mhc_fused.rs:280-287 (splitk off, then c1, then pre_norm_kernel); crates/model-arch/src/glm5next_mhc_fused.rs:164-186 (pre_norm_kernel above the c1 tokens; glm_mhc_pre_prefetch off); tok4/tile4 need 64+ tokens (crates/model-arch/src/glm5next_mhc_tile.rs:56-74); ROUTING-AUDIT.md `glm_hc_pre` (the unfused default arm)"
+cite = "glm_mhc_fused on (METRALE_GLM_MHC_FUSED=1; crates/settings/src/groups/kernels.rs:134): crates/model-arch/src/glm5next_layer/steps/mhc_site.rs:173 runs glm_hc_pre_norm, the mix, Sinkhorn, collapse and the site's norm (input_layernorm, post_attention_layernorm: crates/model-arch/src/glm5next_layer/steps/forward.rs:90,167) in one launch over the rows; crates/model-arch/src/glm5next_mhc_fused.rs:280-287 (splitk off, then c1, then pre_norm_kernel); crates/model-arch/src/glm5next_mhc_fused.rs:164-186 (pre_norm_kernel above the c1 tokens; glm_mhc_pre_prefetch off); tok4/tile4 need 64+ tokens (crates/model-arch/src/glm5next_mhc_tile.rs:56-74); ROUTING-AUDIT.md `glm_hc_pre` (the unfused default arm)"
 
 [[rule]]
 id = "glm_hc_post"
@@ -2720,7 +2720,7 @@ rows = [1, 16]
 modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 10
-cite = "crates/model-arch/src/glm5next_mhc.rs:218-245; crates/model-arch/src/glm5next_layer/steps/forward.rs:128,166; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_layer/steps/forward.rs:,426 -> crates/model-arch/src/glm5next_layer/steps/reduce_post.rs:106 (glm_ar_fused_post off, crates/settings/src/groups/kernels.rs:87)"
+cite = "crates/model-arch/src/glm5next_mhc.rs:218-245; crates/model-arch/src/glm5next_layer/steps/forward.rs:128,166; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_layer/steps/forward.rs:,426 -> crates/model-arch/src/glm5next_layer/steps/mhc_site.rs:297 (glm_ar_fused_post off, crates/settings/src/groups/kernels.rs:87)"
 
 [[rule]]
 id = "glm_hc_contract"
@@ -2744,7 +2744,7 @@ rows = [1, 16]
 modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_layer/steps.rs:17-38; crates/model-arch/src/glm5next_layer/steps/forward.rs:105,162; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_layer/steps.rs:165 (rms_norm_vanilla, one block per row)"
+cite = "crates/model-arch/src/glm5next_layer/steps.rs:16-39; crates/model-arch/src/glm5next_layer/steps/forward.rs:105,162; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_layer/steps/mhc_site.rs:192 (rms_norm_vanilla, one block per row)"
 
 [[rule]]
 id = "glm_rms_norm_plain_dsa"
@@ -2756,7 +2756,7 @@ rows = [1, 16]
 modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_layer/steps.rs:17-38; crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:43-53 (q_a_layernorm); 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:51-61 (q_a_layernorm, grid [k])"
+cite = "crates/model-arch/src/glm5next_layer/steps.rs:16-39; crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:43-53 (q_a_layernorm); 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:51-61 (q_a_layernorm, grid [k])"
 
 # 2026-10-08: Every BF16 projection of one row runs the M = 1 GEMV (`ops::dense_mm_bf16`).
 [[rule]]
@@ -3030,7 +3030,7 @@ rows = [1, 16]
 modes = ["decode", "multi_seq", "verify", "draft"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_mlp/forward.rs:345-358; 2026-10-22: one M = 1 FP32-out GEMV per row at every row count: glm_router_rows off (crates/settings/src/groups/kernels.rs:157), so crates/model-arch/src/glm5next_mlp/forward/router.rs:56-61 declines the batched arm and :78-92 loops the rows"
+cite = "crates/model-arch/src/glm5next_mlp/forward.rs:346-359; 2026-10-22: one M = 1 FP32-out GEMV per row at every row count: glm_router_rows off (crates/settings/src/groups/kernels.rs:157), so crates/model-arch/src/glm5next_mlp/forward/router.rs:56-61 declines the batched arm and :78-92 loops the rows"
 
 [[rule]]
 id = "glm_router_topk_kda"
@@ -3042,7 +3042,7 @@ rows = [1, 16]
 modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:62-86; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_mlp/forward.rs:372; crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:74-77 (grid [rows]; glm_router_topk_rank off, crates/settings/src/groups/kernels.rs:158)"
+cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:71-111; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_mlp/forward.rs:373; crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:83-102 (grid [rows]; glm_router_topk_rank off, crates/settings/src/groups/kernels.rs:158)"
 
 [[rule]]
 id = "glm_router_topk_dsa"
@@ -3054,7 +3054,7 @@ rows = [1, 16]
 modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:62-86; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_mlp/forward.rs:372; crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:74-77 (grid [rows]; glm_router_topk_rank off, crates/settings/src/groups/kernels.rs:158)"
+cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:71-111; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_mlp/forward.rs:373; crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:83-102 (grid [rows]; glm_router_topk_rank off, crates/settings/src/groups/kernels.rs:158)"
 
 # 2026-10-22: The recipe arms of glm_router_rows and glm_router_topk_rank (METRALE_GLM_ROUTER_ROWS=1,
 # METRALE_GLM_ROUTER_TOPK_RANK=1). With router rows the 2..=16-row router logits are one batched
@@ -3080,7 +3080,7 @@ modes = ["multi_seq", "verify"]
 when = { glm_router_rows = "on", glm_router_topk_rank = "on" }
 numerics = "reference"
 priority = 30
-cite = "crates/model-arch/src/glm5next_mlp/forward/router.rs:56-62 (batched: 2..=16 rows through glm_mm, one launch; glm_router_rows read at crates/model-arch/src/glm5next_layer/levers.rs:181); crates/model-arch/src/glm5next_layer/wide_gemv.rs:105-115 (fixed_entry: batchm_few 2..=8, batchm_wide 9..=16; glm_batchm_few and glm_batchm_wide default on, crates/settings/src/groups/kernels.rs:89-90); crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:32-50 (topk_launch: the rank kernel under glm_router_topk_rank, crates/model-arch/src/glm5next_layer/levers.rs:182), :65-86 (grid [rows])"
+cite = "crates/model-arch/src/glm5next_mlp/forward/router.rs:56-62 (batched: 2..=16 rows through glm_mm, one launch; glm_router_rows read at crates/model-arch/src/glm5next_layer/levers.rs:181); crates/model-arch/src/glm5next_layer/wide_gemv.rs:105-115 (fixed_entry: batchm_few 2..=8, batchm_wide 9..=16; glm_batchm_few and glm_batchm_wide default on, crates/settings/src/groups/kernels.rs:89-90); crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:32-59 (topk_launch: the rank kernel under glm_router_topk_rank, crates/model-arch/src/glm5next_layer/levers.rs:182), :65-86 (grid [rows])"
 
 [[rule]]
 id = "glm_router_rows_few_rank_dsa"
@@ -3099,7 +3099,7 @@ modes = ["multi_seq", "verify"]
 when = { glm_router_rows = "on", glm_router_topk_rank = "on" }
 numerics = "reference"
 priority = 30
-cite = "crates/model-arch/src/glm5next_mlp/forward/router.rs:56-62 (batched: 2..=16 rows through glm_mm, one launch; glm_router_rows read at crates/model-arch/src/glm5next_layer/levers.rs:181); crates/model-arch/src/glm5next_layer/wide_gemv.rs:105-115 (fixed_entry: batchm_few 2..=8, batchm_wide 9..=16; glm_batchm_few and glm_batchm_wide default on, crates/settings/src/groups/kernels.rs:89-90); crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:32-50 (topk_launch: the rank kernel under glm_router_topk_rank, crates/model-arch/src/glm5next_layer/levers.rs:182), :65-86 (grid [rows])"
+cite = "crates/model-arch/src/glm5next_mlp/forward/router.rs:56-62 (batched: 2..=16 rows through glm_mm, one launch; glm_router_rows read at crates/model-arch/src/glm5next_layer/levers.rs:181); crates/model-arch/src/glm5next_layer/wide_gemv.rs:105-115 (fixed_entry: batchm_few 2..=8, batchm_wide 9..=16; glm_batchm_few and glm_batchm_wide default on, crates/settings/src/groups/kernels.rs:89-90); crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:32-59 (topk_launch: the rank kernel under glm_router_topk_rank, crates/model-arch/src/glm5next_layer/levers.rs:182), :65-86 (grid [rows])"
 
 [[rule]]
 id = "glm_router_rows_wide_rank_kda"
@@ -3118,7 +3118,7 @@ modes = ["multi_seq", "verify"]
 when = { glm_router_rows = "on", glm_router_topk_rank = "on" }
 numerics = "reference"
 priority = 30
-cite = "crates/model-arch/src/glm5next_mlp/forward/router.rs:56-62 (batched: 2..=16 rows through glm_mm, one launch; glm_router_rows read at crates/model-arch/src/glm5next_layer/levers.rs:181); crates/model-arch/src/glm5next_layer/wide_gemv.rs:105-115 (fixed_entry: batchm_few 2..=8, batchm_wide 9..=16; glm_batchm_few and glm_batchm_wide default on, crates/settings/src/groups/kernels.rs:89-90); crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:32-50 (topk_launch: the rank kernel under glm_router_topk_rank, crates/model-arch/src/glm5next_layer/levers.rs:182), :65-86 (grid [rows])"
+cite = "crates/model-arch/src/glm5next_mlp/forward/router.rs:56-62 (batched: 2..=16 rows through glm_mm, one launch; glm_router_rows read at crates/model-arch/src/glm5next_layer/levers.rs:181); crates/model-arch/src/glm5next_layer/wide_gemv.rs:105-115 (fixed_entry: batchm_few 2..=8, batchm_wide 9..=16; glm_batchm_few and glm_batchm_wide default on, crates/settings/src/groups/kernels.rs:89-90); crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:32-59 (topk_launch: the rank kernel under glm_router_topk_rank, crates/model-arch/src/glm5next_layer/levers.rs:182), :65-86 (grid [rows])"
 
 [[rule]]
 id = "glm_router_rows_wide_rank_dsa"
@@ -3137,7 +3137,7 @@ modes = ["multi_seq", "verify"]
 when = { glm_router_rows = "on", glm_router_topk_rank = "on" }
 numerics = "reference"
 priority = 30
-cite = "crates/model-arch/src/glm5next_mlp/forward/router.rs:56-62 (batched: 2..=16 rows through glm_mm, one launch; glm_router_rows read at crates/model-arch/src/glm5next_layer/levers.rs:181); crates/model-arch/src/glm5next_layer/wide_gemv.rs:105-115 (fixed_entry: batchm_few 2..=8, batchm_wide 9..=16; glm_batchm_few and glm_batchm_wide default on, crates/settings/src/groups/kernels.rs:89-90); crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:32-50 (topk_launch: the rank kernel under glm_router_topk_rank, crates/model-arch/src/glm5next_layer/levers.rs:182), :65-86 (grid [rows])"
+cite = "crates/model-arch/src/glm5next_mlp/forward/router.rs:56-62 (batched: 2..=16 rows through glm_mm, one launch; glm_router_rows read at crates/model-arch/src/glm5next_layer/levers.rs:181); crates/model-arch/src/glm5next_layer/wide_gemv.rs:105-115 (fixed_entry: batchm_few 2..=8, batchm_wide 9..=16; glm_batchm_few and glm_batchm_wide default on, crates/settings/src/groups/kernels.rs:89-90); crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:32-59 (topk_launch: the rank kernel under glm_router_topk_rank, crates/model-arch/src/glm5next_layer/levers.rs:182), :65-86 (grid [rows])"
 
 [[rule]]
 id = "glm_router_rows_few_kda"
@@ -3226,7 +3226,7 @@ modes = ["decode", "multi_seq", "verify"]
 when = { glm_router_topk_rank = "on" }
 numerics = "reference"
 priority = 25
-cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:32-50 (topk_launch: the rank kernel under glm_router_topk_rank, crates/model-arch/src/glm5next_layer/levers.rs:182), :65-86 (grid [rows]); one launch over the rows of a verify and a batched decode group (crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326; crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197)"
+cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:32-59 (topk_launch: the rank kernel under glm_router_topk_rank, crates/model-arch/src/glm5next_layer/levers.rs:182), :65-86 (grid [rows]); one launch over the rows of a verify and a batched decode group (crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326; crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197)"
 
 [[rule]]
 id = "glm_router_topk_rank_dsa"
@@ -3239,7 +3239,7 @@ modes = ["decode", "multi_seq", "verify"]
 when = { glm_router_topk_rank = "on" }
 numerics = "reference"
 priority = 25
-cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:32-50 (topk_launch: the rank kernel under glm_router_topk_rank, crates/model-arch/src/glm5next_layer/levers.rs:182), :65-86 (grid [rows]); one launch over the rows of a verify and a batched decode group (crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326; crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197)"
+cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:32-59 (topk_launch: the rank kernel under glm_router_topk_rank, crates/model-arch/src/glm5next_layer/levers.rs:182), :65-86 (grid [rows]); one launch over the rows of a verify and a batched decode group (crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326; crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197)"
 
 # 2026-10-08: Clamp, SiLU and multiply in one pass over separate gate and up rows; the clamped
 # values stay in FP32 registers.
@@ -3265,7 +3265,7 @@ rows = [1, 16]
 modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:92-126; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:204-205 (grid [rows, 1]; glm_moe_combine_split and _vec8 off, crates/settings/src/groups/kernels.rs:145-146)"
+cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:117-151; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:246-247 (grid [rows, 1]; glm_moe_combine_split and _vec8 off, crates/settings/src/groups/kernels.rs:145-146)"
 
 [[rule]]
 id = "glm_moe_combine_dsa"
@@ -3277,7 +3277,7 @@ rows = [1, 16]
 modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:92-126; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:204-205 (grid [rows, 1]; glm_moe_combine_split and _vec8 off, crates/settings/src/groups/kernels.rs:145-146)"
+cite = "crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:117-151; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:246-247 (grid [rows, 1]; glm_moe_combine_split and _vec8 off, crates/settings/src/groups/kernels.rs:145-146)"
 
 # 2026-10-23: The same combine on the grid `METRALE_GLM_MOE_COMBINE_SPLIT=1` gives it: one block
 # per 256 elements of `hidden` per row instead of one (same kernel, same bytes). The grid is a plan
@@ -3328,7 +3328,7 @@ rows = [2, 8]
 modes = ["multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_kda/mod.rs:213-250 (gemm -> glm_mm), :334 (q|k|v), :363 (f_a), :384 (b), :407,418 (g_a, g_b), :449 (o); crates/model-arch/src/glm5next_kda/gate_at.rs:76 (f_b); crates/model-arch/src/glm5next_mlp/forward/dense.rs:114 (shared expert down); crates/model-arch/src/glm5next_layer/wide_gemv.rs:105-115,191-202"
+cite = "crates/model-arch/src/glm5next_kda/mod.rs:213-250 (gemm -> glm_mm), :334 (q|k|v), :363 (f_a), :384 (b), :407,418 (g_a, g_b), :449 (o); crates/model-arch/src/glm5next_kda/gate_at.rs:76 (f_b); crates/model-arch/src/glm5next_mlp/forward/dense.rs:114 (shared expert down); crates/model-arch/src/glm5next_layer/wide_gemv.rs:105-115,218-220,120-141"
 
 [[rule]]
 id = "glm_bf16_gemv_wide_kda"
@@ -3340,7 +3340,7 @@ rows = [9, 16]
 modes = ["multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_kda/mod.rs:213-250,334,363,384,407,418,449; crates/model-arch/src/glm5next_kda/gate_at.rs:76; crates/model-arch/src/glm5next_mlp/forward/dense.rs:114; crates/model-arch/src/glm5next_layer/wide_gemv.rs:98-99,105-115,191-202"
+cite = "crates/model-arch/src/glm5next_kda/mod.rs:213-250,334,363,384,407,418,449; crates/model-arch/src/glm5next_kda/gate_at.rs:76; crates/model-arch/src/glm5next_mlp/forward/dense.rs:114; crates/model-arch/src/glm5next_layer/wide_gemv.rs:98-99,105-115,218-220,120-141"
 
 [[rule]]
 id = "glm_bf16_gemv_few_dsa"
@@ -3352,7 +3352,7 @@ rows = [2, 8]
 modes = ["multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:30-42,67-79 (q_a, kv_a; glm_dsa_proj_in_merged needs the FP8 registry: crates/model-arch/src/glm5next_dsa/layer/proj_in_merged.rs:61-72); crates/model-arch/src/glm5next_mlp/forward/dense.rs:114; crates/model-arch/src/glm5next_layer/wide_gemv.rs:105-115,191-202"
+cite = "crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:30-42,67-79 (q_a, kv_a; glm_dsa_proj_in_merged needs the FP8 registry: crates/model-arch/src/glm5next_dsa/layer/proj_in_merged.rs:61-72); crates/model-arch/src/glm5next_mlp/forward/dense.rs:114; crates/model-arch/src/glm5next_layer/wide_gemv.rs:105-115,218-220,120-141"
 
 [[rule]]
 id = "glm_bf16_gemv_wide_dsa"
@@ -3364,7 +3364,7 @@ rows = [9, 16]
 modes = ["multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:30-42,67-79; crates/model-arch/src/glm5next_mlp/forward/dense.rs:114; crates/model-arch/src/glm5next_layer/wide_gemv.rs:98-99,105-115,191-202"
+cite = "crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:30-42,67-79; crates/model-arch/src/glm5next_mlp/forward/dense.rs:114; crates/model-arch/src/glm5next_layer/wide_gemv.rs:98-99,105-115,218-220,120-141"
 
 [[rule]]
 id = "glm_shared_gate_up_few_kda"
@@ -3756,7 +3756,7 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 110
-cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:326-339,370-378 (quant_static, then the own-slots sweep `sweep_kernel` picks at one row, :170-188); crates/model-arch/src/glm5next_mlp/mod.rs:348-364"
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:394-407,430-438 (quant_static, then the own-slots sweep `sweep_kernel` picks at one row, :170-188); crates/model-arch/src/glm5next_mlp/mod.rs:354-370"
 
 [[rule]]
 id = "glm_moe_w4a4_gate_up_1_dsa"
@@ -3774,7 +3774,7 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 110
-cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:326-339,370-378 (quant_static, then the own-slots sweep `sweep_kernel` picks at one row, :170-188); crates/model-arch/src/glm5next_mlp/mod.rs:348-364"
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:394-407,430-438 (quant_static, then the own-slots sweep `sweep_kernel` picks at one row, :170-188); crates/model-arch/src/glm5next_mlp/mod.rs:354-370"
 
 [[rule]]
 id = "glm_moe_w4a4_gate_up_2_8_kda"
@@ -3793,7 +3793,7 @@ rows = [2, 8]
 modes = ["multi_seq", "verify"]
 numerics = "reference"
 priority = 110
-cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:326-353,370-378 (quant_static, the row union, the 8-row union sweep, :177-180); crates/model-arch/src/glm5next_mlp/forward/sweep_entries.rs:22-31 (the `_sl` entry, METRALE_GLM_MOE_SWEEP_SERIAL default on); crates/model-arch/src/glm5next_mlp/mod.rs:292-296"
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:394-413,430-438 (quant_static, the row union, the 8-row union sweep, :177-180); crates/model-arch/src/glm5next_mlp/forward/sweep_entries.rs:22-31 (the `_sl` entry, METRALE_GLM_MOE_SWEEP_SERIAL default on); crates/model-arch/src/glm5next_mlp/mod.rs:298-302"
 
 [[rule]]
 id = "glm_moe_w4a4_gate_up_2_8_dsa"
@@ -3812,7 +3812,7 @@ rows = [2, 8]
 modes = ["multi_seq", "verify"]
 numerics = "reference"
 priority = 110
-cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:326-353,370-378 (quant_static, the row union, the 8-row union sweep, :177-180); crates/model-arch/src/glm5next_mlp/forward/sweep_entries.rs:22-31 (the `_sl` entry, METRALE_GLM_MOE_SWEEP_SERIAL default on); crates/model-arch/src/glm5next_mlp/mod.rs:292-296"
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:394-413,430-438 (quant_static, the row union, the 8-row union sweep, :177-180); crates/model-arch/src/glm5next_mlp/forward/sweep_entries.rs:22-31 (the `_sl` entry, METRALE_GLM_MOE_SWEEP_SERIAL default on); crates/model-arch/src/glm5next_mlp/mod.rs:298-302"
 
 [[rule]]
 id = "glm_moe_w4a4_gate_up_9_16_kda"
@@ -3831,7 +3831,7 @@ rows = [9, 16]
 modes = ["multi_seq", "verify"]
 numerics = "reference"
 priority = 110
-cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:326-353,370-378 (quant_static, the row union, the 16-row union sweep, :177-180); crates/model-arch/src/glm5next_mlp/forward/sweep_entries.rs:22-31 (the `_sl` entry, METRALE_GLM_MOE_SWEEP_SERIAL default on); crates/model-arch/src/glm5next_mlp/mod.rs:292-296"
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:394-413,430-438 (quant_static, the row union, the 16-row union sweep, :177-180); crates/model-arch/src/glm5next_mlp/forward/sweep_entries.rs:22-31 (the `_sl` entry, METRALE_GLM_MOE_SWEEP_SERIAL default on); crates/model-arch/src/glm5next_mlp/mod.rs:298-302"
 
 [[rule]]
 id = "glm_moe_w4a4_gate_up_9_16_dsa"
@@ -3850,7 +3850,7 @@ rows = [9, 16]
 modes = ["multi_seq", "verify"]
 numerics = "reference"
 priority = 110
-cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:326-353,370-378 (quant_static, the row union, the 16-row union sweep, :177-180); crates/model-arch/src/glm5next_mlp/forward/sweep_entries.rs:22-31 (the `_sl` entry, METRALE_GLM_MOE_SWEEP_SERIAL default on); crates/model-arch/src/glm5next_mlp/mod.rs:292-296"
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:394-413,430-438 (quant_static, the row union, the 16-row union sweep, :177-180); crates/model-arch/src/glm5next_mlp/forward/sweep_entries.rs:22-31 (the `_sl` entry, METRALE_GLM_MOE_SWEEP_SERIAL default on); crates/model-arch/src/glm5next_mlp/mod.rs:298-302"
 
 [[rule]]
 id = "glm_moe_w4a4_down_1_kda"
@@ -3868,7 +3868,7 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 110
-cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:408-422 (quant_static, then the own-slots sweep)"
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:468-482 (quant_static, then the own-slots sweep)"
 
 [[rule]]
 id = "glm_moe_w4a4_down_1_dsa"
@@ -3886,7 +3886,7 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 110
-cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:408-422 (quant_static, then the own-slots sweep)"
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:468-482 (quant_static, then the own-slots sweep)"
 
 [[rule]]
 id = "glm_moe_w4a4_down_2_8_kda"
@@ -3904,7 +3904,7 @@ rows = [2, 8]
 modes = ["multi_seq", "verify"]
 numerics = "reference"
 priority = 110
-cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:408-422 (quant_static, then the 8-row union sweep over the union built for gate/up; down keeps its PDL entry); the plain-width down reuses the gate/up sweep handles (w4a4.rs down_kernels `sweep: k.w4a4_moe_sweep`; mod.rs `gate_up_sweeps(gpu, levers.mlp.sweep_serial)`), so it launches the `_sl` entry like gate/up"
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:468-482 (quant_static, then the 8-row union sweep over the union built for gate/up; down keeps its PDL entry); the plain-width down reuses the gate/up sweep handles (w4a4.rs down_kernels `sweep: k.w4a4_moe_sweep`; mod.rs `gate_up_sweeps(gpu, levers.mlp.sweep_serial)`), so it launches the `_sl` entry like gate/up"
 
 [[rule]]
 id = "glm_moe_w4a4_down_2_8_dsa"
@@ -3922,7 +3922,7 @@ rows = [2, 8]
 modes = ["multi_seq", "verify"]
 numerics = "reference"
 priority = 110
-cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:408-422 (quant_static, then the 8-row union sweep over the union built for gate/up; down keeps its PDL entry); the plain-width down reuses the gate/up sweep handles (w4a4.rs down_kernels `sweep: k.w4a4_moe_sweep`; mod.rs `gate_up_sweeps(gpu, levers.mlp.sweep_serial)`), so it launches the `_sl` entry like gate/up"
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:468-482 (quant_static, then the 8-row union sweep over the union built for gate/up; down keeps its PDL entry); the plain-width down reuses the gate/up sweep handles (w4a4.rs down_kernels `sweep: k.w4a4_moe_sweep`; mod.rs `gate_up_sweeps(gpu, levers.mlp.sweep_serial)`), so it launches the `_sl` entry like gate/up"
 
 [[rule]]
 id = "glm_moe_w4a4_down_9_16_kda"
@@ -3940,7 +3940,7 @@ rows = [9, 16]
 modes = ["multi_seq", "verify"]
 numerics = "reference"
 priority = 110
-cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:408-422 (quant_static, then the 16-row union sweep over the union built for gate/up; down keeps its PDL entry); the plain-width down reuses the gate/up sweep handles (w4a4.rs down_kernels `sweep: k.w4a4_moe_sweep`; mod.rs `gate_up_sweeps(gpu, levers.mlp.sweep_serial)`), so it launches the `_sl` entry like gate/up"
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:468-482 (quant_static, then the 16-row union sweep over the union built for gate/up; down keeps its PDL entry); the plain-width down reuses the gate/up sweep handles (w4a4.rs down_kernels `sweep: k.w4a4_moe_sweep`; mod.rs `gate_up_sweeps(gpu, levers.mlp.sweep_serial)`), so it launches the `_sl` entry like gate/up"
 
 [[rule]]
 id = "glm_moe_w4a4_down_9_16_dsa"
@@ -3958,7 +3958,7 @@ rows = [9, 16]
 modes = ["multi_seq", "verify"]
 numerics = "reference"
 priority = 110
-cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:408-422 (quant_static, then the 16-row union sweep over the union built for gate/up; down keeps its PDL entry); the plain-width down reuses the gate/up sweep handles (w4a4.rs down_kernels `sweep: k.w4a4_moe_sweep`; mod.rs `gate_up_sweeps(gpu, levers.mlp.sweep_serial)`), so it launches the `_sl` entry like gate/up"
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:139-149 (moe_inter 2048 is a multiple of 128: the plain entries); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:468-482 (quant_static, then the 16-row union sweep over the union built for gate/up; down keeps its PDL entry); the plain-width down reuses the gate/up sweep handles (w4a4.rs down_kernels `sweep: k.w4a4_moe_sweep`; mod.rs `gate_up_sweeps(gpu, levers.mlp.sweep_serial)`), so it launches the `_sl` entry like gate/up"
 
 # 2026-10-22: The recipe arm of glm_moe_w4a4_grouped with glm_moe_expert_layout tp
 # (METRALE_GLM_MOE_W4A4_GROUPED=1, `moe_expert_layout: tp`). The grouped GEMM itself takes only
@@ -4025,7 +4025,7 @@ modes = ["multi_seq", "verify"]
 when = { glm_moe_w4a4_grouped = "on", glm_moe_expert_layout = "tp" }
 numerics = "reference"
 priority = 115
-cite = "crates/model-arch/src/weight_loader/glm5_next_load/mlp_precision.rs:43-52 (glm_moe_w4a4_grouped lifts the routed W4A4 row cap; crates/settings/src/groups/kernels.rs:151); crates/model-arch/src/glm5next_mlp/precision.rs:155-162 (w4a4_at_every_row); crates/model-arch/src/glm5next_mlp/scale_dict.rs:149-161 (Compact needs the lever, default on at crates/settings/src/groups/kernels.rs:149, and the sliced tp layout, --moe-expert-layout default ep at crates/server/src/cli/serve_args/service.rs:176); crates/model-arch/src/glm5next_mlp/scale_dict_kernels.rs:105-120 (pick: the `_cs` twin); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:170-188,340-353 (the row union, then the mx8 union sweep); crates/model-arch/src/glm5next_mlp/forward/sweep_entries.rs:22-56 (the `_sl` entry, glm_moe_sweep_serial default on)"
+cite = "crates/model-arch/src/weight_loader/glm5_next_load/mlp_precision.rs:43-52 (glm_moe_w4a4_grouped lifts the routed W4A4 row cap; crates/settings/src/groups/kernels.rs:151); crates/model-arch/src/glm5next_mlp/precision.rs:155-162 (w4a4_at_every_row); crates/model-arch/src/glm5next_mlp/scale_dict.rs:149-161 (Compact needs the lever, default on at crates/settings/src/groups/kernels.rs:149, and the sliced tp layout, --moe-expert-layout default ep at crates/server/src/cli/serve_args/service.rs:176); crates/model-arch/src/glm5next_mlp/scale_dict_kernels.rs:105-120 (pick: the `_cs` twin); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:170-188,408-413 (the row union, then the mx8 union sweep); crates/model-arch/src/glm5next_mlp/forward/sweep_entries.rs:22-56 (the `_sl` entry, glm_moe_sweep_serial default on)"
 
 [[rule]]
 id = "glm_moe_w4a4_cs_gate_up_2_8_dsa"
@@ -4045,7 +4045,7 @@ modes = ["multi_seq", "verify"]
 when = { glm_moe_w4a4_grouped = "on", glm_moe_expert_layout = "tp" }
 numerics = "reference"
 priority = 115
-cite = "crates/model-arch/src/weight_loader/glm5_next_load/mlp_precision.rs:43-52 (glm_moe_w4a4_grouped lifts the routed W4A4 row cap; crates/settings/src/groups/kernels.rs:151); crates/model-arch/src/glm5next_mlp/precision.rs:155-162 (w4a4_at_every_row); crates/model-arch/src/glm5next_mlp/scale_dict.rs:149-161 (Compact needs the lever, default on at crates/settings/src/groups/kernels.rs:149, and the sliced tp layout, --moe-expert-layout default ep at crates/server/src/cli/serve_args/service.rs:176); crates/model-arch/src/glm5next_mlp/scale_dict_kernels.rs:105-120 (pick: the `_cs` twin); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:170-188,340-353 (the row union, then the mx8 union sweep); crates/model-arch/src/glm5next_mlp/forward/sweep_entries.rs:22-56 (the `_sl` entry, glm_moe_sweep_serial default on)"
+cite = "crates/model-arch/src/weight_loader/glm5_next_load/mlp_precision.rs:43-52 (glm_moe_w4a4_grouped lifts the routed W4A4 row cap; crates/settings/src/groups/kernels.rs:151); crates/model-arch/src/glm5next_mlp/precision.rs:155-162 (w4a4_at_every_row); crates/model-arch/src/glm5next_mlp/scale_dict.rs:149-161 (Compact needs the lever, default on at crates/settings/src/groups/kernels.rs:149, and the sliced tp layout, --moe-expert-layout default ep at crates/server/src/cli/serve_args/service.rs:176); crates/model-arch/src/glm5next_mlp/scale_dict_kernels.rs:105-120 (pick: the `_cs` twin); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:170-188,408-413 (the row union, then the mx8 union sweep); crates/model-arch/src/glm5next_mlp/forward/sweep_entries.rs:22-56 (the `_sl` entry, glm_moe_sweep_serial default on)"
 
 [[rule]]
 id = "glm_moe_w4a4_cs_gate_up_9_16_kda"
@@ -4065,7 +4065,7 @@ modes = ["multi_seq", "verify"]
 when = { glm_moe_w4a4_grouped = "on", glm_moe_expert_layout = "tp" }
 numerics = "reference"
 priority = 115
-cite = "crates/model-arch/src/weight_loader/glm5_next_load/mlp_precision.rs:43-52 (glm_moe_w4a4_grouped lifts the routed W4A4 row cap; crates/settings/src/groups/kernels.rs:151); crates/model-arch/src/glm5next_mlp/precision.rs:155-162 (w4a4_at_every_row); crates/model-arch/src/glm5next_mlp/scale_dict.rs:149-161 (Compact needs the lever, default on at crates/settings/src/groups/kernels.rs:149, and the sliced tp layout, --moe-expert-layout default ep at crates/server/src/cli/serve_args/service.rs:176); crates/model-arch/src/glm5next_mlp/scale_dict_kernels.rs:105-120 (pick: the `_cs` twin); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:170-188,340-353 (the row union, then the mx16 union sweep); crates/model-arch/src/glm5next_mlp/forward/sweep_entries.rs:22-56 (the `_sl` entry, glm_moe_sweep_serial default on)"
+cite = "crates/model-arch/src/weight_loader/glm5_next_load/mlp_precision.rs:43-52 (glm_moe_w4a4_grouped lifts the routed W4A4 row cap; crates/settings/src/groups/kernels.rs:151); crates/model-arch/src/glm5next_mlp/precision.rs:155-162 (w4a4_at_every_row); crates/model-arch/src/glm5next_mlp/scale_dict.rs:149-161 (Compact needs the lever, default on at crates/settings/src/groups/kernels.rs:149, and the sliced tp layout, --moe-expert-layout default ep at crates/server/src/cli/serve_args/service.rs:176); crates/model-arch/src/glm5next_mlp/scale_dict_kernels.rs:105-120 (pick: the `_cs` twin); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:170-188,408-413 (the row union, then the mx16 union sweep); crates/model-arch/src/glm5next_mlp/forward/sweep_entries.rs:22-56 (the `_sl` entry, glm_moe_sweep_serial default on)"
 
 [[rule]]
 id = "glm_moe_w4a4_cs_gate_up_9_16_dsa"
@@ -4085,7 +4085,7 @@ modes = ["multi_seq", "verify"]
 when = { glm_moe_w4a4_grouped = "on", glm_moe_expert_layout = "tp" }
 numerics = "reference"
 priority = 115
-cite = "crates/model-arch/src/weight_loader/glm5_next_load/mlp_precision.rs:43-52 (glm_moe_w4a4_grouped lifts the routed W4A4 row cap; crates/settings/src/groups/kernels.rs:151); crates/model-arch/src/glm5next_mlp/precision.rs:155-162 (w4a4_at_every_row); crates/model-arch/src/glm5next_mlp/scale_dict.rs:149-161 (Compact needs the lever, default on at crates/settings/src/groups/kernels.rs:149, and the sliced tp layout, --moe-expert-layout default ep at crates/server/src/cli/serve_args/service.rs:176); crates/model-arch/src/glm5next_mlp/scale_dict_kernels.rs:105-120 (pick: the `_cs` twin); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:170-188,340-353 (the row union, then the mx16 union sweep); crates/model-arch/src/glm5next_mlp/forward/sweep_entries.rs:22-56 (the `_sl` entry, glm_moe_sweep_serial default on)"
+cite = "crates/model-arch/src/weight_loader/glm5_next_load/mlp_precision.rs:43-52 (glm_moe_w4a4_grouped lifts the routed W4A4 row cap; crates/settings/src/groups/kernels.rs:151); crates/model-arch/src/glm5next_mlp/precision.rs:155-162 (w4a4_at_every_row); crates/model-arch/src/glm5next_mlp/scale_dict.rs:149-161 (Compact needs the lever, default on at crates/settings/src/groups/kernels.rs:149, and the sliced tp layout, --moe-expert-layout default ep at crates/server/src/cli/serve_args/service.rs:176); crates/model-arch/src/glm5next_mlp/scale_dict_kernels.rs:105-120 (pick: the `_cs` twin); crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:170-188,408-413 (the row union, then the mx16 union sweep); crates/model-arch/src/glm5next_mlp/forward/sweep_entries.rs:22-56 (the `_sl` entry, glm_moe_sweep_serial default on)"
 
 [[rule]]
 id = "glm_moe_w4a4_cs_down_1_kda"
@@ -4217,7 +4217,7 @@ rows = [2, 16]
 modes = ["multi_seq", "verify"]
 numerics = "reference"
 priority = 120
-cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:385-395,215-225 (zeroes_in_swiglu: rows 2..=16, not the own-slots arm); crates/model-arch/src/glm5next_mlp/forward/launch.rs:147-171"
+cite = "crates/model-arch/src/glm5next_mlp/forward/w4a4.rs:445-455,215-225 (zeroes_in_swiglu: rows 2..=16, not the own-slots arm); crates/model-arch/src/glm5next_mlp/forward/launch.rs:147-171"
 
 # 2026-10-22: The served recipe's re-quantized projections (glm-5.3/glm-5.3-flash-nvfp4-tp3-512k:
 # `--dense-quantization w4a16`, `--dsa-quantization w8a8`; kernels/circuits/precision/
@@ -4239,7 +4239,7 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 120
-cite = "crates/model-arch/src/glm5next_w4a16_dense.rs:350-362 (one row: w4a16_gemv::w4a16_gemv; glm_w4a16_gemv_seg off, :332); crates/model-arch/src/glm5next_layer/wide_gemv.rs:178-180 (glm_mm asks the W4A16 registry first); crates/model-arch/src/glm5next_w4a16_dense.rs:110-131 (tier_of: these are W4A16)"
+cite = "crates/model-arch/src/glm5next_w4a16_dense.rs:350-362 (one row: w4a16_gemv::w4a16_gemv; glm_w4a16_gemv_seg off, :332); crates/model-arch/src/glm5next_layer/wide_gemv.rs:205-207 (glm_mm asks the W4A16 registry first); crates/model-arch/src/glm5next_w4a16_dense.rs:110-131 (tier_of: these are W4A16)"
 
 [[rule]]
 id = "glm_w4a16_tc_rows"
@@ -5032,7 +5032,7 @@ modes = ["decode", "multi_seq", "verify"]
 when = { glm_ar_fused_post = "on" }
 numerics = "reference"
 priority = 100
-cite = "crates/model-arch/src/glm5next_layer/steps/reduce_post.rs:31-43,49-66 (fused_post, then exchange_partials alone for one row piece), :77-120 (hc_post_reduced: glm5next_hc_post_rank_sum sums the peers' partials into x, then the post-mix, the same bits as the all-reduce then glm_hc_post at three ranks); crates/model-arch/src/glm5next_layer/steps/forward.rs:391-402,424-428 (the mixer and FFN sites of a verify); crates/comm/src/nccl_backend/comm_impl.rs:108 (exchange_partials: the exchange only)"
+cite = "crates/model-arch/src/glm5next_layer/steps/mhc_site.rs:243-255,113-141 (fused_post, then exchange_partials alone for one row piece), :77-120 (hc_post_reduced: glm5next_hc_post_rank_sum sums the peers' partials into x, then the post-mix, the same bits as the all-reduce then glm_hc_post at three ranks); crates/model-arch/src/glm5next_layer/steps/forward.rs:391-402,424-428 (the mixer and FFN sites of a verify); crates/comm/src/nccl_backend/comm_impl.rs:108 (exchange_partials: the exchange only)"
 
 [[rule]]
 id = "tp_all_reduce_oneshot"
@@ -5045,7 +5045,7 @@ rows = [1, 128]
 modes = ["decode", "multi_seq", "verify", "draft"]
 numerics = "reference"
 priority = 10
-cite = "crates/comm/src/nccl_backend/sendrecv.rs:178-221 (all_reduce_oneshot: the exchange, then bf16_add_rank_sum over ceil(count/256) blocks), comm_impl.rs:25-31,52-72 (all_reduce / all_reduce_async take it at three ranks); crates/model-arch/src/glm5next_layer/steps.rs:248-272,345-354 (reduce_partial / reduce_pieces: the MTP layer's attention and MoE outputs, and an mHC site without glm_ar_fused_post)"
+cite = "crates/comm/src/nccl_backend/sendrecv.rs:178-221 (all_reduce_oneshot: the exchange, then bf16_add_rank_sum over ceil(count/256) blocks), comm_impl.rs:25-31,52-72 (all_reduce / all_reduce_async take it at three ranks); crates/model-arch/src/glm5next_layer/steps/mhc_site.rs:77-95, crates/model-arch/src/glm5next_layer/steps.rs:212-221 (reduce_partial / reduce_pieces: the MTP layer's attention and MoE outputs, and an mHC site without glm_ar_fused_post)"
 
 # 2026-10-23: An all-gather the engine runs as the one-shot all-reduce of zero-padded slices: each
 # rank writes its rows into a zeroed full row and the sum assembles it (the MTP eh_proj rows under
@@ -5153,7 +5153,7 @@ rows = [1, 1]
 modes = ["draft"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_layer/steps.rs:332 (input_norm); crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:51-61 (q_a_norm)"
+cite = "crates/model-arch/src/glm5next_layer/steps.rs:199 (input_norm); crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:51-61 (q_a_norm)"
 
 [[rule]]
 id = "glm_mtp_norm_moe"
@@ -5165,7 +5165,7 @@ rows = [1, 1]
 modes = ["draft"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_layer/steps.rs:350 (post_attention_layernorm)"
+cite = "crates/model-arch/src/glm5next_layer/steps.rs:217 (post_attention_layernorm)"
 
 [[rule]]
 id = "glm_mtp_bf16_gemv_dsa"
@@ -5205,7 +5205,7 @@ rows = [1, 1]
 modes = ["draft"]
 numerics = "reference"
 priority = 105
-cite = "crates/model-arch/src/glm5next_layer/steps.rs:348,289-309 (add_inplace after the attention's all-reduce); 2026-10-23: above residual_add_post_norm (100), which fused this add with the next block's norm the draft path runs as its own launch (:453)"
+cite = "crates/model-arch/src/glm5next_layer/steps.rs:215,156-176 (add_inplace after the attention's all-reduce); 2026-10-23: above residual_add_post_norm (100), which fused this add with the next block's norm the draft path runs as its own launch (:453)"
 
 [[rule]]
 id = "glm_mtp_residual_add_moe"
@@ -5217,7 +5217,7 @@ rows = [1, 1]
 modes = ["draft"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_layer/steps.rs:353-354 (add_inplace after the MoE's all-reduce)"
+cite = "crates/model-arch/src/glm5next_layer/steps.rs:220-221 (add_inplace after the MoE's all-reduce)"
 
 [[rule]]
 id = "glm_mtp_router_topk_rank"
@@ -5230,7 +5230,7 @@ modes = ["draft"]
 when = { glm_router_topk_rank = "on" }
 numerics = "reference"
 priority = 25
-cite = "crates/model-arch/src/glm5next_mlp/forward.rs:374 -> crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:65-80 (METRALE_GLM_ROUTER_TOPK_RANK=1)"
+cite = "crates/model-arch/src/glm5next_mlp/forward.rs:375 -> crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:74-105 (METRALE_GLM_ROUTER_TOPK_RANK=1)"
 
 [[rule]]
 id = "glm_mtp_shared_gate_up"
@@ -5245,7 +5245,7 @@ rows = [1, 1]
 modes = ["draft"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_mlp/forward.rs:366-367 (the shared expert on the fork stream, METRALE_GLM_SHARED_FORK default 2) -> crates/model-arch/src/glm5next_mlp/forward/dense.rs (gate and up, one BF16 GEMV each)"
+cite = "crates/model-arch/src/glm5next_mlp/forward.rs:367-368 (the shared expert on the fork stream, METRALE_GLM_SHARED_FORK default 2) -> crates/model-arch/src/glm5next_mlp/forward/dense.rs (gate and up, one BF16 GEMV each)"
 
 [[rule]]
 id = "glm_mtp_shared_down"
@@ -5272,7 +5272,7 @@ rows = [1, 1]
 modes = ["draft"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_mlp/forward.rs:403 -> crates/model-arch/src/glm5next_mlp/forward/moe_experts.rs:65-92 (the routed gate, then up: one launch each over the top-k slots, grid (ceil(N/8), top_k))"
+cite = "crates/model-arch/src/glm5next_mlp/forward.rs:404 -> crates/model-arch/src/glm5next_mlp/forward/moe_experts.rs:65-92 (the routed gate, then up: one launch each over the top-k slots, grid (ceil(N/8), top_k))"
 
 [[rule]]
 id = "glm_mtp_w4a16_experts_down"
@@ -5296,7 +5296,7 @@ rows = [1, 1]
 modes = ["draft"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_mlp/forward.rs:442 -> crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:191-205 (METRALE_GLM_MOE_COMBINE_SPLIT=1)"
+cite = "crates/model-arch/src/glm5next_mlp/forward.rs:443 -> crates/model-arch/src/glm5next_mlp/forward/topk_combine.rs:216-247 (METRALE_GLM_MOE_COMBINE_SPLIT=1)"
 
 [[rule]]
 id = "glm_mtp_final_norm"
