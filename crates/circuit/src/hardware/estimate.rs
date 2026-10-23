@@ -203,9 +203,15 @@ pub fn footprint(c: &Circuit, settings: &BTreeMap<String, String>) -> Result<Foo
 /// 2026-09-30: Weight bytes a decode step reads at one row: every main-section weight once
 /// (routed experts at `top_k` of them). Divided by bandwidth, the C=1 floor.
 pub fn weight_floor_bytes(c: &Circuit) -> Result<f64, String> {
-    let mut total = 0.0;
+    Ok(main_weight_bytes(c)?.iter().sum())
+}
+
+/// 2026-10-23: Each node's share of [`weight_floor_bytes`], indexed like `c.nodes` (0 for a node
+/// outside the main section or without a weight).
+pub fn main_weight_bytes(c: &Circuit) -> Result<Vec<f64>, String> {
+    let mut per = vec![0.0; c.nodes.len()];
     for b in c.blocks.iter().filter(|b| b.section == Section::Main) {
-        for n in &c.nodes[b.first..b.end] {
+        for (i, n) in c.nodes[b.first..b.end].iter().enumerate() {
             let Some(w) = n.weight else { continue };
             let (out, k) = c
                 .weight_shape(n)
@@ -221,10 +227,10 @@ pub fn weight_floor_bytes(c: &Circuit) -> Result<f64, String> {
             let one = w
                 .weight_bytes(out, k)
                 .ok_or_else(|| format!("node `{}`: weight {} has no size", n.id, w.name()))?;
-            total += one as f64 * copies;
+            per[b.first + i] = one as f64 * copies;
         }
     }
-    Ok(total)
+    Ok(per)
 }
 
 /// 2026-09-30: `Format` of a node's first input.
