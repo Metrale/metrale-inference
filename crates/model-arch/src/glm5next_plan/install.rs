@@ -29,12 +29,12 @@ use crate::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels};
 /// 2026-10-23: The shapes the plan-vs-legacy launch gate covers.
 pub const GATED: [(Mode, u64); 2] = [(Mode::Decode, 1), (Mode::Verify, 2)];
 
-/// 2026-10-23: The policy settings the MoE and mHC rules read that come from this layer's
+/// 2026-10-23: The policy settings the MoE, mHC and KDA rules read that come from this layer's
 /// levers and layout, as `(key, value)`.
 pub fn plan_settings(
     k: &Glm5NextMlpKernels,
     cfg: &Glm5NextMlpConfig,
-) -> [(&'static str, String); 7] {
+) -> [(&'static str, String); 9] {
     let on = |b: bool| if b { "on" } else { "off" }.to_string();
     let l = &k.levers;
     let layout = match cfg.expert_shard {
@@ -49,6 +49,8 @@ pub fn plan_settings(
         ("glm_moe_expert_layout", layout.to_string()),
         ("glm_mhc_fused", on(l.mhc_fused)),
         ("glm_ar_fused_post", on(l.ar_fused_post)),
+        ("glm_kda_row_reg", on(l.kda.row_reg)),
+        ("glm_kda_verify_tokens", on(l.kda.verify_tokens)),
     ]
 }
 

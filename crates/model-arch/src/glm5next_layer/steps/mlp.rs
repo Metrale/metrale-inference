@@ -73,7 +73,7 @@ impl Glm5NextLayer {
         // 2026-10-23: An installed plan runs a routed site at its row count as one piece.
         if let Glm5NextMlpSite::Moe(w) = &self.mlp
             && row_pieces == [rows]
-            && self.moe_plans.run(
+            && self.plans.moe.run(
                 ctx.gpu,
                 &self.mlp_kernels,
                 &self.mlp_cfg,

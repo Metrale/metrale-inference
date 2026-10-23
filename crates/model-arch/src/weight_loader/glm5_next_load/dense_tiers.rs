@@ -120,7 +120,7 @@ pub(super) fn register_dense_tiers(
 /// dequantized copy (`glm5next_dequant_persist`). 2026-10-17: `levers` are the resolved dense
 /// tier levers.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn register_projections(
+pub(crate) fn register_projections(
     gpu: &dyn GpuBackend,
     projs: Vec<Proj>,
     slots: &mut [&mut DevicePtr],

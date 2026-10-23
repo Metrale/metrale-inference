@@ -21,6 +21,7 @@ pub(crate) mod fixture;
 #[cfg(test)]
 pub(crate) mod fixture_site;
 pub mod install;
+pub mod kda;
 pub mod mhc;
 pub mod moe;
 
@@ -29,6 +30,7 @@ pub mod moe;
 pub struct GlmBlock {
     pub moe: moe::MoeSlots,
     pub mhc: mhc::MhcSlots,
+    pub kda: kda::KdaSlots,
 }
 
 static MOE_ROUTER: moe::MoeRouter = moe::MoeRouter;
@@ -37,10 +39,12 @@ static GLM_SWIGLU: moe::GlmSwiglu = moe::GlmSwiglu;
 static MOE_BLEND: moe::MoeBlend = moe::MoeBlend { split: false };
 static MOE_BLEND_SPLIT: moe::MoeBlend = moe::MoeBlend { split: true };
 static GLM_HC: mhc::GlmHc = mhc::GlmHc;
+static KDA: kda::Kda = kda::Kda;
 
 /// 2026-10-23: Every GLM emitter.
-static EMITTERS: [&dyn GroupEmitter<GlmBlock>; 6] = [
+static EMITTERS: [&dyn GroupEmitter<GlmBlock>; 7] = [
     &GLM_HC,
+    &KDA,
     &MOE_ROUTER,
     &GLM_MOE_W4A4,
     &GLM_SWIGLU,
@@ -51,7 +55,7 @@ static EMITTERS: [&dyn GroupEmitter<GlmBlock>; 6] = [
 /// 2026-10-23: The plan-executed sites, `(block, template-local ids of a group)`, as the plan
 /// reports name them: the groups the emitters above compile. A group of a listed block whose
 /// locals are not here is a legacy site of that block.
-pub const DONE: [(&str, &[&str]); 15] = [
+pub const DONE: [(&str, &[&str]); 20] = [
     ("dsa", &["mix", "pre", "input_norm"]),
     ("kda", &["mix", "pre", "input_norm"]),
     ("dsa", &["o@all_reduce", "post"]),
@@ -60,6 +64,11 @@ pub const DONE: [(&str, &[&str]); 15] = [
     ("mlp", &["mix", "pre", "post_norm"]),
     ("moe", &["f@all_reduce", "post"]),
     ("mlp", &["f@all_reduce", "post"]),
+    ("kda", &["qkv"]),
+    ("kda", &["short_conv", "conv_ckpt", "l2"]),
+    ("kda", &["fa_quant", "f_b", "gates", "ga_quant", "g_b"]),
+    ("kda", &["recur"]),
+    ("kda", &["out_norm"]),
     ("moe", &["gate"]),
     ("moe", &["top_k"]),
     ("moe", &["gate", "top_k"]),
@@ -68,6 +77,15 @@ pub const DONE: [(&str, &[&str]); 15] = [
     ("moe", &["eact_quant", "experts_down"]),
     ("moe", &["blend"]),
 ];
+
+/// 2026-10-23: The plans installed on one GLM text layer, by site: each empty until
+/// `--forward circuit` installs it, and an empty site runs the layer's own code.
+#[derive(Debug, Default)]
+pub struct LayerPlans {
+    pub moe: install::InstalledMoe,
+    pub mhc: crate::glm5next_mhc_plan::InstalledMhc,
+    pub kda: crate::glm5next_kda::plan::InstalledKda,
+}
 
 /// 2026-10-23: The GLM emitter registry.
 pub fn registry() -> Result<EmitterRegistry<GlmBlock>> {
@@ -154,7 +172,9 @@ pub fn compile_mhc(
     let mut block = GlmBlock::default();
     let mut executed = Vec::new();
     let mut last = None;
-    for g in PlanGroup::all(circuit, plan).filter(|g| g.layer() == Some(layer) && mhc::is_site_group(g)) {
+    for g in
+        PlanGroup::all(circuit, plan).filter(|g| g.layer() == Some(layer) && mhc::is_site_group(g))
+    {
         reg.emit(&g, &mut block)?;
         let kernels: Vec<String> = g.group.kernels.iter().map(|k| k.to_string()).collect();
         executed.push(format!("{}: {}", g.site(), kernels.join(",")));
@@ -165,6 +185,45 @@ pub fn compile_mhc(
         steps: block.mhc.finish(&g)?,
         executed,
         legacy: Vec::new(),
+    })
+}
+
+/// 2026-10-23: Layer `layer`'s KDA mixer in `plan` (over the rank circuit `circuit`): its own
+/// groups through the `kda` emitter, its projection groups declared legacy sites.
+pub fn compile_kda(
+    circuit: &Circuit,
+    plan: &FusionPlan,
+    layer: usize,
+) -> Result<CompiledSite<crate::glm5next_kda::plan::KdaSteps<metrale_circuit::KernelId>>> {
+    let reg = registry()?;
+    let mut block = GlmBlock::default();
+    let (mut executed, mut legacy) = (Vec::new(), Vec::new());
+    let mut last = None;
+    let groups = PlanGroup::all(circuit, plan)
+        .filter(|g| g.layer() == Some(layer) && g.block() == "kda" && !mhc::is_site_group(g));
+    for g in groups {
+        if kda::is_site_group(&g) {
+            reg.emit(&g, &mut block)?;
+            let kernels: Vec<String> = g.group.kernels.iter().map(|k| k.to_string()).collect();
+            executed.push(format!("{}: {}", g.site(), kernels.join(",")));
+            last = Some(g);
+        } else {
+            ensure!(
+                kda::is_legacy_group(&g),
+                "layer {layer}: KDA group {} (rule `{}`, emitter `{}`) is neither the mixer's own \
+                 nor one of its projections",
+                g.site(),
+                g.group.rule,
+                g.group.emitter
+            );
+            legacy.push(g.site());
+        }
+    }
+    let g = last.with_context(|| format!("layer {layer} has no KDA mixer in this plan"))?;
+    Ok(CompiledSite {
+        steps: block.kda.finish(&g)?,
+        executed,
+        legacy,
     })
 }
 

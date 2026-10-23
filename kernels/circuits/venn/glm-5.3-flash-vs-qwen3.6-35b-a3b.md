@@ -80,7 +80,7 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 
 | # | Layer kind | Mode | Rows | Est. added time | vs. multi-row step | Source | Note |
 |---|---|---|---|---|---|---|---|
-| 1 | linear_attention | verify | 4 | 3436.3 µs | +2.5% | legacy: crates/model-arch/src/glm5next_kda/decode.rs:451 | KDA verify: conv and recurrence one row per launch (stateful_row); 2026-10-09: without per-row snapshots, one conv and one recurrent launch under METRALE_GLM_KDA_SEQ_TOKENS |
+| 1 | linear_attention | verify | 4 | 3436.3 µs | +2.5% | legacy: crates/model-arch/src/glm5next_kda/decode.rs:457 | KDA verify: conv and recurrence one row per launch (stateful_row); 2026-10-09: without per-row snapshots, one conv and one recurrent launch under METRALE_GLM_KDA_SEQ_TOKENS |
 | 2 | deepseek_sparse_attention | verify | 4 | 2015.0 µs | +1.4% | legacy: crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:203 | DSA verify: latent write, indexer projections, store and selection one row per launch; 2026-10-21: the selection in one pass after the row loop under METRALE_GLM_DSA_VERIFY_SELECT_ONCE (layer/verify_select.rs) |
 | 3 | linear_attention | multi_seq | 16 | 0.0 µs | +0.0% | legacy: crates/model-arch/src/glm5next_kda/rows.rs:134 | KDA batched decode: conv and recurrence one row per launch unless METRALE_GLM_KDA_SEQ_ROWS (2026-10-09: the rows kernels, one launch per 16 rows) |
 | 4 | deepseek_sparse_attention | multi_seq | 128 | 0.0 µs | +0.0% | circuit: dsa.pool, dsa.select | every family that runs these ops covers one row per launch |

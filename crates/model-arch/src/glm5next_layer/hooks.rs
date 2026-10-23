@@ -261,10 +261,19 @@ impl metrale_model_layers::circuit_exec::CircuitBindings for Glm5NextLayer {
             &self.levers,
             mhc,
             self.hidden,
-            &self.mhc_plans,
+            &self.plans.mhc,
         )?;
+        if let Glm5NextMixer::Kda { layer, .. } = &self.mixer {
+            sites.extend(crate::glm5next_plan::kda::install(
+                gpu,
+                self.layer_idx,
+                plans,
+                layer,
+                &self.plans.kda,
+            )?);
+        }
         if let Glm5NextMlpSite::Moe(w) = &self.mlp {
-            sites.extend(self.moe_plans.install(
+            sites.extend(self.plans.moe.install(
                 gpu,
                 self.layer_idx,
                 plans,
@@ -278,8 +287,9 @@ impl metrale_model_layers::circuit_exec::CircuitBindings for Glm5NextLayer {
     }
 
     fn plan_sites(&self) -> Vec<String> {
-        let mut s = self.mhc_plans.sites();
-        s.extend(self.moe_plans.sites());
+        let mut s = self.plans.mhc.sites();
+        s.extend(self.plans.kda.sites());
+        s.extend(self.plans.moe.sites());
         s
     }
 }

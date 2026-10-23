@@ -26,7 +26,7 @@ impl Glm5NextLayer {
             layer_idx: self.layer_idx,
             comm,
             graph_capture,
-            plans: Some(&self.mhc_plans),
+            plans: Some(&self.plans.mhc),
         }
     }
 
@@ -53,7 +53,8 @@ impl Glm5NextLayer {
         rows: usize,
         stream: u64,
     ) -> Result<()> {
-        self.layer_io(None, false).norm(gpu, x, w, out, rows, stream)
+        self.layer_io(None, false)
+            .norm(gpu, x, w, out, rows, stream)
     }
 
     /// 2026-10-23: [`MhcSite::mhc_pre_norm_one`].
@@ -128,8 +129,7 @@ impl Glm5NextLayer {
         k: usize,
         stream: u64,
     ) -> Result<()> {
-        self.mhc_site(mhc, None, false).hc_post_reduced(
-            gpu, x, partials, residual, streams, post, comb, k, stream,
-        )
+        self.mhc_site(mhc, None, false)
+            .hc_post_reduced(gpu, x, partials, residual, streams, post, comb, k, stream)
     }
 }

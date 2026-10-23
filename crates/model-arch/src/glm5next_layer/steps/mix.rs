@@ -86,6 +86,10 @@ impl Glm5NextLayer {
                     && !layer.chunk64_applies(k, self.levers.kda.chunk64)
                 {
                     layer.prefill(gpu, normed, k, kda, ws, stream)?;
+                } else if let Some(p) = self.plans.kda.get(k).filter(|p| p.takes(k, snaps.len())) {
+                    // 2026-10-23: `--forward circuit` on a TP rank: the installed plan
+                    // (`glm5next_plan::kda`), launch for launch what `decode_k` runs here.
+                    layer.decode_k_plan(gpu, normed, k, kda, ws, snaps, &p, stream)?;
                 } else {
                     layer.decode_k(gpu, normed, k, kda, ws, snaps, stream)?;
                 }

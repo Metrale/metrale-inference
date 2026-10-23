@@ -76,8 +76,20 @@ impl Glm5NextKdaLayer {
         if pack == Pack::InConv {
             return Ok(());
         }
+        self.pack_launch(gpu, self.kernels.pack, t, ws, stream)
+    }
+
+    /// 2026-10-23: The pack of rows `0..t` by `kernel` (`kda_pack_qkv_bf16`'s arguments).
+    pub(super) fn pack_launch(
+        &self,
+        gpu: &dyn GpuBackend,
+        kernel: KernelHandle,
+        t: usize,
+        ws: &Glm5NextKdaWorkspace,
+        stream: u64,
+    ) -> Result<()> {
         let qkv = self.cfg.qkv_dim();
-        KernelLaunch::new(gpu, self.kernels.pack)
+        KernelLaunch::new(gpu, kernel)
             .grid([div_ceil(qkv as u32, 256), t as u32, 1])
             .block([256, 1, 1])
             .arg_ptr(ws.qkv_parts)

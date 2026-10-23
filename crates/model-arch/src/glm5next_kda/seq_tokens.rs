@@ -84,28 +84,56 @@ impl Glm5NextKdaLayer {
         stream: u64,
     ) -> Result<()> {
         let s = &self.kernels.seq;
-        if !self.seq_tokens_ready()
-            || s.recurrent_snap.0 == 0
-            || !snap_tokens_apply(k, snapshots.len())
-        {
+        if !self.seq_tokens_ready() || s.recurrent_snap.0 == 0 {
             bail!(
                 "KDA: the snapshotting token kernels cannot run {k} rows with {} snapshots here",
                 snapshots.len()
             );
         }
-        let c = &self.cfg;
-        let (qkv, cd, d) = (c.qkv_dim(), c.conv_dim(), c.head_dim);
-        let io = RowIo::workspace(c, ws, 0);
         // 2026-10-21: `METRALE_GLM_KDA_CONV_SNAP_TO`: each conv intermediate as one
         // `causal_conv1d_window_advance_to` from the live window (the same bytes as the copy then
         // the advance), so no copy node breaks the graph's PDL chain.
         let to = self.levers.kda.conv_snap_to && s.conv_window_to.0 != 0;
+        let kernels = SnapKernels {
+            advance_to: to.then_some(s.conv_window_to),
+            conv_tokens: s.conv_tokens,
+            conv_window: s.conv_window,
+            recurrent_snap: s.recurrent_snap,
+        };
+        self.stateful_tokens_snap_with(gpu, kernels, k, state, ws, snapshots, stream)
+    }
+
+    /// 2026-10-23: [`Self::stateful_tokens_snap`] by `kernels`: each conv intermediate by
+    /// `advance_to` from the live window, or (`None`) a copy then the window advance.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn stateful_tokens_snap_with(
+        &self,
+        gpu: &dyn GpuBackend,
+        kernels: SnapKernels,
+        k: usize,
+        state: &KdaSeqState,
+        ws: &Glm5NextKdaWorkspace,
+        snapshots: &[(DevicePtr, DevicePtr)],
+        stream: u64,
+    ) -> Result<()> {
+        let c = &self.cfg;
+        if c.head_dim != KDA_REG_D || c.conv_kernel > 4 || !snap_tokens_apply(k, snapshots.len()) {
+            bail!(
+                "KDA: the snapshotting token kernels cannot run {k} rows with {} snapshots at \
+                 head_dim {} / conv width {}",
+                snapshots.len(),
+                c.head_dim,
+                c.conv_kernel
+            );
+        }
+        let (qkv, cd, d) = (c.qkv_dim(), c.conv_dim(), c.head_dim);
+        let io = RowIo::workspace(c, ws, 0);
         for (t, &(_, conv_dst)) in snapshots.iter().enumerate() {
-            let mut launch = if to {
-                KernelLaunch::new(gpu, s.conv_window_to).arg_ptr(state.conv)
+            let mut launch = if let Some(to) = kernels.advance_to {
+                KernelLaunch::new(gpu, to).arg_ptr(state.conv)
             } else {
                 gpu.copy_d2d_async(state.conv, conv_dst, c.conv_state_elems() * 4, stream)?;
-                KernelLaunch::new(gpu, s.conv_window)
+                KernelLaunch::new(gpu, kernels.conv_window)
             };
             launch = launch.arg_ptr(conv_dst);
             launch
@@ -118,9 +146,10 @@ impl Glm5NextKdaLayer {
                 .launch(stream)?;
         }
         // 2026-10-13: The snapshots above read the packed rows, so the pack ran in `front_end`.
-        self.conv_tokens(gpu, k, state, ws, Pack::InFrontEnd, stream)?;
+        let conv = (kernels.conv_tokens, kernels.conv_window);
+        self.conv_tokens_with(gpu, conv, k, state, ws, Pack::InFrontEnd, stream)?;
         let snap = |t: usize| snapshots.get(t).map_or(DevicePtr::NULL, |p| p.0);
-        KernelLaunch::new(gpu, s.recurrent_snap)
+        KernelLaunch::new(gpu, kernels.recurrent_snap)
             .grid([c.heads as u32, (d / SEQ_VB) as u32, 1])
             .block([SEQ_VB as u32, 1, 1])
             .shared_mem((3 * d * 4) as u32)
@@ -159,16 +188,40 @@ impl Glm5NextKdaLayer {
         pack: Pack,
         stream: u64,
     ) -> Result<()> {
+        let s = &self.kernels.seq;
+        self.conv_tokens_with(
+            gpu,
+            (s.conv_tokens, s.conv_window),
+            k,
+            state,
+            ws,
+            pack,
+            stream,
+        )
+    }
+
+    /// 2026-10-23: [`Self::conv_tokens`] by `(tokens, window)`: the packed-rows conv and the
+    /// window advance (the fused pack under [`Pack::InConv`] keeps the layer's).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn conv_tokens_with(
+        &self,
+        gpu: &dyn GpuBackend,
+        (tokens, window): (KernelHandle, KernelHandle),
+        k: usize,
+        state: &KdaSeqState,
+        ws: &Glm5NextKdaWorkspace,
+        pack: Pack,
+        stream: u64,
+    ) -> Result<()> {
         let c = &self.cfg;
         let cd = c.conv_dim();
         let io = RowIo::workspace(c, ws, 0);
-        let s = &self.kernels.seq;
         if pack == Pack::InConv {
             self.conv_tokens_parts(gpu, k, state, ws, stream)?;
         } else {
-            self.conv_tokens_packed(gpu, k, state, io, stream)?;
+            self.conv_tokens_packed(gpu, tokens, k, state, io, stream)?;
         }
-        KernelLaunch::new(gpu, s.conv_window)
+        KernelLaunch::new(gpu, window)
             .grid([div_ceil(cd as u32, 256), 1, 1])
             .block([256, 1, 1])
             .arg_ptr(state.conv)
@@ -183,6 +236,7 @@ impl Glm5NextKdaLayer {
     fn conv_tokens_packed(
         &self,
         gpu: &dyn GpuBackend,
+        kernel: KernelHandle,
         k: usize,
         state: &KdaSeqState,
         io: RowIo,
@@ -190,7 +244,7 @@ impl Glm5NextKdaLayer {
     ) -> Result<()> {
         let c = &self.cfg;
         let (cd, d) = (c.conv_dim(), c.head_dim);
-        KernelLaunch::new(gpu, self.kernels.seq.conv_tokens)
+        KernelLaunch::new(gpu, kernel)
             .grid([div_ceil(cd as u32, 256), k as u32, 1])
             .block([256, 1, 1])
             .arg_ptr(state.conv)
@@ -217,6 +271,18 @@ pub(super) fn snap_tokens_apply(k: usize, snapshots: usize) -> bool {
 /// head's 128 columns run as four blocks.
 const SEQ_VB: usize = 32;
 
+/// 2026-10-23: The kernels of a snapshotting verify's stateful half
+/// ([`Glm5NextKdaLayer::stateful_tokens_snap_with`]).
+#[derive(Clone, Copy, Debug)]
+pub(super) struct SnapKernels {
+    /// 2026-10-23: `causal_conv1d_window_advance_to` per snapshot, or `None` for a copy then
+    /// `conv_window`.
+    pub advance_to: Option<KernelHandle>,
+    pub conv_tokens: KernelHandle,
+    pub conv_window: KernelHandle,
+    pub recurrent_snap: KernelHandle,
+}
+
 impl Glm5NextKdaLayer {
     /// 2026-10-10: One recurrent step of the row buffers `io` on `state.recurrent` with
     /// `kda_recurrent_decode_bf16_seq_reg` at T = 1, as [`Self::stateful_tokens`] launches it for
@@ -229,15 +295,33 @@ impl Glm5NextKdaLayer {
         state: &KdaSeqState,
         stream: u64,
     ) -> Result<()> {
-        let c = &self.cfg;
-        let (qkv, d) = (c.qkv_dim(), c.head_dim);
+        let d = self.cfg.head_dim;
         if self.kernels.seq.recurrent.0 == 0 || d != KDA_REG_D {
             bail!(
                 "METRALE_GLM_KDA_ROW_REG=1: needs kda_recurrent_decode_bf16_seq_reg and \
                  head_dim {KDA_REG_D} (head_dim {d})"
             );
         }
-        KernelLaunch::new(gpu, self.kernels.seq.recurrent)
+        self.recurrent_reg_launch(gpu, self.kernels.seq.recurrent, io, state, stream)
+    }
+
+    /// 2026-10-23: One recurrent step of `io` on `state.recurrent` by `kernel` at T = 1
+    /// (`kda_recurrent_decode_bf16_seq_reg`'s arguments); refuses a head_dim other than
+    /// `KDA_REG_D`.
+    pub(super) fn recurrent_reg_launch(
+        &self,
+        gpu: &dyn GpuBackend,
+        kernel: KernelHandle,
+        io: RowIo,
+        state: &KdaSeqState,
+        stream: u64,
+    ) -> Result<()> {
+        let c = &self.cfg;
+        let (qkv, d) = (c.qkv_dim(), c.head_dim);
+        if d != KDA_REG_D {
+            bail!("kda_recurrent_decode_bf16_seq_reg takes head_dim {KDA_REG_D} (head_dim {d})");
+        }
+        KernelLaunch::new(gpu, kernel)
             .grid([c.heads as u32, (d / SEQ_VB) as u32, 1])
             .block([SEQ_VB as u32, 1, 1])
             .shared_mem((3 * d * 4) as u32)

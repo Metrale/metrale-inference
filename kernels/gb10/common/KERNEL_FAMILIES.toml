@@ -2864,7 +2864,7 @@ layer_kind = "linear_attention"
 per_sequence = ["verify"]
 sites = ["kda.short_conv", "kda.conv_ckpt", "kda.l2", "kda.recur"]
 rows_above = 1
-cite = "crates/model-arch/src/glm5next_kda/decode.rs:451"
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:457"
 holds = "for row in 0..k {"
 note = "KDA verify: conv and recurrence one row per launch (stateful_row); 2026-10-09: without per-row snapshots, one conv and one recurrent launch under METRALE_GLM_KDA_SEQ_TOKENS"
 # 2026-10-22: The recipe's METRALE_GLM_KDA_VERIFY_TOKENS=1 takes stateful_tokens_snap at 2..=4 rows

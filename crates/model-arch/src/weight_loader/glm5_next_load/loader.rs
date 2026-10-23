@@ -384,8 +384,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                 keep_slot_graphs: lc.levers.glm_keep_slot_graphs,
                 dump: dump.clone(),
                 levers,
-                moe_plans: Default::default(),
-                mhc_plans: Default::default(),
+                plans: Default::default(),
             }));
         }
         if let Some(l2) = &l2 {

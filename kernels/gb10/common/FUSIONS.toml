@@ -2769,7 +2769,7 @@ rows = [1, 1]
 modes = ["decode"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_kda/mod.rs:194-234,250-268,283-302,317-326,337-356,378-387; crates/model-arch/src/glm5next_mlp/forward/dense.rs:83-95 (shared expert down)"
+cite = "crates/model-arch/src/glm5next_kda/mod.rs:195-235,251-269,284-292,295-304,315-334,356-365; crates/model-arch/src/glm5next_mlp/forward/dense.rs:83-95 (shared expert down)"
 
 [[rule]]
 id = "glm_bf16_gemv_dsa"
@@ -2824,7 +2824,7 @@ rows = [1, 16]
 modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 10
-cite = "crates/model-arch/src/glm5next_kda/mod.rs:269-278; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_kda/conv_pack.rs:48,75 (Pack::InFrontEnd: glm_kda_conv_pack off, crates/settings/src/groups/kernels.rs:123; grid.y = rows)"
+cite = "crates/model-arch/src/glm5next_kda/mod.rs:270-279; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_kda/conv_pack.rs:48,75 (Pack::InFrontEnd: glm_kda_conv_pack off, crates/settings/src/groups/kernels.rs:123; grid.y = rows)"
 
 # 2026-10-08: The decode conv writes BF16 q|k|v rows (`causal_conv1d_update_l2norm`), which the
 # recurrence reads; the circuit's conv edges are FP32 as the GatedDeltaNet decode keeps them.
@@ -2857,7 +2857,7 @@ rows = [1, 16]
 modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_kda/mod.rs:303-314,328-334; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_kda/gate_at.rs:89 (kda_gate_bf16 grid rows x heads), crates/model-arch/src/glm5next_kda/mod.rs:396; kda_gates_w8a8_k128_rows declines at declared formats (crates/model-arch/src/glm5next_kda/gates_fused.rs:76-81,109-113)"
+cite = "crates/model-arch/src/glm5next_kda/mod.rs:292,306-312, crates/model-arch/src/glm5next_kda/plan.rs:131-154; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_kda/gate_at.rs:89 (kda_gate_bf16 grid rows x heads), crates/model-arch/src/glm5next_kda/mod.rs:374; kda_gates_w8a8_k128_rows declines at declared formats (crates/model-arch/src/glm5next_kda/gates_fused.rs:78-83,116-120)"
 
 [[rule]]
 id = "glm_kda_recurrence"
@@ -2870,7 +2870,7 @@ modes = ["decode", "multi_seq", "verify"]
 when = { ssm_h_dtype = "f32" }
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_kda/decode.rs:95-111 (the shared-memory kernel when the target ships it; :112-127 the 2R+2W fallback); 2026-10-22: one launch per row in every mode at the default levers: a verify walks its rows (crates/model-arch/src/glm5next_kda/decode.rs:301-330, stateful_row :94; glm_kda_seq_tokens and glm_kda_verify_tokens off, crates/settings/src/groups/kernels.rs:132-133), a batched decode steps row by row (crates/model-arch/src/glm5next_kda/rows.rs:105-135, glm_kda_seq_rows unset = Off, crates/settings/src/groups/kernels.rs:131); glm_kda_row_reg off (crates/model-arch/src/glm5next_kda/decode.rs:148)"
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:95-123 (the shared-memory kernel when the target ships it; :124-139 the 2R+2W fallback); 2026-10-22: one launch per row in every mode at the default levers: a verify walks its rows (crates/model-arch/src/glm5next_kda/decode.rs:313-342, stateful_row :94; glm_kda_seq_tokens and glm_kda_verify_tokens off, crates/settings/src/groups/kernels.rs:132-133), a batched decode steps row by row (crates/model-arch/src/glm5next_kda/rows.rs:105-135, glm_kda_seq_rows unset = Off, crates/settings/src/groups/kernels.rs:131); glm_kda_row_reg off (crates/model-arch/src/glm5next_kda/decode.rs:160)"
 
 [[rule]]
 id = "glm_kda_o_norm"
@@ -2882,7 +2882,7 @@ rows = [1, 16]
 modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_kda/mod.rs:368-377; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_kda/mod.rs:439 (grid rows x heads)"
+cite = "crates/model-arch/src/glm5next_kda/mod.rs:346-355; 2026-10-22: one launch over the k rows of a verify (forward_k -> forward_rows_with, crates/model-arch/src/glm5next_layer/steps/forward.rs:232,326) and the 2..=16 rows of a batched decode group (crates/model-arch/src/glm5next_layer/steps/multi_seq.rs:95,197; glm_row_group 16, crates/settings/src/groups/scheduler.rs:48); crates/model-arch/src/glm5next_kda/mod.rs:416,431-432 (grid rows x heads)"
 
 # 2026-10-08: RMSNorm, FP8 quantisation and the paged store in one kernel; the norm hands its
 # FP32 result to the quantizer in registers.
@@ -3328,7 +3328,7 @@ rows = [2, 8]
 modes = ["multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_kda/mod.rs:213-250 (gemm -> glm_mm), :334 (q|k|v), :363 (f_a), :384 (b), :407,418 (g_a, g_b), :449 (o); crates/model-arch/src/glm5next_kda/gate_at.rs:76 (f_b); crates/model-arch/src/glm5next_mlp/forward/dense.rs:114 (shared expert down); crates/model-arch/src/glm5next_layer/wide_gemv.rs:105-115,218-220,120-141"
+cite = "crates/model-arch/src/glm5next_kda/mod.rs:214-251 (gemm -> glm_mm), :312 (q|k|v), :341 (f_a), :362 (b), :385,396 (g_a, g_b), :452 (o); crates/model-arch/src/glm5next_kda/gate_at.rs:76 (f_b); crates/model-arch/src/glm5next_mlp/forward/dense.rs:114 (shared expert down); crates/model-arch/src/glm5next_layer/wide_gemv.rs:105-115,218-220,120-141"
 
 [[rule]]
 id = "glm_bf16_gemv_wide_kda"
@@ -3340,7 +3340,7 @@ rows = [9, 16]
 modes = ["multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_kda/mod.rs:213-250,334,363,384,407,418,449; crates/model-arch/src/glm5next_kda/gate_at.rs:76; crates/model-arch/src/glm5next_mlp/forward/dense.rs:114; crates/model-arch/src/glm5next_layer/wide_gemv.rs:98-99,105-115,218-220,120-141"
+cite = "crates/model-arch/src/glm5next_kda/mod.rs:214-251,312,341,362,385,396,452; crates/model-arch/src/glm5next_kda/gate_at.rs:76; crates/model-arch/src/glm5next_mlp/forward/dense.rs:114; crates/model-arch/src/glm5next_layer/wide_gemv.rs:98-99,105-115,218-220,120-141"
 
 [[rule]]
 id = "glm_bf16_gemv_few_dsa"
@@ -3560,7 +3560,7 @@ rows = [2, 16]
 modes = ["verify"]
 numerics = "reference"
 priority = 110
-cite = "crates/model-arch/src/glm5next_kda/decode.rs:301-330 (stateful_row per row, then snapshot_state for rows with a snapshot slot), :94-115"
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:313-342 (stateful_row per row, then snapshot_state for rows with a snapshot slot), :94-127"
 
 [[rule]]
 id = "glm_kda_conv_l2_rows"
@@ -3576,7 +3576,7 @@ rows = [2, 16]
 modes = ["multi_seq"]
 numerics = "reference"
 priority = 120
-cite = "crates/model-arch/src/glm5next_kda/rows.rs:105-135 (decode_rows_then: stateful_row per row); crates/model-arch/src/glm5next_kda/decode.rs:94-115"
+cite = "crates/model-arch/src/glm5next_kda/rows.rs:105-135 (decode_rows_then: stateful_row per row); crates/model-arch/src/glm5next_kda/decode.rs:94-127"
 
 # 2026-10-22: The recipe arms of the KDA levers (METRALE_GLM_KDA_ROW_REG=1, _ROWS_REG=1,
 # _SEQ_ROWS=decode, _VERIFY_TOKENS=1). glm_kda_row_reg: every single-row recurrent step (the C=1
@@ -3594,7 +3594,7 @@ modes = ["decode", "multi_seq", "verify"]
 when = { ssm_h_dtype = "f32", glm_kda_row_reg = "on" }
 numerics = "reference"
 priority = 25
-cite = "crates/model-arch/src/glm5next_kda/decode.rs:148 (glm_kda_row_reg: recurrent_row_reg, crates/settings/src/groups/kernels.rs:130); crates/model-arch/src/glm5next_kda/seq_tokens.rs:225 (kda_recurrent_decode_bf16_seq_reg at T = 1); the per-row walks of crates/model-arch/src/glm5next_kda/decode.rs:301-330"
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:160 (glm_kda_row_reg: recurrent_row_reg, crates/settings/src/groups/kernels.rs:130); crates/model-arch/src/glm5next_kda/seq_tokens.rs:291 (kda_recurrent_decode_bf16_seq_reg at T = 1); the per-row walks of crates/model-arch/src/glm5next_kda/decode.rs:313-342"
 
 # 2026-10-22: glm_kda_verify_tokens: a 2..=4-row verify with one snapshot per row but the last
 # (snap_tokens_apply) runs its conv and recurrence once over the rows: each conv intermediate one
@@ -3621,7 +3621,7 @@ modes = ["verify"]
 when = { glm_kda_verify_tokens = "on" }
 numerics = "reference"
 priority = 125
-cite = "crates/model-arch/src/glm5next_kda/decode.rs:302-306 (snap_tokens: glm_kda_verify_tokens, crates/settings/src/groups/kernels.rs:133); crates/model-arch/src/glm5next_kda/seq_tokens.rs:212 (snap_tokens_apply: 2..=4 rows, k - 1 snapshots); crates/model-arch/src/glm5next_kda/seq_tokens.rs:77-146 (stateful_tokens_snap), :102 (window_advance_to per snapshot, glm_kda_conv_snap_to default on at crates/settings/src/groups/kernels.rs:124), :153-181 (conv_tokens: causal_conv1d_update_l2norm_tokens, then causal_conv1d_window_advance); crates/model-arch/src/glm5next_layer/steps/mix.rs:48-51 (a verify snapshots rows 0..k-2)"
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:314-318 (snap_tokens: glm_kda_verify_tokens, crates/settings/src/groups/kernels.rs:133); crates/model-arch/src/glm5next_kda/seq_tokens.rs:266 (snap_tokens_apply: 2..=4 rows, k - 1 snapshots); crates/model-arch/src/glm5next_kda/seq_tokens.rs:77-175 (stateful_tokens_snap), :96 (window_advance_to per snapshot, glm_kda_conv_snap_to default on at crates/settings/src/groups/kernels.rs:124), :153-181 (conv_tokens: causal_conv1d_update_l2norm_tokens, then causal_conv1d_window_advance); crates/model-arch/src/glm5next_layer/steps/mix.rs:48-51 (a verify snapshots rows 0..k-2)"
 
 [[rule]]
 id = "glm_kda_conv_tokens_verify_3"
@@ -3643,7 +3643,7 @@ modes = ["verify"]
 when = { glm_kda_verify_tokens = "on" }
 numerics = "reference"
 priority = 125
-cite = "crates/model-arch/src/glm5next_kda/decode.rs:302-306 (snap_tokens: glm_kda_verify_tokens, crates/settings/src/groups/kernels.rs:133); crates/model-arch/src/glm5next_kda/seq_tokens.rs:212 (snap_tokens_apply: 2..=4 rows, k - 1 snapshots); crates/model-arch/src/glm5next_kda/seq_tokens.rs:77-146 (stateful_tokens_snap), :102 (window_advance_to per snapshot, glm_kda_conv_snap_to default on at crates/settings/src/groups/kernels.rs:124), :153-181 (conv_tokens: causal_conv1d_update_l2norm_tokens, then causal_conv1d_window_advance); crates/model-arch/src/glm5next_layer/steps/mix.rs:48-51 (a verify snapshots rows 0..k-2)"
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:314-318 (snap_tokens: glm_kda_verify_tokens, crates/settings/src/groups/kernels.rs:133); crates/model-arch/src/glm5next_kda/seq_tokens.rs:266 (snap_tokens_apply: 2..=4 rows, k - 1 snapshots); crates/model-arch/src/glm5next_kda/seq_tokens.rs:77-175 (stateful_tokens_snap), :96 (window_advance_to per snapshot, glm_kda_conv_snap_to default on at crates/settings/src/groups/kernels.rs:124), :153-181 (conv_tokens: causal_conv1d_update_l2norm_tokens, then causal_conv1d_window_advance); crates/model-arch/src/glm5next_layer/steps/mix.rs:48-51 (a verify snapshots rows 0..k-2)"
 
 [[rule]]
 id = "glm_kda_conv_tokens_verify_4"
@@ -3666,7 +3666,7 @@ modes = ["verify"]
 when = { glm_kda_verify_tokens = "on" }
 numerics = "reference"
 priority = 125
-cite = "crates/model-arch/src/glm5next_kda/decode.rs:302-306 (snap_tokens: glm_kda_verify_tokens, crates/settings/src/groups/kernels.rs:133); crates/model-arch/src/glm5next_kda/seq_tokens.rs:212 (snap_tokens_apply: 2..=4 rows, k - 1 snapshots); crates/model-arch/src/glm5next_kda/seq_tokens.rs:77-146 (stateful_tokens_snap), :102 (window_advance_to per snapshot, glm_kda_conv_snap_to default on at crates/settings/src/groups/kernels.rs:124), :153-181 (conv_tokens: causal_conv1d_update_l2norm_tokens, then causal_conv1d_window_advance); crates/model-arch/src/glm5next_layer/steps/mix.rs:48-51 (a verify snapshots rows 0..k-2)"
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:314-318 (snap_tokens: glm_kda_verify_tokens, crates/settings/src/groups/kernels.rs:133); crates/model-arch/src/glm5next_kda/seq_tokens.rs:266 (snap_tokens_apply: 2..=4 rows, k - 1 snapshots); crates/model-arch/src/glm5next_kda/seq_tokens.rs:77-175 (stateful_tokens_snap), :96 (window_advance_to per snapshot, glm_kda_conv_snap_to default on at crates/settings/src/groups/kernels.rs:124), :153-181 (conv_tokens: causal_conv1d_update_l2norm_tokens, then causal_conv1d_window_advance); crates/model-arch/src/glm5next_layer/steps/mix.rs:48-51 (a verify snapshots rows 0..k-2)"
 
 [[rule]]
 id = "glm_kda_recurrence_verify_tokens"
@@ -3679,7 +3679,7 @@ modes = ["verify"]
 when = { ssm_h_dtype = "f32", glm_kda_verify_tokens = "on" }
 numerics = "reference"
 priority = 30
-cite = "crates/model-arch/src/glm5next_kda/decode.rs:302-306 (snap_tokens: glm_kda_verify_tokens, crates/settings/src/groups/kernels.rs:133); crates/model-arch/src/glm5next_kda/seq_tokens.rs:212 (snap_tokens_apply: 2..=4 rows, k - 1 snapshots); crates/model-arch/src/glm5next_kda/seq_tokens.rs:77-146 (stateful_tokens_snap), :102 (window_advance_to per snapshot, glm_kda_conv_snap_to default on at crates/settings/src/groups/kernels.rs:124), :153-181 (conv_tokens: causal_conv1d_update_l2norm_tokens, then causal_conv1d_window_advance); crates/model-arch/src/glm5next_layer/steps/mix.rs:48-51 (a verify snapshots rows 0..k-2)"
+cite = "crates/model-arch/src/glm5next_kda/decode.rs:314-318 (snap_tokens: glm_kda_verify_tokens, crates/settings/src/groups/kernels.rs:133); crates/model-arch/src/glm5next_kda/seq_tokens.rs:266 (snap_tokens_apply: 2..=4 rows, k - 1 snapshots); crates/model-arch/src/glm5next_kda/seq_tokens.rs:77-175 (stateful_tokens_snap), :96 (window_advance_to per snapshot, glm_kda_conv_snap_to default on at crates/settings/src/groups/kernels.rs:124), :153-181 (conv_tokens: causal_conv1d_update_l2norm_tokens, then causal_conv1d_window_advance); crates/model-arch/src/glm5next_layer/steps/mix.rs:48-51 (a verify snapshots rows 0..k-2)"
 
 # 2026-10-22: glm_kda_seq_rows = decode: a batched decode (one row per sequence, two or more
 # sequences) steps every row in one conv and one recurrent launch per launch group of <= 16 rows
@@ -4331,7 +4331,7 @@ modes = ["decode"]
 when = { glm_w4a16_gemv_seg = "on" }
 numerics = "reference"
 priority = 130
-cite = "crates/model-arch/src/glm5next_w4a16_seg.rs:246-256 (seg_gemv: one row, or 2..=gemv_rows rows; pipe_rows: glm_w4a16_gemv_pipe default on, crates/settings/src/groups/kernels.rs:164); crates/model-arch/src/glm5next_w4a16_dense.rs:446-495 (group_of_six, proj_group_registered); crates/model-layers/src/layers/ops/w4a16_gemv_pipe.rs:47-53 (w4a16_gemv_pipe_m1, _m2); crates/model-arch/src/glm5next_kda/mod.rs:291-313 (the six projections of one row as one group)"
+cite = "crates/model-arch/src/glm5next_w4a16_seg.rs:246-256 (seg_gemv: one row, or 2..=gemv_rows rows; pipe_rows: glm_w4a16_gemv_pipe default on, crates/settings/src/groups/kernels.rs:164); crates/model-arch/src/glm5next_w4a16_dense.rs:446-495 (group_of_six, proj_group_registered); crates/model-layers/src/layers/ops/w4a16_gemv_pipe.rs:47-53 (w4a16_gemv_pipe_m1, _m2); crates/model-arch/src/glm5next_kda/mod.rs:291-292, crates/model-arch/src/glm5next_kda/plan.rs:105-154 (the six projections of one row as one group)"
 
 [[rule]]
 id = "glm_w4a16_pipe_shared_1row"
@@ -4375,7 +4375,7 @@ modes = ["multi_seq", "verify"]
 when = { glm_w4a16_gemv_seg = "on", glm_w4a16_gemv_rows = "2" }
 numerics = "reference"
 priority = 130
-cite = "crates/model-arch/src/glm5next_w4a16_seg.rs:246-256 (seg_gemv: one row, or 2..=gemv_rows rows; pipe_rows: glm_w4a16_gemv_pipe default on, crates/settings/src/groups/kernels.rs:164); crates/model-arch/src/glm5next_w4a16_dense.rs:446-495 (group_of_six, proj_group_registered); crates/model-layers/src/layers/ops/w4a16_gemv_pipe.rs:47-53 (w4a16_gemv_pipe_m1, _m2); crates/model-arch/src/glm5next_kda/mod.rs:291-313 (the six projections as one group)"
+cite = "crates/model-arch/src/glm5next_w4a16_seg.rs:246-256 (seg_gemv: one row, or 2..=gemv_rows rows; pipe_rows: glm_w4a16_gemv_pipe default on, crates/settings/src/groups/kernels.rs:164); crates/model-arch/src/glm5next_w4a16_dense.rs:446-495 (group_of_six, proj_group_registered); crates/model-layers/src/layers/ops/w4a16_gemv_pipe.rs:47-53 (w4a16_gemv_pipe_m1, _m2); crates/model-arch/src/glm5next_kda/mod.rs:291-292, crates/model-arch/src/glm5next_kda/plan.rs:105-154 (the six projections as one group)"
 
 [[rule]]
 id = "glm_w4a16_pipe_kda_o_2rows"
@@ -4394,7 +4394,7 @@ modes = ["multi_seq", "verify"]
 when = { glm_w4a16_gemv_seg = "on", glm_w4a16_gemv_rows = "2" }
 numerics = "reference"
 priority = 130
-cite = "crates/model-arch/src/glm5next_w4a16_seg.rs:246-256 (seg_gemv: one row, or 2..=gemv_rows rows; pipe_rows: glm_w4a16_gemv_pipe default on, crates/settings/src/groups/kernels.rs:164); crates/model-arch/src/glm5next_w4a16_dense.rs:446-495 (group_of_six, proj_group_registered); crates/model-layers/src/layers/ops/w4a16_gemv_pipe.rs:47-53 (w4a16_gemv_pipe_m1, _m2); crates/model-arch/src/glm5next_w4a16_dense.rs:364-375 (a lone 2-row projection of any K on the pipe); crates/model-arch/src/glm5next_kda/mod.rs:439-452 (the output norm, then o)"
+cite = "crates/model-arch/src/glm5next_w4a16_seg.rs:246-256 (seg_gemv: one row, or 2..=gemv_rows rows; pipe_rows: glm_w4a16_gemv_pipe default on, crates/settings/src/groups/kernels.rs:164); crates/model-arch/src/glm5next_w4a16_dense.rs:446-495 (group_of_six, proj_group_registered); crates/model-layers/src/layers/ops/w4a16_gemv_pipe.rs:47-53 (w4a16_gemv_pipe_m1, _m2); crates/model-arch/src/glm5next_w4a16_dense.rs:364-375 (a lone 2-row projection of any K on the pipe); crates/model-arch/src/glm5next_kda/mod.rs:409-418 (the output norm, then o)"
 
 [[rule]]
 id = "glm_w4a16_pipe_shared_2rows"
@@ -4435,7 +4435,7 @@ modes = ["multi_seq", "verify"]
 when = { glm_w4a16_seg = "fuse" }
 numerics = "reference"
 priority = 125
-cite = "crates/model-arch/src/glm5next_dense_levers.rs:59-68,114 (glm_w4a16_seg fuse); crates/model-arch/src/glm5next_w4a16_seg.rs:259-269 (gemv_tier above gemv_rows; split 1 under fuse); crates/model-arch/src/glm5next_w4a16_dense.rs:381-388,451-495 (the segmented row tile); crates/model-layers/src/layers/ops/w4a16_tc_rows_seg.rs:47-75 (w4a16_tc_rows_seg_16_k1 up to 16 rows); crates/model-arch/src/glm5next_kda/mod.rs:291-295,314-324 (q|k|v one group)"
+cite = "crates/model-arch/src/glm5next_dense_levers.rs:59-68,114 (glm_w4a16_seg fuse); crates/model-arch/src/glm5next_w4a16_seg.rs:259-269 (gemv_tier above gemv_rows; split 1 under fuse); crates/model-arch/src/glm5next_w4a16_dense.rs:381-388,451-495 (the segmented row tile); crates/model-layers/src/layers/ops/w4a16_tc_rows_seg.rs:47-75 (w4a16_tc_rows_seg_16_k1 up to 16 rows); crates/model-arch/src/glm5next_kda/mod.rs:291,293-302, crates/model-arch/src/glm5next_kda/plan.rs:115-119 (q|k|v one group)"
 
 [[rule]]
 id = "glm_w4a16_seg_kda_low"
@@ -4454,7 +4454,7 @@ modes = ["multi_seq", "verify"]
 when = { glm_w4a16_seg = "fuse" }
 numerics = "reference"
 priority = 125
-cite = "crates/model-arch/src/glm5next_dense_levers.rs:59-68,114 (glm_w4a16_seg fuse); crates/model-arch/src/glm5next_w4a16_seg.rs:259-269 (gemv_tier above gemv_rows; split 1 under fuse); crates/model-arch/src/glm5next_w4a16_dense.rs:381-388,451-495 (the segmented row tile); crates/model-layers/src/layers/ops/w4a16_tc_rows_seg.rs:47-75 (w4a16_tc_rows_seg_16_k1 up to 16 rows); crates/model-arch/src/glm5next_kda/mod.rs:296-300,353-361 (f_a|b|g_a one group)"
+cite = "crates/model-arch/src/glm5next_dense_levers.rs:59-68,114 (glm_w4a16_seg fuse); crates/model-arch/src/glm5next_w4a16_seg.rs:259-269 (gemv_tier above gemv_rows; split 1 under fuse); crates/model-arch/src/glm5next_w4a16_dense.rs:381-388,451-495 (the segmented row tile); crates/model-layers/src/layers/ops/w4a16_tc_rows_seg.rs:47-75 (w4a16_tc_rows_seg_16_k1 up to 16 rows); crates/model-arch/src/glm5next_kda/mod.rs:291,330-339, crates/model-arch/src/glm5next_kda/plan.rs:120-124 (f_a|b|g_a one group)"
 
 [[rule]]
 id = "glm_w4a16_seg_kda_o"
@@ -4473,7 +4473,7 @@ modes = ["multi_seq", "verify"]
 when = { glm_w4a16_seg = "fuse" }
 numerics = "reference"
 priority = 125
-cite = "crates/model-arch/src/glm5next_dense_levers.rs:59-68,114 (glm_w4a16_seg fuse); crates/model-arch/src/glm5next_w4a16_seg.rs:259-269 (gemv_tier above gemv_rows; split 1 under fuse); crates/model-arch/src/glm5next_w4a16_dense.rs:381-388,451-495 (the segmented row tile); crates/model-layers/src/layers/ops/w4a16_tc_rows_seg.rs:47-75 (w4a16_tc_rows_seg_16_k1 up to 16 rows); crates/model-arch/src/glm5next_kda/mod.rs:439-452 (the output norm, then o)"
+cite = "crates/model-arch/src/glm5next_dense_levers.rs:59-68,114 (glm_w4a16_seg fuse); crates/model-arch/src/glm5next_w4a16_seg.rs:259-269 (gemv_tier above gemv_rows; split 1 under fuse); crates/model-arch/src/glm5next_w4a16_dense.rs:381-388,451-495 (the segmented row tile); crates/model-layers/src/layers/ops/w4a16_tc_rows_seg.rs:47-75 (w4a16_tc_rows_seg_16_k1 up to 16 rows); crates/model-arch/src/glm5next_kda/mod.rs:409-418 (the output norm, then o)"
 
 [[rule]]
 id = "glm_w4a16_seg_shared"
@@ -4520,7 +4520,7 @@ modes = ["decode"]
 when = { glm_w4a16_gemv_seg = "on" }
 numerics = "reference"
 priority = 40
-cite = "crates/model-arch/src/glm5next_kda/gates_fused.rs:43-62 (the one-row kernel needs glm_kda_gates_fused, off), :66-84 (try_gates_rows: glm_kda_gates_rows default on, crates/settings/src/groups/kernels.rs:126; 1..=GATES_MAX_ROWS 8, :36), :103-130 (refused unless f_a and g_a came from one grouped launch and f_b, g_b are on the per-row FP8 tier); the low-rank group: the pipe six-group (crates/model-arch/src/glm5next_w4a16_dense.rs:446-448)"
+cite = "crates/model-arch/src/glm5next_kda/gates_fused.rs:43-64 (the one-row kernel needs glm_kda_gates_fused, off), :68-86 (try_gates_rows: glm_kda_gates_rows default on, crates/settings/src/groups/kernels.rs:126; 1..=GATES_MAX_ROWS 8, :36), :103-130 (refused unless f_a and g_a came from one grouped launch and f_b, g_b are on the per-row FP8 tier); the low-rank group: the pipe six-group (crates/model-arch/src/glm5next_w4a16_dense.rs:446-448)"
 
 [[rule]]
 id = "glm_kda_gates_w8a8_rows_2rows"
@@ -4539,7 +4539,7 @@ modes = ["multi_seq", "verify"]
 when = { glm_w4a16_gemv_seg = "on", glm_w4a16_gemv_rows = "2" }
 numerics = "reference"
 priority = 40
-cite = "crates/model-arch/src/glm5next_kda/gates_fused.rs:43-62 (the one-row kernel needs glm_kda_gates_fused, off), :66-84 (try_gates_rows: glm_kda_gates_rows default on, crates/settings/src/groups/kernels.rs:126; 1..=GATES_MAX_ROWS 8, :36), :103-130 (refused unless f_a and g_a came from one grouped launch and f_b, g_b are on the per-row FP8 tier); the low-rank group: the pipe six-group at 2 rows (crates/model-arch/src/glm5next_w4a16_dense.rs:446-448)"
+cite = "crates/model-arch/src/glm5next_kda/gates_fused.rs:43-64 (the one-row kernel needs glm_kda_gates_fused, off), :68-86 (try_gates_rows: glm_kda_gates_rows default on, crates/settings/src/groups/kernels.rs:126; 1..=GATES_MAX_ROWS 8, :36), :103-130 (refused unless f_a and g_a came from one grouped launch and f_b, g_b are on the per-row FP8 tier); the low-rank group: the pipe six-group at 2 rows (crates/model-arch/src/glm5next_w4a16_dense.rs:446-448)"
 
 [[rule]]
 id = "glm_kda_gates_w8a8_rows_seg"
@@ -4558,7 +4558,7 @@ modes = ["multi_seq", "verify"]
 when = { glm_w4a16_seg = "fuse" }
 numerics = "reference"
 priority = 40
-cite = "crates/model-arch/src/glm5next_kda/gates_fused.rs:43-62 (the one-row kernel needs glm_kda_gates_fused, off), :66-84 (try_gates_rows: glm_kda_gates_rows default on, crates/settings/src/groups/kernels.rs:126; 1..=GATES_MAX_ROWS 8, :36), :103-130 (refused unless f_a and g_a came from one grouped launch and f_b, g_b are on the per-row FP8 tier); the low-rank group: the fused f_a|b|g_a segment (crates/model-arch/src/glm5next_kda/mod.rs:296-300,353-361)"
+cite = "crates/model-arch/src/glm5next_kda/gates_fused.rs:43-64 (the one-row kernel needs glm_kda_gates_fused, off), :68-86 (try_gates_rows: glm_kda_gates_rows default on, crates/settings/src/groups/kernels.rs:126; 1..=GATES_MAX_ROWS 8, :36), :103-130 (refused unless f_a and g_a came from one grouped launch and f_b, g_b are on the per-row FP8 tier); the low-rank group: the fused f_a|b|g_a segment (crates/model-arch/src/glm5next_kda/mod.rs:291,330-339, crates/model-arch/src/glm5next_kda/plan.rs:120-124)"
 
 # 2026-10-22: W8A8 (FP8 per-channel weights, per-token FP8 activations): `glm5next_fp8_dense::proj`
 # (crates/model-arch/src/glm5next_fp8_dense.rs:306-366) quantizes the input
@@ -4616,7 +4616,7 @@ rows = [1, 8]
 modes = ["decode", "multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_kda/gate_at.rs:76 (f_b), crates/model-arch/src/glm5next_kda/mod.rs:418 (g_b); crates/model-arch/src/glm5next_kda/gates_fused.rs:76-81,109-113 (kda_gates_w8a8_k128_rows needs the W4A16-seg low-rank group, glm_w4a16_seg unset); crates/model-arch/src/glm5next_fp8_dense.rs:341-366"
+cite = "crates/model-arch/src/glm5next_kda/gate_at.rs:76 (f_b), crates/model-arch/src/glm5next_kda/mod.rs:396 (g_b); crates/model-arch/src/glm5next_kda/gates_fused.rs:78-83,116-120 (kda_gates_w8a8_k128_rows needs the W4A16-seg low-rank group, glm_w4a16_seg unset); crates/model-arch/src/glm5next_fp8_dense.rs:341-366"
 
 [[rule]]
 id = "glm_w8a8_kda_mb2"
@@ -4628,7 +4628,7 @@ rows = [9, 16]
 modes = ["multi_seq", "verify"]
 numerics = "reference"
 priority = 20
-cite = "crates/model-arch/src/glm5next_kda/gate_at.rs:76; crates/model-arch/src/glm5next_kda/mod.rs:418; crates/model-arch/src/glm5next_fp8_dense.rs:341-366; crates/model-layers/src/layers/ops/w8a8_decode.rs:259-267"
+cite = "crates/model-arch/src/glm5next_kda/gate_at.rs:76; crates/model-arch/src/glm5next_kda/mod.rs:396; crates/model-arch/src/glm5next_fp8_dense.rs:341-366; crates/model-layers/src/layers/ops/w8a8_decode.rs:259-267"
 
 # 2026-10-22: The indexer key and compress gate at one row reuse the layer input's quantization
 # (`stable_input`, the split launch's: decode_k.rs:119-123, glm5next_fp8_dense.rs:341-345), so
