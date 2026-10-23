@@ -481,9 +481,11 @@ pub use fused::{SELECT_FUSED_MAXK, SELECT_FUSED_SMEM, fused_shape};
 mod pipe;
 pub use pipe::{DsaPipeRegions, SCORES_PIPE_SMEM, scores_pipe_for};
 mod scores;
-
 pub(crate) use scores::rows_ceiling_for as rows_ceiling_ready;
 mod topk;
+pub(crate) use topk::{TOPK_MC_PASSES, topk_mc_ctas};
+mod planned;
+pub use planned::{PlannedSelect, select_planned};
 
 #[cfg(test)]
 mod ceiling_fast_tests;

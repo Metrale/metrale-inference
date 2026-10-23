@@ -32,6 +32,7 @@ pub mod binding;
 pub mod chunk16;
 pub mod chunk64;
 pub mod cut;
+pub mod plan;
 pub mod tp;
 pub mod tp_bind;
 
@@ -51,7 +52,7 @@ mod seq_tokens;
 pub use config::{Glm5NextKdaConfig, Glm5NextKdaWeights};
 use conv_pack::Pack;
 use gate_at::GateAt;
-pub use kernels::{Glm5NextKdaKernels, KDA_REG_D, KDA_ROWS_MAX, KdaSeqKernels};
+pub use kernels::{Glm5NextKdaKernels, KDA_REG_D, KDA_ROWS_MAX, KdaSeqKernels, entry};
 pub use replay::KdaVerifyRecord;
 
 use anyhow::{Result, bail};
@@ -288,31 +289,8 @@ impl Glm5NextKdaLayer {
 
         // 2026-09-25: Three separate `[T, qkv]` projections, then one pack (see the module doc).
         // 2026-10-09: One launch under `METRALE_GLM_W4A16_SEG` (`proj_group`), else one each.
-        let w = &self.weights;
-        let qkv_group: Vec<_> = [&w.q_proj, &w.k_proj, &w.v_proj]
-            .into_iter()
-            .enumerate()
-            .map(|(i, p)| (p.weight, ws.qkv_parts.offset(i * t * qkv * 2), qkv))
-            .collect();
-        let low_group = [
-            (w.f_a.weight, ws.lowrank, hd),
-            (w.b_proj.weight, ws.beta_bf16, c.heads),
-            (w.g_a.weight, ws.lowrank_g, hd),
-        ];
-        // 2026-10-10: One row under `METRALE_GLM_W4A16_GEMV_SEG`: all six in one launch.
-        // 2026-10-11: Also 2..=4 GEMV-tier rows (`glm5next_w4a16_dense::group_of_six`).
-        let front = crate::glm5next_w4a16_dense::group_of_six(&self.levers.dense, t)? && {
-            let all: Vec<_> = qkv_group.iter().chain(&low_group).copied().collect();
-            crate::glm5next_w4a16_dense::proj_group(
-                gpu,
-                &self.levers.dense,
-                &all,
-                hidden,
-                t,
-                hid,
-                stream,
-            )?
-        };
+        let (qkv_group, low_group) = self.proj_groups(t, ws);
+        let front = self.six_group(gpu, hidden, t, ws, stream)?;
         let grouped = front
             || crate::glm5next_w4a16_dense::proj_group(
                 gpu,
@@ -436,8 +414,22 @@ impl Glm5NextKdaLayer {
         ws: &Glm5NextKdaWorkspace,
         stream: u64,
     ) -> Result<()> {
+        self.o_norm_launch(gpu, self.kernels.o_norm, t, ws, stream)?;
+        self.o_proj(gpu, t, ws, stream)
+    }
+
+    /// 2026-10-23: The sigmoid-gated RMSNorm of rows `0..t` by `kernel`
+    /// (`kda_o_norm_gated_bf16`'s arguments).
+    fn o_norm_launch(
+        &self,
+        gpu: &dyn GpuBackend,
+        kernel: KernelHandle,
+        t: usize,
+        ws: &Glm5NextKdaWorkspace,
+        stream: u64,
+    ) -> Result<()> {
         let c = &self.cfg;
-        KernelLaunch::new(gpu, self.kernels.o_norm)
+        KernelLaunch::new(gpu, kernel)
             .grid([(t * c.heads) as u32, 1, 1])
             .block([c.head_dim as u32, 1, 1])
             .arg_ptr(ws.core)
@@ -446,7 +438,18 @@ impl Glm5NextKdaLayer {
             .arg_ptr(ws.o_norm_out)
             .arg_u32(c.head_dim as u32)
             .arg_f32(c.rms_norm_eps)
-            .launch(stream)?;
+            .launch(stream)
+    }
+
+    /// 2026-10-23: `o_proj` of rows `0..t` of `o_norm_out` into `final_out`.
+    fn o_proj(
+        &self,
+        gpu: &dyn GpuBackend,
+        t: usize,
+        ws: &Glm5NextKdaWorkspace,
+        stream: u64,
+    ) -> Result<()> {
+        let c = &self.cfg;
         self.gemm(
             gpu,
             ws.o_norm_out,

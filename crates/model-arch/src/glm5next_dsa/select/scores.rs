@@ -156,27 +156,16 @@ pub(super) fn launch_scores(
                 [scores_warp_grid_x(npools_a), geom.q_rows as u32, 1],
             ),
         };
-        return KernelLaunch::new(gpu, k)
-            .grid(grid)
-            .block([256, 1, 1])
-            .arg_ptr(inputs.q)
-            .arg_ptr(inputs.rows.pool_keys)
-            .arg_ptr(inputs.weights)
-            .arg_ptr(inputs.rows.bt)
-            .arg_ptr(inputs.q_pos)
-            .arg_ptr(scratch.scores)
-            .arg_ptr(scratch.valid_cand)
-            .arg_u32(geom.q_rows as u32)
-            .arg_u32(npools_a as u32)
-            .arg_u32(geom.index_heads as u32)
-            .arg_u32(d as u32)
-            .arg_u32(kp as u32)
-            .arg_u32(seq_a as u32)
-            .arg_u32(inputs.rows.block_size)
-            .arg_u32(inputs.rows.pk_blk)
-            .arg_f32(scale)
-            .arg_ptr(gd)
-            .launch(stream);
+        return launch_persisted(
+            gpu,
+            k,
+            grid,
+            geom,
+            inputs,
+            scratch,
+            (npools_a, seq_a),
+            stream,
+        );
     }
     // 2026-10-21: `METRALE_GLM_DSA_SCORES_WARP` (default on): the same scores, one warp per
     // pool, when the shape fits the kernel.
@@ -226,14 +215,52 @@ pub(super) fn launch_scores(
         .launch(stream)
 }
 
+/// 2026-10-23: The persisted keys' scores on `k` over `grid` (`launch_scores`'s pick, or a plan's
+/// lane-per-head kernel over one block per SM).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn launch_persisted(
+    gpu: &dyn GpuBackend,
+    k: KernelHandle,
+    grid: [u32; 3],
+    geom: &DsaSelectGeometry,
+    inputs: &DsaSelectInputs,
+    scratch: &DsaSelectScratch,
+    (npools_a, seq_a): (usize, usize),
+    stream: u64,
+) -> Result<()> {
+    let d = geom.index_head_dim;
+    KernelLaunch::new(gpu, k)
+        .grid(grid)
+        .block([256, 1, 1])
+        .arg_ptr(inputs.q)
+        .arg_ptr(inputs.rows.pool_keys)
+        .arg_ptr(inputs.weights)
+        .arg_ptr(inputs.rows.bt)
+        .arg_ptr(inputs.q_pos)
+        .arg_ptr(scratch.scores)
+        .arg_ptr(scratch.valid_cand)
+        .arg_u32(geom.q_rows as u32)
+        .arg_u32(npools_a as u32)
+        .arg_u32(geom.index_heads as u32)
+        .arg_u32(d as u32)
+        .arg_u32(geom.index_kpool as u32)
+        .arg_u32(seq_a as u32)
+        .arg_u32(inputs.rows.block_size)
+        .arg_u32(inputs.rows.pk_blk)
+        .arg_f32((d as f32).powf(-0.5))
+        .arg_ptr(inputs.geom_dev)
+        .launch(stream)
+}
+
 /// 2026-10-21: A persisted pass's expansion: `dsa_expand_selection_rows` for its rows, which
 /// recomputes the pools' token slots and S from each row's device geometry instead of reading
 /// `pool_indices` (the same tokens `dsa_expand_selection` writes on a paged cache). `strides`
 /// are the scores' and selected pools' row strides, the pass's `(npools_a, selk_a)`.
+/// 2026-10-23: `expand` is `rows.expand_selection` (the layer's, or a plan's).
 #[allow(clippy::too_many_arguments)]
-pub(super) fn launch_expand_geom(
+pub(crate) fn launch_expand_geom(
     gpu: &dyn GpuBackend,
-    kernels: &Glm5NextDsaKernels,
+    expand: KernelHandle,
     cfg: &Glm5NextDsaConfig,
     geom: &DsaSelectGeometry,
     inputs: &DsaSelectInputs,
@@ -241,7 +268,7 @@ pub(super) fn launch_expand_geom(
     (sc_stride, sel_stride): (usize, usize),
     stream: u64,
 ) -> Result<()> {
-    KernelLaunch::new(gpu, kernels.rows.expand_selection)
+    KernelLaunch::new(gpu, expand)
         .grid([1, geom.q_rows as u32, 1])
         .block([ROW_BLOCK, 1, 1])
         .arg_ptr(scratch.selected)
@@ -258,4 +285,3 @@ pub(super) fn launch_expand_geom(
         .arg_u32(sel_stride as u32)
         .launch(stream)
 }
-

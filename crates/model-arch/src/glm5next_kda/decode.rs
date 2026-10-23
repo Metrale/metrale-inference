@@ -104,10 +104,22 @@ impl Glm5NextKdaLayer {
         state: &KdaSeqState,
         stream: u64,
     ) -> Result<()> {
+        self.conv_row_with(gpu, self.kernels.conv_decode, io, state, stream)
+    }
+
+    /// 2026-10-23: [`Self::conv_row`] by `kernel` (`causal_conv1d_update_l2norm`'s arguments).
+    pub(super) fn conv_row_with(
+        &self,
+        gpu: &dyn GpuBackend,
+        kernel: KernelHandle,
+        io: RowIo,
+        state: &KdaSeqState,
+        stream: u64,
+    ) -> Result<()> {
         let c = &self.cfg;
         ops::conv1d_update_l2norm(
             gpu,
-            self.kernels.conv_decode,
+            kernel,
             state.conv,
             io.qkv_in,
             &self.weights.conv,
@@ -435,27 +447,19 @@ impl Glm5NextKdaLayer {
         mut per_row: impl FnMut(usize) -> Result<()>,
         after_rows: impl FnOnce() -> Result<()>,
     ) -> Result<()> {
-        if k == 0 || k > ws.max_tokens {
-            bail!(
-                "KDA decode of {k} rows does not fit a workspace built for {}",
-                ws.max_tokens
-            );
-        }
-        use crate::glm5next_layer::profile;
-        // 2026-09-25: Three profile buckets (front, recurrence, back), each closed where its span
-        // ends.
-        let t_front = self.levers.profile.start();
-        self.front_end(gpu, hidden, k, ws, pack, gate, stream)?;
-        profile::end(profile::KDA_FRONT, t_front, gpu, stream);
-        let t_recur = self.levers.profile.start();
-        for row in 0..k {
-            per_row(row)?;
-        }
-        after_rows()?;
-        profile::end(profile::KDA_RECUR, t_recur, gpu, stream);
-        let t_back = self.levers.profile.start();
-        let r = self.back_end(gpu, k, ws, stream);
-        profile::end(profile::KDA_BACK, t_back, gpu, stream);
-        r
+        self.spans(
+            gpu,
+            k,
+            ws,
+            stream,
+            || self.front_end(gpu, hidden, k, ws, pack, gate, stream),
+            || {
+                for row in 0..k {
+                    per_row(row)?;
+                }
+                after_rows()
+            },
+            || self.back_end(gpu, k, ws, stream),
+        )
     }
 }

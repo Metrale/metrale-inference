@@ -223,6 +223,7 @@ impl Glm5NextDsaLayer {
         // contiguous i64 array, and the kernel writes row `i` to `slot[i]`.
         self.write_latent_rows(
             gpu,
+            self.kernels.latent_write,
             0,
             n,
             kv_cache,
@@ -321,8 +322,8 @@ impl Glm5NextDsaLayer {
                     kv_cache,
                     place,
                     pos,
-                    self.cfg.index_head_dim,
                     r,
+                    self.indexer_kernels(),
                     stream,
                 )?;
             } else {
@@ -333,6 +334,7 @@ impl Glm5NextDsaLayer {
                     kv_cache,
                     place,
                     !batched_idx,
+                    self.indexer_kernels(),
                     stream,
                 )?;
             }
@@ -340,6 +342,7 @@ impl Glm5NextDsaLayer {
             if replay_safe {
                 self.write_geom(
                     gpu,
+                    self.select_kernels.write_geom,
                     meta.seq_len.offset(mr * 4),
                     self.workspace.geom_dev,
                     stream,

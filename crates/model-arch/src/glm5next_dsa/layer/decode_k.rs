@@ -197,7 +197,15 @@ impl Glm5NextDsaLayer {
                 (None, Some(h)) => (h.slot, h.q_pos, h.bt, 0),
                 (None, None) => bail!("DSA layer {}: no row metadata staged", self.layer_idx),
             };
-            self.write_latent_rows(gpu, 0, k, kv_cache, slot0, stream)?;
+            self.write_latent_rows(
+                gpu,
+                self.kernels.latent_write,
+                0,
+                k,
+                kv_cache,
+                slot0,
+                stream,
+            )?;
             self.stage_prefill_rows(gpu, hidden, k, st, kv_cache, pos0, bt0, bt_rows, stream)?;
         }
         for row in 0..k {
@@ -209,7 +217,8 @@ impl Glm5NextDsaLayer {
                 (None, None) => bail!("DSA layer {}: no row metadata staged", self.layer_idx),
             };
             if !staged {
-                self.write_latent_rows(gpu, row, 1, kv_cache, slot_dev, stream)?;
+                let latent = self.kernels.latent_write;
+                self.write_latent_rows(gpu, latent, row, 1, kv_cache, slot_dev, stream)?;
             }
 
             use crate::glm5next_layer::profile;
@@ -249,8 +258,8 @@ impl Glm5NextDsaLayer {
                     kv_cache,
                     place,
                     pos,
-                    self.cfg.index_head_dim,
                     row,
+                    self.indexer_kernels(),
                     stream,
                 )?;
             } else if !staged {
@@ -302,7 +311,7 @@ impl Glm5NextDsaLayer {
                 } else {
                     w.geom_dev
                 };
-                self.write_geom(gpu, d_sl, geom, stream)?;
+                self.write_geom(gpu, self.select_kernels.write_geom, d_sl, geom, stream)?;
             }
             if select_once {
             } else if batch_select && staged {

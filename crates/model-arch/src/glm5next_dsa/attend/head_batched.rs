@@ -13,10 +13,60 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use super::{
-    DsaDecodeInputs, DsaDecodePaging, Glm5NextDsaConfig, HB_HEADS, HB_LAUNCH_ROWS, HB_MERGE_BLOCK,
-    HeadBatched, TC_MAX_WIDTH,
+    DsaDecodeInputs, DsaDecodePaging, Glm5NextDsaConfig, Glm5NextDsaDecodeKernel, HB_BLOCK,
+    HB_HEADS, HB_LAUNCH_ROWS, HB_MAX_SPLITS, HB_MERGE_BLOCK, HeadBatched, TC_MAX_WIDTH,
 };
+use crate::glm5next_dsa::plan::AttendStep;
 use crate::glm5next_dsa::select::DsaSelectGeometry;
+use metrale_gpu_runtime::gpu::KernelHandle;
+
+impl HeadBatched {
+    /// 2026-10-23: The decode entry `decode` and its `merge` at `splits`, without the prefill
+    /// twins (each 0 until a `for_prefill_*` swaps one in).
+    pub(super) fn entry(decode: KernelHandle, merge: KernelHandle, splits: usize) -> Self {
+        Self {
+            decode,
+            decode_p_hi: KernelHandle(0),
+            prefill_pipe: KernelHandle(0),
+            prefill_tc: KernelHandle(0),
+            prefill_tc_nanor: KernelHandle(0),
+            merge,
+            splits,
+            smem: 0,
+            block: HB_BLOCK,
+            offset_table: false,
+        }
+    }
+}
+
+impl Glm5NextDsaDecodeKernel {
+    /// 2026-10-23: A plan's decode attend: the per-head kernel, or the head-batched entry and its
+    /// merge at the plan's split count (2..=`HB_MAX_SPLITS`: the plan names the merge). Carries
+    /// no per-head kernel beside the head-batched one, so it runs no diagnostics.
+    pub fn from_plan(step: AttendStep<KernelHandle>) -> Result<Self> {
+        Ok(match step {
+            AttendStep::PerHead(per_head) => Self {
+                per_head,
+                head_batched: None,
+            },
+            AttendStep::HeadBatched {
+                decode,
+                merge,
+                splits,
+            } => {
+                if !(2..=HB_MAX_SPLITS).contains(&splits) {
+                    bail!(
+                        "DSA plan attend: {splits} splits with the merge; expected 2..={HB_MAX_SPLITS}"
+                    );
+                }
+                Self {
+                    per_head: KernelHandle(0),
+                    head_batched: Some(HeadBatched::entry(decode, merge, splits)),
+                }
+            }
+        })
+    }
+}
 
 /// 2026-10-09: The head-batched decode of `decode_attention`, in launches of at most
 /// [`HB_LAUNCH_ROWS`] rows; from two splits up each launch is followed by the merge.

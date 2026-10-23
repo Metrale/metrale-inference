@@ -35,7 +35,7 @@ const WARPS: usize = 8;
 /// 2026-10-21: `kdag::MAX_ROWS` in `kda_gates_w8a8.cu`: the token columns of one MMA tile.
 pub const GATES_MAX_ROWS: usize = 8;
 
-type GateWeights = (Option<Fp8Weight>, Option<Fp8Weight>);
+pub(super) type GateWeights = (Option<Fp8Weight>, Option<Fp8Weight>);
 
 impl Glm5NextKdaLayer {
     /// 2026-10-10: Run the fused chain when a lever asks for it at this row count; `Ok(false)`
@@ -48,17 +48,19 @@ impl Glm5NextKdaLayer {
         ws: &Glm5NextKdaWorkspace,
         stream: u64,
     ) -> Result<bool> {
-        let weights = || {
-            (
-                crate::glm5next_fp8_dense::row_weight(self.weights.f_b.weight),
-                crate::glm5next_fp8_dense::row_weight(self.weights.g_b.weight),
-            )
-        };
         if self.levers.kda.gates_fused && t == 1 {
-            self.launch_gates_fused(gpu, low, weights(), ws, stream)?;
+            self.launch_gates_fused(gpu, low, self.gate_weights(), ws, stream)?;
             return Ok(true);
         }
-        self.try_gates_rows(gpu, t, low, weights(), ws, stream)
+        self.try_gates_rows(gpu, t, low, self.gate_weights(), ws, stream)
+    }
+
+    /// 2026-10-23: f_b's and g_b's per-row FP8 copies, where registered.
+    pub(super) fn gate_weights(&self) -> GateWeights {
+        (
+            crate::glm5next_fp8_dense::row_weight(self.weights.f_b.weight),
+            crate::glm5next_fp8_dense::row_weight(self.weights.g_b.weight),
+        )
     }
 
     /// 2026-10-21: The rows kernel at `t` rows when its lever is on, `t` is in range and nothing
@@ -100,7 +102,12 @@ impl Glm5NextKdaLayer {
     }
 
     /// 2026-10-21: Why `kernel` cannot run the chain here, `None` when it can.
-    fn gates_refusal(&self, kernel: KernelHandle, low: bool, w: GateWeights) -> Option<String> {
+    pub(super) fn gates_refusal(
+        &self,
+        kernel: KernelHandle,
+        low: bool,
+        w: GateWeights,
+    ) -> Option<String> {
         let c = &self.cfg;
         let (qkv, hd) = (c.qkv_dim(), c.head_dim);
         if kernel.0 == 0 {
@@ -131,7 +138,7 @@ impl Glm5NextKdaLayer {
 
     /// 2026-10-21: One launch of `kernel` (the one-token entry when `rows` is `None`, else the
     /// rows entry with that M), after [`Self::gates_refusal`] passed.
-    fn launch_gates(
+    pub(super) fn launch_gates(
         &self,
         gpu: &dyn GpuBackend,
         kernel: KernelHandle,

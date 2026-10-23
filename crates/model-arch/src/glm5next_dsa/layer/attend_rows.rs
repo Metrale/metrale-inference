@@ -12,7 +12,9 @@ use anyhow::Result;
 use metrale_cache::kv_cache::PagedKvCache;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
-use super::super::attend::{DsaDecodeInputs, DsaDecodePaging, HbDiagnostics, decode_attention};
+use super::super::attend::{
+    DsaDecodeInputs, DsaDecodePaging, Glm5NextDsaDecodeKernel, HbDiagnostics, decode_attention,
+};
 use super::super::state::Glm5NextDsaState;
 use super::Glm5NextDsaLayer;
 
@@ -36,6 +38,46 @@ impl Glm5NextDsaLayer {
         is_prefill: bool,
         stream: u64,
     ) -> Result<()> {
+        let kernel = if is_prefill {
+            self.decode_kernel
+                .for_prefill_levers(self.levers.dsa.prefill)?
+        } else {
+            self.decode_kernel
+        };
+        let diag = HbDiagnostics {
+            check_dir: self.dsa_owned.hb_check.as_deref(),
+            serve_ref: self.levers.dsa.serve_ref,
+        };
+        self.attend_rows_with(
+            gpu,
+            kernel,
+            diag,
+            rows,
+            state,
+            kv_cache,
+            block_table_dev,
+            seq_lens_dev,
+            paging,
+            stream,
+        )
+    }
+
+    /// 2026-10-23: [`Self::attend_rows`] on `kernel` with the diagnostics `diag` (the layer's
+    /// resolution of both, or a plan's attend with none).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn attend_rows_with(
+        &self,
+        gpu: &dyn GpuBackend,
+        kernel: Glm5NextDsaDecodeKernel,
+        diag: HbDiagnostics<'_>,
+        rows: usize,
+        state: &Glm5NextDsaState,
+        kv_cache: &PagedKvCache,
+        block_table_dev: DevicePtr,
+        seq_lens_dev: DevicePtr,
+        paging: &DsaDecodePaging,
+        stream: u64,
+    ) -> Result<()> {
         use crate::glm5next_layer::profile;
         let w = &self.workspace;
         // 2026-09-25: `decode_attention` reads only `out_width` and `q_rows` from it.
@@ -46,12 +88,6 @@ impl Glm5NextDsaLayer {
         };
         let t = self.levers.profile.start();
         let pool = kv_cache.k_pool_ptr(self.attn_layer_idx);
-        let kernel = if is_prefill {
-            self.decode_kernel
-                .for_prefill_levers(self.levers.dsa.prefill)?
-        } else {
-            self.decode_kernel
-        };
         decode_attention(
             gpu,
             kernel,
@@ -70,10 +106,7 @@ impl Glm5NextDsaLayer {
                 v_scale: self.kv_scale,
                 split_ws: w.split_ws,
             },
-            HbDiagnostics {
-                check_dir: self.dsa_owned.hb_check.as_deref(),
-                serve_ref: self.levers.dsa.serve_ref,
-            },
+            diag,
             stream,
         )?;
         profile::end(profile::DSA_ATTEND, t, gpu, stream);

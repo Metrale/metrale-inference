@@ -31,6 +31,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use super::levers::DsaPrefillLevers;
+use super::plan::entry;
 use super::{Glm5NextDsaConfig, select::DsaSelectGeometry};
 
 /// 2026-09-25: Module name the DSA decode kernel resolves from. An unlisted `.cu`
@@ -116,7 +117,7 @@ impl Glm5NextDsaDecodeKernel {
     /// point is an error, with no dense fallback. 2026-10-09: with the head-batched kernel
     /// when `hb_splits` names a split count (`None`: the per-head kernel alone).
     pub fn resolve(gpu: &dyn GpuBackend, hb_splits: Option<usize>) -> Result<Self> {
-        let per_head = gpu.kernel(DSA_DECODE_MODULE, "glm5next_dsa_mla_decode_fp8")?;
+        let per_head = gpu.kernel(entry::PER_HEAD.0, entry::PER_HEAD.1)?;
         let head_batched = match hb_splits {
             None => None,
             Some(splits) => {
@@ -126,33 +127,23 @@ impl Glm5NextDsaDecodeKernel {
                 tracing::warn!(
                     "METRALE_GLM_DSA_DECODE_HB={splits}: DSA decode on the head-batched kernel"
                 );
+                let decode = gpu.kernel(entry::DECODE_HB.0, entry::DECODE_HB.1)?;
+                let try_k = |m, f| metrale_model_layers::layers::try_kernel(gpu, m, f);
+                let decode_p_hi = try_k(DSA_DECODE_HB_MODULE, "glm5next_dsa_mla_decode_hb_fp8_phi");
+                let prefill_pipe =
+                    try_k(DSA_PREFILL_PIPE_MODULE, "glm5next_dsa_mla_prefill_pipe_phi");
+                let prefill_tc = try_k(DSA_PREFILL_TC_MODULE, "glm5next_dsa_mla_prefill_tc_phi");
+                let prefill_tc_nanor = try_k(
+                    DSA_PREFILL_TC_MODULE,
+                    "glm5next_dsa_mla_prefill_tc_phi_nanor",
+                );
+                let merge = gpu.kernel(entry::HB_MERGE.0, entry::HB_MERGE.1)?;
                 Some(HeadBatched {
-                    decode: gpu.kernel(DSA_DECODE_HB_MODULE, "glm5next_dsa_mla_decode_hb_fp8")?,
-                    decode_p_hi: metrale_model_layers::layers::try_kernel(
-                        gpu,
-                        DSA_DECODE_HB_MODULE,
-                        "glm5next_dsa_mla_decode_hb_fp8_phi",
-                    ),
-                    prefill_pipe: metrale_model_layers::layers::try_kernel(
-                        gpu,
-                        DSA_PREFILL_PIPE_MODULE,
-                        "glm5next_dsa_mla_prefill_pipe_phi",
-                    ),
-                    prefill_tc: metrale_model_layers::layers::try_kernel(
-                        gpu,
-                        DSA_PREFILL_TC_MODULE,
-                        "glm5next_dsa_mla_prefill_tc_phi",
-                    ),
-                    prefill_tc_nanor: metrale_model_layers::layers::try_kernel(
-                        gpu,
-                        DSA_PREFILL_TC_MODULE,
-                        "glm5next_dsa_mla_prefill_tc_phi_nanor",
-                    ),
-                    merge: gpu.kernel(DSA_DECODE_HB_MODULE, "glm5next_dsa_mla_merge")?,
-                    splits,
-                    smem: 0,
-                    block: HB_BLOCK,
-                    offset_table: false,
+                    decode_p_hi,
+                    prefill_pipe,
+                    prefill_tc,
+                    prefill_tc_nanor,
+                    ..HeadBatched::entry(decode, merge, splits)
                 })
             }
         };

@@ -54,6 +54,7 @@ pub mod fp8_twin;
 pub mod layer;
 pub mod levers;
 pub mod paged;
+pub mod plan;
 pub mod select;
 pub mod sp_select;
 pub mod state;
@@ -214,35 +215,30 @@ impl DsaRowsKernels {
         let warp = |name: &str| {
             metrale_model_layers::layers::try_kernel(gpu, DSA_SCORES_WARP_MODULE, name)
         };
-        let mc =
-            |name: &str| metrale_model_layers::layers::try_kernel(gpu, DSA_TOPK_MC_MODULE, name);
         let sm_count = gpu.sm_count().unwrap_or(0);
+        let e = |entry| plan::try_entry(gpu, entry);
         let heads = if sm_count == 0 {
             KernelHandle(0)
         } else {
-            warp("dsa_index_scores_heads_paged")
+            e(plan::entry::SCORES_HEADS_PAGED)
         };
         let heads_window = if heads.0 == 0 {
             KernelHandle(0)
         } else {
-            metrale_model_layers::layers::try_kernel(
-                gpu,
-                DSA_SCORES_HEADS_WINDOW_MODULE,
-                "dsa_index_scores_heads_window",
-            )
+            e(plan::entry::SCORES_HEADS_WINDOW)
         };
         Self {
             store: k("dsa_indexer_store_rows"),
             write_geom: k("dsa_write_geom_rows"),
             pool_scores: k("dsa_pool_scores_rows"),
             topk_pools: k("dsa_topk_pools_rows"),
-            expand_selection: k("dsa_expand_selection_rows"),
+            expand_selection: e(plan::entry::EXPAND_ROWS),
             scores_tiled: k("dsa_index_scores_tiled"),
             scores_mma: k("dsa_index_scores_mma"),
             topk_radix: k("dsa_topk_pools_radix"),
             scores_warp: warp("dsa_index_scores_warp"),
             scores_warp_paged: warp("dsa_index_scores_warp_paged"),
-            pool_keys_store: warp("dsa_pool_keys_store_rows"),
+            pool_keys_store: e(plan::entry::POOL_KEYS),
             pool_prep: pipe("dsa_pool_prep_bf16"),
             scores_pipe: pipe("dsa_index_scores_mma_pipe"),
             sel_fold: fold("dsa_sel_fold"),
@@ -252,8 +248,8 @@ impl DsaRowsKernels {
             scores_heads_window: heads_window,
             pool_keys_bf16: false,
             scores_mma_paged: KernelHandle(0),
-            topk_mc_pass: mc("dsa_topk_mc_pass"),
-            topk_mc_collect: mc("dsa_topk_mc_collect"),
+            topk_mc_pass: e(plan::entry::TOPK_MC_PASS),
+            topk_mc_collect: e(plan::entry::TOPK_MC_COLLECT),
             sm_count,
         }
     }
@@ -302,13 +298,9 @@ impl Glm5NextDsaKernels {
             index_scores: gpu.kernel(DSA_MODULE, "dsa_index_scores")?,
             topk_pools: gpu.kernel(DSA_MODULE, "dsa_topk_pools")?,
             expand_selection: gpu.kernel(DSA_MODULE, "dsa_expand_selection")?,
-            k_norm: gpu.kernel(LAYERNORM_MODULE, "nllb_layernorm_bf16")?,
-            write_geom: metrale_model_layers::layers::try_kernel(gpu, DSA_MODULE, "dsa_write_geom"),
-            indexer_store: metrale_model_layers::layers::try_kernel(
-                gpu,
-                DSA_MODULE,
-                "dsa_indexer_store",
-            ),
+            k_norm: gpu.kernel(plan::entry::K_NORM.0, plan::entry::K_NORM.1)?,
+            write_geom: plan::try_entry(gpu, plan::entry::WRITE_GEOM),
+            indexer_store: plan::try_entry(gpu, plan::entry::STORE),
             topk_to_mask: gpu.kernel(DSA_MODULE, "dsa_topk_to_mask")?,
             mla_masked_attn: gpu.kernel(DSA_MODULE, "dsa_mla_masked_attn")?,
             rows: DsaRowsKernels::resolve(gpu),

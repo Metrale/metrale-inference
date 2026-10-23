@@ -22,6 +22,7 @@ pub mod bindings;
 pub mod compile;
 mod draft_rows;
 mod emitters;
+pub mod family;
 pub mod fixed;
 pub mod kernels;
 pub mod policy;
@@ -125,30 +126,41 @@ pub struct CircuitExec {
     workspace_bytes: u64,
 }
 
+/// 2026-10-23: `instance` at the served shape (from the checkpoint's `config.json`), loaded with
+/// its precision: the served model's own policy for a policy precision, else its table. The one
+/// load both the executor and per-rank plan installation fuse from.
+pub fn load_served(
+    instance: &metrale_circuit::Instance,
+    config: &metrale_config::ModelConfig,
+    config_json: &str,
+) -> Result<metrale_circuit::Loaded> {
+    let mut served = instance.clone();
+    let from_checkpoint = sources::checkpoint_shape(config_json, config.vocab_size as u64)?;
+    served.shape = sources::served_shape(&instance.shape, &from_checkpoint)?;
+    let src = sources::sources(&served)?;
+    Ok(match &served.precision {
+        // 2026-09-28: The served model's own policy: its parsed quantization_config under
+        // the published tier and kernel capabilities, with the instance's engine formats.
+        metrale_circuit::PrecisionSpec::Policy { engine, .. } => {
+            let policy = metrale_config::WeightQuantPolicy::for_checkpoint(
+                crate::layers::weight_quantization(),
+                config.quantization_config.as_ref(),
+                crate::layers::kernel_caps(),
+            );
+            metrale_circuit::load_with(
+                &served,
+                src,
+                &metrale_circuit::precision_policy::PolicyPrecision::new(policy, engine),
+            )?
+        }
+        metrale_circuit::PrecisionSpec::Table(_) => metrale_circuit::load(&served, src)?,
+    })
+}
+
 impl CircuitExec {
     /// 2026-09-28: Build the executor.
     pub fn build(b: Boot<'_>) -> Result<Self> {
-        let mut served = b.instance.clone();
-        let from_checkpoint = sources::checkpoint_shape(b.config_json, b.config.vocab_size as u64)?;
-        served.shape = sources::served_shape(&b.instance.shape, &from_checkpoint)?;
-        let src = sources::sources(&served)?;
-        let loaded = match &served.precision {
-            // 2026-09-28: The served model's own policy: its parsed quantization_config under
-            // the published tier and kernel capabilities, with the instance's engine formats.
-            metrale_circuit::PrecisionSpec::Policy { engine, .. } => {
-                let policy = metrale_config::WeightQuantPolicy::for_checkpoint(
-                    crate::layers::weight_quantization(),
-                    b.config.quantization_config.as_ref(),
-                    crate::layers::kernel_caps(),
-                );
-                metrale_circuit::load_with(
-                    &served,
-                    src,
-                    &metrale_circuit::precision_policy::PolicyPrecision::new(policy, engine),
-                )?
-            }
-            metrale_circuit::PrecisionSpec::Table(_) => metrale_circuit::load(&served, src)?,
-        };
+        let loaded = load_served(b.instance, b.config, b.config_json)?;
         let unmodelled = policy::unmodelled_switches(b.levers);
         if !unmodelled.is_empty() {
             bail!(

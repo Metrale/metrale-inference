@@ -64,6 +64,21 @@ pub struct Glm5NextKdaKernels {
     pub gates_rows: KernelHandle,
 }
 
+/// 2026-10-23: `(module, entry)` of the kernels a planned KDA mixer launches (`plan.rs`), named
+/// once for `resolve` and the GLM plan emitter (`glm5next_plan::kda`).
+pub mod entry {
+    pub const PACK: (&str, &str) = ("kda_layer_ops", "kda_pack_qkv_bf16");
+    pub const CONV_ROW: (&str, &str) = ("causal_conv1d", "causal_conv1d_update_l2norm");
+    pub const CONV_TOKENS: (&str, &str) = ("kda_conv_tokens", "causal_conv1d_update_l2norm_tokens");
+    pub const CONV_WINDOW: (&str, &str) = ("kda_conv_tokens", "causal_conv1d_window_advance");
+    pub const CONV_WINDOW_TO: (&str, &str) = ("kda_conv_tokens", "causal_conv1d_window_advance_to");
+    pub const RECUR_REG: (&str, &str) = ("kda_recurrent", "kda_recurrent_decode_bf16_seq_reg");
+    pub const RECUR_SNAP: (&str, &str) =
+        ("kda_recurrent", "kda_recurrent_decode_bf16_seq_reg_snap");
+    pub const GATES_ROWS: (&str, &str) = ("kda_gates_w8a8", "kda_gates_w8a8_k128_rows");
+    pub const O_NORM: (&str, &str) = ("kda_layer_ops", "kda_o_norm_gated_bf16");
+}
+
 impl Glm5NextKdaKernels {
     pub const ENTRY_POINTS: usize = 14;
 
@@ -82,7 +97,7 @@ impl Glm5NextKdaKernels {
                 "dense_gemv_bf16_batchm_wide",
             ),
             gemv_batchm_few: crate::glm5next_layer::wide_gemv::FewGemv::resolve(gpu),
-            conv_decode: gpu.kernel("causal_conv1d", "causal_conv1d_update_l2norm")?,
+            conv_decode: gpu.kernel(entry::CONV_ROW.0, entry::CONV_ROW.1)?,
             conv_decode_rows: metrale_model_layers::layers::try_kernel(
                 gpu,
                 "causal_conv1d",
@@ -110,11 +125,11 @@ impl Glm5NextKdaKernels {
                 "kda_recurrent_decode_bf16_rows_reg",
             ),
             seq: KdaSeqKernels::resolve(gpu),
-            o_norm: gpu.kernel("kda_layer_ops", "kda_o_norm_gated_bf16")?,
+            o_norm: gpu.kernel(entry::O_NORM.0, entry::O_NORM.1)?,
             split_widen: gpu.kernel("kda_layer_ops", "kda_split_widen")?,
             sigmoid: gpu.kernel("kda_layer_ops", "kda_sigmoid_bf16_f32")?,
             fill: gpu.kernel("kda_layer_ops", "kda_fill_f32")?,
-            pack: gpu.kernel("kda_layer_ops", "kda_pack_qkv_bf16")?,
+            pack: gpu.kernel(entry::PACK.0, entry::PACK.1)?,
             gates_fused: metrale_model_layers::layers::try_kernel(
                 gpu,
                 "kda_gates_w8a8",
@@ -122,8 +137,8 @@ impl Glm5NextKdaKernels {
             ),
             gates_rows: metrale_model_layers::layers::try_kernel(
                 gpu,
-                "kda_gates_w8a8",
-                "kda_gates_w8a8_k128_rows",
+                entry::GATES_ROWS.0,
+                entry::GATES_ROWS.1,
             ),
         })
     }
@@ -181,25 +196,21 @@ impl KdaSeqKernels {
     pub fn resolve(gpu: &dyn GpuBackend) -> Self {
         let k = metrale_model_layers::layers::try_kernel;
         Self {
-            conv_tokens: k(gpu, "kda_conv_tokens", "causal_conv1d_update_l2norm_tokens"),
+            conv_tokens: k(gpu, entry::CONV_TOKENS.0, entry::CONV_TOKENS.1),
             conv_tokens_parts: k(
                 gpu,
                 "kda_conv_tokens",
                 "causal_conv1d_update_l2norm_tokens_parts",
             ),
-            conv_window: k(gpu, "kda_conv_tokens", "causal_conv1d_window_advance"),
-            conv_window_to: k(gpu, "kda_conv_tokens", "causal_conv1d_window_advance_to"),
+            conv_window: k(gpu, entry::CONV_WINDOW.0, entry::CONV_WINDOW.1),
+            conv_window_to: k(gpu, entry::CONV_WINDOW_TO.0, entry::CONV_WINDOW_TO.1),
             conv_snap: k(
                 gpu,
                 "kda_conv_snap",
                 "causal_conv1d_update_l2norm_tokens_snap",
             ),
-            recurrent: k(gpu, "kda_recurrent", "kda_recurrent_decode_bf16_seq_reg"),
-            recurrent_snap: k(
-                gpu,
-                "kda_recurrent",
-                "kda_recurrent_decode_bf16_seq_reg_snap",
-            ),
+            recurrent: k(gpu, entry::RECUR_REG.0, entry::RECUR_REG.1),
+            recurrent_snap: k(gpu, entry::RECUR_SNAP.0, entry::RECUR_SNAP.1),
             chunk16_prepare: k(gpu, "kda_chunk16", "kda_chunk16_prepare"),
             chunk16_scan: k(gpu, "kda_chunk16", "kda_chunk16_scan"),
             chunk64_prepare: k(gpu, "kda_chunk64_prepare", "kda_chunk64_prepare"),

@@ -11,7 +11,7 @@
 
 use anyhow::Result;
 use metrale_cache::kv_cache::PagedKvCache;
-use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
+use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use super::Glm5NextDsaLayer;
@@ -94,16 +94,19 @@ impl Glm5NextDsaLayer {
     /// rows from row `row`, row `row + i` into the KV slot at `slot_dev[i]` (i64).
     /// `glm5next_mla_latent_write_fp8` runs one block per row and the blocks share nothing,
     /// so a row's bytes do not depend on `rows`.
+    /// 2026-10-23: `latent` is the kernel: the layer's `kernels.latent_write`, or a plan's.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn write_latent_rows(
         &self,
         gpu: &dyn GpuBackend,
+        latent: KernelHandle,
         row: usize,
         rows: usize,
         kv_cache: &PagedKvCache,
         slot_dev: DevicePtr,
         stream: u64,
     ) -> Result<()> {
-        KernelLaunch::new(gpu, self.kernels.latent_write)
+        KernelLaunch::new(gpu, latent)
             .grid([rows as u32, 1, 1])
             .block([self.cfg.kv_lora_rank as u32, 1, 1])
             .arg_ptr(self.workspace.kv_a.offset(row * self.cfg.kv_lora_rank * 2))
@@ -118,14 +121,16 @@ impl Glm5NextDsaLayer {
 
     /// 2026-10-08: `dsa_write_geom` into `geom` (the workspace's `geom_dev`, or a row's slots of
     /// its `geom_rows`), reading S from `d_sl`, a row's `seq_len` entry in the metadata.
+    /// 2026-10-23: `kernel` is the layer's `select_kernels.write_geom`, or a plan's.
     pub(super) fn write_geom(
         &self,
         gpu: &dyn GpuBackend,
+        kernel: KernelHandle,
         d_sl: DevicePtr,
         geom: DevicePtr,
         stream: u64,
     ) -> Result<()> {
-        KernelLaunch::new(gpu, self.select_kernels.write_geom)
+        KernelLaunch::new(gpu, kernel)
             .grid([1, 1, 1])
             .block([1, 1, 1])
             .arg_ptr(d_sl)
@@ -311,11 +316,25 @@ impl Glm5NextDsaLayer {
                 )?;
             }
         }
-        KernelLaunch::new(gpu, self.select_kernels.k_norm)
+        self.k_norm_rows(gpu, self.select_kernels.k_norm, w.stage_k, n, stream)
+    }
+
+    /// 2026-10-23: The indexer key LayerNorm (`nllb_layernorm_bf16`, one block per row) over `n`
+    /// rows of `x`, in place; `kernel` is the layer's `select_kernels.k_norm`, or a plan's.
+    pub(super) fn k_norm_rows(
+        &self,
+        gpu: &dyn GpuBackend,
+        kernel: KernelHandle,
+        x: DevicePtr,
+        n: usize,
+        stream: u64,
+    ) -> Result<()> {
+        let d = self.cfg.index_head_dim;
+        KernelLaunch::new(gpu, kernel)
             .grid([n as u32, 1, 1])
             .block([d.min(1024) as u32, 1, 1])
             .shared_mem((d.min(1024) * 4) as u32)
-            .arg_ptr(w.stage_k)
+            .arg_ptr(x)
             .arg_ptr(self.weights.k_norm_weight)
             .arg_ptr(self.weights.k_norm_bias)
             .arg_u32(n as u32)

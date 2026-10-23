@@ -35,24 +35,33 @@ pub(super) fn topk_launch(
     rank: bool,
 ) -> Result<(KernelHandle, u32)> {
     if !rank {
-        return Ok((k.router, ACT_BLOCK));
+        return Ok((k.router, topk_block(cfg.num_experts, false)?));
     }
     if k.router_rank.0 == 0 {
         bail!("METRALE_GLM_ROUTER_TOPK_RANK=1: glm5next_router_topk_rank is not in this target");
     }
-    if cfg.num_experts == 0 || cfg.num_experts > ROUTER_RANK_MAX_EXPERTS {
+    Ok((k.router_rank, topk_block(cfg.num_experts, true)?))
+}
+
+/// 2026-10-23: The block width of the top-k: `ACT_BLOCK` for the base kernel, one thread per
+/// expert in whole warps for the rank kernel (`rank`), which takes at most
+/// [`ROUTER_RANK_MAX_EXPERTS`].
+pub fn topk_block(num_experts: usize, rank: bool) -> Result<u32> {
+    if !rank {
+        return Ok(ACT_BLOCK);
+    }
+    if num_experts == 0 || num_experts > ROUTER_RANK_MAX_EXPERTS {
         bail!(
-            "METRALE_GLM_ROUTER_TOPK_RANK=1: {} experts; the rank kernel takes 1..={}",
-            cfg.num_experts,
+            "METRALE_GLM_ROUTER_TOPK_RANK=1: {num_experts} experts; the rank kernel takes 1..={}",
             ROUTER_RANK_MAX_EXPERTS
         );
     }
-    Ok((k.router_rank, cfg.num_experts.div_ceil(32) as u32 * 32))
+    Ok(num_experts.div_ceil(32) as u32 * 32)
 }
 
 /// 2026-10-10: Blocks per row of the combine: one, or (`split`) one per `ACT_BLOCK` elements of
 /// `hidden`, so each thread owns one element.
-pub(super) fn combine_blocks_per_row(split: bool, hidden: usize) -> u32 {
+pub fn combine_blocks_per_row(split: bool, hidden: usize) -> u32 {
     if split {
         hidden.div_ceil(ACT_BLOCK as usize).max(1) as u32
     } else {
@@ -72,6 +81,22 @@ pub(super) fn router_topk(
     stream: u64,
 ) -> Result<()> {
     let (func, block) = topk_launch(k, cfg, k.levers.router_topk_rank)?;
+    topk_raw(gpu, func, block, cfg, w, ws, rows, stream)
+}
+
+/// 2026-10-23: The top-k launch of `rows` rows on `func` at `block` threads: the launch
+/// [`router_topk`] makes, and the plan executor's for the kernel its plan names.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn topk_raw(
+    gpu: &dyn GpuBackend,
+    func: KernelHandle,
+    block: u32,
+    cfg: &Glm5NextMlpConfig,
+    w: &Glm5NextMoeWeights,
+    ws: &Glm5NextMlpWorkspace,
+    rows: usize,
+    stream: u64,
+) -> Result<()> {
     KernelLaunch::new(gpu, func)
         .grid([rows as u32, 1, 1])
         .block([block, 1, 1])
@@ -201,6 +226,23 @@ pub(super) fn combine_with(
 ) -> Result<()> {
     let bufs = [ws.expert_out, ws.shared_out, out];
     let (func, y) = combine_launch(k, cfg, indexed, split, vec8, bufs)?;
+    combine_raw(gpu, func, y, cfg, ws, out, rows, indexed, stream)
+}
+
+/// 2026-10-23: The combine launch of `rows` rows on `func` at `y` blocks per row: the launch
+/// [`combine_with`] makes, and the plan executor's for the kernel and grid its plan names.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn combine_raw(
+    gpu: &dyn GpuBackend,
+    func: KernelHandle,
+    y: u32,
+    cfg: &Glm5NextMlpConfig,
+    ws: &Glm5NextMlpWorkspace,
+    out: DevicePtr,
+    rows: usize,
+    indexed: bool,
+    stream: u64,
+) -> Result<()> {
     let launch = KernelLaunch::new(gpu, func)
         .grid([rows as u32, y, 1])
         .block([ACT_BLOCK, 1, 1])

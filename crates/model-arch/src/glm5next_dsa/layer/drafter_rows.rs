@@ -95,7 +95,15 @@ impl Glm5NextDsaLayer {
             self.workspace.kv_a,
             c.kv_lora_rank,
         )?;
-        self.write_latent_rows(gpu, 0, m, kv_cache, slots_dev, stream)?;
+        self.write_latent_rows(
+            gpu,
+            self.kernels.latent_write,
+            0,
+            m,
+            kv_cache,
+            slots_dev,
+            stream,
+        )?;
         let d = c.index_head_dim;
         let off = st.row_offset(seq_len);
         let (k_rows, gate_rows) = (st.k_normed.offset(off), st.gate.offset(off));
@@ -117,6 +125,7 @@ impl Glm5NextDsaLayer {
         if let Some(rows) = st.flat_rows() {
             self.store_pool_keys(
                 gpu,
+                self.select_kernels.rows.pool_keys_store,
                 super::rows::PoolKeyRows::Flat {
                     rows: &rows,
                     pos0: seq_len,

@@ -285,30 +285,18 @@ pub fn glm_hc_pre_norm_with(
             .unwrap_or_else(|| {
                 pre_norm_kernel(kernels, num_tokens, hidden_size, hc_mult, prefetch)
             });
-    if kernel.0 == 0 {
-        bail!("glm_hc_pre_norm: the glm5next_mhc_fused kernels are not in this build");
-    }
-    KernelLaunch::new(gpu, kernel)
-        .grid([num_tokens, grid_y, 1])
-        .block([256, 1, 1])
-        .arg_ptr(streams)
-        .arg_ptr(w.hc_fn)
-        .arg_ptr(w.hc_scale)
-        .arg_ptr(w.hc_base)
-        .arg_ptr(w.mix)
-        .arg_ptr(w.done)
-        .arg_ptr(norm_w)
-        .arg_ptr(y_out)
-        .arg_ptr(post_out)
-        .arg_ptr(comb_out)
-        .arg_ptr(normed_out)
-        .arg_u32(hidden_size)
-        .arg_u32(hc_mult)
-        .arg_u32(sinkhorn_iters)
-        .arg_f32(norm_eps)
-        .arg_f32(hc_eps)
-        .arg_f32(rms_eps)
-        .launch(stream)
+    crate::glm5next_mhc_pre_launch::launch(
+        gpu,
+        (kernel, grid_y),
+        streams,
+        w,
+        norm_w,
+        [y_out, post_out, comb_out, normed_out],
+        num_tokens,
+        [hidden_size, hc_mult, sinkhorn_iters],
+        [norm_eps, hc_eps, rms_eps],
+        stream,
+    )
 }
 
 /// 2026-10-10: The one-shot all-reduce's sum and `glm_hc_post` in one launch

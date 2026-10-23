@@ -89,8 +89,10 @@ impl Glm5NextDsaLayerKernels {
                 "dense_gemv_bf16_batchm_few_fp32out_pair",
             ),
             rms_norm: gpu.kernel("rms_norm_vanilla", "rms_norm_vanilla")?,
-            latent_write: gpu
-                .kernel("glm5next_mla_latent_write", "glm5next_mla_latent_write_fp8")?,
+            latent_write: gpu.kernel(
+                crate::glm5next_dsa::plan::entry::LATENT_WRITE.0,
+                crate::glm5next_dsa::plan::entry::LATENT_WRITE.1,
+            )?,
         })
     }
 }

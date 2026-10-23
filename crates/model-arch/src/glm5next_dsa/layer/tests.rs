@@ -54,15 +54,15 @@ fn the_layer_takes_the_vanilla_rmsnorm_not_the_plus_one_variant() {
 }
 
 /// 2026-09-25: The indexer's `k_norm` is a LayerNorm with a bias: the layer launches the
-/// `k_norm` kernel handle and passes `k_norm_bias`.
+/// `k_norm` kernel handle and passes `k_norm_bias`. 2026-10-23: the launch is `k_norm_rows`
+/// (`row_ops.rs`), on the handle `indexer_kernels` resolves (`indexer_place.rs`).
 #[test]
 fn the_indexer_norm_passes_a_bias() {
-    let src = include_str!("../layer.rs");
     assert!(
-        src.contains("k_norm_bias"),
+        include_str!("row_ops.rs").contains(".arg_ptr(self.weights.k_norm_bias)"),
         "indexer.k_norm.bias is REQUIRED; a weight-only bind drops mean subtraction too"
     );
-    assert!(src.contains("self.select_kernels.k_norm"));
+    assert!(include_str!("indexer_place.rs").contains("k_norm: self.select_kernels.k_norm"));
 }
 
 /// 2026-09-25: Q reaches the decode kernel in latent space. A raw `q_b_proj` is a well-formed
@@ -251,7 +251,8 @@ fn every_early_launched_graph_is_captured_behind_the_gate() {
 /// `Glm5NextDsaLayer` implement `check_replay_room`.
 #[test]
 fn the_composite_layer_implements_the_room_check_too() {
-    let composite = include_str!("../../glm5next_layer/mod.rs");
+    // 2026-10-23: The composite's trait impls moved to `hooks.rs` (file-size split).
+    let composite = include_str!("../../glm5next_layer/hooks.rs");
     assert!(
         composite.contains("fn check_replay_room"),
         "the COMPOSITE layer must implement it — the inner impl is never reached"
@@ -269,7 +270,7 @@ fn the_composite_layer_implements_the_room_check_too() {
 fn the_replay_refusal_is_distinguishable_from_the_prefill_one() {
     for src in [
         include_str!("../layer.rs"),
-        include_str!("../../glm5next_layer/mod.rs"),
+        include_str!("../../glm5next_layer/hooks.rs"),
     ] {
         assert!(
             src.contains("DSA replay pre-check"),
@@ -365,6 +366,7 @@ fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
     let prefill = include_str!("../../glm5next_layer/steps/prefill_capture.rs");
     let module = concat!(
         include_str!("../../glm5next_layer/mod.rs"),
+        include_str!("../../glm5next_layer/hooks.rs"),
         include_str!("../../glm5next_layer/l2_warm.rs"),
         include_str!("../../glm5next_layer/levers.rs"),
         include_str!("../../glm5next_layer/profile.rs"),
@@ -377,8 +379,10 @@ fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
         include_str!("../../glm5next_layer/steps/forward_pieces.rs"),
         include_str!("../../glm5next_layer/steps/forward_sp.rs"),
         include_str!("../../glm5next_layer/steps/forward_sp_pipe.rs"),
+        include_str!("../../glm5next_layer/steps/mhc_site.rs"),
         include_str!("../../glm5next_layer/steps/mhc_slice.rs"),
         include_str!("../../glm5next_layer/steps/mix.rs"),
+        include_str!("../../glm5next_layer/steps/mlp.rs"),
         include_str!("../../glm5next_layer/steps/multi_seq.rs"),
         include_str!("../../glm5next_layer/steps/prefill_capture.rs"),
         include_str!("../../glm5next_layer/steps/prefill_spans.rs"),
@@ -391,6 +395,7 @@ fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
     assert_eq!(
         glm5next_layer_files(),
         [
+            "hooks.rs",
             "l2_warm.rs",
             "levers.rs",
             "levers_settings_tests.rs",
@@ -406,8 +411,10 @@ fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
             "steps/forward_pieces.rs",
             "steps/forward_sp.rs",
             "steps/forward_sp_pipe.rs",
+            "steps/mhc_site.rs",
             "steps/mhc_slice.rs",
             "steps/mix.rs",
+            "steps/mlp.rs",
             "steps/multi_seq.rs",
             "steps/prefill_capture.rs",
             "steps/prefill_spans.rs",

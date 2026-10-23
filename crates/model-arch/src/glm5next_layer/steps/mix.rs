@@ -99,6 +99,10 @@ impl Glm5NextLayer {
                     && !layer.chunk64_applies(k, self.levers.kda.chunk64)
                 {
                     layer.prefill(gpu, normed, k, kda, ws, stream)?;
+                } else if let Some(p) = self.plans.kda.get(k).filter(|p| p.takes(k, snaps.len())) {
+                    // 2026-10-23: `--forward circuit` on a TP rank: the installed plan
+                    // (`glm5next_plan::kda`), launch for launch what `decode_k` runs here.
+                    layer.decode_k_plan(gpu, normed, k, kda, ws, snaps, &p, stream)?;
                 } else {
                     layer.decode_k(gpu, normed, k, kda, ws, snaps, stream)?;
                 }
@@ -119,18 +123,27 @@ impl Glm5NextLayer {
                         None => layer,
                     };
                 // 2026-09-25: DSA's `decode_k` writes its output projection over its input
-                // buffer.
-                layer.decode_k(
-                    normed,
-                    k,
-                    state,
-                    kv_cache,
-                    seq_len,
-                    block_table,
-                    ctx,
-                    stream,
-                    is_prefill,
-                )?;
+                // buffer. 2026-10-23: Under `--forward circuit` a captured pass with row
+                // metadata at an installed row count runs its plan (`glm5next_plan::dsa`),
+                // launch for launch what `decode_k` runs there; every other pass (eager, a
+                // prefill piece, no metadata) is the layer's own code.
+                let captured = crate::glm5next_dsa::plan::plan_rows(ctx, k, is_prefill).is_some();
+                match self.plans.dsa.get(k).filter(|_| captured) {
+                    Some(p) => layer.decode_k_plan(
+                        normed, k, state, kv_cache, seq_len, ctx, is_prefill, &p, stream,
+                    )?,
+                    None => layer.decode_k(
+                        normed,
+                        k,
+                        state,
+                        kv_cache,
+                        seq_len,
+                        block_table,
+                        ctx,
+                        stream,
+                        is_prefill,
+                    )?,
+                }
                 Ok(normed)
             }
             (Glm5NextMixer::Kda { .. }, None) => {

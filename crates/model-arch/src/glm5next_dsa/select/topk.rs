@@ -16,6 +16,8 @@
 //!   many CTAs for every row of the pass.
 
 use super::*;
+use anyhow::ensure;
+use metrale_gpu_runtime::gpu::KernelHandle;
 
 /// 2026-10-21: `DSA_MC_CMAX` and `DSA_MC_WS_WORDS(C)` of `dsa_topk_mc.cu`: the most CTAs per row,
 /// and one row's workspace in u32 words at `c` CTAs.
@@ -95,6 +97,54 @@ pub(crate) fn topk_mc_for(
         && scratch.topk_mc.holds(rows, topk_mc_ctas(pools))
 }
 
+/// 2026-10-21: The histogram passes of the multi-CTA select, each a launch of `dsa_topk_mc_pass`.
+pub(crate) const TOPK_MC_PASSES: u32 = 4;
+
+/// 2026-10-23: The multi-CTA select of `rows` rows at `c` CTAs per row: [`TOPK_MC_PASSES`] launches
+/// of `pass`, then `collect` (the layer's kernels, or a plan's). Refuses a workspace that does
+/// not hold that many rows and CTAs.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn launch_mc(
+    gpu: &dyn GpuBackend,
+    (pass, collect): (KernelHandle, KernelHandle),
+    c: usize,
+    rows: usize,
+    scratch: &DsaSelectScratch,
+    (npools_a, selk_a): (usize, usize),
+    gd: DevicePtr,
+    stream: u64,
+) -> Result<()> {
+    ensure!(
+        scratch.topk_mc.holds(rows, c),
+        "DSA select: the multi-CTA top-k workspace does not hold {rows} rows at {c} CTAs"
+    );
+    let (c, rows) = (c as u32, rows as u32);
+    for p in 0..TOPK_MC_PASSES {
+        KernelLaunch::new(gpu, pass)
+            .grid([c, rows, 1])
+            .block([ROW_BLOCK, 1, 1])
+            .arg_ptr(scratch.scores)
+            .arg_ptr(scratch.topk_mc.ws)
+            .arg_u32(rows)
+            .arg_u32(npools_a as u32)
+            .arg_u32(selk_a as u32)
+            .arg_ptr(gd)
+            .arg_u32(p)
+            .launch(stream)?;
+    }
+    KernelLaunch::new(gpu, collect)
+        .grid([c, rows, 1])
+        .block([ROW_BLOCK, 1, 1])
+        .arg_ptr(scratch.scores)
+        .arg_ptr(scratch.topk_mc.ws)
+        .arg_ptr(scratch.selected)
+        .arg_u32(rows)
+        .arg_u32(npools_a as u32)
+        .arg_u32(selk_a as u32)
+        .arg_ptr(gd)
+        .launch(stream)
+}
+
 /// 2026-10-21: The pass's top-k over `scratch.scores` into `scratch.selected`; `(npools_a,
 /// np2_a, selk_a)` are the pass's launch arguments (`launch::run`), `gd` its device geometry.
 #[allow(clippy::too_many_arguments)]
@@ -120,31 +170,18 @@ pub(super) fn launch_topk(
         scratch.levers.decode_topk_radix,
     );
     if topk_mc_for(kernels, scratch, ceiling, radix, geom.q_rows, npools_a) {
-        let c = topk_mc_ctas(npools_a) as u32;
-        for pass in 0..4u32 {
-            KernelLaunch::new(gpu, kernels.rows.topk_mc_pass)
-                .grid([c, rows, 1])
-                .block([ROW_BLOCK, 1, 1])
-                .arg_ptr(scratch.scores)
-                .arg_ptr(scratch.topk_mc.ws)
-                .arg_u32(rows)
-                .arg_u32(npools_a as u32)
-                .arg_u32(selk_a as u32)
-                .arg_ptr(gd)
-                .arg_u32(pass)
-                .launch(stream)?;
-        }
-        return KernelLaunch::new(gpu, kernels.rows.topk_mc_collect)
-            .grid([c, rows, 1])
-            .block([ROW_BLOCK, 1, 1])
-            .arg_ptr(scratch.scores)
-            .arg_ptr(scratch.topk_mc.ws)
-            .arg_ptr(scratch.selected)
-            .arg_u32(rows)
-            .arg_u32(npools_a as u32)
-            .arg_u32(selk_a as u32)
-            .arg_ptr(gd)
-            .launch(stream);
+        let (pass, collect) = (kernels.rows.topk_mc_pass, kernels.rows.topk_mc_collect);
+        let c = topk_mc_ctas(npools_a);
+        return launch_mc(
+            gpu,
+            (pass, collect),
+            c,
+            geom.q_rows,
+            scratch,
+            (npools_a, selk_a),
+            gd,
+            stream,
+        );
     }
     if radix {
         return KernelLaunch::new(gpu, kernels.rows.topk_radix)

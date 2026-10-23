@@ -219,6 +219,12 @@ pub const MOE_W4A4_MAX_ROWS: usize = 16;
 /// wave.
 pub const W4A4_SWEEP_CTAS_PER_SM: u32 = 1;
 
+/// 2026-10-23: The routed W4A4 sweep's persistent grid on `gpu`: [`W4A4_SWEEP_CTAS_PER_SM`] per
+/// SM. The one rule the legacy kernels and the plan executor size it by.
+pub fn w4a4_sweep_ctas(gpu: &dyn GpuBackend) -> Result<u32> {
+    Ok(gpu.sm_count()? * W4A4_SWEEP_CTAS_PER_SM)
+}
+
 /// 2026-10-08: Rows one dense W4A4 launch covers (`w4a4_gemv_mx32`); wider launches run in
 /// chunks of it, and each row's sums do not depend on the chunk.
 pub const DENSE_W4A4_CHUNK_ROWS: usize = 32;
@@ -361,7 +367,7 @@ impl Glm5NextMlpKernels {
                 W4A4_MOE_MODULE,
                 "w4a4_gemv_mx8_moe_slots_sweep",
             ),
-            w4a4_sweep_ctas: gpu.sm_count()? * W4A4_SWEEP_CTAS_PER_SM,
+            w4a4_sweep_ctas: w4a4_sweep_ctas(gpu)?,
             w4a4_moe_k64: W4a4MoeK64Kernels {
                 quant: metrale_model_layers::layers::try_kernel(
                     gpu,

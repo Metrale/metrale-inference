@@ -178,6 +178,7 @@ settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "nvf
 # - The glm_* settings are the recipe's `env:` levers that pick another kernel for a planned node
 #   (kernels/gb10/common/FUSIONS.toml `when`): glm_mhc_fused (METRALE_GLM_MHC_FUSED=1),
 #   glm_router_rows (METRALE_GLM_ROUTER_ROWS=1), glm_router_topk_rank (METRALE_GLM_ROUTER_TOPK_RANK=1),
+#   glm_moe_combine_split (METRALE_GLM_MOE_COMBINE_SPLIT=1, 2026-10-23: the combine's grid),
 #   glm_moe_w4a4_grouped (METRALE_GLM_MOE_W4A4_GROUPED=1) and glm_moe_expert_layout (the recipe's
 #   `moe_expert_layout: tp`), glm_kda_row_reg, glm_kda_rows_reg, glm_kda_seq_rows (`decode`) and
 #   glm_kda_verify_tokens (METRALE_GLM_KDA_ROW_REG, _ROWS_REG, _SEQ_ROWS, _VERIFY_TOKENS), glm_w4a16_gemv_seg,
@@ -204,7 +205,7 @@ plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], 
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", glm_mhc_fused = "on", glm_router_rows = "on", glm_router_topk_rank = "on", glm_moe_w4a4_grouped = "on", glm_moe_expert_layout = "tp", glm_kda_row_reg = "on", glm_kda_rows_reg = "on", glm_kda_seq_rows = "decode", glm_kda_verify_tokens = "on", glm_w4a16_gemv_seg = "on", glm_w4a16_gemv_rows = "2", glm_w4a16_seg = "fuse", glm_swiglu_down_fold = "off", glm_dense_segment = "off", glm_kda_conv_one = "off", glm_dsa_decode_hb = "8", glm_dsa_verify_rows = "on", glm_dsa_indexer_rows = "on", glm_ar_fused_post = "on", screen_head = "on", glm_mtp_device_step = "on", final_norm_vanilla = "on" }
+settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", glm_mhc_fused = "on", glm_router_rows = "on", glm_router_topk_rank = "on", glm_moe_combine_split = "on", glm_moe_w4a4_grouped = "on", glm_moe_expert_layout = "tp", glm_kda_row_reg = "on", glm_kda_rows_reg = "on", glm_kda_seq_rows = "decode", glm_kda_verify_tokens = "on", glm_w4a16_gemv_seg = "on", glm_w4a16_gemv_rows = "2", glm_w4a16_seg = "fuse", glm_swiglu_down_fold = "off", glm_dense_segment = "off", glm_kda_conv_one = "off", glm_dsa_decode_hb = "8", glm_dsa_verify_rows = "on", glm_dsa_indexer_rows = "on", glm_ar_fused_post = "on", screen_head = "on", glm_mtp_device_step = "on", final_norm_vanilla = "on" }
 
 # 2026-10-23: The recipe serves --tp-size 3 (one GB10 per rank) with every split part of the
 # circuit's `[parallel]` spec (kernels/circuits/glm5_next.toml) over all three ranks; `hidden` is
@@ -245,7 +246,7 @@ plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], 
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", glm_mhc_fused = "on", glm_router_rows = "off", glm_router_topk_rank = "off", glm_moe_w4a4_grouped = "off", glm_moe_expert_layout = "ep", glm_kda_row_reg = "off", glm_kda_rows_reg = "off", glm_kda_seq_rows = "off", glm_kda_verify_tokens = "off", glm_w4a16_gemv_seg = "off", glm_w4a16_gemv_rows = "off", glm_w4a16_seg = "off", glm_swiglu_down_fold = "off", glm_dense_segment = "off", glm_kda_conv_one = "off", glm_dsa_decode_hb = "off", glm_dsa_verify_rows = "off", glm_dsa_indexer_rows = "on", glm_ar_fused_post = "off" }
+settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", glm_mhc_fused = "on", glm_router_rows = "off", glm_router_topk_rank = "off", glm_moe_combine_split = "off", glm_moe_w4a4_grouped = "off", glm_moe_expert_layout = "ep", glm_kda_row_reg = "off", glm_kda_rows_reg = "off", glm_kda_seq_rows = "off", glm_kda_verify_tokens = "off", glm_w4a16_gemv_seg = "off", glm_w4a16_gemv_rows = "off", glm_w4a16_seg = "off", glm_swiglu_down_fold = "off", glm_dense_segment = "off", glm_kda_conv_one = "off", glm_dsa_decode_hb = "off", glm_dsa_verify_rows = "off", glm_dsa_indexer_rows = "on", glm_ar_fused_post = "off" }
 
 # 2026-10-18: deepseek-ai/DeepSeek-V4.1-Flash-1017 (`deepseek_v41`), the three-node campaign's
 # model. The recipe id is the planned one: no recipe serves this checkpoint yet, and the circuit
