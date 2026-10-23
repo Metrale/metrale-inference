@@ -185,7 +185,19 @@ pub fn section(
     })
 }
 
-/// 2026-10-23: The requested sections (all when `names` is empty), keyed by name.
+/// 2026-10-23: A section that cannot be computed, as a declared mode (PCND): the others are
+/// still returned.
+fn unavailable(e: &metrale_error::Error) -> Value {
+    let mut o = Map::new();
+    o.insert("unavailable".into(), Value::Bool(true));
+    o.insert("code".into(), Value::String(e.code().name().to_string()));
+    o.insert("reason".into(), Value::String(e.to_string()));
+    Value::Object(o)
+}
+
+/// 2026-10-23: The requested sections (all when `names` is empty), keyed by name. A section
+/// that cannot be computed is returned as `{unavailable, code, reason}`, never failing the rest;
+/// an unknown campaign or section name is refused.
 pub fn status(
     b: &Bundle,
     cfg: &Config,
@@ -199,9 +211,18 @@ pub fn status(
     } else {
         names.to_vec()
     };
+    cfg.campaign(campaign)?;
+    if let Some(bad) = all.iter().find(|n| !SECTIONS.contains(&n.as_str())) {
+        return Err(error!(
+            ErrorCode::KgToolArgument,
+            "sections",
+            format!("no section `{bad}`; sections: {}", SECTIONS.join(", "))
+        ));
+    }
     let mut o = Map::new();
     for n in &all {
-        o.insert(n.clone(), section(b, cfg, campaign, n, fresh, instance)?);
+        let v = section(b, cfg, campaign, n, fresh, instance).unwrap_or_else(|e| unavailable(&e));
+        o.insert(n.clone(), v);
     }
     Ok(Value::Object(o))
 }

@@ -211,3 +211,74 @@ pub fn dangling(b: &Bundle) -> Vec<(KgId, Vec<KgId>)> {
         })
         .collect()
 }
+
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut cur = vec![i + 1];
+        for (j, cb) in b.iter().enumerate() {
+            let sub = prev[j] + usize::from(ca != *cb);
+            cur.push(sub.min(prev[j + 1] + 1).min(cur[j] + 1));
+        }
+        prev = cur;
+    }
+    prev[b.len()]
+}
+
+/// 2026-10-23: Ids the caller probably meant by `raw` (a bare key, a wrong prefix or a typo):
+/// every node whose key is `raw`'s key exactly, else up to three nodes within edit distance 3 of
+/// it, nearest first. Empty when nothing is close.
+pub fn suggest(b: &Bundle, raw: &str) -> Vec<KgId> {
+    let key = raw.split_once(':').map_or(raw, |(_, k)| k);
+    let exact: Vec<KgId> = b
+        .nodes
+        .iter()
+        .filter(|n| n.id.key() == key)
+        .map(|n| n.id.clone())
+        .collect();
+    if !exact.is_empty() {
+        return exact;
+    }
+    let mut near: Vec<(usize, &KgId)> = b
+        .nodes
+        .iter()
+        .filter(|n| n.id.label() != Label::Unresolved)
+        .map(|n| (edit_distance(key, n.id.key()), &n.id))
+        .filter(|(d, _)| *d <= 3)
+        .collect();
+    near.sort();
+    near.into_iter().take(3).map(|(_, id)| id.clone()).collect()
+}
+
+/// 2026-10-23: Parse `raw` and require the node, or refuse naming the closest ids and the
+/// prefixes, so a first call never dead-ends.
+pub fn resolve_id(b: &Bundle, raw: &str) -> Result<KgId> {
+    let hint = |raw: &str| {
+        let s = suggest(b, raw);
+        if s.is_empty() {
+            String::new()
+        } else {
+            let names: Vec<String> = s.iter().map(ToString::to_string).collect();
+            format!(" (did you mean {}?)", names.join(" or "))
+        }
+    };
+    match KgId::parse(raw) {
+        Ok(id) if b.node(&id).is_some() => Ok(id),
+        Ok(id) => Err(error!(ErrorCode::KgUnknownId, format!("{id}{}", hint(raw)))),
+        Err(_) => Err(error!(
+            ErrorCode::KgBadId,
+            raw.to_string(),
+            format!(
+                "{}{}; prefixes: {}",
+                if raw.contains(':') {
+                    "unknown label prefix"
+                } else {
+                    "no `<prefix>:` part"
+                },
+                hint(raw),
+                Label::prefixes()
+            )
+        )),
+    }
+}

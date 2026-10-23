@@ -182,10 +182,16 @@ impl Config {
             .iter()
             .find(|c| c.id == id)
             .ok_or_else(|| {
+                let known: Vec<&str> = self
+                    .sources
+                    .campaigns
+                    .iter()
+                    .map(|c| c.id.as_str())
+                    .collect();
                 error!(
                     ErrorCode::KgToolArgument,
                     "campaign",
-                    format!("no campaign {id}")
+                    format!("no campaign `{id}`; known: {}", known.join(", "))
                 )
             })
     }

@@ -123,6 +123,14 @@ labels! {
 /// 2026-10-23: The most labels one LatticeDB collection holds (a `u64` label bitmap).
 pub const LABEL_LIMIT: usize = 64;
 
+impl Label {
+    /// 2026-10-23: Every id prefix, comma-separated (for refusals that must not dead-end).
+    pub fn prefixes() -> String {
+        let all: Vec<&str> = Label::ALL.iter().map(|l| l.prefix()).collect();
+        all.join(", ")
+    }
+}
+
 impl KgId {
     /// 2026-10-23: The id of `label` with `key`; refuses an empty key, a tab or a newline.
     pub fn new(label: Label, key: impl Into<String>) -> Result<KgId> {
@@ -143,14 +151,17 @@ impl KgId {
             return Err(error!(
                 ErrorCode::KgBadId,
                 s.to_string(),
-                "no `<prefix>:` part"
+                format!("no `<prefix>:` part; prefixes: {}", Label::prefixes())
             ));
         };
         let Some(label) = Label::from_prefix(p) else {
             return Err(error!(
                 ErrorCode::KgBadId,
                 s.to_string(),
-                "unknown label prefix"
+                format!(
+                    "unknown label prefix `{p}`; prefixes: {}",
+                    Label::prefixes()
+                )
             ));
         };
         KgId::new(label, k)

@@ -11,7 +11,7 @@
 use crate::app::App;
 use crate::cypher;
 use metrale_error::{ErrorCode, Result, error};
-use metrale_kg_derive::id::{KgId, Label, Rel};
+use metrale_kg_derive::id::{Label, Rel};
 use metrale_kg_derive::ledger::{self, render_deps};
 use metrale_kg_derive::queries::{self, impact};
 use metrale_kg_derive::status::status;
@@ -162,7 +162,7 @@ pub fn default_rels(label: Label, downstream: bool) -> Vec<Rel> {
 }
 
 fn kg_impact(app: &App, args: &Value) -> Result<Value> {
-    let root = KgId::parse(arg_str(args, "id")?)?;
+    let root = queries::resolve_id(&app.bundle, arg_str(args, "id")?)?;
     let downstream = match arg_str(args, "direction")? {
         "downstream" => true,
         "upstream" => false,
