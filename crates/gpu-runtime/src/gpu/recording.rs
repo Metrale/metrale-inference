@@ -76,6 +76,9 @@ pub struct RecordingGpu {
     denied: Mutex<BTreeSet<(String, String)>>,
     ops: Mutex<Vec<Op>>,
     next_event: Mutex<u64>,
+    /// 2026-10-23: Side streams are distinct and non-zero (the mock's are the default stream 0),
+    /// so a log shows which launches a fork moved off the main stream.
+    next_stream: Mutex<u64>,
     sms: u32,
 }
 
@@ -89,6 +92,7 @@ impl RecordingGpu {
             denied: Mutex::new(BTreeSet::new()),
             ops: Mutex::new(Vec::new()),
             next_event: Mutex::new(1),
+            next_stream: Mutex::new(0x5_0000),
             sms,
         }
     }
@@ -268,6 +272,12 @@ impl GpuBackend for RecordingGpu {
             stream: Some(stream),
         });
         Ok(())
+    }
+
+    fn create_stream(&self) -> Result<u64> {
+        let mut s = self.next_stream.lock();
+        *s += 1;
+        Ok(*s)
     }
 
     fn create_event(&self) -> Result<u64> {

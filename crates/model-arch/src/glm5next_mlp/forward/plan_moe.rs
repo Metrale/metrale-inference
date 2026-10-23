@@ -13,8 +13,10 @@
 //! - A plan is bound only to a site whose dims are the plan's (the rank's expert slice, top-k,
 //!   expert count) and whose expert tables match its scale format (`_cs` entries read base
 //!   tables); anything else is refused before a launch.
-//! - The shared expert is not modelled here yet: the caller runs it at the shared group's place
-//!   (`MoePlan::run`'s `shared`), on the hand-written path.
+//! - The shared expert is not modelled here yet: the caller runs it on the hand-written path,
+//!   starting it before the router (`shared_start`: a fork onto the side stream) and finishing
+//!   it before the combine (`shared_finish`: the join, or the whole expert in line), as
+//!   `forward_moe` does.
 
 use anyhow::{Context, Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
@@ -229,9 +231,9 @@ impl MoeSteps<KernelHandle> {
         Ok(())
     }
 
-    /// 2026-10-23: The site at `rows` rows of `x` into `out`, in the plan's order: router, top-k,
-    /// the routed experts (zeroing first where the plan does not zero otherwise), `shared` at the
-    /// shared expert's place, the combine.
+    /// 2026-10-23: The site at `rows` rows of `x` into `out`, in the plan's order: `shared_start`,
+    /// router, top-k, the routed experts (zeroing first where the plan does not zero otherwise),
+    /// `shared_finish`, the combine.
     #[allow(clippy::too_many_arguments)]
     pub fn run(
         &self,
@@ -243,7 +245,8 @@ impl MoeSteps<KernelHandle> {
         x: DevicePtr,
         out: DevicePtr,
         rows: usize,
-        shared: impl FnOnce() -> Result<()>,
+        shared_start: impl FnOnce() -> Result<()>,
+        shared_finish: impl FnOnce() -> Result<()>,
         stream: u64,
     ) -> Result<()> {
         ensure!(
@@ -253,6 +256,7 @@ impl MoeSteps<KernelHandle> {
         );
         let scales: W4a4ActScales = w.act_scales.context("GLM MoE plan: no activation scales")?;
         let (n_e, h) = (self.experts, self.hidden);
+        shared_start()?;
         match &self.router {
             RouterStep::PerRow(gemv) => {
                 let k = ops::DenseMmKernels {
@@ -377,7 +381,7 @@ impl MoeSteps<KernelHandle> {
             shape(h, mi, 1),
             stream,
         )?;
-        shared()?;
+        shared_finish()?;
         combine_raw(
             gpu,
             self.blend.kernel,
@@ -407,9 +411,10 @@ pub fn bind(
     Ok((bound, crate::glm5next_mlp::w4a4_sweep_ctas(gpu)?))
 }
 
-/// 2026-10-23: The site from `plan` with its shared expert on the hand-written path, where
-/// `forward_moe` runs it unforked (`pieces::shared_expert` over the site's rows as one piece);
-/// `k` is read for the shared expert only.
+/// 2026-10-23: The site from `plan` with its shared expert on the hand-written path, as
+/// `forward_moe` runs it over the site's rows as one piece: forked onto the workspace's side
+/// stream when its fork takes `rows` (`METRALE_GLM_SHARED_FORK`), else in line before the
+/// combine; `k` is read for the shared expert only.
 #[allow(clippy::too_many_arguments)]
 pub fn run_with_legacy_shared(
     plan: &MoePlan,
@@ -424,9 +429,19 @@ pub fn run_with_legacy_shared(
     stream: u64,
 ) -> Result<()> {
     let (steps, ctas) = plan;
-    let shared =
-        || super::pieces::shared_expert(gpu, k, cfg, w, x, ws, ws.dense_scratch(), &[rows], stream);
-    steps.run(gpu, *ctas, cfg, w, ws, x, out, rows, shared, stream)
+    let pieces = [rows];
+    let expert =
+        |scratch, s| super::pieces::shared_expert(gpu, k, cfg, w, x, ws, scratch, &pieces, s);
+    let fork = ws.shared_fork.as_ref().filter(|f| f.takes(rows));
+    let start = || match fork {
+        Some(f) => f.fork(gpu, stream, |side, scratch| expert(scratch, side)),
+        None => Ok(()),
+    };
+    let finish = || match fork {
+        Some(f) => f.join(gpu, stream),
+        None => expert(ws.dense_scratch(), stream),
+    };
+    steps.run(gpu, *ctas, cfg, w, ws, x, out, rows, start, finish, stream)
 }
 
 #[cfg(test)]

@@ -187,25 +187,13 @@ pub fn plan_kernel(gpu: &dyn GpuBackend, k: &KernelId) -> Result<KernelHandle> {
         .with_context(|| format!("the plan names `{k}`, which this target cannot launch"))
 }
 
-/// 2026-10-23: Who issues a family's launches for one block kind: its own layer code, or the
-/// circuit executor from the plan. A declared, reported choice (PCND): never inferred, never a
-/// fallback from one to the other.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Execution {
-    /// 2026-10-23: The hand-written layer code.
-    Legacy,
-    /// 2026-10-23: The plan's groups, through the family's emitters.
-    Plan,
-}
-
-impl Execution {
-    /// 2026-10-23: The spelling in reports and on the command line.
-    pub fn name(self) -> &'static str {
-        match self {
-            Execution::Legacy => "legacy",
-            Execution::Plan => "plan",
-        }
-    }
+/// 2026-10-23: One rank's fused plans over its circuit, as a layer installs plan execution
+/// from them: one plan per `(mode, rows)` the engine fused, in that order. The executed
+/// selection is `--forward circuit` (the engine's `ForwardSelect`); this carries only its data.
+#[derive(Clone, Copy)]
+pub struct RankPlans<'a> {
+    pub circuit: &'a Circuit,
+    pub plans: &'a [FusionPlan],
 }
 
 #[cfg(test)]

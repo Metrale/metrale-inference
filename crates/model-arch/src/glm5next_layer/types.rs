@@ -86,6 +86,9 @@ pub struct Glm5NextLayer {
     pub dump: Option<Arc<crate::glm5next_layer_dump::DumpConfig>>,
     /// 2026-10-17: The GLM layer levers, resolved once at load ([`GlmLevers::from_settings`]).
     pub levers: super::GlmLevers,
+    /// 2026-10-23: The routed MoE plans `--forward circuit` installs (`install_plans`); empty
+    /// runs the hand-written site.
+    pub moe_plans: crate::glm5next_plan::install::InstalledMoe,
 }
 
 impl Glm5NextLayer {

@@ -123,5 +123,6 @@ pub(crate) fn moe_layers(c: &Circuit) -> Vec<usize> {
     v
 }
 
-/// 2026-10-23: The runs a speculative TP=3 step makes, and the non-speculative decode.
-pub(crate) const RUNS: [(Mode, u64); 2] = [(Mode::Decode, 1), (Mode::Verify, 2)];
+/// 2026-10-23: The runs a speculative TP=3 step makes, and the non-speculative decode: the shapes
+/// plan execution installs at.
+pub(crate) const RUNS: [(Mode, u64); 2] = super::install::GATED;

@@ -20,7 +20,11 @@ pub struct ServeSchedulingArgs {
     /// program compiled at boot from the model's circuit plan (`met circuit show`);
     /// `circuit-reference` compiles the plan without its bit-identical fusions. The circuit
     /// covers single-sequence decode so far; boot refuses a model, recipe or switch it does not
-    /// model. No environment fallback.
+    /// model. On a tensor-parallel rank `circuit` runs from the rank's plan the sites the model's
+    /// emitters compile (GLM-5.3: the routed MoE) and reports them at boot. No environment
+    /// fallback.
+    // 2026-10-23: @human-review: legacy stays the default; the owner may make `circuit` the
+    // default once the plan-executed sites are bit-gated on the GPU.
     #[arg(long, value_enum, default_value_t = ForwardArg::Legacy)]
     pub forward: ForwardArg,
 

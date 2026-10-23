@@ -18,6 +18,9 @@ use crate::glm5next_mlp::forward::plan_moe::MoeSteps;
 
 #[cfg(test)]
 pub(crate) mod fixture;
+#[cfg(test)]
+pub(crate) mod fixture_site;
+pub mod install;
 pub mod moe;
 
 /// 2026-10-23: The compile target the GLM emitters fill: one block instance's steps.
@@ -59,11 +62,13 @@ pub fn registry() -> Result<EmitterRegistry<GlmBlock>> {
     EmitterRegistry::new(&EMITTERS)
 }
 
-/// 2026-10-23: One block instance compiled from a plan: its steps and the sites of the block the
-/// plan names but the layer still runs on its own code, in plan order.
+/// 2026-10-23: One block instance compiled from a plan: its steps, the plan's sites they run
+/// (each `block [locals]: kernels`), and the sites of the block the plan names but the layer
+/// still runs on its own code, in plan order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompiledSite<S> {
     pub steps: S,
+    pub executed: Vec<String>,
     pub legacy: Vec<String>,
 }
 
@@ -100,7 +105,7 @@ pub fn compile_moe(
 ) -> Result<CompiledSite<MoeSteps<metrale_circuit::KernelId>>> {
     let reg = registry()?;
     let mut block = GlmBlock::default();
-    let mut legacy = Vec::new();
+    let (mut executed, mut legacy) = (Vec::new(), Vec::new());
     let mut last = None;
     for g in PlanGroup::all(circuit, plan).filter(|g| g.layer() == Some(layer) && moe_site_group(g))
     {
@@ -108,6 +113,8 @@ pub fn compile_moe(
             legacy.push(g.site());
         } else {
             reg.emit(&g, &mut block)?;
+            let kernels: Vec<String> = g.group.kernels.iter().map(|k| k.to_string()).collect();
+            executed.push(format!("{}: {}", g.site(), kernels.join(",")));
         }
         last = Some(g);
     }
@@ -119,6 +126,7 @@ pub fn compile_moe(
     );
     Ok(CompiledSite {
         steps: block.moe.finish(&g)?,
+        executed,
         legacy,
     })
 }

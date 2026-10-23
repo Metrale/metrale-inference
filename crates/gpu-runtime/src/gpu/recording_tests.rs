@@ -72,3 +72,12 @@ fn a_denied_kernel_fails_its_lookup_only() {
     assert!(gpu.kernel("m", "b").is_ok());
     assert_eq!(gpu.sm_count().unwrap(), 48);
 }
+
+/// 2026-10-23: Side streams are distinct and none is the default stream, so a fork's launches
+/// are told apart from the main stream's in a log.
+#[test]
+fn side_streams_are_distinct_and_not_the_default() {
+    let gpu = RecordingGpu::new(1);
+    let (a, b) = (gpu.create_stream().unwrap(), gpu.create_stream().unwrap());
+    assert!(a != 0 && b != 0 && a != b, "{a} {b}");
+}

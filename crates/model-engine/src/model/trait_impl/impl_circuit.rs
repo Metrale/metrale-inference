@@ -250,6 +250,25 @@ impl TransformerModel {
 
 impl ModelCircuit for TransformerModel {
     fn set_forward(&self, sel: &ForwardSelect) -> Result<()> {
+        // 2026-10-23: A TP rank runs plan sites inside its layers (`impl_circuit_ranks`); every
+        // switch first returns them to their own code.
+        self.clear_rank_plans()?;
+        if let ForwardSelect::Circuit {
+            instance,
+            fusions,
+            modules,
+            config_json,
+        } = sel
+            && self.circuit_by_rank()
+        {
+            self.destroy_lora_decode_graphs();
+            let sites = self.install_rank_plans(instance, *fusions, modules, config_json)?;
+            tracing::info!(
+                "{}",
+                super::impl_circuit_ranks::report_sites(self.config.tp_rank, &sites)
+            );
+            return Ok(());
+        }
         let next = match sel {
             ForwardSelect::Legacy => None,
             ForwardSelect::Circuit {
@@ -278,7 +297,9 @@ impl ModelCircuit for TransformerModel {
 
     fn forward_disclosure(&self) -> ForwardDisclosure {
         match &*self.circuit.read() {
-            None => ForwardDisclosure::legacy(),
+            None => self
+                .rank_plans_disclosure()
+                .unwrap_or_else(ForwardDisclosure::legacy),
             Some(e) => ForwardDisclosure {
                 forward: match e.fusions {
                     Fusions::All => "circuit",
