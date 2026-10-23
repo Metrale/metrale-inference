@@ -13,10 +13,11 @@ use alloc::collections::BTreeMap;
 
 use serde::Serialize;
 
+use super::HwError;
+pub use super::headroom_ci::{SiteCi, TotalsCi};
 pub use super::headroom_sites::Outside;
 use super::headroom_svg::Ceilings;
 use super::headroom_trace::{Stated, Trace};
-use super::HwError;
 
 /// 2026-10-22: Which term sets a site's floor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -131,6 +132,11 @@ pub struct SiteRow {
     pub upside_target: Option<Upside>,
     /// 2026-10-22: Energy.
     pub energy: EnergyCols,
+    /// 2026-10-22: Intervals of the measured fields; `None` without per-step series.
+    pub ci: Option<SiteCi>,
+    /// 2026-10-22: Its upside interval overlaps a neighbour's in the ranking: the order between
+    /// them is not resolved.
+    pub tied: bool,
 }
 
 /// 2026-10-22: A captured kernel outside the plan.
@@ -188,6 +194,8 @@ pub struct Totals {
     pub overlap_us: Option<f64>,
     /// 2026-10-22: Step − Σ exclusive: no kernel running.
     pub residual_us: Option<f64>,
+    /// 2026-10-22: Intervals of the step, tok/s and the residual; `None` without series.
+    pub ci: Option<TotalsCi>,
 }
 
 /// 2026-10-22: The headroom of one step.
@@ -229,6 +237,8 @@ pub struct Headroom {
     pub curve: Vec<CurvePoint>,
     /// 2026-10-22: Totals.
     pub totals: Totals,
+    /// 2026-10-22: What the intervals cover, or why there are none.
+    pub uncertainty: String,
 }
 
 /// 2026-10-22: Why a headroom could not be computed.
@@ -265,4 +275,3 @@ pub struct Inputs<'a> {
     /// 2026-10-22: Energy constants.
     pub energy: Option<EnergyRoofline>,
 }
-

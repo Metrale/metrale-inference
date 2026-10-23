@@ -57,7 +57,7 @@ fn args(trace: Option<&str>) -> CircuitHeadroomArgs {
             mode: Mode::Draft,
             rows: 1,
         }],
-        trace: trace.map(PathBuf::from),
+        trace: trace.map(PathBuf::from).into_iter().collect(),
         step_kernel: None,
         attribution: None,
         kv_tokens: None,
@@ -89,8 +89,9 @@ fn outputs() -> Vec<(String, String)> {
 fn the_headroom_reports_are_current() {
     let root = root();
     for (rel, text) in outputs() {
-        let on_disk = std::fs::read_to_string(root.join(&rel))
-            .unwrap_or_else(|e| panic!("{rel}: {e}; regenerate with --ignored regenerate_headroom"));
+        let on_disk = std::fs::read_to_string(root.join(&rel)).unwrap_or_else(|e| {
+            panic!("{rel}: {e}; regenerate with --ignored regenerate_headroom")
+        });
         assert!(
             on_disk == text,
             "{rel} is stale; regenerate with `cargo test -p met circuit_headroom -- --ignored regenerate_headroom`"
@@ -110,7 +111,9 @@ fn regenerate_headroom() {
 /// 2026-10-22: The subset of JSON Schema schemas/headroom.v1.json uses.
 fn validate(schema: &Value, root: &Value, v: &Value, path: &str) -> Result<(), String> {
     if let Some(r) = schema.get("$ref").and_then(Value::as_str) {
-        let name = r.strip_prefix("#/$defs/").ok_or(format!("{path}: bad $ref"))?;
+        let name = r
+            .strip_prefix("#/$defs/")
+            .ok_or(format!("{path}: bad $ref"))?;
         return validate(&root["$defs"][name], root, v, path);
     }
     if let Some(any) = schema.get("anyOf").and_then(Value::as_array) {
@@ -121,9 +124,15 @@ fn validate(schema: &Value, root: &Value, v: &Value, path: &str) -> Result<(), S
             .ok_or(format!("{path}: matches no anyOf branch"));
     }
     if let Some(e) = schema.get("enum").and_then(Value::as_array) {
-        return e.contains(v).then_some(()).ok_or(format!("{path}: {v} not in enum"));
+        return e
+            .contains(v)
+            .then_some(())
+            .ok_or(format!("{path}: {v} not in enum"));
     }
-    let ok = match schema["type"].as_str().ok_or(format!("{path}: schema has no type"))? {
+    let ok = match schema["type"]
+        .as_str()
+        .ok_or(format!("{path}: schema has no type"))?
+    {
         "object" => {
             let o = v.as_object().ok_or(format!("{path}: not an object"))?;
             if let Some(props) = schema.get("properties").and_then(Value::as_object) {
@@ -160,7 +169,8 @@ fn validate(schema: &Value, root: &Value, v: &Value, path: &str) -> Result<(), S
         "null" => v.is_null(),
         t => return Err(format!("{path}: type {t} not handled")),
     };
-    ok.then_some(()).ok_or(format!("{path}: {v} is not {}", schema["type"]))
+    ok.then_some(())
+        .ok_or(format!("{path}: {v} is not {}", schema["type"]))
 }
 
 #[test]
@@ -178,13 +188,28 @@ fn the_json_report_validates_against_the_committed_schema() {
     // Negative controls: the validator refuses what the schema forbids.
     let mut extra = doc.clone();
     extra["sites"][0]["guess"] = Value::from(1);
-    assert!(validate(&schema, &schema, &extra, "$").unwrap_err().contains("unknown field `guess`"));
+    assert!(
+        validate(&schema, &schema, &extra, "$")
+            .unwrap_err()
+            .contains("unknown field `guess`")
+    );
     let mut missing = doc.clone();
-    missing["totals"].as_object_mut().unwrap().remove("residual_us");
-    assert!(validate(&schema, &schema, &missing, "$").unwrap_err().contains("missing `residual_us`"));
+    missing["totals"]
+        .as_object_mut()
+        .unwrap()
+        .remove("residual_us");
+    assert!(
+        validate(&schema, &schema, &missing, "$")
+            .unwrap_err()
+            .contains("missing `residual_us`")
+    );
     let mut bound = doc;
     bound["sites"][0]["bound"] = Value::from("guessed");
-    assert!(validate(&schema, &schema, &bound, "$").unwrap_err().contains("not in enum"));
+    assert!(
+        validate(&schema, &schema, &bound, "$")
+            .unwrap_err()
+            .contains("not in enum")
+    );
 }
 
 #[test]
@@ -204,7 +229,8 @@ fn the_glm_capture_closes_its_step_budget() {
         &std::fs::read_to_string(root().join(CAPTURES[0].0)).unwrap(),
     )
     .unwrap();
-    let captured: f64 = trace.kernels.iter().map(|k| k.exclusive_us).sum::<f64>() / trace.steps as f64;
+    let captured: f64 =
+        trace.kernels.iter().map(|k| k.exclusive_us).sum::<f64>() / trace.steps as f64;
     assert!((captured - sites - out).abs() < 1e-6 * step);
 }
 
@@ -213,7 +239,10 @@ fn a_flag_that_contradicts_the_capture_is_refused() {
     let mut a = args(Some(CAPTURES[0].0));
     a.kv_tokens = Some(999);
     let e = compute(&root(), &a).unwrap_err().to_string();
-    assert!(e.contains("--kv-tokens 999 contradicts the capture's 1646"), "{e}");
+    assert!(
+        e.contains("--kv-tokens 999 contradicts the capture's 1646"),
+        "{e}"
+    );
     // The same value agrees.
     a.kv_tokens = Some(1646);
     assert!(compute(&root(), &a).is_ok());

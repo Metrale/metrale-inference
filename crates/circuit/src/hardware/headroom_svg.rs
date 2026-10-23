@@ -264,11 +264,41 @@ pub fn waterfall_svg(h: &Headroom) -> String {
         t.sites_exclusive_us,
     ) {
         let kernels = sites + out;
-        bars.push(("measured step".into(), 0.0, step, "b1", format!("{:.0} us, {:.1} tok/s", step, t.step_tok_s.unwrap_or(0.0))));
-        bars.push(("− no kernel running".into(), kernels, step, "b2", format!("residual {:.0} us (host, syncs, waits, gaps)", res)));
-        bars.push(("= Σ kernels, exclusive".into(), 0.0, kernels, "b1", format!("{:.0} us: launch sites {:.0} + outside the plan {:.0}", kernels, sites, out)));
+        bars.push((
+            "measured step".into(),
+            0.0,
+            step,
+            "b1",
+            format!("{:.0} us, {:.1} tok/s", step, t.step_tok_s.unwrap_or(0.0)),
+        ));
+        bars.push((
+            "− no kernel running".into(),
+            kernels,
+            step,
+            "b2",
+            format!("residual {:.0} us (host, syncs, waits, gaps)", res),
+        ));
+        bars.push((
+            "= Σ kernels, exclusive".into(),
+            0.0,
+            kernels,
+            "b1",
+            format!(
+                "{:.0} us: launch sites {:.0} + outside the plan {:.0}",
+                kernels, sites, out
+            ),
+        ));
         let lo = t.ceiling_us.min(kernels);
-        bars.push(("− above the floors".into(), lo, kernels, "b2", format!("{:.0} us (outside-the-plan kernels have no floor)", kernels - lo)));
+        bars.push((
+            "− above the floors".into(),
+            lo,
+            kernels,
+            "b2",
+            format!(
+                "{:.0} us (outside-the-plan kernels have no floor)",
+                kernels - lo
+            ),
+        ));
     }
     bars.push((
         "= step ceiling: Σ floors".into(),

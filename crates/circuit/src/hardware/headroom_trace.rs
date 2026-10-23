@@ -67,6 +67,12 @@ pub struct TraceKernel {
     pub exclusive_us: f64,
     /// 2026-10-22: Energy of these launches, microjoules, when a power capture attributed it.
     pub energy_uj: Option<f64>,
+    /// 2026-10-22: Per step: the durations of the launches that start in it (empty: no series).
+    #[serde(default)]
+    pub step_total_us: Vec<f64>,
+    /// 2026-10-22: Per step: the exclusive time inside it.
+    #[serde(default)]
+    pub step_exclusive_us: Vec<f64>,
 }
 
 /// 2026-10-22: A capture.
@@ -83,6 +89,13 @@ pub struct Trace {
     pub steps: u64,
     /// 2026-10-22: From the first step's start to the last step's end, microseconds.
     pub window_us: f64,
+    /// 2026-10-22: Per step: its duration, anchor to anchor (empty: the capture has no series and
+    /// the headroom states no interval).
+    #[serde(default)]
+    pub step_us: Vec<f64>,
+    /// 2026-10-22: The steps of each pooled capture, in order (empty: one capture).
+    #[serde(default)]
+    pub segments: Vec<u64>,
     /// 2026-10-22: Tokens a step emits on average in the capture.
     pub tokens_per_step: Option<Stated>,
     /// 2026-10-22: The time one launch takes when it does no work on this device.
@@ -104,10 +117,7 @@ impl Trace {
     /// 2026-10-22: Refuse a capture whose numbers cannot be a window of whole steps.
     pub fn check(&self) -> Result<(), String> {
         if self.schema != 1 {
-            return Err(format!(
-                "trace schema {} (this build reads 1)",
-                self.schema
-            ));
+            return Err(format!("trace schema {} (this build reads 1)", self.schema));
         }
         if self.source.trim().is_empty() {
             return Err("trace has no `source` fingerprint".into());
@@ -129,6 +139,15 @@ impl Trace {
             }
             busy += k.exclusive_us;
         }
+        if !self.step_us.is_empty() {
+            self.check_series(busy)?;
+        }
+        if !self.segments.is_empty() && self.segments.iter().sum::<u64>() != self.steps {
+            return Err(format!(
+                "trace segments {:?} do not add up to its {} steps",
+                self.segments, self.steps
+            ));
+        }
         if busy > self.window_us * (1.0 + 1e-9) {
             return Err(format!(
                 "trace exclusive time {busy} us exceeds its window {} us: exclusive times must be \
@@ -138,6 +157,172 @@ impl Trace {
         }
         Ok(())
     }
+}
+
+impl Trace {
+    /// 2026-10-22: The per-step series exist for every kernel and add up to the totals (to the
+    /// exporter's rounding, 0.5 ns per step).
+    fn check_series(&self, _busy: f64) -> Result<(), String> {
+        let n = usize::try_from(self.steps).map_err(|e| e.to_string())?;
+        let tol = |x: f64| 1e-9 * x.abs() + 5e-4 * n as f64;
+        let sum = |v: &[f64]| v.iter().sum::<f64>();
+        if self.step_us.len() != n
+            || (sum(&self.step_us) - self.window_us).abs() > tol(self.window_us)
+        {
+            return Err(format!(
+                "trace step_us holds {} steps summing to {} us; the window is {} steps, {} us",
+                self.step_us.len(),
+                sum(&self.step_us),
+                n,
+                self.window_us
+            ));
+        }
+        for k in &self.kernels {
+            let ok = k.step_total_us.len() == n
+                && k.step_exclusive_us.len() == n
+                && (sum(&k.step_total_us) - k.total_us).abs() <= tol(k.total_us)
+                && (sum(&k.step_exclusive_us) - k.exclusive_us).abs() <= tol(k.exclusive_us);
+            if !ok {
+                return Err(format!(
+                    "trace kernel `{}`: its per-step series must have {n} steps and add up to its totals",
+                    k.kernel
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// 2026-10-22: The steps of each capture.
+    pub fn segment_lengths(&self) -> Vec<usize> {
+        let segs: Vec<u64> = if self.segments.is_empty() {
+            vec![self.steps]
+        } else {
+            self.segments.clone()
+        };
+        segs.iter()
+            .map(|&x| usize::try_from(x).unwrap_or(0))
+            .collect()
+    }
+
+    /// 2026-10-22: Captures pooled into this one.
+    pub fn captures(&self) -> usize {
+        self.segments.len().max(1)
+    }
+}
+
+/// 2026-10-22: Pool captures of one configuration: same step kernel, plan (shard dims, KV) and
+/// tokens per step, or refused. Kernels are joined by (kernel, site, label, note); a kernel a
+/// capture lacks has zero time in its steps. The launch floor is the median of the captures'.
+pub fn pool(traces: &[Trace]) -> Result<Trace, String> {
+    let Some(first) = traces.first() else {
+        return Err("no capture to pool".into());
+    };
+    if traces.len() == 1 {
+        return Ok(first.clone());
+    }
+    for t in traces {
+        t.check()?;
+        let same = t.step_kernel == first.step_kernel
+            && t.plan == first.plan
+            && t.tokens_per_step.as_ref().map(|x| x.value)
+                == first.tokens_per_step.as_ref().map(|x| x.value);
+        if !same {
+            return Err(format!(
+                "captures `{}` and `{}` differ in step kernel, plan or tokens per step: pooling them \
+                 would mix configurations",
+                first.source, t.source
+            ));
+        }
+        if t.step_us.is_empty() {
+            return Err(format!(
+                "capture `{}` has no per-step series to pool",
+                t.source
+            ));
+        }
+    }
+    type Key = (String, Option<String>, Option<String>, Option<String>);
+    let mut keys: Vec<Key> = Vec::new();
+    for t in traces {
+        for k in &t.kernels {
+            let key = (
+                k.kernel.clone(),
+                k.site.clone(),
+                k.label.clone(),
+                k.note.clone(),
+            );
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+    }
+    let mut kernels = Vec::new();
+    for key in keys {
+        let mut row = TraceKernel {
+            kernel: key.0.clone(),
+            site: key.1.clone(),
+            label: key.2.clone(),
+            note: key.3.clone(),
+            calls: 0,
+            total_us: 0.0,
+            exclusive_us: 0.0,
+            energy_uj: Some(0.0),
+            step_total_us: Vec::new(),
+            step_exclusive_us: Vec::new(),
+        };
+        for t in traces {
+            let n = usize::try_from(t.steps).map_err(|e| e.to_string())?;
+            match t.kernels.iter().find(|k| {
+                (&k.kernel, &k.site, &k.label, &k.note) == (&key.0, &key.1, &key.2, &key.3)
+            }) {
+                Some(k) => {
+                    row.calls += k.calls;
+                    row.total_us += k.total_us;
+                    row.exclusive_us += k.exclusive_us;
+                    row.energy_uj = row.energy_uj.zip(k.energy_uj).map(|(a, b)| a + b);
+                    row.step_total_us.extend(&k.step_total_us);
+                    row.step_exclusive_us.extend(&k.step_exclusive_us);
+                }
+                None => {
+                    row.energy_uj = None;
+                    row.step_total_us.extend(core::iter::repeat_n(0.0, n));
+                    row.step_exclusive_us.extend(core::iter::repeat_n(0.0, n));
+                }
+            }
+        }
+        kernels.push(row);
+    }
+    let floors: Vec<f64> = traces
+        .iter()
+        .filter_map(|t| t.launch_floor_us.as_ref().map(|l| l.value))
+        .collect();
+    let pooled = Trace {
+        schema: 1,
+        source: traces
+            .iter()
+            .map(|t| t.source.as_str())
+            .collect::<Vec<_>>()
+            .join(" | "),
+        step_kernel: first.step_kernel.clone(),
+        steps: traces.iter().map(|t| t.steps).sum(),
+        window_us: traces.iter().map(|t| t.window_us).sum(),
+        step_us: traces
+            .iter()
+            .flat_map(|t| t.step_us.iter().copied())
+            .collect(),
+        segments: traces.iter().map(|t| t.steps).collect(),
+        tokens_per_step: first.tokens_per_step.clone(),
+        launch_floor_us: (floors.len() == traces.len())
+            .then(|| super::stats::median(&floors))
+            .flatten()
+            .map(|v| Stated {
+                value: v,
+                basis: format!("median of the {} captures' launch floors", floors.len()),
+            }),
+        plan: first.plan.clone(),
+        kernels,
+    };
+    pooled.check()?;
+    Ok(pooled)
 }
 
 /// 2026-10-22: Parse and check a trace file.

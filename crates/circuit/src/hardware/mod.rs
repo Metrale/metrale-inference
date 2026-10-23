@@ -29,6 +29,7 @@ pub mod estimate;
 pub mod exec;
 pub mod gaps;
 pub mod headroom;
+pub mod headroom_ci;
 mod headroom_model;
 mod headroom_render;
 pub mod headroom_sites;
@@ -41,6 +42,7 @@ mod render;
 mod render_matrix;
 mod render_routes;
 pub mod sources;
+pub mod stats;
 pub mod tc_policy;
 mod tc_policy_render;
 

@@ -35,6 +35,7 @@ met circuit headroom ... --trace run.sqlite --step-kernel screen_head_scan \
 The flags:
 
 - `--also <mode>:<rows>` adds another forward to the step, e.g. the MTP draft head.
+- `--trace` can be repeated to pool captures of one configuration (see Statistics).
 - `--kv-tokens`, `--tokens-per-step` and `--launch-floor-us` state inputs the capture may also
   state. If both give a value and the values differ, the command fails.
 - With no stated KV length, the class's `[roofline] context_tokens` assumption is used.
@@ -137,7 +138,49 @@ kernel-energy design. Until then the columns read `–`, never 0.
 - **Routed experts.** The floor uses uniform routing (`E(1-(1-k/E)^T)` distinct experts), not
   the union the capture actually swept.
 - **Single capture.** A report from one capture is labelled preliminary. It carries that
-  capture's fingerprint (measurement discipline, rules 1 and 5).
+  capture's fingerprint (measurement discipline, rules 1 and 5). Its intervals cover
+  step-to-step variation inside that capture, not run-to-run variation (see Statistics).
+
+## Statistics: the intervals and what they cover
+
+Every measured site time, its pct-of-floor and upside, and the step, tok/s and residual carry
+a 95% interval, computed in `crates/circuit/src/hardware/headroom_ci.rs`:
+
+- **Per-step series.** The exporter writes `step_us` and, per kernel, `step_total_us` and
+  `step_exclusive_us` (exclusive time split across the steps it covers). `Trace::check` refuses
+  series whose sums disagree with the totals.
+- **Moving-block bootstrap** (Künsch 1989). Steps are autocorrelated, so steps are resampled in
+  blocks of `ceil(n^(1/3))` consecutive steps (Hall, Horowitz, Jing 1995), with 1000 replicates,
+  seed `0x68656164726f6f6d` ("headroom", SplitMix64) and a percentile interval. Each replicate
+  resamples the **same step indices for every series**, so the joint quantities (upside,
+  residual, tok/s at the target) keep their covariance.
+- **Delta-method cross-check.** pct-of-floor and the residual also get a normal interval from
+  the Newey-West (HAC) variance of the mean, with lag = block. The report prints both side by
+  side; a large disagreement means the bootstrap is not to be trusted at this n.
+- **Point estimates are window means**, because the step budget is additive only in means. The
+  JSON also carries each site's per-step **median** total and its interval (`median_total_us`,
+  `median_total_ci`), which is robust to a slow step.
+- **Ranking.** Sites are ranked by the point upside. Where neighbouring upside intervals overlap,
+  the rank is flagged `≈` (tied): the order between them is not established.
+- **Pooling.** `--trace` can be repeated. Captures must agree on the step kernel, the plan dims,
+  the KV length and tokens per step, or they are refused ("would mix configurations"). Each
+  capture is one segment, and bootstrap blocks never cross segments. The header then says
+  "n=k captures pooled". Run-to-run variance needs k ≥ 2 independent serves.
+- **No series, no interval.** A capture without series is labelled "preliminary, n=1 (no CI)".
+  Its interval cells read `–`, and no interval is ever invented.
+
+**Consolidation (one source of truth).** `crates/circuit/src/hardware/stats.rs` is interim. The
+shared crate `metrale-stats` (branch `kernel-energy`, a placeholder as of 2026-10-22) is to hold
+BCa and block bootstrap, HAC ESS, mixed effects, TOST and Holm/BH. `stats.rs` uses the names it
+is to export: `Interval`, `SplitMix64`, `median`, `block_len`, `block_resample`,
+`percentile_ci`, `hac_variance_of_mean`. The merge has five steps:
+
+1. Move these functions and their tests into `metrale-stats`, or map them onto its equivalents.
+2. Add the dependency to metrale-circuit (both are no_std).
+3. Change the `use super::stats::…` line in `headroom_ci.rs`.
+4. Delete `stats.rs`.
+5. Check that the golden headroom reports are byte-identical. With the same seed and RNG they
+   must be; if a different RNG is adopted, regenerate the reports deliberately.
 
 ## Tools that complement it, per platform, and how they feed `--trace`
 
