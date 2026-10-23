@@ -22,6 +22,10 @@ mod keeper;
 pub mod os;
 mod plan;
 
+/// 2026-10-23: The kernel thread id that ran a host function queued on a stream, re-exported
+/// here so the keeper's caller names no vendor module.
+#[cfg(all(feature = "cuda", target_os = "linux"))]
+pub use crate::cuda_backend::host_task_probe::host_task_tid;
 #[cfg(target_os = "linux")]
 pub use keeper::{KEEPER_NAME, KeeperConfig, KeeperCost, Pinned, WakeKeeper, select};
 pub use plan::{CoreChoice, KeeperMode, Role, classify, gpu_irq, single_cpu};

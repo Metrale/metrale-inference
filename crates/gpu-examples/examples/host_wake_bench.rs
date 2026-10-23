@@ -213,7 +213,7 @@ struct Setup {
 }
 
 fn roles() -> Vec<Role> {
-    vec![Role::CudaDriver, Role::NcclProxy]
+    vec![Role::DriverHelper, Role::CollectiveProxy]
 }
 
 fn setup(arm: Arm, core: u32, allowed: &[u32]) -> Result<Setup> {
