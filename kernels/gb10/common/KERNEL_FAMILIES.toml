@@ -1181,6 +1181,12 @@ measurement = "glm-5.3-flash::w4a16_gemv_pipe_m2 @ decode C=1 (R=2, MTP k=1, TP=
 point = {}
 rows = [2]
 measurement = "glm-5.3-flash::w4a16_gemv_pipe_m2 @ decode C=1 (R=2, MTP k=1, TP=3 rank 0) KV≈1k · shared expert down M=2 N=4096 K=768"
+# 2026-10-23: The P3 persistent segment over the same GEMVs (glm_dense_segment): bit-identical, x0.86
+# in isolation and -1.5..-1.7% of the step in serve (LEDGER dense-seg-inserve); kept off.
+[[family.evidence]]
+point = {}
+rows = [2]
+measurement = "glm-5.3-flash::glm5next_dense_seg_pipe_m2 @ microbench steady-state R=2 · shared expert segment gate|up+swiglu+down M=2 N=768+768 K=4096 / N=4096 K=768"
 
 # 2026-09-30: The 17..32-row CUDA-core tier the batched propose's LM head takes past the
 # tensor-core GEMV (`MtpHead::lm_head_batch_kernel`).
