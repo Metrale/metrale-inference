@@ -25,6 +25,7 @@ use crate::glm5next_mlp::forward::Glm5NextMlpWorkspace;
 use crate::glm5next_mlp::forward::plan_moe::{self, MoePlan};
 use crate::glm5next_mlp::weights::Glm5NextMoeWeights;
 use crate::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels};
+use crate::glm5next_w4a16_seg::SegMode;
 
 /// 2026-10-23: The shapes the plan-vs-legacy launch gate covers.
 pub const GATED: [(Mode, u64); 2] = [(Mode::Decode, 1), (Mode::Verify, 2)];
@@ -38,7 +39,7 @@ pub const DRAFT_GATED: [(Mode, u64); 1] = [(Mode::Draft, 1)];
 pub fn plan_settings(
     k: &Glm5NextMlpKernels,
     cfg: &Glm5NextMlpConfig,
-) -> [(&'static str, String); 12] {
+) -> [(&'static str, String); 15] {
     let on = |b: bool| if b { "on" } else { "off" }.to_string();
     let l = &k.levers;
     let layout = match cfg.expert_shard {
@@ -61,6 +62,23 @@ pub fn plan_settings(
         ),
         ("glm_dsa_verify_rows", on(l.dsa_verify_rows)),
         ("glm_dsa_indexer_rows", on(l.dsa_indexer_rows)),
+        ("glm_w4a16_gemv_seg", on(l.dense.gemv_seg)),
+        (
+            "glm_w4a16_gemv_rows",
+            match l.dense.gemv_rows {
+                0 => "off".to_string(),
+                n => n.to_string(),
+            },
+        ),
+        (
+            "glm_w4a16_seg",
+            match l.dense.seg {
+                SegMode::Off => "off",
+                SegMode::Fuse => "fuse",
+                SegMode::Split => "split",
+            }
+            .to_string(),
+        ),
     ]
 }
 

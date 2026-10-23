@@ -3,8 +3,9 @@
 //! 2026-10-23: The emitter of a KDA mixer's own groups (`kda`): the pack (`[qkv]`), the conv
 //! (`[short_conv,conv_ckpt,l2]`: one row's update, or a snapshotting verify's window advances,
 //! token conv and live-window advance), the W8A8 gate chain (`[fa_quant,f_b,gates,ga_quant,g_b]`),
-//! the recurrence (`[recur]`) and the output norm when it is its own group (`[out_norm]`). The
-//! projections are the `glm_w4a16` groups: declared legacy sites of the block, the layer's code.
+//! the recurrence (`[recur]`) and the output norm when it is its own group (`[out_norm]`); and
+//! (2026-10-23, [`GlmW4a16`]) the block's `glm_w4a16` groups: the six projections
+//! (`[q,k,v,f_a,b,g_a]`), `[o]` at one row and `[out_norm,o]` at two.
 //!
 //! Owner: model-arch (GLM-5.3).
 //! Invariants:
@@ -19,6 +20,7 @@ use metrale_model_layers::circuit_exec::family::{GroupEmitter, PlanGroup};
 use super::GlmBlock;
 use crate::glm5next_kda::entry;
 use crate::glm5next_kda::plan::{ConvStep, KdaSteps, RecurStep};
+use crate::glm5next_w4a16_plan::{W4a16Step, entry as w4a16};
 
 /// 2026-10-23: The KDA block's own nodes this emitter compiles, by group.
 const PACK: [&str; 1] = ["qkv"];
@@ -26,6 +28,9 @@ const CONV: [&str; 3] = ["short_conv", "conv_ckpt", "l2"];
 const GATES: [&str; 5] = ["fa_quant", "f_b", "gates", "ga_quant", "g_b"];
 const RECUR: [&str; 1] = ["recur"];
 const OUT_NORM: [&str; 1] = ["out_norm"];
+const SIX: [&str; 6] = ["q", "k", "v", "f_a", "b", "g_a"];
+const O: [&str; 1] = ["o"];
+const NORM_O: [&str; 2] = ["out_norm", "o"];
 
 /// 2026-10-23: The projections and their norms of the block: the `glm_w4a16` sites the layer runs.
 const PROJECTIONS: [&str; 8] = ["q", "k", "v", "f_a", "b", "g_a", "o", "out_norm"];
@@ -38,11 +43,13 @@ pub struct KdaSlots {
     pub conv: Option<ConvStep<KernelId>>,
     pub recur: Option<RecurStep<KernelId>>,
     pub out_norm: Option<KernelId>,
+    pub six: Option<W4a16Step<KernelId>>,
+    pub o: Option<W4a16Step<KernelId>>,
 }
 
 /// 2026-10-23: Whether a group is one of the KDA block's own groups this emitter compiles.
 pub fn is_site_group(g: &PlanGroup<'_>) -> bool {
-    g.block() == "kda" && g.group.emitter == "kda"
+    g.block() == "kda" && ["kda", "glm_w4a16"].contains(&g.group.emitter.as_str())
 }
 
 /// 2026-10-23: Whether a group is one of the block's projection groups the layer runs.
@@ -121,6 +128,59 @@ impl GroupEmitter<GlmBlock> for Kda {
     }
 }
 
+/// 2026-10-23: `glm_w4a16` over a KDA mixer's projection groups: the six projections in one
+/// pipelined launch, `o` on the one-row GEMV, or the output norm then `o` pipelined over two rows.
+pub struct GlmW4a16;
+
+impl GroupEmitter<GlmBlock> for GlmW4a16 {
+    fn id(&self) -> &'static str {
+        "glm_w4a16"
+    }
+
+    fn emit(&self, g: &PlanGroup<'_>, site: &mut GlmBlock) -> Result<()> {
+        ensure!(
+            matches!(g.mode, Mode::Decode | Mode::Verify),
+            "`glm_w4a16` runs one sequence's decode or verify here; the plan is {:?}",
+            g.mode
+        );
+        ensure!(
+            g.block() == "kda",
+            "`glm_w4a16` serves the `kda` block's projections here; group {} is {}",
+            g.index,
+            g.site()
+        );
+        let s = &mut site.kda;
+        let locals = g.locals();
+        let ks = &g.group.kernels;
+        let pipe = |k: &KernelId| -> Result<W4a16Step<KernelId>> {
+            let e = w4a16::pipe(g.rows)
+                .with_context(|| format!("the pipelined GEMV has no {}-row entry", g.rows))?;
+            Ok(W4a16Step::Pipe(want(k, e)?))
+        };
+        if locals == SIX {
+            g.expect_kernels(self.id(), 1)?;
+            set(&mut s.six, pipe(&ks[0])?, "six-projection")
+        } else if locals == O {
+            g.expect_kernels(self.id(), 1)?;
+            ensure!(g.rows == 1, "a {}-row `o` on the one-row GEMV", g.rows);
+            set(
+                &mut s.o,
+                W4a16Step::Gemv(want(&ks[0], w4a16::GEMV)?),
+                "o-projection",
+            )
+        } else if locals == NORM_O {
+            g.expect_kernels(self.id(), 2)?;
+            set(&mut s.out_norm, want(&ks[0], entry::O_NORM)?, "output-norm")?;
+            set(&mut s.o, pipe(&ks[1])?, "o-projection")
+        } else {
+            bail!(
+                "`glm_w4a16` takes the KDA six projections, `o` or the output norm with `o`; got \
+                 {locals:?}"
+            )
+        }
+    }
+}
+
 /// 2026-10-23: The conv group's step: one kernel for one row; for a verify of `rows` rows,
 /// `rows - 1` window advances, the token conv, the live window's advance.
 fn conv_step(g: &PlanGroup<'_>) -> Result<ConvStep<KernelId>> {
@@ -169,6 +229,9 @@ impl KdaSlots {
             "the KDA conv {conv:?} and recurrence {recur:?} are of different forms"
         );
         Ok(KdaSteps {
+            six: self.six.with_context(|| need("six-projection"))?,
+            out_norm: self.out_norm.with_context(|| need("output-norm"))?,
+            o: self.o.with_context(|| need("o-projection"))?,
             rows: usize::try_from(g.rows)?,
             heads: usize::try_from(g.dim("lin_v_heads")?)?,
             head_dim: usize::try_from(g.dim("lin_v_dim")?)?,
@@ -176,7 +239,6 @@ impl KdaSlots {
             gates: self.gates.with_context(|| need("gate-chain"))?,
             conv,
             recur,
-            out_norm: self.out_norm,
         })
     }
 }
@@ -186,7 +248,8 @@ impl KdaSlots {
 /// settings (`install::plan_settings`); the conv pack does not reach a gated shape (one row, or
 /// a verify that snapshots: `Glm5NextKdaLayer::pack_for`).
 pub fn unmodelled(levers: &crate::glm5next_layer::GlmLevers) -> Vec<&'static str> {
-    let k = &levers.kda;
+    let (k, d) = (&levers.kda, &levers.dense);
+    let ahead = |floor: Option<usize>| floor.is_some_and(|f| f <= 2);
     [
         (
             k.gates_fused,
@@ -199,6 +262,19 @@ pub fn unmodelled(levers: &crate::glm5next_layer::GlmLevers) -> Vec<&'static str
         (
             !k.conv_snap_to,
             "METRALE_GLM_KDA_CONV_SNAP_TO=0 (the rules name causal_conv1d_window_advance_to)",
+        ),
+        (
+            !d.gemv_pipe,
+            "METRALE_GLM_W4A16_GEMV_PIPE=0 (the rules name w4a16_gemv_pipe)",
+        ),
+        (
+            ahead(d.tc_min_rows) || ahead(d.dequant_min_rows),
+            "METRALE_GLM_W4A16_TC_GEMM_MIN_ROWS or _DEQUANT_GEMM_MIN_ROWS at 1 or 2 (ahead of the \
+             GEMV the rules name)",
+        ),
+        (
+            d.batch_invariant,
+            "METRALE_GLM_BATCH_INVARIANT (the one-row row-tile order)",
         ),
     ]
     .into_iter()
@@ -225,6 +301,13 @@ pub fn install(
         "GLM layer {layer}: the plan's KDA rules do not model {}",
         refused.join("; ")
     );
+    ensure!(
+        crate::glm5next_w4a16_dense::enabled(),
+        "GLM layer {layer}: the plan's KDA projections are NVFP4 (--dense-quantization w4a16); \
+         this serve runs another dense tier"
+    );
+    // 2026-10-23: The W4A16 pipe's block cap reads the SM count (`w4a16_gemv_pipe_cap`).
+    let sms = gpu.sm_count()?;
     let mut next = Vec::new();
     for plan in rp.plans {
         if !super::install::GATED.contains(&(plan.mode, plan.rows)) {
@@ -241,7 +324,10 @@ pub fn install(
             kda.cfg.head_dim
         );
         let rows = s.rows;
-        let bound = s.map(|k| metrale_model_layers::circuit_exec::family::plan_kernel(gpu, &k))?;
+        let bound = crate::glm5next_kda::plan::KdaPlan {
+            steps: s.map(|k| metrale_model_layers::circuit_exec::family::plan_kernel(gpu, &k))?,
+            sms,
+        };
         let sites = site
             .executed
             .iter()

@@ -2,17 +2,16 @@
 
 //! 2026-10-23: A KDA mixer run from its plan groups instead of the layer's levers: the pack, the
 //! gate chain, the conv (one row, or a snapshotting verify's window advances, token conv and
-//! window advance), the recurrence and (one row) the output norm, as typed steps over plan kernel
-//! ids ([`KdaSteps`], built by `glm5next_plan::kda`), bound to this device's handles and launched
-//! through the launchers the hand-written path uses. The W4A16 projections (the six-projection
-//! group, `o`, and at two rows the output norm with `o`) are the plan's `glm_w4a16` sites: they
-//! stay the layer's own code.
+//! window advance), the recurrence, the output norm, and (2026-10-23) the W4A16 projections (the
+//! six-projection launch and `o`, the plan's `glm_w4a16` groups), as typed steps over plan kernel
+//! ids ([`KdaSteps`], built by `glm5next_plan::kda`), bound to this device's handles
+//! ([`KdaPlan`]) and launched through the launchers the hand-written path uses.
 //!
 //! Owner: model-arch (GLM-5.3-Flash KDA).
 //! Invariants:
-//! - Running reads no KDA lever: every kernel and launch form is the plan's. The projection
-//!   groups are the dense tier's own decision; a plan whose six-projection launch the tier
-//!   declines, or whose gate kernel the weights refuse, is an error, never the unfused chain.
+//! - Running reads no KDA or dense lever: every kernel and launch form is the plan's, the
+//!   projections' block cap the kernel's rule over the SM count bound at installation. A plan
+//!   whose gate kernel the weights refuse is an error, never the unfused chain.
 //! - The profile buckets are the hand-written path's ([`Glm5NextKdaLayer::spans`]).
 
 use anyhow::ensure;
@@ -21,6 +20,7 @@ use parking_lot::RwLock;
 use super::decode::RowIo;
 use super::seq_tokens::SnapKernels;
 use super::*;
+use crate::glm5next_w4a16_plan::{self as w4a16_plan, W4a16Step};
 
 /// 2026-10-23: The conv of a planned KDA mixer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,9 +52,26 @@ pub struct KdaSteps<K> {
     pub gates: K,
     pub conv: ConvStep<K>,
     pub recur: RecurStep<K>,
-    /// 2026-10-23: The output norm when it is its own group (one row); `None` when it belongs
-    /// to the `glm_w4a16` group with `o`, which the layer runs.
-    pub out_norm: Option<K>,
+    /// 2026-10-23: q, k, v, f_a, b and g_a in one launch.
+    pub six: W4a16Step<K>,
+    /// 2026-10-23: The output norm (its own group at one row, with `o` at two).
+    pub out_norm: K,
+    pub o: W4a16Step<K>,
+}
+
+/// 2026-10-23: A KDA mixer's steps bound to this device, and the SM count the W4A16 pipe's
+/// block cap reads.
+#[derive(Clone, Copy, Debug)]
+pub struct KdaPlan {
+    pub steps: KdaSteps<KernelHandle>,
+    pub sms: u32,
+}
+
+impl KdaPlan {
+    /// 2026-10-23: [`KdaSteps::takes`].
+    pub fn takes(&self, k: usize, snapshots: usize) -> bool {
+        self.steps.takes(k, snapshots)
+    }
 }
 
 impl<K> KdaSteps<K> {
@@ -82,7 +99,9 @@ impl<K> KdaSteps<K> {
                 RecurStep::Row(k) => RecurStep::Row(f(k)?),
                 RecurStep::Snap(k) => RecurStep::Snap(f(k)?),
             },
-            out_norm: self.out_norm.map(f).transpose()?,
+            six: self.six.map(&mut f)?,
+            out_norm: f(self.out_norm)?,
+            o: self.o.map(&mut f)?,
         })
     }
 }
@@ -198,10 +217,10 @@ impl Glm5NextKdaLayer {
         state: &KdaSeqState,
         ws: &Glm5NextKdaWorkspace,
         snapshots: &[(DevicePtr, DevicePtr)],
-        plan: &KdaSteps<KernelHandle>,
+        bound: &KdaPlan,
         stream: u64,
     ) -> Result<()> {
-        let c = &self.cfg;
+        let (plan, c) = (&bound.steps, &self.cfg);
         ensure!(
             (k, plan.heads, plan.head_dim) == (plan.rows, c.heads, c.head_dim),
             "GLM KDA plan: compiled for {} rows of {} x {} heads, run at {k} rows of {} x {}",
@@ -216,35 +235,41 @@ impl Glm5NextKdaLayer {
             k,
             ws,
             stream,
-            || self.front_plan(gpu, hidden, k, ws, plan, stream),
+            || self.front_plan(gpu, hidden, k, ws, bound, stream),
             || self.stateful_plan(gpu, k, state, ws, snapshots, plan, stream),
-            || match plan.out_norm {
-                Some(norm) => {
-                    self.o_norm_launch(gpu, norm, k, ws, stream)?;
-                    self.o_proj(gpu, k, ws, stream)
-                }
-                None => self.back_end(gpu, k, ws, stream),
+            || {
+                self.o_norm_launch(gpu, plan.out_norm, k, ws, stream)?;
+                let o = [(self.weights.o_proj.weight, ws.final_out, c.hidden)];
+                w4a16_plan::launch(
+                    gpu,
+                    plan.o,
+                    &o,
+                    ws.o_norm_out,
+                    k,
+                    c.qkv_dim(),
+                    bound.sms,
+                    stream,
+                )
             },
         )
     }
 
-    /// 2026-10-23: The plan's front: the dense tier's six-projection launch, the pack, the gate
-    /// chain.
+    /// 2026-10-23: The plan's front: the six projections, the pack, the gate chain.
     fn front_plan(
         &self,
         gpu: &dyn GpuBackend,
         hidden: DevicePtr,
         t: usize,
         ws: &Glm5NextKdaWorkspace,
-        plan: &KdaSteps<KernelHandle>,
+        bound: &KdaPlan,
         stream: u64,
     ) -> Result<()> {
+        let plan = &bound.steps;
         let _stable = crate::glm5next_fp8_dense::stable_input(hidden);
-        ensure!(
-            self.six_group(gpu, hidden, t, ws, stream)?,
-            "GLM KDA plan: the dense tier did not run the six projections of {t} rows as the one \
-             launch the plan names"
-        );
+        let (qkv_group, low_group) = self.proj_groups(t, ws);
+        let six: Vec<_> = qkv_group.iter().chain(&low_group).copied().collect();
+        let h = self.cfg.hidden;
+        w4a16_plan::launch(gpu, plan.six, &six, hidden, t, h, bound.sms, stream)?;
         self.pack_launch(gpu, plan.pack, t, ws, stream)?;
         let w = self.gate_weights();
         if let Some(why) = self.gates_refusal(plan.gates, true, w) {
@@ -301,7 +326,7 @@ impl Glm5NextKdaLayer {
 /// 2026-10-23: The KDA plans one layer runs, by row count, with their executed sites.
 #[derive(Default)]
 pub struct InstalledKda {
-    by_rows: RwLock<Vec<(KdaSteps<KernelHandle>, Vec<String>)>>,
+    by_rows: RwLock<Vec<(KdaPlan, Vec<String>)>>,
 }
 
 impl std::fmt::Debug for InstalledKda {
@@ -314,16 +339,16 @@ impl std::fmt::Debug for InstalledKda {
 
 impl InstalledKda {
     /// 2026-10-23: Replace the installed plans (empty clears).
-    pub fn set(&self, plans: Vec<(KdaSteps<KernelHandle>, Vec<String>)>) {
+    pub fn set(&self, plans: Vec<(KdaPlan, Vec<String>)>) {
         *self.by_rows.write() = plans;
     }
 
     /// 2026-10-23: The plan at `rows` rows.
-    pub fn get(&self, rows: usize) -> Option<KdaSteps<KernelHandle>> {
+    pub fn get(&self, rows: usize) -> Option<KdaPlan> {
         self.by_rows
             .read()
             .iter()
-            .find(|(p, _)| p.rows == rows)
+            .find(|(p, _)| p.steps.rows == rows)
             .map(|(p, _)| *p)
     }
 

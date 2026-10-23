@@ -13,7 +13,7 @@
 //!   kernel's invariant; GPU proof: the `glm5next_w4a16_gemv_pipe_bench` example).
 
 use anyhow::{Context, Result};
-use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
+use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use super::{
@@ -93,17 +93,33 @@ pub fn w4a16_gemv_pipe_at(
     max_blocks: u32,
     stream: u64,
 ) -> Result<()> {
+    let entry = w4a16_gemv_pipe_entry(m).context("w4a16_gemv_pipe: no entry")?;
+    let kernel = gpu
+        .op_cache()
+        .kernel(gpu, W4A16_GEMV_PIPE_MODULE, entry)
+        .with_context(|| format!("w4a16_gemv_pipe: {W4A16_GEMV_PIPE_MODULE}::{entry}"))?;
+    w4a16_gemv_pipe_with(gpu, kernel, input, segs, m, k, max_blocks, stream)
+}
+
+/// 2026-10-23: [`w4a16_gemv_pipe_at`] on `kernel`, the entry of `m` rows a caller resolved (a
+/// plan's): the same launch. Refuses what [`w4a16_gemv_pipe_at`] refuses.
+#[allow(clippy::too_many_arguments)]
+pub fn w4a16_gemv_pipe_with(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    input: DevicePtr,
+    segs: &[W4a16Seg],
+    m: u32,
+    k: u32,
+    max_blocks: u32,
+    stream: u64,
+) -> Result<()> {
     let ns: Vec<u32> = segs.iter().map(|g| g.n).collect();
     anyhow::ensure!(
         w4a16_gemv_pipe_ok(k, &ns, m) && max_blocks > 0,
         "w4a16_gemv_pipe: k={k} n={ns:?} rows={m} max_blocks={max_blocks} outside the kernel's \
          contract"
     );
-    let entry = w4a16_gemv_pipe_entry(m).context("w4a16_gemv_pipe: no entry")?;
-    let kernel = gpu
-        .op_cache()
-        .kernel(gpu, W4A16_GEMV_PIPE_MODULE, entry)
-        .with_context(|| format!("w4a16_gemv_pipe: {W4A16_GEMV_PIPE_MODULE}::{entry}"))?;
     let blocks = w4a16_gemv_pipe_blocks(w4a16_gemv_seg_tiles(&ns, 1), max_blocks);
     let mut launch = KernelLaunch::new(gpu, kernel)
         .grid([blocks, 1, 1])

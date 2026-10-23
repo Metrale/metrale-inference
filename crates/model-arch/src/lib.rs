@@ -48,6 +48,7 @@ pub mod glm5next_sp_overlap;
 pub mod glm5next_sp_pipeline;
 pub mod glm5next_tail_merge;
 pub mod glm5next_w4a16_dense;
+pub mod glm5next_w4a16_plan;
 pub mod glm5next_w4a16_seg;
 pub mod glm5next_w4a16_tc;
 pub mod glm5next_w4a16_wide;

@@ -168,8 +168,8 @@ impl Nvfp4QuantKernels {
 
 /// 2026-10-09: One registered projection: its NVFP4 weight and `[n, k]` shape.
 #[derive(Clone, Copy)]
-struct Entry {
-    w: QuantizedWeight,
+pub(crate) struct Entry {
+    pub(crate) w: QuantizedWeight,
     n: usize,
     k: usize,
 }
@@ -295,7 +295,7 @@ pub fn proj(
 }
 
 /// 2026-10-09: The registered entry under `b`, checked against the launch shape `[n, k]`.
-fn lookup(b: DevicePtr, n: usize, k: usize) -> Result<Option<Entry>> {
+pub(crate) fn lookup(b: DevicePtr, n: usize, k: usize) -> Result<Option<Entry>> {
     let g = state().lock().unwrap_or_else(|e| e.into_inner());
     let Some(&e) = g.get(&b.0) else {
         return Ok(None);
