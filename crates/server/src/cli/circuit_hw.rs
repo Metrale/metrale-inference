@@ -24,6 +24,9 @@ use metrale_circuit::venn::Run;
 
 pub(crate) use super::circuit_hw_tree::FsTree;
 use super::circuit_venn::find_root;
+// 2026-10-22: `--format explain`, this module's only caller.
+#[path = "circuit_explain.rs"]
+mod circuit_explain;
 use super::{CircuitHwArgs, CircuitHwFormat, CircuitMode, CircuitPrecision};
 
 /// 2026-09-30: The devices of the roadmap matrix.
@@ -380,7 +383,7 @@ pub(crate) fn run(a: CircuitHwArgs) -> Result<()> {
             }
             report_text(&tree, &reg, &texts, device, precision, command)?.text
         }
-        CircuitHwFormat::Plan => {
+        CircuitHwFormat::Plan | CircuitHwFormat::Explain => {
             let model = source(&tree).model(&ModelSpec {
                 checkpoint: &texts.id,
                 config_json: texts.config.as_deref(),
@@ -395,7 +398,11 @@ pub(crate) fn run(a: CircuitHwArgs) -> Result<()> {
                 (None, _) => bail!("--mode {} needs --rows", mode.name()),
             };
             let one = hardware::plan_one(&reg, device, &tree, &model, Run { mode, rows })?;
-            hardware::plan_text(&model.circuit, &one)
+            if a.format == CircuitHwFormat::Explain {
+                circuit_explain::explain_json(&model.circuit, &one)?
+            } else {
+                hardware::plan_text(&model.circuit, &one)
+            }
         }
     };
     match &a.out {

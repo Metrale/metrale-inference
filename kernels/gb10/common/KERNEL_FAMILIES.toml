@@ -47,6 +47,16 @@
 #   source implements. `[[family.point]] pipeline` and `kernel_pipeline."<kernel>"` override where
 #   they differ. Every plan requires each node's declared pipeline to equal what its formats and
 #   policy require (crates/circuit/src/pipeline/check.rs).
+# - 2026-10-22: `explain` is what the family computes, published by the blueprint store's kernel
+#   modal: `about` (prose: the computation, the launch organisation, the variants), `numerics`
+#   (prose: formats read, widening, accumulator, reduction, intrinsics, rounding and saturation at
+#   each store, scale rules) and `math` (display equations in KaTeX, written from the kernels'
+#   sources in the family's own parameters). Prose takes inline math between `$` pairs. Every
+#   family states all three (the loader refuses one without them,
+#   crates/circuit/src/venn/families_explain.rs) and every entry renders in KaTeX strict mode
+#   (crates/circuit/tests/kernel_math.rs). The text is public: no source paths or code. The math
+#   lives here only: the other classes inherit these families, and a class that overrides a
+#   family by id states its own `explain`.
 
 schema = 1
 hardware = "gb10"
@@ -78,6 +88,11 @@ energy_source = "probe kenergy_probe.cu sha256 1b74b8af..., spark-28c2, driver 5
 [[family]]
 id = "embed_copy"
 description = "Embedding rows copied device-to-device per row (no kernel)"
+explain.about = '''No kernel launches in this family. Before the step's program runs, the engine embeds each token by copying row $\mathrm{tok}_t$ of the BF16 embedding table $E \in \mathbb{R}^{V \times d}$ into row $t$ of the hidden-state buffer, one device-to-device copy per row, so the output of the group is the buffer those copies land in. A model whose configuration declares an embedding scale multiplies the rows afterwards in a separate step that is not part of this family.'''
+explain.numerics = '''Pure data movement: the BF16 table row is copied byte for byte, with no widening, arithmetic or rounding.'''
+explain.math = [
+  '''h_t = E_{\mathrm{tok}_t,\,:} \in \mathbb{R}^{d}, \qquad t = 1,\dots,m, \qquad E \in \mathbb{R}^{V \times d}''',
+]
 compute = "memory"
 emitters = ["embed_copy"]
 rows = [1, 65536]
@@ -93,6 +108,11 @@ files = ["crates/model-engine/src/model/trait_impl/decode_a2.rs"]
 [[family]]
 id = "embed_gather"
 description = "Embedding rows gathered by a kernel from device-resident ids"
+explain.about = '''Embedding rows gathered on the device from token ids that are already on the device (the previous step's argmax or the draft chain), so no id is read back to the host first. batched_embed runs one block per token; its threads stride over the hidden dimension and copy row $\mathrm{tok}_t$ of the BF16 table $E \in \mathbb{R}^{V \times d}$ into row $t$ of the output. Ids are not range-checked: the caller guarantees $\mathrm{tok}_t < V$.'''
+explain.numerics = '''Pure data movement: each BF16 element is copied byte for byte, with no widening, arithmetic or rounding.'''
+explain.math = [
+  '''h_t = E_{\mathrm{tok}_t,\,:} \in \mathbb{R}^{d}, \qquad t = 0,\dots,m-1, \qquad \mathrm{tok}_t \in \{0,\dots,V-1\}''',
+]
 compute = "memory"
 kernels = ["embed_from_argmax::batched_embed"]
 rows = [1, 65536]
@@ -106,6 +126,11 @@ files = ["kernels/gb10/common/embed_from_argmax.cu"]
 [[family]]
 id = "argmax_host"
 description = "Greedy token on the host from copied logits (no kernel)"
+explain.about = '''No kernel launches in this family. The step returns its BF16 logits row $z \in \mathbb{R}^{V}$, the caller copies it to host memory, and the greedy token is picked by one sequential scan on the CPU. With greedy sampling parameters the scan reads the raw row, with no penalties or logit bias applied.'''
+explain.numerics = '''Each BF16 logit is widened exactly to FP32 and compared with a strict greater-than against the running maximum, so on exact ties the first (lowest) index wins; the result is a 32-bit token index.'''
+explain.math = [
+  '''\hat{y} = \min\Bigl\{\, i \in \{0,\dots,V-1\} \;:\; z_i = \max_{0 \le j < V} z_j \,\Bigr\}''',
+]
 compute = "memory"
 emitters = ["host_sampling"]
 rows = [1, 65536]
@@ -119,6 +144,12 @@ files = ["crates/model-engine/src/model/trait_impl/decode_a2.rs"]
 [[family]]
 id = "argmax_device"
 description = "Row-wise BF16 argmax over the logits"
+explain.about = '''Greedy token selection on the device: one block of $B = 1024$ threads per row of logits $z_r \in \mathbb{R}^{V}$. Each thread scans the vocabulary indices congruent to its thread id modulo $B$ and keeps its first maximum, then a shared-memory halving tree merges the $B$ candidates into the row's winner. argmax_bf16 handles a single row, argmax_bf16_batch runs one block per row over rows a fixed stride apart, and argmax_bf16_batch_lp also returns the log-probability of the chosen token, computed by an online softmax in the same pass (used for per-position draft confidence).'''
+explain.numerics = '''BF16 logits are widened exactly to FP32 and compared with strict greater-than from a starting maximum of $-10^{30}$; within a thread the earliest index wins, and between threads the fixed halving tree keeps the lower slot of each pair, so an exact tie resolves to the tied index whose thread id $i \bmod B$ is smallest in 10-bit bit-reversed order (deterministic, but not always the smallest index). In the log-probability variant each thread keeps a running FP32 sum rescaled with the fast exponential __expf whenever its maximum rises, the tree merges the (max, sum) pairs the same way, and the result is $-\log$ of the sum via __logf, stored as FP32.'''
+explain.math = [
+  '''\begin{aligned} \mathcal{T}_r &= \bigl\{\, i : z_{r,i} = \textstyle\max_{j} z_{r,j} \,\bigr\}, \qquad c_r = \operatorname*{arg\,min}_{c \,\in\, \{ i \bmod B \,:\, i \in \mathcal{T}_r \}} \operatorname{bitrev}_{10}(c) \\ \hat{y}_r &= \min\bigl\{\, i \in \mathcal{T}_r : i \equiv c_r \pmod{B} \,\bigr\} \end{aligned}''',
+  '''\log p_r = z_{r,\hat{y}_r} - \log \sum_{i=0}^{V-1} e^{z_{r,i}} = -\log \sum_{i=0}^{V-1} e^{\,z_{r,i} - z_{r,\hat{y}_r}}''',
+]
 compute = "memory"
 # 2026-09-30: `argmax_bf16_batch` is every row in one launch (the batched MTP verify);
 # `argmax_bf16_batch_lp` also writes each row's top-1 log-probability (the batched propose).
@@ -145,6 +176,12 @@ measurement = "qwen3.8-27b::argmax_bf16 @ decode C=1 (R=4, MTP k=3)"
 [[family]]
 id = "rms_norm"
 description = "RMSNorm, fused residual copy / residual add + RMSNorm, strided per-head norm"
+explain.about = '''RMSNorm over rows $x \in \mathbb{R}^{d}$ with one block of up to 1024 threads per row: each thread squares BF16 pairs loaded as 32-bit words, the partial sums are reduced by a warp shuffle tree and then across warps through shared memory, and a second pass scales every element by the reciprocal root and the norm weight. rms_norm, rms_norm_strided (rows grouped along a second grid axis with a group stride, used for per-head q/k norms) and rms_norm_vanilla compute the norm alone; rms_norm_residual also copies the input row into the residual buffer; residual_add_rms_norm and residual_add_rms_norm_exact first add a branch output $s$ into the hidden row $h$ in place, then normalise it and copy it into the residual buffer, fusing one layer's residual add with the next layer's input norm. The weight is applied as $1+\gamma$ (the one_plus point) in every kernel except rms_norm_vanilla, which applies the plain weight $\gamma$.'''
+explain.numerics = '''BF16 inputs are widened exactly to FP32; squares are accumulated per thread in FP32, reduced by a butterfly warp shuffle and a second shuffle over the per-warp sums, and the reciprocal root uses rsqrtf; the products are formed in FP32 and rounded once to BF16 (RNE) at the store. In residual_add_rms_norm the sum of squares uses the FP32 sums $h+s$ before their BF16 rounding while the normalised values are the rounded sums, whereas residual_add_rms_norm_exact squares the rounded sums, so it is bit-identical to the unfused add followed by rms_norm_residual.'''
+explain.math = [
+  '''\begin{aligned} r &= \Bigl(\frac{1}{d}\sum_{j=1}^{d} x_j^2 + \epsilon\Bigr)^{-1/2} \\ y_i &= \mathrm{rn}_{\mathrm{bf16}}\bigl(x_i \, r \, w_i\bigr), \qquad w_i = \begin{cases} 1+\gamma_i & \text{one\_plus} \\ \gamma_i & \text{plain} \end{cases} \end{aligned}''',
+  '''\begin{aligned} h_i &\leftarrow \mathrm{rn}_{\mathrm{bf16}}(h_i + s_i), \qquad \rho_i \leftarrow h_i \\ r &= \Bigl(\frac{1}{d}\sum_{j=1}^{d} u_j^2 + \epsilon\Bigr)^{-1/2}, \qquad u_j = \begin{cases} h_j + s_j \ \text{in FP32} & \text{residual\_add\_rms\_norm} \\ \mathrm{rn}_{\mathrm{bf16}}(h_j + s_j) & \text{residual\_add\_rms\_norm\_exact} \end{cases} \\ y_i &= \mathrm{rn}_{\mathrm{bf16}}\bigl(h_i \, r \, (1+\gamma_i)\bigr) \end{aligned}''',
+]
 compute = "memory"
 kernels = [
   "norm::rms_norm", "norm::rms_norm_residual", "norm::residual_add_rms_norm",
@@ -195,6 +232,11 @@ measurement = "qwen3.8-27b::residual_add_rms_norm @ decode C=1 (R=4, MTP k=3)"
 [[family]]
 id = "residual_add"
 description = "BF16 residual add"
+explain.about = '''Elementwise residual add of a branch output $s$ into the residual stream $h$, in place, one thread per element over all $m \times d$ elements of the launch. bf16_residual_add adds through FP32 registers; bf16_add_inplace uses the native BF16 add.'''
+explain.numerics = '''Both kernels produce the correctly rounded BF16 sum: bf16_residual_add widens both operands exactly to FP32, adds (exactly representable for all but extreme exponent gaps, where the result still rounds to the same BF16 value) and rounds once to BF16 (RNE); bf16_add_inplace uses the hardware BF16 add with round-to-nearest-even.'''
+explain.math = [
+  '''h_i \leftarrow \mathrm{rn}_{\mathrm{bf16}}\bigl(h_i + s_i\bigr), \qquad i = 1,\dots,m\,d''',
+]
 compute = "memory"
 # 2026-10-08: `bf16_add_inplace` (bf16_add.cu) is the in-place twin the GLM-5 MTP block's plain
 # residual adds with (glm5next_layer/steps.rs:183-206).
@@ -210,6 +252,11 @@ files = ["kernels/gb10/common/residual_add.cu", "kernels/gb10/common/bf16_add.cu
 [[family]]
 id = "sigmoid_gate_mul"
 description = "Attention output gate x * sigmoid(gate)"
+explain.about = '''The output gate of gated attention: the attention output $x$ is multiplied elementwise by the sigmoid of a gate projection $g$, one thread per element. sigmoid_gate_mul works on flat arrays of equal shape; sigmoid_gate_mul_batched works on $m$ rows of width $d$ whose gate rows are a fixed stride apart, so the gate can be a slice of a wider projection.'''
+explain.numerics = '''BF16 inputs widened exactly to FP32; the sigmoid is $1/(1+e^{-g})$ with the accurate expf and an IEEE division; one RNE rounding to BF16 at the store.'''
+explain.math = [
+  '''y_{t,i} = \mathrm{rn}_{\mathrm{bf16}}\bigl(x_{t,i}\,\sigma(g_{t,i})\bigr), \qquad \sigma(z) = \frac{1}{1+e^{-z}}, \qquad 1 \le t \le m, \ 1 \le i \le d''',
+]
 compute = "memory"
 kernels = ["residual_add::sigmoid_gate_mul", "residual_add::sigmoid_gate_mul_batched"]
 rows = [1, 65536]
@@ -223,6 +270,11 @@ files = ["kernels/gb10/common/residual_add.cu"]
 [[family]]
 id = "concat"
 description = "BF16 feature-dim concat (MTP embedding | hidden)"
+explain.about = '''Feature-dimension concatenation of two BF16 rows of width $d$, used by the multi-token-prediction head to place the normalised token embedding $a$ beside the normalised target hidden state $b$. One thread per element writes both halves; the launch covers one row and is issued once per row.'''
+explain.numerics = '''Pure data movement: BF16 values are copied unchanged, with no arithmetic or rounding.'''
+explain.math = [
+  '''y = \begin{bmatrix} a \\ b \end{bmatrix} \in \mathbb{R}^{2d}, \qquad y_i = a_i, \quad y_{d+i} = b_i, \qquad 1 \le i \le d''',
+]
 compute = "memory"
 kernels = ["residual_add::bf16_concat"]
 rows = [1, 65536]
@@ -236,6 +288,11 @@ files = ["kernels/gb10/common/residual_add.cu"]
 [[family]]
 id = "silu_mul"
 description = "silu(gate) * up over a packed gate|up row"
+explain.about = '''The SwiGLU activation of a feed-forward or expert block: for gate and up projections $g, u$ (gate rows followed by up rows in one packed buffer) it computes $\operatorname{silu}(g) \odot u$, one thread per element over the launch's $m \times d_{ff}$ elements. No clamp is applied to either operand.'''
+explain.numerics = '''BF16 inputs widened exactly to FP32; the sigmoid uses the fast exponential __expf, the product is formed as $(g\,\sigma(g))\,u$ in FP32, and the result is rounded once to BF16 (RNE).'''
+explain.math = [
+  '''y_i = \mathrm{rn}_{\mathrm{bf16}}\bigl(\operatorname{silu}(g_i)\,u_i\bigr) = \mathrm{rn}_{\mathrm{bf16}}\Bigl(\frac{g_i}{1+e^{-g_i}}\,u_i\Bigr)''',
+]
 compute = "memory"
 kernels = ["moe_silu_mul::moe_silu_mul"]
 rows = [1, 65536]
@@ -249,6 +306,11 @@ files = ["kernels/gb10/common/moe_silu_mul.cu"]
 [[family]]
 id = "relu_squared"
 description = "relu(x)^2, flat elementwise (Nemotron-H experts' activation)"
+explain.about = '''The squared-ReLU activation used by Nemotron-H experts, applied elementwise with one thread per element over a flat array; relu_squared writes a separate output and relu_squared_inplace overwrites its input.'''
+explain.numerics = '''BF16 input widened exactly to FP32, clamped at zero, squared in FP32 and rounded once to BF16 (RNE).'''
+explain.math = [
+  '''y_i = \mathrm{rn}_{\mathrm{bf16}}\bigl(\max(x_i, 0)^2\bigr)''',
+]
 compute = "memory"
 kernels = ["relu2::relu_squared", "relu2::relu_squared_inplace"]
 rows = [1, 65536]
@@ -263,6 +325,11 @@ files = ["kernels/gb10/common/relu_squared.cu"]
 [[family]]
 id = "view_split"
 description = "Contiguous split: pointer offsets, no launch"
+explain.about = '''No kernel launches in this family. A projection output whose row is the concatenation of contiguous segments (for a Mamba-2 input projection: the gate $z$, the convolution input $xBC$ and the step sizes $\Delta$) is split by pointer offsets alone: each output is a view of the same buffer starting at its segment offset, with the parent's row stride $D = d_1 + d_2 + d_3$.'''
+explain.numerics = '''No data is read or written; each view sees the parent's BF16 values unchanged.'''
+explain.math = [
+  '''y^{(k)}_{t,i} = x_{t,\;o_k + i}, \qquad o_k = \sum_{l<k} d_l, \qquad 0 \le i < d_k, \quad k \in \{1,2,3\}, \quad x_t \in \mathbb{R}^{d_1+d_2+d_3}''',
+]
 compute = "memory"
 emitters = ["view"]
 rows = [1, 65536]
@@ -276,6 +343,11 @@ files = ["crates/model-arch/src/nemotron_mamba2/trait_impl.rs"]
 [[family]]
 id = "deinterleave_qg"
 description = "Deinterleave the gated attention q | gate projection per head"
+explain.about = '''Reorders the output of a gated-attention query projection, which interleaves each head's query and gate, $[q_0, g_0, q_1, g_1, \dots]$ with every segment $d_h$ wide, into all queries followed by all gates, in place. One block of 256 threads per token stages the token's $2 H d_h$ values in shared memory and writes them back permuted; token rows are a fixed stride apart.'''
+explain.numerics = '''Pure permutation of BF16 values: no arithmetic, the output bytes equal the input bytes.'''
+explain.math = [
+  '''\begin{aligned} q_{h,i} &= x_{\,2 d_h h + i}, \qquad g_{h,i} = x_{\,2 d_h h + d_h + i}, \qquad 0 \le h < H, \ 0 \le i < d_h \\ x &\leftarrow \bigl[\, q_{0,:},\, \dots,\, q_{H-1,:} \;\big|\; g_{0,:},\, \dots,\, g_{H-1,:} \,\bigr] \end{aligned}''',
+]
 compute = "memory"
 kernels = ["ssm_preprocess::deinterleave_qg"]
 rows = [1, 65536]
@@ -304,6 +376,12 @@ measurement = "qwen3.8-27b::deinterleave_qg @ decode C=16 (R=32, MTP k=1)"
 [[family]]
 id = "rope"
 description = "Rotary position embedding (plain, strided multi-row, MRoPE interleaved)"
+explain.about = '''Rotary position embedding applied in place to BF16 query and key heads, rotate-half style: channel $i$ is paired with channel $i + r/2$ for $i < r/2$, where $r \le d_h$ is the rotary width, and channels from $r$ to $d_h$ are left untouched. The grid has one block of 128 threads per (query or key head, group of positions, batch); each thread rotates one pair at one position, and each block first computes the $r/2$ distinct frequencies once into shared memory. rope_forward takes packed rows, rope_forward_strided takes explicit row strides for Q and K (so several sequences in one interleaved QKV buffer rotate in one launch), and rope_forward_mrope_interleaved is multimodal RoPE, where pair $i$ takes its position from stream $i \bmod 3$ (temporal, height, width).'''
+explain.numerics = '''Frequencies are evaluated in FP64 as $1/\theta^{2i/r}$ and rounded to FP32; the angle is the FP32 product of the position (converted to FP32) and that frequency, cosf and sinf are the accurate FP32 versions, and the rotation is computed in FP32 from exactly widened BF16 inputs and rounded once per output to BF16 (RNE). With all three MRoPE positions equal, the MRoPE kernel is bit-identical to rope_forward.'''
+explain.math = [
+  '''\begin{aligned} \omega_i &= \mathrm{fp32}\bigl(\theta^{-2i/r}\bigr), \qquad \phi_i = p\,\omega_i, \qquad 0 \le i < r/2 \\ y_i &= \mathrm{rn}_{\mathrm{bf16}}\bigl(x_i\cos\phi_i - x_{i+r/2}\sin\phi_i\bigr) \\ y_{i+r/2} &= \mathrm{rn}_{\mathrm{bf16}}\bigl(x_{i+r/2}\cos\phi_i + x_i\sin\phi_i\bigr) \\ y_j &= x_j, \qquad r \le j < d_h \end{aligned}''',
+  '''p = \begin{cases} p_t & i \equiv 0 \pmod 3 \\ p_h & i \equiv 1 \pmod 3 \\ p_w & i \equiv 2 \pmod 3 \end{cases} \qquad \text{(MRoPE: the position used for pair } i \text{)}''',
+]
 compute = "memory"
 kernels = [
   "rope::rope_forward", "rope::rope_forward_strided",
@@ -322,6 +400,12 @@ files = ["kernels/gb10/common/rope.cu", "kernels/gb10/common/rope_mrope_interlea
 [[family]]
 id = "gdn_ba_gates_gemv"
 description = "GDN in_proj_b|a GEMV fused with the beta/decay gates, one row per launch"
+explain.about = '''Single-token projection of the hidden state $x \in \mathbb{R}^{K}$ onto the Gated DeltaNet beta and decay logits, $z = Wx$ with $W \in \mathbb{R}^{N \times K}$ and $N = 2 n_v$ ($n_v$ value heads), with both gate transforms applied in the same kernel so the logits never leave registers. Each 256-thread block computes four outputs, 64 lanes per output sweeping $K$ in 8-element vectors. The weight rows are interleaved per key-head group: within each group of $2r$ rows ($r$ value heads per key head) the first $r$ give the beta logits $b_h$ and the next $r$ the decay logits $a_h$. A beta row is written as $\beta_h$, a decay row as the multiplicative decay $\alpha_h$, both one scalar per value head.'''
+explain.numerics = '''BF16 activations and weights are widened exactly to FP32 and every product and sum is FP32 (built without FMA contraction); each lane sums its strided vectors in index order, then a shuffle-down tree (offsets 16 to 1) and the sum of the two warp partials give the dot product. The transforms use the fast intrinsics __expf and __logf, the arguments of the inner exponentials are clamped at 20, and both outputs are stored as FP32 with no BF16 rounding of the logits.'''
+explain.math = [
+  '''\begin{aligned} b_h &= \langle W_{\mathrm{b}(h)}, x\rangle, \qquad a_h = \langle W_{\mathrm{a}(h)}, x\rangle \\ \beta_h &= \sigma(b_h) \\ \alpha_h &= \exp\!\Big(-e^{\min(A_h,\,20)}\,\log\!\big(1 + e^{\min(a_h + \delta_h,\,20)}\big)\Big) \end{aligned}''',
+  '''\text{where } A_h \text{ is the learned log decay rate},\ \delta_h \text{ the learned dt bias, and } \mathrm{b}(h), \mathrm{a}(h) \text{ the interleaved weight rows of value head } h''',
+]
 compute = "cuda_core"
 kernels = ["ssm_preprocess::dense_gemv_ba_gates"]
 rows = [1, 1]
@@ -353,6 +437,12 @@ files = ["kernels/gb10/common/ssm_preprocess.cu"]
 [[family]]
 id = "gdn_ba_gates_gemm"
 description = "GDN in_proj_b|a GEMM fused with the gates, all rows"
+explain.about = '''The multi-row form of gdn_ba_gates_gemv: the same beta and decay projection with fused gates for $m$ token rows in one launch, writing per token the $n_v$ decays $\alpha_h$ followed by the $n_v$ betas $\beta_h$ into one FP32 row. ssm_preprocess::dense_gemm_ba_gates_prefill uses a grid of (output quads, tokens), each block computing four outputs of one token with 64 lanes each. ssm_ba_gates_hopper::dense_gemm_ba_gates_prefill_hopper runs one block per token over all $N$ outputs, converting each activation vector once and reusing it for eight output groups, while keeping the parent's lane-to-$k$ mapping and reduction tree so its results are bit-identical; it is selected for larger row counts.'''
+explain.numerics = '''Identical to gdn_ba_gates_gemv: exact BF16 to FP32 widening, FP32 products and sums without FMA contraction, per-lane sums in index order, shuffle-down tree at offsets 16 to 1, then even plus odd warp partial. Gates use __expf and __logf with inner arguments clamped at 20; outputs are FP32.'''
+explain.math = [
+  '''\begin{aligned} b_{t,h} &= \langle W_{\mathrm{b}(h)}, x_t\rangle, \qquad a_{t,h} = \langle W_{\mathrm{a}(h)}, x_t\rangle, \qquad t = 1,\dots,m \\ \beta_{t,h} &= \sigma(b_{t,h}) \\ \alpha_{t,h} &= \exp\!\Big(-e^{\min(A_h,\,20)}\,\log\!\big(1 + e^{\min(a_{t,h} + \delta_h,\,20)}\big)\Big) \end{aligned}''',
+  '''\text{where } A_h \text{ is the learned log decay rate},\ \delta_h \text{ the learned dt bias},\ \mathrm{b}(h), \mathrm{a}(h) \text{ the interleaved weight rows of value head } h''',
+]
 compute = "cuda_core"
 kernels = [
   "ssm_preprocess::dense_gemm_ba_gates_prefill",
@@ -398,6 +488,12 @@ measurement = "qwen3.8-27b::dense_gemm_ba_gates_prefill @ decode C=16 (R=32, MTP
 [[family]]
 id = "causal_conv1d"
 description = "Causal conv1d update + SiLU (Mamba2 xBC, GDN legacy path); writes no per-row window snapshots"
+explain.about = '''One decode step of a causal depthwise 1D convolution with SiLU, as used for the Mamba2 xBC stream and the legacy Gated DeltaNet path. Each channel $c$ keeps a window of the last $w$ inputs ($w$ = conv width, a runtime argument); the step shifts the window left by one, appends the new input, convolves it with the channel's $w$ taps plus an optional bias, and applies SiLU. One thread owns one channel and a 2D grid covers channels times sequences; the windows must be contiguous across the batch. No intermediate window snapshot is written.'''
+explain.numerics = '''The window is stored in FP32 and the BF16 input and BF16 taps are widened exactly; the sum starts from the FP32 bias (or zero) and adds the taps in order from oldest to newest in FP32 without FMA contraction. The sigmoid uses __expf and the result is rounded once to BF16 (RNE) at the store.'''
+explain.math = [
+  '''\begin{aligned} s_c &\leftarrow \big(s_{c,2}, \dots, s_{c,w},\, x_{t,c}\big) \\ y_{t,c} &= \mathrm{rn}_{\mathrm{bf16}}\Big(\operatorname{silu}\big(b_c + \textstyle\sum_{i=1}^{w} W_{c,i}\, s_{c,i}\big)\Big) \end{aligned}''',
+  '''\text{where } s_c \in \mathbb{R}^{w} \text{ is the window of channel } c \text{ (oldest first)},\ W_{c,i} \text{ the taps and } b_c \text{ the optional bias } (0 \text{ if absent})''',
+]
 compute = "cuda_core"
 kernels = ["causal_conv1d::causal_conv1d_update"]
 rows = [1, 4096]
@@ -423,6 +519,13 @@ files = ["kernels/gb10/common/causal_conv1d.cu"]
 [[family]]
 id = "causal_conv1d_l2norm"
 description = "Causal conv1d update + SiLU + L2 norm of the q/k heads (GDN)"
+explain.about = '''The Gated DeltaNet and KDA decode convolution: the causal depthwise conv plus SiLU of causal_conv1d over the packed q|k|v channels, followed by an L2 normalisation of each q and k head of $d_k = 128$ channels; the value channels (from qk_channels on) get SiLU only. Blocks of 256 threads hold two heads each, one thread per channel, and the head norm is a warp shuffle plus a sum of four warp partials. causal_conv1d::causal_conv1d_update_l2norm writes BF16 and is the verify-path kernel, the _f32 and _f32_strided twins write FP32 (the strided one runs every sequence's row with arbitrary row strides), and _rows takes up to 16 rows of different sequences, each with its own window. kda_conv_tokens::causal_conv1d_update_l2norm_tokens runs $T$ consecutive tokens of one sequence in one launch, building each token's window in registers from the stored window and the earlier inputs so that the stored window is only read; causal_conv1d_window_advance then moves the window past the $T$ tokens, and causal_conv1d_window_advance_to writes the advanced window to a separate snapshot buffer.'''
+explain.numerics = '''FP32 window, exact BF16 widening of inputs and taps, FP32 conv sum from bias then taps oldest to newest, sigmoid via __expf; the squared norm is a shuffle-down tree within each warp then four warp partials summed in order, and the scale is rsqrtf of (sum of squares + eps), so eps is added to the sum and not to a mean. The fused verify, rows and tokens kernels round to BF16 (RNE) once at the store; the f32 twins store FP32. Built without FMA contraction.'''
+explain.math = [
+  '''\begin{aligned} s_c &\leftarrow \big(s_{c,2}, \dots, s_{c,w},\, x_{t,c}\big), \qquad u_{t,c} = \operatorname{silu}\Big(b_c + \textstyle\sum_{i=1}^{w} W_{c,i}\, s_{c,i}\Big) \\ y_{t,c} &= \begin{cases} u_{t,c}\,\Big(\sum_{j \in \mathcal{H}(c)} u_{t,j}^2 + \epsilon\Big)^{-1/2} & c < c_{qk} \\ u_{t,c} & c \ge c_{qk} \end{cases} \end{aligned}''',
+  '''\text{where } \mathcal{H}(c) \text{ is the } d_k\text{-channel q or k head containing } c,\ c_{qk} \text{ the number of q and k channels},\ s_c \in \mathbb{R}^{w} \text{ the window (oldest first)}''',
+  '''\text{token form: } s^{(t)}_{c,i} = x_{t-w+i,\,c} \text{ for } i = 1,\dots,w, \text{ with } x_{j,c} \text{ for } j \le 0 \text{ read from the stored window slot } j + w''',
+]
 compute = "cuda_core"
 # 2026-09-30: The strided twin runs every sequence's row in one launch (the batched GDN arm,
 # kernels/gb10/common/FUSIONS.toml).
@@ -492,6 +595,15 @@ measurement = "glm-5.3-flash::causal_conv1d_window_advance_to @ decode C=1 (R=2,
 [[family]]
 id = "gdn_recurrence"
 description = "Gated delta rule decode (one row per sequence) and the WY verify kernels (K = 2, 3, 4)"
+explain.about = '''The Gated DeltaNet recurrence for one head with scalar decay $\alpha_t$ and write strength $\beta_t$, state $S \in \mathbb{R}^{d_k \times d_v}$ in FP32. The decode kernels (one token per sequence) run one block per (value head, sequence) with one thread per state column, read the column twice (once for $S^\top k$, once to update and read out), and clamp the state norm after the step; gated_delta_rule_decode_f32_norm additionally applies the SiLU-gated RMS norm to the head output in the same block. The WY verify kernels gated_delta_rule_wy2, _wy3 and _wy4 run $K = 2, 3, 4$ speculative tokens in two passes over the state: pass one forms $S_0^\top k_t$ for all $K$ keys at once, the key Gram entries $\langle k_t, k_j\rangle$ correct them into the sequential predictions, and pass two applies the $K$ updates in registers, storing the $K-1$ intermediate states for rollback and the final state in place. Value head $h$ reads key head $\lfloor h / r\rfloor$ with $r$ value heads per key head.'''
+explain.numerics = '''State and arithmetic FP32 throughout, without FMA contraction; column dot products are accumulated in groups of four rows in ascending order and the Gram entries are 128-thread block reductions (shuffle-down tree then a fixed combination of four warp sums). The decode kernels read FP32 q, k, v and write FP32 (the _norm kernel writes BF16 after the gated norm, its SiLU via expf); the WY kernels read BF16 q, k, v (widened exactly) and round the output to BF16 (RNE). The read-out scale is rsqrtf of $d_k$; the state-norm clamp (decode kernels only) uses rsqrtf of the squared Frobenius norm and leaves that step's output unclamped.'''
+explain.math = [
+  '''\begin{aligned} \bar\alpha_t &= \min\!\big(\max(\alpha_t, 10^{-6}),\, 1 - 10^{-6}\big) \\ u_t &= \beta_t\,\big(v_t - \bar\alpha_t\, S_{t-1}^\top k_t\big) \\ S_t &= \bar\alpha_t\, S_{t-1} + k_t\, u_t^\top \\ o_t &= \frac{S_t^\top q_t}{\sqrt{d_k}} \end{aligned}''',
+  '''\text{decode only, after } o_t\text{: } S_t \leftarrow S_t \cdot \min\!\Big(1,\ \frac{1000}{\lVert S_t \rVert_F}\Big)''',
+  '''\begin{aligned} c_t &= \Big(\prod_{l=1}^{t-1} \bar\alpha_l\Big) S_0^\top k_t + \sum_{j=1}^{t-1} \Big(\prod_{l=j+1}^{t-1} \bar\alpha_l\Big) \langle k_t, k_j\rangle\, u_j \;=\; S_{t-1}^\top k_t \\ u_t &= \beta_t\,\big(v_t - \bar\alpha_t\, c_t\big), \qquad t = 1, \dots, K \\ S_t &= \bar\alpha_t S_{t-1} + k_t u_t^\top, \qquad o_t = \mathrm{rn}_{\mathrm{bf16}}\big(S_t^\top q_t / \sqrt{d_k}\big) \end{aligned}''',
+  '''y = \frac{o}{\sqrt{\frac{1}{d_v}\sum_{j=1}^{d_v} o_j^2 + \epsilon}} \odot \gamma \odot \operatorname{silu}(z)''',
+  '''\text{where } q_t, k_t \in \mathbb{R}^{d_k} \text{ are L2-normalised},\ v_t \in \mathbb{R}^{d_v},\ \gamma \text{ the norm weight and } z \text{ the BF16 output gate (fused norm only)}''',
+]
 compute = "cuda_core"
 kernels = [
   "gated_delta_rule::gated_delta_rule_decode_f32", "gated_delta_rule::gated_delta_rule_decode_f32_norm",
@@ -543,6 +655,12 @@ measurement = "qwen3.8-27b::gated_delta_rule_wy4 @ decode C=1 (R=4, MTP k=3)"
 [[family]]
 id = "gdn_recurrence_strided"
 description = "Gated delta rule decode, all sequences in one launch (strided states)"
+explain.about = '''The single-token Gated DeltaNet decode step of gdn_recurrence for every sequence of a batch in one launch: grid (value heads, sequences), one thread per state column, with the q/k, v, gate/beta and output rows of each sequence at caller-given strides so the batched decode needs no repacking. Each sequence's state is the slot of a strided state pool. The arithmetic, the decay clamp and the state-norm clamp are those of the one-sequence decode kernel.'''
+explain.numerics = '''FP32 q, k, v, gates, state and output; FP32 arithmetic without FMA contraction, column dot products in groups of four rows in ascending order; read-out scale rsqrtf of $d_k$; the norm clamp sums squares per thread, reduces with a shuffle-down tree and four warp partials, and scales by rsqrtf.'''
+explain.math = [
+  '''\begin{aligned} \bar\alpha_{b} &= \min\!\big(\max(\alpha_{b}, 10^{-6}),\, 1 - 10^{-6}\big) \\ u_{b} &= \beta_{b}\,\big(v_{b} - \bar\alpha_{b}\, S_{b}^\top k_{b}\big) \\ S_{b}^{+} &= \bar\alpha_{b}\, S_{b} + k_{b}\, u_{b}^\top, \qquad o_{b} = \frac{(S_{b}^{+})^\top q_{b}}{\sqrt{d_k}} \\ S_{b} &\leftarrow S_{b}^{+} \cdot \min\!\Big(1,\ \frac{1000}{\lVert S_{b}^{+} \rVert_F}\Big) \end{aligned}''',
+  '''\text{where } b \text{ indexes the sequence (per value head)},\ S_b \in \mathbb{R}^{d_k \times d_v}''',
+]
 compute = "cuda_core"
 kernels = ["gated_delta_rule::gated_delta_rule_decode_f32_strided"]
 rows = [1, 128]
@@ -563,6 +681,14 @@ files = ["kernels/gb10/common/gated_delta_rule.cu"]
 [[family]]
 id = "gdn_verify_fused_k2"
 description = "Opt-in fused GDN verify at K = 2: conv + L2 + recurrence + gated norm"
+explain.about = '''An opt-in fused form of the two-token ($K = 2$) Gated DeltaNet verify around the WY2 recurrence. gdn_verify_fused_k2::gdn_verify_fused_conv_k2 keeps each channel's conv window in registers across both positions, computes conv plus SiLU plus the per-head L2 norm of q and k for both, snapshots the window after position 0 for rollback and leaves the window after position 1 as the state; it is the per-token causal_conv1d_update_l2norm arithmetic with no bias. gdn_verify_fused_k2::gdn_verify_fused_norm_k2 then applies the SiLU-gated RMS norm to both positions' recurrence outputs, one block per (head, position). The recurrence between them is the WY2 kernel of gdn_recurrence.'''
+explain.numerics = '''Conv: FP32 window, exact BF16 widening, FP32 tap sum, __expf sigmoid, L2 scale rsqrtf(sum of squares + eps), BF16 (RNE) store. Norm: BF16 core and gate widened exactly, sum of squares per thread then a shuffle-xor tree and a second warp reduction, rsqrtf(mean + eps), SiLU via expf, BF16 (RNE) store. Built without FMA contraction.'''
+explain.math = [
+  '''\begin{aligned} s^{(1)} &= \big(s^{(0)}_2, \dots, s^{(0)}_w,\, x_1\big), \qquad s^{(2)} = \big(s^{(1)}_2, \dots, s^{(1)}_w,\, x_2\big) \\ u_{t,c} &= \operatorname{silu}\Big(\textstyle\sum_{i=1}^{w} W_{c,i}\, s^{(t)}_{c,i}\Big), \qquad t = 1, 2 \\ y_{t,c} &= \mathrm{rn}_{\mathrm{bf16}}\Big(u_{t,c}\,\big(\textstyle\sum_{j \in \mathcal{H}(c)} u_{t,j}^2 + \epsilon\big)^{-1/2}\Big) \ \ (c < c_{qk}), \qquad y_{t,c} = \mathrm{rn}_{\mathrm{bf16}}(u_{t,c}) \ \ (c \ge c_{qk}) \end{aligned}''',
+  '''\text{recurrence (WY2): } u_t = \beta_t\big(v_t - \bar\alpha_t\, S_{t-1}^\top k_t\big),\quad S_t = \bar\alpha_t S_{t-1} + k_t u_t^\top,\quad o_t = \mathrm{rn}_{\mathrm{bf16}}\big(S_t^\top q_t/\sqrt{d_k}\big)''',
+  '''z_t = \mathrm{rn}_{\mathrm{bf16}}\Big(\frac{o_t}{\sqrt{\frac{1}{d_v}\sum_{j=1}^{d_v} o_{t,j}^2 + \epsilon}} \odot \gamma \odot \operatorname{silu}(g_t)\Big)''',
+  '''\text{where } s^{(0)} \text{ is the stored window},\ s^{(1)} \text{ the snapshot},\ \mathcal{H}(c) \text{ the q or k head of channel } c,\ \gamma \text{ the norm weight},\ g_t \text{ the output gate}''',
+]
 compute = "cuda_core"
 kernels = ["gdn_verify_fused_k2::gdn_verify_fused_conv_k2", "gdn_verify_fused_k2::gdn_verify_fused_norm_k2"]
 rows = [2, 2]
@@ -602,6 +728,13 @@ files = ["kernels/gb10/common/gdn_verify_fused_k2.cu"]
 [[family]]
 id = "gdn_carry_verify"
 description = "Carried-state batched GDN verify: conv, WY (eager and lazy) and the pending-row folds"
+explain.about = '''A carried-state form of the batched Gated DeltaNet verify that avoids writing the state on every verify. The stored state of a sequence lags it by $p$ accepted rows held in a per-slot stash (at most 8 rows of $u$, clamped $\bar\alpha$ and $k$); a verify kernel first folds those rows into its copy of the state with the decode update, in row order, then runs the WY chain of gdn_recurrence for its $K = 2, 3, 4$ rows and stashes them behind the pending ones. The eager kernels (gdn_carry_wy2/3/4) write the folded state back on every verify and fold at most four rows; the lazy kernels (_lazy) write back only when $p + K$ would exceed the stash capacity and keep half the column in registers between the two passes. gdn_carry_conv applies the same scheme to the conv window (folding stashed inputs, then conv plus SiLU plus L2 norm per position), and gdn_carry_flush and gdn_carry_conv_flush fold the pending rows without a verify. Grid (value heads, sequences) with 128 threads for the WY kernels, $d_k = d_v = 128$.'''
+explain.numerics = '''All state, stash and arithmetic FP32 with the parents' expressions and accumulation order (column dot products in groups of four rows, Gram entries by separate 128-thread block reductions, read-out scale rsqrtf of the runtime $d_k$), so outputs and states are bitwise those of the uncarried kernels; q, k, v are BF16 widened exactly and outputs are rounded to BF16 (RNE). The conv stash holds the BF16 inputs; conv numerics are those of causal_conv1d_l2norm with no bias. No state-norm clamp.'''
+explain.math = [
+  '''\text{fold: } S \leftarrow \bar\alpha_r\, S + k_r\, u_r^\top, \quad r = 1, \dots, p \quad \text{(stashed } \bar\alpha_r, k_r, u_r\text{)}''',
+  '''\begin{aligned} c_t &= \Big(\prod_{l=1}^{t-1} \bar\alpha_l\Big) S_0^\top k_t + \sum_{j=1}^{t-1} \Big(\prod_{l=j+1}^{t-1} \bar\alpha_l\Big) \langle k_t, k_j\rangle\, u_j \\ u_t &= \beta_t\,\big(v_t - \bar\alpha_t\, c_t\big), \qquad \bar\alpha_t = \min\!\big(\max(\alpha_t, 10^{-6}),\, 1 - 10^{-6}\big) \\ S_t &= \bar\alpha_t S_{t-1} + k_t u_t^\top, \qquad o_t = \mathrm{rn}_{\mathrm{bf16}}\big(S_t^\top q_t / \sqrt{d_k}\big), \qquad t = 1, \dots, K \end{aligned}''',
+  '''\text{where } S_0 \text{ is the folded state; the verify writes no } S_t \text{ and stashes } (\bar\alpha_t, k_t, u_t)_{t=1}^{K}''',
+]
 compute = "cuda_core"
 kernels = [
   "gated_delta_rule_carry::gdn_carry_conv", "gated_delta_rule_carry::gdn_carry_wy2",
@@ -634,6 +767,12 @@ files = ["kernels/gb10/common/gated_delta_rule_carry.cu"]
 [[family]]
 id = "mamba2_ssm"
 description = "Mamba2 selective state update, one row per sequence (grid over the batch)"
+explain.about = '''The Mamba2 selective state update for one token per sequence: per head $h$ (in group $g$ of the shared $B$, $C$ projections) the state $H \in \mathbb{R}^{P \times N}$ ($P$ head dim, $N$ state size) decays by a scalar $\bar A$ and accumulates the outer product of $x$ with $\Delta B$; the output contracts the state with $C$ and adds the skip term $D x$. One block per (head, sequence) with one thread per state column; for each head-dim row a thread updates its element and a warp shuffle reduces the row's partial dot product with $C$. Head dim, state size and group count are runtime arguments ($N \le 128$, a multiple of 32, $P \le N$). The state is not clamped.'''
+explain.numerics = '''BF16 x, B, C and dt widened exactly, FP32 A_log, D, dt bias and state; FP32 arithmetic with accurate expf and logf, no FMA contraction. The read-out sums each warp's partials with a shuffle-down tree, then the warp sums in order, then adds $D x$; the output is rounded once to BF16 (RNE).'''
+explain.math = [
+  '''\begin{aligned} \Delta &= \operatorname{clamp}\!\Big(\operatorname{sp}(\delta_{\mathrm{raw}} + \delta_h),\ \Delta_{\min},\ \Delta_{\max}\Big), \qquad \operatorname{sp}(z) = \begin{cases} z & z > 20 \\ \log(1 + e^{z}) & z \le 20 \end{cases} \\ \bar A &= \exp\!\big(-e^{A_h}\,\Delta\big) \\ H_{p,s} &\leftarrow \bar A\, H_{p,s} + x_p\,(\Delta B_{g,s}) \\ y_p &= \mathrm{rn}_{\mathrm{bf16}}\Big(\textstyle\sum_{s=1}^{N} H_{p,s}\, C_{g,s} + D_h\, x_p\Big) \end{aligned}''',
+  '''\text{where } A_h \text{ is the learned log decay},\ \delta_h \text{ the dt bias},\ D_h \text{ the skip coefficient},\ \Delta_{\min}, \Delta_{\max} \text{ the configured time-step limits}''',
+]
 compute = "cuda_core"
 kernels = ["mamba2_ssm::mamba2_ssm_decode"]
 rows = [1, 4096]
@@ -662,6 +801,12 @@ files = ["kernels/gb10/common/mamba2_ssm_decode.cu"]
 [[family]]
 id = "gated_rms_norm"
 description = "Gated RMSNorm: rmsnorm(x) * silu(z) (GDN output norm)"
+explain.about = '''Gated RMSNorm, the output norm of a gated delta-net (linear-attention) layer: each head row $x \in \mathbb{R}^{d}$ is normalised and multiplied by the plain norm weight and by $\operatorname{silu}$ of a gate row $z$. One block per row; the sum of squares is reduced by warp shuffles and shared memory. gated_rms_norm_f32_input reads an FP32 input with one row per block and gate rows a fixed stride apart, gated_rms_norm_f32_input_strided does the same over a (head, sequence) grid with separate sequence strides, and gated_rms_norm_prefill reads BF16 input over a (head, token) grid and keeps each thread's elements in registers between the two passes. These implement the norm_first point; the gate_first point (per-model copies) applies the gate first and normalises each group of $g$ channels separately.'''
+explain.numerics = '''The input is read as FP32 (or BF16 widened exactly in the prefill kernel), the gate and weight as BF16; the sum of squares is accumulated and reduced in FP32, the root uses rsqrtf, $\operatorname{silu}(z) = z/(1+e^{-z})$ uses the accurate expf (the fast __expf in the gate_first copies), the product $x\,r\,\gamma\,\operatorname{silu}(z)$ is formed in FP32 left to right, and one RNE rounding to BF16 happens at the store.'''
+explain.math = [
+  '''\begin{aligned} r &= \Bigl(\frac{1}{d}\sum_{j=1}^{d} x_j^2 + \epsilon\Bigr)^{-1/2} \\ y_i &= \mathrm{rn}_{\mathrm{bf16}}\bigl(x_i\, r\, \gamma_i \operatorname{silu}(z_i)\bigr), \qquad \operatorname{silu}(z) = \frac{z}{1+e^{-z}} \end{aligned}''',
+  '''\begin{aligned} u_i &= x_i \operatorname{silu}(z_i), \qquad r_G = \Bigl(\frac{1}{g}\sum_{j \in G} u_j^2 + \epsilon\Bigr)^{-1/2} \\ y_i &= \mathrm{rn}_{\mathrm{bf16}}\bigl(u_i\, r_{G(i)}\, \gamma_i\bigr) \qquad \text{(gate\_first: } G(i) \text{ is the group of } g \text{ channels holding } i \text{)} \end{aligned}''',
+]
 compute = "memory"
 # 2026-09-30: `_strided` is the one-launch multi-sequence twin (the batched GDN arm).
 kernels = [
@@ -710,6 +855,12 @@ measurement = "qwen3.8-27b::gated_rms_norm_prefill @ decode C=16 (R=32, MTP k=1)
 [[family]]
 id = "paged_decode_attn"
 description = "Paged softmax decode attention, one query row per sequence"
+explain.about = '''Softmax decode attention for one query row per sequence over a paged KV cache read through the sequence's block table, with grouped-query attention (query head $h$ reads KV head $\lfloor h/G \rfloor$, $G = H_q/H_{kv}$) and an optional sliding window of the last $W$ positions. One block of 8 warps per (query head, sequence): each lane holds $d_h/32$ channels of the query, each warp takes one contiguous eighth of the attended positions and walks them four at a time within each physical cache block, keeping an online-softmax state $(m, \ell, o)$, and the eight warp states are merged through shared memory before the normalised output is stored. paged_decode_attn reads a BF16 cache and paged_decode_attn_fp8 an FP8 E4M3 cache with per-tensor scales $c_K, c_V$; the head width $d_h$ is a compile-time parameter (256 by default, with 128 and 512 builds), and the score scale $c$ is supplied by the host (normally $1/\sqrt{d_h}$).'''
+explain.numerics = '''Q is BF16 widened to FP32 and K, V are BF16 (or E4M3 decoded exactly through FP16) widened to FP32; each lane forms an FP32 partial dot product over its channels and a five-step butterfly warp shuffle completes it, exponentials use the fast __expf with no base-2 rescaling, the running maximum starts at $-10^{30}$, and output and normaliser accumulate in FP32. Warp states merge in a fixed pairwise tree (8 to 4 to 2 to 1) that skips warps with $\ell = 0$, the output is multiplied by the FP32 reciprocal of $\ell$ and rounded once to BF16 (RNE); in the FP8 kernel $c_K$ is folded into the score scale and $c_V$ is applied once per channel before the merge.'''
+explain.math = [
+  '''\begin{aligned} j_0 &= \begin{cases} L - W & W > 0,\ L > W \\ 0 & \text{otherwise} \end{cases}, \qquad k_j = \mathcal{K}_{T[\lfloor j/B \rfloor],\; j \bmod B,\; \lfloor h/G \rfloor,\; :}, \quad v_j \text{ likewise}, \qquad j_0 \le j < L \\ s_j &= c\,\langle q, k_j \rangle, \qquad m = \max_{j} s_j, \qquad \ell = \sum_{j=j_0}^{L-1} e^{\,s_j - m} \\ y &= \mathrm{rn}_{\mathrm{bf16}}\Bigl(\frac{1}{\ell}\sum_{j=j_0}^{L-1} e^{\,s_j - m}\, v_j\Bigr) \end{aligned}''',
+  '''s_j = (c\,c_K)\,\langle q, \hat{k}_j \rangle, \qquad y = \mathrm{rn}_{\mathrm{bf16}}\Bigl(\frac{c_V}{\ell}\sum_{j} e^{\,s_j - m}\, \hat{v}_j\Bigr) \qquad \text{(FP8 cache: } \hat{k}_j, \hat{v}_j \text{ are the decoded E4M3 values)}''',
+]
 compute = "cuda_core"
 kernels = ["paged_decode::paged_decode_attn", "paged_decode_fp8::paged_decode_attn_fp8"]
 rows = [1, 4096]
@@ -950,6 +1101,11 @@ files = ["kernels/gb10/common/paged_decode_attn_turbo8_512.cu"]
 [[family]]
 id = "kv_write"
 description = "Append K and V rows to the paged cache"
+explain.about = '''Appends each token's key and value rows (all $H_{kv}$ heads of width $d_h$) to the paged KV cache. One block of 256 threads per token reads the token's slot $\pi_t$ from the slot mapping, splits it into a physical block index and an offset within the block of $B$ slots, and writes the rows to that slot of the K and V caches, whose blocks are laid out as [slot, head, channel]; a negative slot writes nothing. reshape_and_cache_flash copies BF16 rows with 8-byte vector moves; reshape_and_cache_flash_fp8 encodes them to FP8 E4M3 with per-tensor dequantization scales $c_K, c_V$.'''
+explain.numerics = '''The BF16 cache is a bit-exact copy. The FP8 path widens BF16 to FP32, multiplies by the FP32 reciprocal of the dequantization scale (not a division per element), and converts pairs to E4M3 with round-to-nearest-even and saturation to the finite range of plus or minus 448.'''
+explain.math = [
+  '''\begin{aligned} b_t &= \lfloor \pi_t / B \rfloor, \qquad o_t = \pi_t \bmod B \qquad (\text{no write if } \pi_t < 0) \\ \mathcal{K}_{b_t,o_t,h,i} &= k_{t,h,i}, \qquad \mathcal{V}_{b_t,o_t,h,i} = v_{t,h,i} \qquad (\text{BF16 cache}) \\ \mathcal{K}_{b_t,o_t,h,i} &= \mathrm{sat}_{\mathrm{e4m3}}\bigl(k_{t,h,i}\cdot \mathrm{fp32}(1/c_K)\bigr), \qquad \mathcal{V}_{b_t,o_t,h,i} = \mathrm{sat}_{\mathrm{e4m3}}\bigl(v_{t,h,i}\cdot \mathrm{fp32}(1/c_V)\bigr) \qquad (\text{FP8 cache}) \end{aligned}''',
+]
 compute = "memory"
 kernels = ["reshape_and_cache::reshape_and_cache_flash", "reshape_and_cache::reshape_and_cache_flash_fp8"]
 rows = [1, 65536]
@@ -982,6 +1138,11 @@ files = ["kernels/gb10/common/reshape_and_cache.cu"]
 [[family]]
 id = "dense_bf16"
 description = "BF16 GEMV (1 row), batched GEMV (M <= 16 per block row) and GEMM (any M)"
+explain.about = '''Dense BF16 projection on CUDA cores, $y_{tn}=\sum_k W_{nk}x_{tk}$ for $t<m$ rows, with $W\in\mathbb{R}^{N\times K}$ row-major. The one-row GEMV dense_gemv_bf16 gives every output 64 threads (two warps) and packs four outputs into a 256-thread block; each thread walks K in 8-element vectors $v = l, l+64, \dots$, the warps reduce by shuffle and the two warp partials are added. The batched GEMVs (dense_gemv_bf16_batchm for up to 16 rows per block row with the rows staged in shared memory, its unrolled _wide entries for 9 to 16 rows, and dense_gemv_bf16_batchm_few for 2 to 8 rows with up to eight K slabs of weight loads in flight, the _pair entry running two projections in one launch) read each weight vector once for all rows and repeat the one-row operation order, so every row is bit-identical to dense_gemv_bf16. For larger M, dense_gemm_bf16 is a 16 x 16 shared-memory tile with one thread per output and dense_gemm_bf16_router a 16 x 64 register-blocked tile (four columns per thread) used for the MoE router; the fp32out and f32out variants store the FP32 sum without rounding.'''
+explain.numerics = '''BF16 weights and activations are widened exactly to FP32 and multiplied and added as separate correctly rounded FP32 operations (the build disables FMA contraction), in the fixed order shown; the only narrowing is one round-to-nearest-even to BF16 at the store, which the FP32-output variants skip.'''
+explain.math = [
+  '''\begin{aligned} y_{tn} &= \mathrm{rn}_{\mathrm{bf16}}\big(P^{(0)}_{tn} + P^{(1)}_{tn}\big), \qquad P^{(w)}_{tn} = \sum_{l=32w}^{32w+31}\;\sum_{v \equiv l \pmod{64}}\;\sum_{i=0}^{7} x_{t,8v+i}\,W_{n,8v+i} \quad \text{(GEMV)} \\ y_{tn} &= \mathrm{rn}_{\mathrm{bf16}}\Big(\sum_{k=0}^{K-1} x_{tk}\,W_{nk}\Big) \quad \text{(tiled GEMM, sequential in } k\text{)} \end{aligned}''',
+]
 # 2026-10-02: Every kernel here is CUDA-core FMA: the GEMM and the router GEMM tile in shared
 # memory with FP32 accumulators (dense_gemm_bf16.cu); the file's mma.sync path is
 # `dense_gemm_bf16_pipelined`, which this family does not list.
@@ -1081,6 +1242,12 @@ measurement = "glm-5.3-flash::dense_gemv_bf16 @ decode C=1 (R=2, MTP k=1, TP=3 r
 [[family]]
 id = "dense_bf16_tc"
 description = "BF16 tensor-core GEMV row tiers (tc8, tc16, tc32)"
+explain.about = '''Small-M BF16 projection on tensor cores for 1 to 32 rows: dense_gemv_bf16_tc8, tc16 and tc32 cover $m \le 8, 16, 32$ with 1, 2 or 4 token tiles of 8. The weights sit on the 16-row side of the m16n8k16 MMA and the tokens on its 8-wide side, so one MMA covers a 16 x 16 weight block for up to 8 tokens and each weight fragment is reused by every token tile. A CTA of 8 warps owns one 16-row weight tile; the warps take interleaved 64-wide K blocks (several blocks of weight loads in flight per thread) and their FP32 partials are summed through shared memory in fixed warp order. Both operands carry the same K permutation, so the checkpoint layout needs no repack; K must be a multiple of 64.'''
+explain.numerics = '''Raw BF16 words go straight into the MMA fragments (BF16 x BF16 products, FP32 accumulation inside the MMA chain); the 8 warp partials are added in FP32 in warp order with no atomics, so the result is deterministic, and the sum is rounded once to BF16 with round-to-nearest-even. Results differ from the CUDA-core GEMV only through the grouping of the FP32 sums.'''
+explain.math = [
+  '''\begin{aligned} y_{tn} &= \mathrm{rn}_{\mathrm{bf16}}\Big(\sum_{w=0}^{7} P^{(w)}_{tn}\Big), \qquad P^{(w)}_{tn} = \sum_{b \equiv w \pmod{8}}\;\sum_{k=64b}^{64b+63} W_{nk}\,x_{tk}, \qquad t < m \end{aligned}''',
+  '''\text{where } P^{(w)} \text{ is the FP32 partial of warp } w \text{ over the 64-wide K blocks } b \text{ it owns}''',
+]
 compute = "tensor_core"
 mma = "mma.sync.m16n8k16.bf16"
 kernels = [
@@ -1111,6 +1278,13 @@ measurement = "qwen3.8-27b::dense_gemv_bf16_tc16 @ decode C=16 (R=32, MTP k=1) �
 [[family]]
 id = "w4a16_gemv"
 description = "NVFP4 W4A16 CUDA-core GEMV: 1 row (sw, fused dual / q|gate / SiLU-input) and 2-3 row copies"
+explain.about = '''NVFP4-weight, BF16-activation GEMV on CUDA cores for 1 to 3 rows. The weight is E2M1 codes (two per byte, low nibble first) with one E4M3 scale per 16 values along K and one FP32 tensor scale, dequantized on the fly from a 16-entry E2M1 table staged in shared memory. w4a16_gemv gives each output 64 threads and four outputs per block, w4a16_gemv_sw one warp per output with the same operation order, and w4a16_gemv_batch2 and batch3 read each weight chunk once for 2 or 3 rows with each row bit-identical to the one-row kernel. The fused entries run two projections of one input in one launch (w4a16_gemv_dual, dual_sw, dual_batch2, dual_batch3), deinterleave a head-interleaved query and gate weight into a [Q | gate] output (w4a16_gemv_qg and its batch2 and batch3 forms), or take $\operatorname{silu}(g)\odot u$ as the input, computed per element (w4a16_gemv_silu_input_sw). w4a16_gemv_seg_r1, r2 and r4 run up to six weight segments that share the input row on one persistent grid (R output rows per warp tile, the input staged once per block), and w4a16_gemv_pipe_m1 and m2 do the same with each warp's weight loads issued one step ahead; both reproduce w4a16_gemv's bytes.'''
+explain.numerics = '''The scale $s_{\mathrm{g}}\,s_{nj}$ is formed in FP32; the 16-value chunk walk accumulates each chunk with a fused multiply-add chain and folds it with one FMA by the chunk scale, while the 8-value walk (qg, dual, silu-input) multiplies the scale into every weight first; activations are widened BF16, the silu input stays in FP32, the warp shuffle tree and the two-warp sum are FP32, and the output is rounded once to BF16 with round-to-nearest-even.'''
+explain.math = [
+  '''\hat W_{nk} = s_{\mathrm{g}}\,s_{n,\lfloor k/16 \rfloor}\,q_{nk}, \qquad q_{nk} \in \{0, \pm 0.5, \pm 1, \pm 1.5, \pm 2, \pm 3, \pm 4, \pm 6\}, \quad s_{nj} = \mathrm{e4m3}(\text{scale byte}), \quad s_{\mathrm{g}} \in \mathrm{fp32}, \quad \text{where } q \text{ is the E2M1 value, } s_{nj} \text{ the decoded E4M3 group scale and } s_{\mathrm{g}} \text{ the tensor scale}''',
+  '''\begin{aligned} y_n &= \mathrm{rn}_{\mathrm{bf16}}\Big(\sum_{j=0}^{K/16-1} \big(s_{\mathrm{g}}\,s_{nj}\big) \sum_{i=0}^{15} q_{n,16j+i}\,x_{16j+i}\Big) \quad \text{(16-value chunk walk)} \\ y_n &= \mathrm{rn}_{\mathrm{bf16}}\Big(\sum_{k=0}^{K-1} x_k \big(q_{nk}\,(s_{\mathrm{g}}\,s_{n,\lfloor k/16 \rfloor})\big)\Big) \quad \text{(8-value walk)} \\ x_k &= \frac{g_k}{1 + e^{-g_k}}\,u_k \quad \text{(silu input, FP32)} \end{aligned}''',
+  '''y^{[Q\,|\,G]}_{\pi(n)} = y_n, \qquad \pi(2dh + i) = \begin{cases} dh + i & i < d \\ Hd + dh + (i - d) & i \ge d \end{cases} \quad \text{(qg: } H \text{ heads of width } d\text{)}''',
+]
 compute = "cuda_core"
 # 2026-10-22: `w4a16_gemv` is the plain one-row GEMV GLM's `--dense-quantization w4a16` runs at
 # one row (glm5next_w4a16_dense.rs:350-362); w4a16_gemv.cu:168 holds the arithmetic stated below.
@@ -1187,6 +1361,11 @@ measurement = "glm-5.3-flash::w4a16_gemv_pipe_m2 @ decode C=1 (R=2, MTP k=1, TP=
 [[family]]
 id = "w4a16_gemv_wide"
 description = "NVFP4 W4A16 CUDA-core GEMV, up to 32 rows in one launch"
+explain.about = '''NVFP4-weight, BF16-activation GEMV on CUDA cores for up to 32 rows in one launch (w4a16_gemv_batch32). Each 16-value weight chunk and its E4M3 scale are loaded and unpacked once and applied to every row; 64 threads serve each output, four outputs per 256-thread block, with grid $\lceil N/4 \rceil$. The chunk walk is remapped so a warp reads consecutive activation chunks, but each row reproduces the one-row w4a16_gemv order exactly, so every row is bit-identical to w4a16_gemv on that row alone.'''
+explain.numerics = '''Per chunk an FP32 fused multiply-add chain over the 16 E2M1 table values times the widened BF16 activations, folded into the running sum by one FMA with the FP32 scale $s_{\mathrm{g}}\,s_{nj}$; partner threads combine their two accumulators with one shuffle, the 64 lane sums go through the same FP32 shuffle tree and two-warp sum as w4a16_gemv, and the result is rounded once to BF16 (round-to-nearest-even).'''
+explain.math = [
+  '''y_{tn} = \mathrm{rn}_{\mathrm{bf16}}\Big(\sum_{j=0}^{K/16-1} \big(s_{\mathrm{g}}\,s_{n,j}\big) \sum_{i=0}^{15} q_{n,16j+i}\,x_{t,16j+i}\Big), \qquad t < m \le 32, \quad \hat W_{nk} = s_{\mathrm{g}}\,s_{n,\lfloor k/16 \rfloor}\,q_{nk}''',
+]
 compute = "cuda_core"
 kernels = ["w4a16_gemv::w4a16_gemv_batch32"]
 rows = [1, 32]
@@ -1204,6 +1383,12 @@ files = ["kernels/gb10/common/w4a16_gemv.cu"]
 [[family]]
 id = "w4a16_tc"
 description = "NVFP4 W4A16 tensor-core GEMV row tiers (tc8, tc16)"
+explain.about = '''NVFP4 W4A16 GEMV for 1 to 16 rows on BF16 tensor cores: w4a16_gemv_tc8 serves $m \le 8$ (the upper 8 activation rows of the fragment are zero) and w4a16_gemv_tc16 serves $m \le 16$ with two 8-column weight tiles per CTA. The token rows sit on the 16-row side of the m16n8k16 MMA and the weight rows on its 8-wide side, so one MMA covers every row and the dequantization work per weight byte does not depend on m. Eight warps take interleaved 128-wide K blocks with all of a trip's weight and scale loads issued before any dequantization, and the warp partials are summed through shared memory in warp order. A K permutation applied identically to both operands lets the kernel read the checkpoint layout directly; K must be a multiple of 128.'''
+explain.numerics = '''Each E2M1 nibble is placed into BF16 bits as $q\,2^{-126}$ and each E4M3 group scale is converted exactly to BF16 as $s\,2^{100}$; one BF16x2 multiply forms $q\,s\,2^{-26}$, which is exact (a 2-bit times a 4-bit significand fits BF16 and stays normal), the MMA accumulates in FP32, and the epilogue multiplies the FP32 sum by $s_{\mathrm{g}}\,2^{26}$ before one round-to-nearest-even to BF16.'''
+explain.math = [
+  '''\begin{aligned} \tilde w_{nk} &= \mathrm{rn}_{\mathrm{bf16}}\big((q_{nk}\,2^{-126})\,(s_{n,\lfloor k/16 \rfloor}\,2^{100})\big) = q_{nk}\,s_{n,\lfloor k/16 \rfloor}\,2^{-26} \\ y_{tn} &= \mathrm{rn}_{\mathrm{bf16}}\Big(\Big[\sum_{w=0}^{7}\;\sum_{b \equiv w \pmod{8}}\;\sum_{k=128b}^{128b+127} x_{tk}\,\tilde w_{nk}\Big]\cdot\big(s_{\mathrm{g}}\,2^{26}\big)\Big), \qquad t < m \le 16 \end{aligned}''',
+  '''\text{where } q_{nk} \text{ is the E2M1 weight value, } s_{nj} \text{ the E4M3 group scale and } s_{\mathrm{g}} \text{ the FP32 tensor scale}''',
+]
 compute = "tensor_core"
 mma = "mma.sync.m16n8k16.bf16"
 kernels = ["w4a16_gemv_tc::w4a16_gemv_tc8", "w4a16_gemv_tc::w4a16_gemv_tc16"]
@@ -1241,6 +1426,12 @@ measurement = "qwen3.8-27b::w4a16_gemv_tc16 @ decode C=16 (R=32, MTP k=1)"
 [[family]]
 id = "w4a16_gemm"
 description = "NVFP4 W4A16 tile GEMM (p3, k64/n64, m128 variants; the p3 variants are model shadows)"
+explain.about = '''NVFP4-weight tile GEMM for any number of rows, $y = \hat W x$ per row with $\hat W_{nk} = s_{\mathrm{g}}\,s_{n,\lfloor k/16\rfloor}\,q_{nk}$, reading the weight in a K-major transposed layout with a row stride that may exceed N (the padded lm_head). The common w4a16::w4a16_gemm_t uses a 64 x 64 CTA tile of four warps with 16 rows each and K steps of 16: every step dequantizes the weight tile into shared memory as BF16 and runs m16n8k16 BF16 MMAs. The model-specific variants w4a16_gemm_t_p3, w4a16_gemm_t_k64_p3, w4a16_gemm_t_k64_n64_p3 and w4a16_gemm_t_m128 use 64-row tiles 128 columns wide (64 for k64_n64; m128 runs two 64-row chunks against one 128-column weight tile) with K steps of 32 or 64 and cp.async pipelines (weights triple-buffered in the p3 forms), dequantizing the weight to E4M3 and converting the activation to E4M3 for m16n8k32 FP8 MMAs.'''
+explain.numerics = '''Common kernel: the fully scaled weight $q\,s\,s_{\mathrm{g}}$ is computed in FP32 and rounded to BF16 before a BF16 x BF16 MMA with FP32 accumulation. Shadow variants: the same FP32 weight value is narrowed with round-to-nearest-even saturating to E4M3 and the BF16 activation is narrowed the same way with no scale (an implicit per-tensor scale of 1), then E4M3 x E4M3 MMAs accumulate in FP32. Every variant rounds the FP32 sum once to BF16 at the store.'''
+explain.math = [
+  '''\begin{aligned} y_{tn} &= \mathrm{rn}_{\mathrm{bf16}}\Big(\sum_{k=0}^{K-1} x_{tk}\;\mathrm{rn}_{\mathrm{bf16}}\big(q_{nk}\,s_{n,\lfloor k/16\rfloor}\,s_{\mathrm{g}}\big)\Big) \quad \text{(w4a16\_gemm\_t)} \\ y_{tn} &= \mathrm{rn}_{\mathrm{bf16}}\Big(\sum_{k=0}^{K-1} \mathrm{sat}_{\mathrm{e4m3}}(x_{tk})\;\mathrm{sat}_{\mathrm{e4m3}}\big(q_{nk}\,s_{n,\lfloor k/16\rfloor}\,s_{\mathrm{g}}\big)\Big) \quad \text{(p3, k64, m128 variants)} \end{aligned}''',
+  '''\text{where } q_{nk} \text{ is the E2M1 weight value, } s_{nj} \text{ the E4M3 group scale, } s_{\mathrm{g}} \text{ the FP32 tensor scale, and } \mathrm{sat}_{\mathrm{e4m3}} \text{ rounds to nearest even with saturation at } \pm 448''',
+]
 compute = "tensor_core"
 mma = "mma.sync.m16n8k16.bf16"
 kernels = [
@@ -1290,6 +1481,13 @@ measurement = "qwen3.8-27b::w4a16_gemm_t_p3 @ decode C=16 (R=32, MTP k=1) · GDN
 [[family]]
 id = "nvfp4_mmq"
 description = "NVFP4 W4A4 MMQ tiles (activation quantize, mmq16/32/64, pipelined GEMM)"
+explain.about = '''W4A4 dense FFN in which both operands are NVFP4. metrale_nvfp4_quantize_bf16 quantizes each BF16 activation row in groups of 16 (one thread per group), choosing each group's E4M3 scale from five candidate codes by squared error; the weights keep their checkpoint E2M1 codes and E4M3 scales, rearranged by a bit shuffle with no requantization. The GEMM runs as MMQ tiles of 128 weight rows by 16, 32 or 64 token columns (metrale_nvfp4_mmq16_nc, mmq32_nc, mmq64_nc; 8 warps) or as metrale_nvfp4_gemm_pipe, a 128-channel by 192-token tile on 8 warps (64 x 48 each) with a two-stage cp.async pipeline over 256-wide K stages; all issue m16n8k64 block-scaled FP4 MMAs. The tensor scales are folded in afterwards: metrale_nvfp4_silu_mul_quant multiplies the gate and up outputs by their tensor scales, applies SiLU-and-multiply and quantizes the product straight to NVFP4 for the down projection, and metrale_nvfp4_scale_bf16 (or the pipelined GEMM's epilogue) scales the down output.'''
+explain.numerics = '''Activation scales: $c_0$ is $\max|x|/6$ rounded to nearest even and saturated to an E4M3 code, the codes $c_0, c_0 \mp 1, c_0 \mp 2$ (kept within 0 to 126) are tried in that order and the first with the smallest FP32 squared error wins; E2M1 codes are the nearest table value to $x/s$, ties to the smaller magnitude, saturating at 6, and there is no per-tensor activation scale. The MMA multiplies E2M1 x E2M1 with UE4M3 block scales per 16 values; each k64 MMA starts from zero and is added to an FP32 sum in increasing k, rounded once to BF16, and the down projection's tensor scale is a second BF16 rounding.'''
+explain.math = [
+  '''\begin{aligned} c_0 &= \mathrm{sat}_{\mathrm{e4m3}}\Big(\tfrac{1}{6}\max_{i<16}|x_{t,16j+i}|\Big), \qquad e_c = \sum_{i=0}^{15}\Big(|x_{t,16j+i}| - \mathrm{e4m3}(c)\,\big|\mathrm{rn}_{\mathrm{e2m1}}\big(x_{t,16j+i}/\mathrm{e4m3}(c)\big)\big|\Big)^2 \\ s^{a}_{tj} &= \mathrm{e4m3}(c^{*}), \quad c^{*} = \operatorname*{arg\,min}_{c \in \{c_0,\,c_0-1,\,c_0+1,\,c_0-2,\,c_0+2\} \cap [0,126]} e_c, \qquad a_{tk} = \mathrm{rn}_{\mathrm{e2m1}}\big(x_{tk}/s^{a}_{t,\lfloor k/16\rfloor}\big) \end{aligned}''',
+  '''\begin{aligned} z_{tn} &= \mathrm{rn}_{\mathrm{bf16}}\Big(\sum_{b=0}^{K/64-1}\;\sum_{k=64b}^{64b+63}\big(q_{nk}\,s^{w}_{n,\lfloor k/16\rfloor}\big)\big(a_{tk}\,s^{a}_{t,\lfloor k/16\rfloor}\big)\Big) \\ h_{tk} &= \operatorname{silu}\big(s^{\mathrm{gate}}_{\mathrm{g}}\,z^{\mathrm{gate}}_{tk}\big)\,\big(s^{\mathrm{up}}_{\mathrm{g}}\,z^{\mathrm{up}}_{tk}\big) \quad \text{(FP32, then NVFP4-quantized as above)} \\ y^{\mathrm{down}}_{tn} &= \mathrm{rn}_{\mathrm{bf16}}\big(z^{\mathrm{down}}_{tn}\,s^{\mathrm{down}}_{\mathrm{g}}\big) \end{aligned}''',
+  '''\text{where } q, s^{w} \text{ are the weight E2M1 values and E4M3 group scales, } s^{\cdot}_{\mathrm{g}} \text{ the FP32 weight tensor scales, } \mathrm{e4m3}(c) \text{ the value of code } c, \text{ and } \mathrm{rn}_{\mathrm{e2m1}} \text{ rounds to the nearest E2M1 value, ties to the smaller magnitude, saturating at } 6''',
+]
 compute = "tensor_core"
 mma = "mma.sync.m16n8k64.mxf4nvf4.block_scale"
 kernel_compute."nvfp4_mmq::metrale_nvfp4_quantize_bf16" = { compute = "memory" }
@@ -1336,6 +1534,13 @@ measurement = "qwen3.8-27b::metrale_nvfp4_mmq32_nc @ decode C=16 (R=32, MTP k=1)
 [[family]]
 id = "w4a4_mx"
 description = "W4A4 MX GEMV (per-row NVFP4 activation quantize; mx8, the activation-reuse twins and the persistent entries)"
+explain.about = '''W4A4 GEMV for 1 to 32 rows on the Blackwell block-scaled FP4 MMA (m16n8k64, E2M1 x E2M1 with UE4M3 scales per 16 values): the checkpoint's NVFP4 weight bytes and E4M3 group scales are the MMA operands directly, so the weights are never dequantized. w4a4_quant_rows (one 256-thread CTA per row) quantizes each BF16 activation row to NVFP4 with a dynamic per-row global scale, writing codes and group scales in the MMA fragment order. The GEMVs put weights on the 16-row side and tokens on the 8-wide side; a 256-thread CTA owns a 16-row weight tile, warp $w$ takes the 128-wide K chunks $c \equiv w \pmod 8$ in increasing order with two MMAs per chunk, and the 8 warp partials are summed in warp order. w4a4_gemv_mx8 serves up to 8 rows; w4a4_gemv_mx16_nt2 and w4a4_gemv_mx32_nt4 keep their activation fragments in registers across 2 or 4 weight tiles; w4a4_gemv_mx16_ps and w4a4_gemv_mx32_ps are persistent forms with staged activations. Every variant is bit-identical per row to the one-tile kernel.'''
+explain.numerics = '''Activation quantization in FP32: the row global scale is $\max|x|/(6\cdot 448)$ (1 for an all-zero row), each group scale is $\max|x|/6$ times the reciprocal global scale rounded to nearest even and saturated to E4M3, and each value is $x/(s\,g)$ rounded to nearest even onto the E2M1 grid, saturating at 6 (zero when the group scale is zero). The MMA chains its FP32 accumulator across a warp's chunks, the warp partials are added in FP32 in warp order, and the sum is multiplied by $g_t\,s_{\mathrm{g}}$ and rounded once to BF16.'''
+explain.math = [
+  '''\begin{aligned} g_t &= \begin{cases} \max_k |x_{tk}| \,/\, (6\cdot 448) & \max_k |x_{tk}| > 0 \\ 1 & \text{otherwise} \end{cases} \\ s^{a}_{tj} &= \mathrm{sat}_{\mathrm{e4m3}}\Big(\tfrac{1}{6}\max_{i<16}|x_{t,16j+i}|\cdot g_t^{-1}\Big), \qquad a_{tk} = \mathrm{rn}_{\mathrm{e2m1}}\Big(\frac{x_{tk}}{s^{a}_{t,\lfloor k/16\rfloor}\,g_t}\Big) \end{aligned}''',
+  '''y_{tn} = \mathrm{rn}_{\mathrm{bf16}}\Big(\Big[\sum_{w=0}^{7}\;\sum_{c \equiv w \pmod{8}}\;\sum_{k=128c}^{128c+127}\big(q_{nk}\,s^{w}_{n,\lfloor k/16\rfloor}\big)\big(a_{tk}\,s^{a}_{t,\lfloor k/16\rfloor}\big)\Big]\cdot\big(g_t\,s_{\mathrm{g}}\big)\Big)''',
+  '''\text{where } q, s^{w} \text{ are the checkpoint E2M1 weight values and E4M3 group scales, } s_{\mathrm{g}} \text{ the FP32 weight tensor scale, and } \mathrm{rn}_{\mathrm{e2m1}} \text{ rounds to nearest even on the E2M1 grid, saturating at } 6''',
+]
 compute = "tensor_core"
 mma = "mma.sync.m16n8k64.mxf4nvf4.block_scale"
 kernel_compute."w4a4_gemv_mx::w4a4_quant_rows" = { compute = "memory" }
@@ -1383,6 +1588,13 @@ measurement = "glm-5.3-flash::w4a4_gemv_mx8 @ decode C=1 (R=2, MTP k=1, TP=3 ran
 [[family]]
 id = "w4a4_mx_static"
 description = "W4A4 MX with static NVFP4 activation scales: static row quantize and the routed-expert slot GEMV"
+explain.about = '''W4A4 on the same block-scaled FP4 MMA core as w4a4_mx, for checkpoints that declare a static NVFP4 activation scale $\gamma$ per projection, and its routed-expert forms. w4a4_quant_rows_static (and the _k64 twin, which pads rows to a multiple of 128) quantizes with the global scale fixed to $\gamma$. w4a4_gemv_mx8_moe_slots runs the one-tile GEMV once per routed slot with that slot's expert weights; the union kernels (w4a4_gemv_mx8_moe_union, mx16_moe_union and their persistent _sweep forms, gate and up in one launch) sweep each expert of the rows' union once for every row that selected it, with w4a16_gemv::glm5next_moe_row_union building the union tables on the device. For prefill, w4a4_grouped_mx_m32, m64 and m128 run every routed slot in one launch over expert-sorted rows (weight tiles of 128 or 64 rows, 3- or 6-stage pipelines, after the tile-offset pass of w4a4_grouped_tiles or w4a4_grouped_one_group), and w4a4_grouped_gu_m32, m64 and m128 fuse gate, up, the clamped SwiGLU and the down input's static quantization into the epilogue. The _k64 variants accept K a multiple of 64, and the _cs variants read block scales stored as 5-bit offsets from a per-tensor base code that rebuild the same E4M3 codes; every variant writes the slot GEMV's bytes.'''
+explain.numerics = '''As w4a4_mx, with $g = \gamma$: group scales $\max|x|/(6\gamma)$ rounded to nearest even and saturated to E4M3 (so values beyond $6\cdot 448\,\gamma$ saturate), E2M1 round-to-nearest-even saturating at 6, E2M1 x E2M1 block-scaled MMAs accumulating in FP32 in the slot GEMV's warp-class order, and one BF16 rounding of the sum times $\gamma\,s^{(e)}_{\mathrm{g}}$ (the checkpoint's GEMM alpha). In the fused gate/up epilogue gate and up are first rounded to BF16, the clamped SwiGLU is evaluated in FP32 and rounded to BF16, and that value is quantized under the down projection's $\gamma$.'''
+explain.math = [
+  '''\begin{aligned} s^{a}_{tj} &= \mathrm{sat}_{\mathrm{e4m3}}\Big(\tfrac{1}{6}\max_{i<16}|x_{t,16j+i}|\cdot\gamma^{-1}\Big), \qquad a_{tk} = \mathrm{rn}_{\mathrm{e2m1}}\Big(\frac{x_{tk}}{s^{a}_{t,\lfloor k/16\rfloor}\,\gamma}\Big) \\ y_{(t,r),n} &= \mathrm{rn}_{\mathrm{bf16}}\Big(\Big[\sum_{w=0}^{7}\;\sum_{c \equiv w \pmod{8}}\;\sum_{k=128c}^{128c+127}\big(q^{(e)}_{nk}\,s^{w,(e)}_{n,\lfloor k/16\rfloor}\big)\big(a_{tk}\,s^{a}_{t,\lfloor k/16\rfloor}\big)\Big]\cdot\big(\gamma\,s^{(e)}_{\mathrm{g}}\big)\Big), \quad e = \mathrm{id}_{t,r} \end{aligned}''',
+  '''h_{tk} = \mathrm{rn}_{\mathrm{bf16}}\Big(\operatorname{silu}\big(\min(\tilde g_{tk}, L)\big)\cdot \min\big(\max(\tilde u_{tk}, -L), L\big)\Big), \qquad \tilde g = \mathrm{rn}_{\mathrm{bf16}}(\text{gate}),\; \tilde u = \mathrm{rn}_{\mathrm{bf16}}(\text{up}),\; L = \text{SwiGLU limit}''',
+  '''\text{where } (t, r) \text{ is routed slot } r \text{ of token } t, \; q^{(e)}, s^{w,(e)}, s^{(e)}_{\mathrm{g}} \text{ are the E2M1 values of expert } e \text{, its E4M3 group scales and its FP32 tensor scale, and } \gamma \text{ is the static activation scale}''',
+]
 compute = "tensor_core"
 mma = "mma.sync.m16n8k64.mxf4nvf4.block_scale"
 kernel_compute."w4a4_gemv_mx_moe::w4a4_quant_rows_static" = { compute = "memory" }
@@ -1479,6 +1691,12 @@ measurement = "glm-5.3-flash::w4a4_gemv_mx8_moe_union_sweep_k64_cs @ decode C=1 
 [[family]]
 id = "w8a16_gemm"
 description = "FP8 block-128 W8A16 pipelined GEMM (m32, m64, full tiles)"
+explain.about = '''FP8 block-128 weight, BF16 activation GEMM on BF16 tensor cores: weights are E4M3 with one FP32 scale per 128 x 128 block, and a cp.async pipeline copies BF16 activation tiles and raw E4M3 weight bytes into shared memory while the current step's m16n8k16 MMAs run. w8a16_gemm_pipelined uses a 128-row by 32-column tile with K steps of 32 (8 warps, 2 stages); w8a16_gemm_pipelined_m32 and _m64 use 32- and 64-row tiles with one 128-wide K step per scale block and caller-supplied row pitches (1 to 16 rows with modest K run a skinny form on an N-only grid), keeping the same per-output MMA sequence as the 128-row kernel. The weight bytes are decoded through a 256-entry table in shared memory (the m64 form decodes into its fragment registers directly).'''
+explain.numerics = '''E4M3 to BF16 is exact, so the MMA multiplies unscaled BF16 weights by BF16 activations with FP32 accumulation; each 128-wide K block is summed into an inner FP32 accumulator that is multiplied by its FP32 block scale and added to the outer accumulator at the block boundary, so the scale never touches a BF16 value, and the result is rounded once to BF16 (round-to-nearest-even).'''
+explain.math = [
+  '''y_{tn} = \mathrm{rn}_{\mathrm{bf16}}\Big(\sum_{b=0}^{K/128-1} S_{\lfloor n/128\rfloor,\,b}\;\sum_{k=128b}^{128b+127} x_{tk}\;\mathrm{e4m3}(W_{nk})\Big), \qquad \text{outer} \leftarrow \text{outer} + \text{inner}_b \cdot S_{\lfloor n/128\rfloor,\,b}''',
+  '''\text{where } \mathrm{e4m3}(W_{nk}) \text{ is the decoded weight byte and } S \text{ the FP32 scale of each } 128 \times 128 \text{ weight block}''',
+]
 compute = "tensor_core"
 mma = "mma.sync.m16n8k16.bf16"
 kernels = [
@@ -1510,6 +1728,12 @@ measurement = "qwen3.6-35b-a3b::w8a16_gemm_pipelined_m32 @ decode C=16 (R=32, MT
 [[family]]
 id = "wxay"
 description = "WxAy policy engine: tensor-core GEMV for M <= 128, row-invariant"
+explain.about = '''The WxAy skinny tensor-core engine for W8A8 decode projections of 1 to 128 rows: E4M3 weights times E4M3 activations on m16n8k32 FP8 MMAs, with the format handled by a policy. The rowscale policy pairs per-output-channel weight scales with per-token activation scales; the blk128 policy pairs 128 x 128 weight block scales with per-128 activation group scales, folded per chunk. A 256-thread CTA owns 16 weight rows (the MMA's 16-row side) and MB token tiles of 8 (mb1 to mb16 cover up to 8 to 128 rows); K is cut into 128-value chunks, chunk $c$ belongs to warp $c \bmod 8$ for every row count and is multiplied in increasing order, and the 8 warp partials are summed in warp order, so a token's result is independent of how many tokens share the launch. Up to three stacked weight segments (for example Q, K and V) are read in place into one output, and w8a8_gemv_rowscale_mb1_ku8_split4 writes up to four projections of one input to separate outputs with the same bytes.'''
+explain.numerics = '''E4M3 x E4M3 products accumulate in FP32 inside the MMA. Rowscale: chunk sums chain in the warp's FP32 accumulator, the warp partials are added, and the sum is multiplied by $w_n\,a_t$ before one BF16 rounding. Blk128: each chunk's FP32 MMA sum is folded with one fused multiply-add by the FP32 product of its weight and activation scales, then the warp partials are added and rounded once to BF16 (round-to-nearest-even).'''
+explain.math = [
+  '''\begin{aligned} S_{c,tn} &= \sum_{k=128c}^{128c+127} \mathrm{e4m3}(A_{tk})\,\mathrm{e4m3}(W_{nk}) \\ y_{tn} &= \mathrm{rn}_{\mathrm{bf16}}\Big(\Big[\sum_{w=0}^{7}\;\sum_{c \equiv w \pmod{8}} S_{c,tn}\Big]\cdot\big(w_n\,a_t\big)\Big) \quad \text{(rowscale)} \\ y_{tn} &= \mathrm{rn}_{\mathrm{bf16}}\Big(\sum_{w=0}^{7}\;\sum_{c \equiv w \pmod{8}} S_{c,tn}\cdot\big(w_{\lfloor n/128\rfloor,c}\,a_{t,c}\big)\Big) \quad \text{(blk128)} \end{aligned}''',
+  '''\text{where } w_n, a_t \text{ are the per-channel weight and per-token activation scales, and } w_{\lfloor n/128\rfloor,c}, a_{t,c} \text{ the block-128 weight and group-128 activation scales (all FP32)}''',
+]
 compute = "tensor_core"
 mma = "mma.sync.m16n8k32.e4m3"
 kernels = [
@@ -1573,6 +1797,12 @@ measurement = "glm-5.3-flash::w8a8_gemv_rowscale_mb1_ku8_split4 @ decode C=1 (R=
 [[family]]
 id = "fp8_gemm_blockscaled"
 description = "FP8 block-128 W8A8 GEMM with its per-128 activation quantizer (MoE shared expert above 64 rows)"
+explain.about = '''FP8 block-128 W8A8 GEMM with its activation quantizer, used for the MoE shared expert above 64 rows. per_token_group_quant_fp8 quantizes each row's BF16 activations in 128-wide K groups (one 128-thread block per row and group), producing E4M3 values and one FP32 scale per group. fp8_gemm_t_blockscaled then runs a 64 x 128 x 32 tile (four warps of 16 rows, cp.async double buffering) of m16n8k32 E4M3 MMAs against E4M3 weights with one FP32 scale per 128 x 128 block, folding the scales once per 128-wide K group.'''
+explain.numerics = '''Quantizer: the group scale is $\max|x|/448$ by correctly rounded FP32 division, floored at $10^{-12}$; each value is divided by it, clamped to $\pm 448$ and converted to E4M3 with round-to-nearest-even and saturation. GEMM: four unscaled E4M3 x E4M3 MMAs per 128-K group sum into an inner FP32 accumulator, which is multiplied by $a_{t,b}\,S_{\lfloor n/128\rfloor,b}$ and added to the outer FP32 accumulator (separate multiply and add), and the result is rounded once to BF16.'''
+explain.math = [
+  '''\begin{aligned} a_{t,b} &= \max\Big(\max_{k \in [128b,\,128b+128)} |x_{tk}| \,/\, 448,\; 10^{-12}\Big), \qquad A_{tk} = \mathrm{sat}_{\mathrm{e4m3}}\Big(\min\big(\max(x_{tk}/a_{t,\lfloor k/128\rfloor}, -448), 448\big)\Big) \\ y_{tn} &= \mathrm{rn}_{\mathrm{bf16}}\Big(\sum_{b=0}^{K/128-1}\Big(\sum_{k=128b}^{128b+127} A_{tk}\,W_{nk}\Big)\big(a_{t,b}\,S_{\lfloor n/128\rfloor,\,b}\big)\Big) \end{aligned}''',
+  '''\text{where } W_{nk} \text{ is the E4M3 weight, } S \text{ its FP32 } 128 \times 128 \text{ block scale, and } \mathrm{sat}_{\mathrm{e4m3}} \text{ rounds to nearest even with saturation}''',
+]
 compute = "tensor_core"
 mma = "mma.sync.m16n8k32.e4m3"
 kernel_compute."per_token_group_quant_fp8::per_token_group_quant_fp8" = { compute = "memory" }
@@ -1594,6 +1824,11 @@ files = ["kernels/gb10/common/fp8_gemm_t_blockscaled.cu", "kernels/gb10/common/p
 [[family]]
 id = "w8a8_act_quant"
 description = "FP8 activation quantizer, dynamic per-token or per-128 (optionally SiLU * up first)"
+explain.about = '''Dynamic FP8 activation quantizer for the W8A8 decode projections, one 256-thread CTA per row. w8a8_act_quant_row produces one FP32 scale per token and w8a8_act_quant_g128 one per 128-wide K group (16 threads per group, reduced by xor shuffles); the per-token variant holds up to 18432 values of the row in registers so the row is read once. The silu variants (w8a8_act_quant_silu_row, w8a8_act_quant_silu_g128) first form $\mathrm{rn}_{\mathrm{bf16}}(\operatorname{silu}(g)\,u)$ from a gate row and an up row, writing the same bytes as SiLU-and-multiply followed by the plain quantizer.'''
+explain.numerics = '''BF16 inputs are widened exactly to FP32; the SiLU product is $(g\,\sigma(g))\,u$ with a fast exponential, left to right without FMA contraction, rounded to BF16. The absolute maximum is exact and order-independent; the scale is $\max|x|/448$ by correctly rounded FP32 division, floored at $10^{-12}$ (an all-zero group encodes zeros), and each value is divided by the scale, clamped to $\pm 448$ and converted to E4M3 with round-to-nearest-even and saturation.'''
+explain.math = [
+  '''\begin{aligned} v_{tk} &= x_{tk} \quad \text{or} \quad v_{tk} = \mathrm{rn}_{\mathrm{bf16}}\big((g_{tk}\,\sigma(g_{tk}))\,u_{tk}\big) \\ s_{t,G} &= \max\Big(\max_{k \in G} |v_{tk}| \,/\, 448,\; 10^{-12}\Big), \qquad G = [0, K) \text{ (row) or } [128b, 128b+128) \text{ (g128)} \\ q_{tk} &= \mathrm{sat}_{\mathrm{e4m3}}\Big(\min\big(\max(v_{tk}/s_{t,G}, -448), 448\big)\Big) \end{aligned}''',
+]
 compute = "memory"
 kernels = [
   "w8a8_act_quant::w8a8_act_quant_row", "w8a8_act_quant::w8a8_act_quant_g128",
@@ -1642,6 +1877,11 @@ files = ["kernels/gb10/common/w8a8_act_quant.cu"]
 [[family]]
 id = "rms_norm_act_quant"
 description = "RMSNorm with the activation quantizer in its epilogue (FP8 per-row / per-128, NVFP4 g16)"
+explain.about = '''RMSNorm with an activation quantizer in its epilogue, one block per row with $\min(K, 1024)$ threads. The normalized row is rounded to BF16 exactly as the standalone RMSNorm stores it and kept in shared memory, then quantized in the same launch: rms_norm_quant_fp8_row to per-token E4M3 with one FP32 scale, rms_norm_quant_fp8_g128 to E4M3 with one FP32 scale per 128-wide group (one thread per group), and rms_norm_quant_nvfp4 to E2M1 values with E4M3 scales per 16 and an FP32 per-row global scale in the W4A4 GEMV's fragment order. Each output is bit-identical to running the norm and the corresponding quantizer as two kernels. The norm weight is applied in the $(1+\gamma_i)$ form.'''
+explain.numerics = '''Sum of squares in FP32 (per-thread pair sums, then a block reduction), $\operatorname{rsqrt}$ in FP32, the scaled value $(x_i\,r)(1+\gamma_i)$ rounded to BF16 with round-to-nearest-even. FP8: scale $\max|y|/448$ floored at $10^{-12}$, value divided, clamped to $\pm 448$ and converted with round-to-nearest-even and saturation. NVFP4: $g = \max|y|/(6\cdot 448)$ (1 for a zero row), group scale $\max|y|/6$ times $g^{-1}$ rounded to nearest even and saturated to E4M3, E2M1 round-to-nearest-even saturating at 6.'''
+explain.math = [
+  '''\begin{aligned} r &= \operatorname{rsqrt}\Big(\frac{1}{d}\sum_{j=1}^{d} x_j^2 + \epsilon\Big), \qquad y_i = \mathrm{rn}_{\mathrm{bf16}}\big((x_i\,r)\,(1+\gamma_i)\big) \\ s_G &= \max\Big(\max_{i \in G}|y_i| \,/\, 448,\; 10^{-12}\Big), \quad q_i = \mathrm{sat}_{\mathrm{e4m3}}\Big(\min\big(\max(y_i/s_G, -448), 448\big)\Big) \quad \text{(FP8, } G = \text{row or 128-group)} \\ g &= \max_i |y_i| \,/\, (6\cdot 448), \quad s_j = \mathrm{sat}_{\mathrm{e4m3}}\Big(\tfrac{1}{6}\max_{i<16}|y_{16j+i}|\cdot g^{-1}\Big), \quad q_i = \mathrm{rn}_{\mathrm{e2m1}}\Big(\frac{y_i}{s_{\lfloor i/16\rfloor}\,g}\Big) \quad \text{(NVFP4)} \end{aligned}''',
+]
 compute = "memory"
 kernels = [
   "rms_norm_act_quant::rms_norm_quant_fp8_row", "rms_norm_act_quant::rms_norm_quant_fp8_g128",
@@ -1681,6 +1921,13 @@ files = ["kernels/gb10/common/rms_norm_act_quant.cu"]
 [[family]]
 id = "moe_topk"
 description = "Top-k expert selection (per row, rows, batched) and the grouped-decode sort"
+explain.about = '''Expert routing for $m$ rows over $E$ experts: one 256-thread block per row reads the router logits $z \in \mathbb{R}^{E}$ (at most 512), selects the top $k$ experts in $k$ rounds of a block-wide argmax (each round removes the winner), and writes their indices highest first with their routing weights $p_e$. The softmax kernels (moe_topk::moe_topk_softmax for one row, moe_topk_softmax_rows and moe_topk_softmax_batched for $m$ rows) select on the logits, take the softmax over all $E$ logits at each selected expert and optionally renormalise over the selected set; the sigmoid kernels (moe_topk_sig::moe_topk_sigmoid and its batched form) select on $\sigma(z_e)$ plus a per-expert selection bias $b_e$ but weight by the unbiased $\sigma(z_e)$, optionally renormalised, then multiplied by a routed scaling factor $\lambda$; the softmax-plus-bias and $\sqrt{\operatorname{softplus}}$-plus-bias scoring policies follow the same select-biased, weight-unbiased template. On equal values the lower expert index wins, except in moe_topk_softmax_batched, whose warp and cross-warp steps keep the lower lane or warp candidate. moe_fp8_grouped_sort::moe_fp8_grouped_sort then counting-sorts the $mk$ (row, slot) pairs by expert in one 256-thread block, producing per-expert offsets, the sorted row list, the inverse permutation $\pi$ used by the combine, and the ascending list of active experts that the grouped expert kernels launch over.'''
+explain.numerics = '''BF16 logits are widened to FP32; scores, the softmax maximum and denominator, and the renormalising sums are FP32, with the exponentials and the sigmoid evaluated by the fast hardware exponential; the softmax denominator is a strided per-thread sum, a warp shuffle tree and a sequential sum of the eight warp totals. Weights are stored as FP32 and indices as 32-bit integers; the sigmoid path skips renormalisation when the selected sum is at most $10^{-20}$.'''
+explain.math = [
+  '''\begin{aligned} \mathcal{T}(x) &= \operatorname*{arg\,top}_{k}\,\{\, z_e \,\}_{e=1}^{E}, \qquad \tilde p_e = \frac{\exp(z_e - z_{\max})}{\sum_{j=1}^{E} \exp(z_j - z_{\max})}, \\ p_e &= \begin{cases} \tilde p_e \,/\, \sum_{e^\prime \in \mathcal{T}(x)} \tilde p_{e^\prime} & \text{normalise} \\ \tilde p_e & \text{otherwise} \end{cases} \qquad e \in \mathcal{T}(x) \end{aligned}''',
+  '''\begin{aligned} s_e &= \sigma(z_e), \qquad \mathcal{T}(x) = \operatorname*{arg\,top}_{k}\,\{\, s_e + b_e \,\}_{e=1}^{E}, \\ p_e &= \lambda \cdot \begin{cases} s_e \,/\, \sum_{e^\prime \in \mathcal{T}(x)} s_{e^\prime} & \text{normalise and } \sum_{e^\prime \in \mathcal{T}(x)} s_{e^\prime} > 10^{-20} \\ s_e & \text{otherwise} \end{cases} \end{aligned}''',
+  '''\begin{aligned} c_e &= \#\{(t,i) : e_{t,i} = e\}, \qquad o_e = \sum_{j<e} c_j, \\ \pi(t,i) &\in [\,o_{e_{t,i}},\; o_{e_{t,i}} + c_{e_{t,i}}\,), \qquad \mathcal{A} = (\, e : c_e > 0 \,) \text{ ascending} \end{aligned}''',
+]
 compute = "memory"
 kernels = [
   "moe_topk::moe_topk_softmax", "moe_topk::moe_topk_softmax_rows", "moe_topk::moe_topk_softmax_batched",
@@ -1736,6 +1983,11 @@ measurement = "qwen3.6-35b-a3b::moe_topk_softmax_rows @ decode C=1 (R=2, MTP k=1
 [[family]]
 id = "moe_fp8_1row"
 description = "FP8 block-128 experts + shared expert, one row per launch (gate+up, SiLU + down)"
+explain.about = '''Single-token decode of the $k$ routed experts and the shared expert with FP8 block-128 weights, as two launches. The gate+up kernel moe_shared_expert_fused_fp8::moe_expert_gate_up_shared_fp8 has grid (output tiles, $k+1$, 2): the y index is the expert slot (slot $k$ is the shared expert), z selects the gate or the up projection, and each 128-thread block computes 8 outputs, two per warp, with each warp streaming 16 weight bytes per lane step. The down kernel moe_expert_silu_down_shared_fp8 recomputes $\operatorname{silu}(g) \odot u$ for its slot into shared memory and runs the down GEMV the same way. Each slot writes its own BF16 output row; the weighted combine with the routing weights and the shared-expert gate is done by moe_blend, and a slot whose expert has no weights writes zeros.'''
+explain.numerics = '''Weights are E4M3 with one FP32 scale per 128 x 128 block; each byte is decoded through a 256-entry shared-memory table (NaN codes read as 0) and multiplied by its block scale in FP32. Activations are BF16 widened to FP32; products accumulate in FP32 per lane, reduce by a warp shuffle tree, and gate, up and down are each rounded once to BF16 (RNE) at the store; the SiLU product is formed in FP32 from the BF16 gate and up with the fast exponential and is not rounded before the down projection.'''
+explain.math = [
+  '''\begin{aligned} \hat W_{nk} &= \mathrm{e4m3}(W_{nk})\; s_{\lfloor n/128 \rfloor,\, \lfloor k/128 \rfloor} \\ g^{(e)} &= \mathrm{rn}_{\mathrm{bf16}}\big(\hat W^{\mathrm{gate}}_{e} x\big), \qquad u^{(e)} = \mathrm{rn}_{\mathrm{bf16}}\big(\hat W^{\mathrm{up}}_{e} x\big) \\ h^{(e)} &= \operatorname{silu}\big(g^{(e)}\big) \odot u^{(e)} \\ y^{(e)} &= \mathrm{rn}_{\mathrm{bf16}}\big(\hat W^{\mathrm{down}}_{e}\, h^{(e)}\big), \qquad e \in \mathcal{T}(x) \cup \{\mathrm{sh}\} \end{aligned}''',
+]
 compute = "cuda_core"
 kernels = [
   "moe_shared_expert_fused_fp8::moe_expert_gate_up_shared_fp8",
@@ -1768,6 +2020,11 @@ measurement = "qwen3.6-35b-a3b::moe_expert_gate_up_shared_fp8 @ decode C=1 (R=2,
 [[family]]
 id = "moe_bf16_1row"
 description = "BF16 experts + shared expert, one row per launch (gate+up, SiLU + down)"
+explain.about = '''Single-token decode of the $k$ routed experts and the shared expert with unscaled BF16 weights $W \in \mathbb{R}^{N \times K}$, as two launches. moe_shared_expert_fused_bf16::moe_expert_gate_up_shared_bf16 has grid (output tiles, $k+1$, 2): the y index is the expert slot (slot $k$ is the shared expert), z selects the gate or up projection, and each 128-thread block computes 8 outputs, two per warp, reading 8 weights per lane step. moe_expert_silu_down_shared_bf16 recomputes $\operatorname{silu}(g) \odot u$ for its slot into shared memory and runs the down GEMV. Each slot writes its own BF16 row for the combine in moe_blend; a slot with no weights, or a missing shared expert, writes zeros.'''
+explain.numerics = '''BF16 weights and activations are widened exactly to FP32, multiplied and accumulated in FP32 per lane, reduced by a warp shuffle tree, and rounded once to BF16 (RNE) per output. The SiLU product is computed in FP32 from the stored BF16 gate and up with the fast exponential and feeds the down projection unrounded.'''
+explain.math = [
+  '''\begin{aligned} g^{(e)} &= \mathrm{rn}_{\mathrm{bf16}}\big(W^{\mathrm{gate}}_{e} x\big), \qquad u^{(e)} = \mathrm{rn}_{\mathrm{bf16}}\big(W^{\mathrm{up}}_{e} x\big) \\ y^{(e)} &= \mathrm{rn}_{\mathrm{bf16}}\Big(W^{\mathrm{down}}_{e} \big(\operatorname{silu}(g^{(e)}) \odot u^{(e)}\big)\Big), \qquad e \in \mathcal{T}(x) \cup \{\mathrm{sh}\} \end{aligned}''',
+]
 compute = "cuda_core"
 kernels = [
   "moe_shared_expert_fused_bf16::moe_expert_gate_up_shared_bf16",
@@ -1800,6 +2057,11 @@ files = ["kernels/gb10/common/moe_shared_expert_fused_bf16.cu"]
 [[family]]
 id = "moe_grouped_fp8_scalar"
 description = "FP8 block-128 grouped experts + shared expert on CUDA cores (LUT dequant), 4 rows per pass"
+explain.about = '''Grouped decode for $m$ rows (up to 64) with FP8 block-128 weights on CUDA cores: rows are first sorted by expert, and each block row of the grid serves one active expert, reading every weight row once per pass and applying it to up to 4 routed rows at a time; the first $\lceil m/4 \rceil$ block rows serve the shared expert over all $m$ tokens, so the grid size does not depend on the routing. moe_shared_expert_fused_fp8_grouped::moe_expert_gate_up_act_fp8_grouped (128 threads, a gate and up column pair per warp) writes the FP32 SiLU product per sorted position; moe_expert_down_act_fp8_grouped (256 threads, 4 output columns per warp, 4 column groups per block, weights prefetched one chunk ahead) writes the BF16 down output per sorted position. Per row the result is bit-identical to the single-row kernels of moe_fp8_1row and independent of which rows share the pass.'''
+explain.numerics = '''E4M3 weights are decoded through a 256-entry shared-memory table and multiplied by their FP32 128 x 128 block scale; BF16 activations are widened to FP32 and products summed in fixed groups of four, accumulated in FP32 per lane and reduced by a warp shuffle tree. Gate and up are rounded to BF16 (RNE) before the FP32 SiLU product (fast exponential), which is stored as FP32; the down output is rounded once to BF16.'''
+explain.math = [
+  '''\begin{aligned} &\text{for each sorted position } \pi \text{ with token } t(\pi) \text{ and expert } e(\pi): \\ g_{\pi} &= \mathrm{rn}_{\mathrm{bf16}}\big(\hat W^{\mathrm{gate}}_{e(\pi)}\, x_{t(\pi)}\big), \qquad u_{\pi} = \mathrm{rn}_{\mathrm{bf16}}\big(\hat W^{\mathrm{up}}_{e(\pi)}\, x_{t(\pi)}\big) \\ h_{\pi} &= \operatorname{silu}(g_{\pi}) \odot u_{\pi} \in \mathbb{R}^{I}, \qquad y_{\pi} = \mathrm{rn}_{\mathrm{bf16}}\big(\hat W^{\mathrm{down}}_{e(\pi)}\, h_{\pi}\big) \\ &\text{where } \hat W_{nk} = \mathrm{e4m3}(W_{nk})\, s_{\lfloor n/128 \rfloor, \lfloor k/128 \rfloor} \text{ and the shared expert is applied to every token} \end{aligned}''',
+]
 compute = "cuda_core"
 kernels = [
   "moe_shared_expert_fused_fp8_grouped::moe_expert_gate_up_act_fp8_grouped",
@@ -1846,6 +2108,13 @@ measurement = "qwen3.6-35b-a3b::moe_expert_gate_up_act_fp8_grouped @ decode C=16
 [[family]]
 id = "moe_grouped_tc"
 description = "Tensor-core grouped experts + shared expert (FP8 block-128 W8A16/W8A8, NVFP4 g16 W4A16, BF16)"
+explain.about = '''Tensor-core grouped expert decode for up to 256 rows, with the grid contract of the CUDA-core grouped kernels: one block row per active expert after the expert sort, the first $\lceil m/8 \rceil$ block rows for the shared expert. One weight-format-parameterised warp runs mma m16n8k16 BF16 tiles with the weights as the 16-row A operand and up to 8 token rows as the MMA's N columns (16 rows, two column groups sharing each decoded fragment, when an expert has more than 8); a warp covers 16 output columns for gate+up (its gate and up tiles, so the SiLU product forms in registers) and 32 for down, and keeps two K-chunk load groups in flight. Weight formats: FP8 block-128 (moe_fp8_grouped_tc), NVFP4 with one E4M3 scale per 16 and an FP32 tensor scale in row-major and repacked tile-contiguous lean layouts (moe_nvfp4_grouped_tc, whose lean kernels return the same bytes), and BF16 (moe_bf16_grouped_tc). The W8A8 twin (moe_fp8_grouped_tc_w8a8) quantizes the layer input with moe_act_quant_e4m3, runs mma m16n8k32 E4M3 tiles on the raw FP8 weights, and re-quantizes the SiLU product per 128 intermediate columns inside the gate+up epilogue. A row output does not depend on which rows share its launch, pass or expert.'''
+explain.numerics = '''W*A16 points: FP8 bytes become BF16 by a bit shift (exactly $\mathrm{e4m3}(b)\,2^{-120}$) with activations lifted by $2^{60}$ and each 128-K partial sum folded in FP32 by its block scale times $2^{60}$; NVFP4 values enter as the exact BF16 product $q \cdot d$ of the E2M1 value and its E4M3 scale and the FP32 sum is multiplied once by the tensor scale $s_2$; MMAs accumulate in FP32, gate and up are rounded to BF16 before the FP32 SiLU product, which is stored as a BF16 hi plus lo pair (about 16 mantissa bits) and fed to the down MMAs as two operands, and outputs are rounded once to BF16 (RNE). W8A8 point: activation scales $a = \max(\mathrm{amax}/448, 10^{-12})$ per (row, 128 values), values $\mathrm{sat}_{\mathrm{e4m3}}(\mathrm{rn}(x/a))$, E4M3 x E4M3 MMAs into FP32, each 128-K block folded by weight scale times activation scale.'''
+explain.math = [
+  '''\begin{aligned} &\text{FP8 block-128 (W8A16):} \\ g_{\pi,n} &= \mathrm{rn}_{\mathrm{bf16}}\Big(\textstyle\sum_{\kappa} s_{\lfloor n/128 \rfloor,\kappa} \sum_{k \in \kappa} \mathrm{e4m3}(W^{\mathrm{gate}}_{nk})\, x_{t(\pi),k}\Big), \quad u_{\pi,n} \text{ likewise} \\ h_{\pi} &= \operatorname{silu}(g_{\pi}) \odot u_{\pi}, \qquad h^{\mathrm{hi}}_{\pi} = \mathrm{rn}_{\mathrm{bf16}}(h_{\pi}), \qquad h^{\mathrm{lo}}_{\pi} = \mathrm{rn}_{\mathrm{bf16}}\big(h_{\pi} - h^{\mathrm{hi}}_{\pi}\big) \\ y_{\pi,n} &= \mathrm{rn}_{\mathrm{bf16}}\Big(\textstyle\sum_{\kappa} s_{\lfloor n/128 \rfloor,\kappa} \sum_{k \in \kappa} \mathrm{e4m3}(W^{\mathrm{down}}_{nk})\,\big(h^{\mathrm{hi}}_{\pi,k} + h^{\mathrm{lo}}_{\pi,k}\big)\Big) \\ &\text{where } W = W_{e(\pi)} \text{ with block scales } s,\ t(\pi) \text{ is the token of sorted position } \pi,\ \kappa \text{ runs over 128-wide K blocks} \end{aligned}''',
+  '''\begin{aligned} &\text{NVFP4 (W4A16), BF16 (W16A16):} \\ g_{\pi,n} &= \mathrm{rn}_{\mathrm{bf16}}\Big(s_2 \textstyle\sum_{k} q_{nk}\, d_{n,\lfloor k/16 \rfloor}\, x_{t(\pi),k}\Big), \qquad y_{\pi,n} = \mathrm{rn}_{\mathrm{bf16}}\Big(s_2 \textstyle\sum_{k} q_{nk}\, d_{n,\lfloor k/16 \rfloor}\,\big(h^{\mathrm{hi}}_{\pi,k} + h^{\mathrm{lo}}_{\pi,k}\big)\Big) \\ &\text{with } q = \mathrm{e2m1}(W),\ d = \mathrm{e4m3}(\text{block scale}); \text{ for BF16 weights } q_{nk} d_{n,\lfloor k/16 \rfloor} s_2 \to W_{nk} \end{aligned}''',
+  '''\begin{aligned} &\text{FP8 W8A8:} \quad a_{t,\kappa} = \max\Big(\tfrac{\max_{k \in \kappa} |x_{t,k}|}{448},\, 10^{-12}\Big), \qquad \bar x_{t,k} = \mathrm{sat}_{\mathrm{e4m3}}\big(\mathrm{rn}(x_{t,k} / a_{t,\kappa})\big) \\ g_{\pi,n} &= \mathrm{rn}_{\mathrm{bf16}}\Big(\textstyle\sum_{\kappa} s_{\lfloor n/128 \rfloor,\kappa}\, a_{t(\pi),\kappa} \sum_{k \in \kappa} \mathrm{e4m3}(W^{\mathrm{gate}}_{nk})\, \bar x_{t(\pi),k}\Big), \quad u_{\pi,n} \text{ likewise} \\ h_{\pi} &= \operatorname{silu}(g_{\pi}) \odot u_{\pi}, \qquad b_{\pi,\kappa} = \max\Big(\tfrac{\max_{j \in \kappa} |h_{\pi,j}|}{448},\, 10^{-12}\Big), \qquad \bar h_{\pi,j} = \mathrm{sat}_{\mathrm{e4m3}}\big(\mathrm{rn}(h_{\pi,j} / b_{\pi,\kappa})\big) \\ y_{\pi,n} &= \mathrm{rn}_{\mathrm{bf16}}\Big(\textstyle\sum_{\kappa} s_{\lfloor n/128 \rfloor,\kappa}\, b_{\pi,\kappa} \sum_{j \in \kappa} \mathrm{e4m3}(W^{\mathrm{down}}_{nj})\, \bar h_{\pi,j}\Big) \end{aligned}''',
+]
 compute = "tensor_core"
 mma = "mma.sync.m16n8k16.bf16"
 kernel_compute."moe_fp8_grouped_tc_w8a8::moe_act_quant_e4m3" = { compute = "memory" }
@@ -1997,6 +2266,12 @@ microbench = "same bench, W8A8 twin, 2026-09-28: 270 us at M=2, 823 us at M=8, 2
 [[family]]
 id = "tc_rows"
 description = "Tensor-core row-tile dense projection (FP8 block-128 W8A16, NVFP4 g16 W4A16)"
+explain.about = '''Row-invariant tensor-core projection for 1 to 64 decode rows with a weight-format policy: FP8 E4M3 with 128 x 128 FP32 block scales (w8a16_tc_rows_16, 32, 64 and the any-M _64c, which tiles rows in chunks of 64) or NVFP4 g16 (w4a16_tc_rows_16, 32, 64, the narrow-block w4a16_tc_rows_8_w1 and _8_w2, and the prefill GEMM w4a16_tc_gemm_64x128). Weight rows sit on the 16-row side of the m16n8k16 BF16 MMA and token rows on the 8-wide side; each warp owns 16 output columns, weight bytes go from a 16-byte global load straight into BF16 fragment registers, and activations are staged once per block in shared memory, one load group ahead. A row's summation order depends on K alone, so its output bits do not depend on the row count, the other rows, the tile counts or the warps per block, and the prefill GEMM writes decode's bytes. w4a16_tc_rows_seg_16, 32 and 64 with k1, k2 or k4 run up to three weight segments sharing the input and split K over a thread-block cluster of 1, 2 or 4 blocks, merging the FP32 partials in rank order through distributed shared memory.'''
+explain.numerics = '''FP8: a weight byte becomes the BF16 value $\mathrm{e4m3}(b)\,2^{-120}$ by bit manipulation and activations are lifted by $2^{60}$ (both exact), MMAs accumulate each 128-K block in FP32, and the block sum is multiplied by $S\,2^{60}$ and added to the FP32 total. NVFP4: the BF16 product of the E2M1 value and its E4M3 scale is exact, the MMAs accumulate in FP32, and the sum (after the in-order split merge for $p>1$) is multiplied by $s_{\mathrm{g}}$. Both round once to BF16 at the store.'''
+explain.math = [
+  '''\begin{aligned} y_{tn} &= \mathrm{rn}_{\mathrm{bf16}}\Big(\sum_{b=0}^{K/128-1}\Big(\sum_{k=128b}^{128b+127}\big(\mathrm{e4m3}(W_{nk})\,2^{-120}\big)\big(x_{tk}\,2^{60}\big)\Big)\big(S_{\lfloor n/128\rfloor,\,b}\,2^{60}\big)\Big) \quad \text{(FP8 block-128)} \\ y_{tn} &= \mathrm{rn}_{\mathrm{bf16}}\Big(s_{\mathrm{g}}\Big(\big(P^{(0)}_{tn} + P^{(1)}_{tn}\big) + \dots + P^{(p-1)}_{tn}\Big)\Big), \quad P^{(\sigma)}_{tn} = \sum_{k \in \mathcal{K}_\sigma} x_{tk}\;\mathrm{rn}_{\mathrm{bf16}}\big(q_{nk}\,s_{n,\lfloor k/16\rfloor}\big) \quad \text{(NVFP4 g16)} \end{aligned}''',
+  '''\text{where } S \text{ is the FP32 } 128 \times 128 \text{ weight block scale, } q, s, s_{\mathrm{g}} \text{ the NVFP4 E2M1 value, E4M3 group scale and tensor scale, and } \mathcal{K}_\sigma \text{ the K range of split } \sigma < p \;(p \in \{1, 2, 4\},\ \text{whole 256-wide units})''',
+]
 compute = "tensor_core"
 mma = "mma.sync.m16n8k16.bf16"
 kernels = [
@@ -2053,6 +2328,11 @@ pipeline.linear = { in = ["bf16"], act = "bf16", weight = "nvfp4/g16->bf16", mma
 [[family]]
 id = "moe_nvfp4_grouped"
 description = "NVFP4 W4A16 grouped experts + NVFP4 shared expert on CUDA cores, 4 rows per pass"
+explain.about = '''Grouped decode for $m$ rows (up to 64) with NVFP4 routed and shared experts (W4A16) on CUDA cores. Rows are sorted by expert; each block row serves one active expert and reads each weight row once per pass of up to 4 rows, and the first block rows serve the shared expert over all tokens. moe_nvfp4_grouped::moe_expert_gate_up_act_nvfp4_grouped (128 threads, two column pairs of gate and up per warp, 32 K elements per lane step loaded one step ahead) writes the FP32 SiLU product per sorted position; moe_expert_down_act_nvfp4_grouped (256 threads, 4 columns per warp in 4 column groups, one 16-element scale block per lane step) writes the BF16 down output per sorted position. A row result is the same at every row count and pass.'''
+explain.numerics = '''E2M1 values are decoded through a 16-entry shared-memory table; each 16-element block is summed against the BF16 activations (widened exactly to FP32) in fixed groups of four products, then multiplied once by its dequant scale $\mathrm{e4m3}(d)\,s_2$ in FP32 and accumulated, and the warp reduces with a fixed shuffle tree. Gate and up are rounded to BF16 (RNE) before the FP32 SiLU product (fast exponential), which the down kernel reads as FP32; the down output is rounded once to BF16.'''
+explain.math = [
+  '''\begin{aligned} [\hat W v]_n &= \textstyle\sum_{\beta} \big(\mathrm{e4m3}(d_{n\beta})\, s_2\big) \sum_{k \in \beta} \mathrm{e2m1}(q_{nk})\, v_k, \qquad \beta = \text{blocks of 16 along } K \\ g_{\pi} &= \mathrm{rn}_{\mathrm{bf16}}\big(\hat W^{\mathrm{gate}}_{e(\pi)} x_{t(\pi)}\big), \qquad u_{\pi} = \mathrm{rn}_{\mathrm{bf16}}\big(\hat W^{\mathrm{up}}_{e(\pi)} x_{t(\pi)}\big) \\ y_{\pi} &= \mathrm{rn}_{\mathrm{bf16}}\Big(\hat W^{\mathrm{down}}_{e(\pi)} \big(\operatorname{silu}(g_{\pi}) \odot u_{\pi}\big)\Big) \end{aligned}''',
+]
 compute = "cuda_core"
 kernels = [
   "moe_nvfp4_grouped::moe_expert_gate_up_act_nvfp4_grouped",
@@ -2093,6 +2373,11 @@ files = ["kernels/gb10/common/moe_nvfp4_grouped.cu"]
 [[family]]
 id = "moe_nvfp4_gemv_1row"
 description = "NVFP4 routed-expert up GEMV, one token (no activation)"
+explain.about = '''The up projection of the routed experts for one token with NVFP4 weights and no activation, for expert MLPs that have only up and down projections. moe_expert_gemv::moe_expert_gemv has grid (output tiles, $k$): the y index is the expert slot $i$, whose expert is $e_i$, and each 128-thread block computes 4 outputs, one per warp, each lane taking 8 K elements (4 packed bytes and one scale byte) per step. With a zero input stride every slot reads the same token row; otherwise slot $i$ reads its own input row. A slot whose expert has no weights writes zeros.'''
+explain.numerics = '''Each E2M1 nibble is decoded through a 16-entry table and multiplied in FP32 by its dequant scale $\mathrm{e4m3}(d)\,s_2^{(e)}$; BF16 activations are widened exactly, products accumulate in FP32 per lane and reduce by a warp shuffle tree, and the output is rounded once to BF16 (RNE).'''
+explain.math = [
+  '''u^{(i)}_n = \mathrm{rn}_{\mathrm{bf16}}\Big(\sum_{k=1}^{K} x^{(i)}_k\, \mathrm{e2m1}\big(q^{(e_i)}_{nk}\big)\, \mathrm{e4m3}\big(d^{(e_i)}_{n,\lfloor k/16 \rfloor}\big)\, s_2^{(e_i)}\Big), \qquad i = 1, \dots, k''',
+]
 compute = "cuda_core"
 kernels = ["moe_expert_gemv::moe_expert_gemv"]
 rows = [1, 1]
@@ -2106,6 +2391,11 @@ files = ["kernels/gb10/common/moe_expert_gemv.cu"]
 [[family]]
 id = "moe_relu2_down_1row"
 description = "NVFP4 ReLU² + routed down + shared down, one token"
+explain.about = '''For one token, the $\mathrm{relu}^2$ activation of each routed expert up output followed by its NVFP4 down GEMV, with the shared expert optionally as slot $k$. moe_relu2_fused::moe_expert_relu2_down_shared has grid (output tiles, $k$ or $k+1$) and 128-thread blocks of 8 outputs, two per warp: each block first writes $\max(u,0)^2$ for its whole input row into shared memory, then streams 4 packed bytes per lane step. Routed slots use intermediate width $K_r$ and output width $N$; the shared slot uses its own $K_s$ and $N_s$. Each slot writes its own BF16 row for the weighted combine, and a slot whose expert has no weights writes zeros.'''
+explain.numerics = '''The BF16 up output is widened to FP32 and squared after the clamp in FP32, unrounded; E2M1 nibbles are decoded by a 16-entry table and multiplied in FP32 by $\mathrm{e4m3}(d)\,s_2$; products accumulate in FP32 per lane, reduce by a warp shuffle tree, and are rounded once to BF16 (RNE).'''
+explain.math = [
+  '''\begin{aligned} r^{(i)}_k &= \max\big(u^{(i)}_k, 0\big)^2 \\ y^{(i)}_n &= \mathrm{rn}_{\mathrm{bf16}}\Big(\sum_{k} r^{(i)}_k\, \mathrm{e2m1}\big(q^{(e_i)}_{nk}\big)\, \mathrm{e4m3}\big(d^{(e_i)}_{n,\lfloor k/16 \rfloor}\big)\, s_2^{(e_i)}\Big), \qquad i \in \{1, \dots, k\} \cup \{\mathrm{sh}\} \end{aligned}''',
+]
 compute = "cuda_core"
 kernels = ["moe_relu2_fused::moe_expert_relu2_down_shared"]
 rows = [1, 1]
@@ -2126,6 +2416,11 @@ files = ["kernels/gb10/common/moe_expert_relu2_down_shared.cu"]
 [[family]]
 id = "moe_w4a16_grouped_gemm"
 description = "NVFP4 W4A16 grouped expert GEMM over expert-sorted tokens (prefill), no epilogue"
+explain.about = '''Prefill grouped GEMM of NVFP4 experts against BF16 activations over expert-sorted rows, all experts in one launch, with no epilogue (gate, up or down are separate launches). The grid is (N tiles, M tiles, experts): expert $e$ owns sorted rows $[o_e, o_{e+1})$, a 128-thread block computes a 64 x 64 output tile with each of its 4 warps owning 16 rows and 8 MMA n-tiles of 8 columns, and K advances 16 at a time. Each step stages the 64 x 16 activation tile, gathered through the sorted token ids (or in order when there are none), and the 16 x 64 weight tile dequantized to BF16 in shared memory, then issues mma m16n8k16. moe_w4a16::moe_w4a16_grouped_gemm_ptrtable reads weights stored $[N, K/2]$ through per-expert pointer tables; moe_w4a16_grouped_gemm_ptrtable_t reads them stored $[K/2, N]$ with scales $[K/16, N]$ so adjacent threads read adjacent bytes. An expert without weights writes nothing.'''
+explain.numerics = '''Each weight is dequantized in FP32 as E2M1 value times E4M3 scale times the per-expert FP32 scale $s_2$ and rounded to BF16 (RNE) in shared memory; BF16 x BF16 MMAs accumulate in FP32 over the full K, and the output is rounded once to BF16.'''
+explain.math = [
+  '''\begin{aligned} \tilde W^{(e)}_{nk} &= \mathrm{rn}_{\mathrm{bf16}}\Big(\mathrm{e2m1}\big(q^{(e)}_{nk}\big)\, \mathrm{e4m3}\big(d^{(e)}_{n,\lfloor k/16 \rfloor}\big)\, s_2^{(e)}\Big) \\ C_{\pi,n} &= \mathrm{rn}_{\mathrm{bf16}}\Big(\sum_{k=1}^{K} x_{t(\pi),k}\, \tilde W^{(e)}_{nk}\Big), \qquad \pi \in [o_e, o_{e+1}) \end{aligned}''',
+]
 compute = "tensor_core"
 mma = "mma.sync.m16n8k16.bf16"
 kernels = [
@@ -2145,6 +2440,11 @@ files = ["kernels/gb10/common/moe_w4a16_grouped_gemm.cu"]
 [[family]]
 id = "moe_prefill_w8a8"
 description = "FP8 block-128 W8A8 grouped expert GEMM over a tile work list (the 35B MoE above 64 rows)"
+explain.about = '''The FP8 block-128 W8A8 prefill path for expert batches above 64 rows. moe::moe_sort_by_expert counting-sorts the $mk$ (token, slot) pairs by expert in one block (offsets $o_e$, sorted token ids, inverse permutation $\pi$), and moe::moe_build_tile_worklist emits one work item per (expert, 128-row M tile, 64-column N tile) of every expert that has rows and weights. moe_w8a8_grouped_gemm::moe_w8a8_grouped_gemm_pm4 has its 256-thread CTAs stride over the work list: each tile stages raw FP8 activations (rows gathered by token id) and weights through a two-stage asynchronous copy pipeline, converts them to BF16 in shared memory, and runs mma m16n8k16 over 32-K steps, 8 warps of 16 rows by 64 columns, folding the block scales into an outer accumulator every 64 K. Between the gate+up and down GEMMs moe_silu_mul::silu_mul_quant_fp8 forms $\operatorname{silu}(g) \odot u$ per row (one 128-thread block per row) and quantizes it to E4M3 per 128 columns as the down GEMM input; the layer input is quantized the same way per (token, 128 values) before the gate+up GEMM.'''
+explain.numerics = '''E4M3 activations and weights are converted to BF16 exactly (NaN codes read as 0), multiplied on BF16 tensor cores and accumulated in FP32 per 64-K chunk; each chunk is folded into an FP32 outer accumulator times activation scale and weight block scale of its 128-K block, and the output is rounded once to BF16 (RNE). The SiLU product is computed in FP32 with the fast exponential, rounded to BF16, then quantized with scale $\max(\mathrm{amax}/448, 10^{-12})$, clamp to $\pm 448$ and a saturating round-to-nearest E4M3 encode.'''
+explain.math = [
+  '''\begin{aligned} C_{\pi,n} &= \mathrm{rn}_{\mathrm{bf16}}\Big(\sum_{c} \Big(\sum_{k \in c} \bar x_{t(\pi),k}\, \mathrm{e4m3}\big(W^{(e)}_{nk}\big)\Big)\, a_{t(\pi),\lfloor c/2 \rfloor}\; s^{(e)}_{\lfloor n/128 \rfloor,\lfloor c/2 \rfloor}\Big), \qquad c = \text{chunks of 64 along } K,\ \pi \in [o_e, o_{e+1}) \\ h_{\pi,j} &= \mathrm{rn}_{\mathrm{bf16}}\big(g_{\pi,j}\, \sigma(g_{\pi,j})\, u_{\pi,j}\big), \qquad b_{\pi,\kappa} = \max\Big(\tfrac{\max_{j \in \kappa} |h_{\pi,j}|}{448},\, 10^{-12}\Big) \\ \bar h_{\pi,j} &= \mathrm{sat}_{\mathrm{e4m3}}\Big(\mathrm{rn}\big(\operatorname{clamp}(h_{\pi,j} / b_{\pi,\kappa},\, -448,\, 448)\big)\Big), \qquad \kappa = \text{groups of 128 columns} \\ &\text{where } \bar x, a \text{ are the E4M3 input and its per-(token, 128) scales, } s^{(e)} \text{ the weight block scales, and } g, u \text{ the gate and up GEMM outputs} \end{aligned}''',
+]
 compute = "tensor_core"
 mma = "mma.sync.m16n8k16.bf16"
 kernel_compute."moe_silu_mul::silu_mul_quant_fp8" = { compute = "memory" }
@@ -2176,6 +2476,11 @@ files = ["kernels/gb10/common/moe_w8a8_grouped_gemm.cu", "kernels/gb10/common/mo
 [[family]]
 id = "moe_blend"
 description = "Weighted sum of the routed experts plus the sigmoid-gated shared expert"
+explain.about = '''The final MoE combine: for each token, the routing-weighted sum of its $k$ routed expert outputs plus the shared expert output scaled by the sigmoid gate $\gamma = \sigma(w_{\mathrm{sg}}^{\top} x)$, where $x$ is the normalised MoE input and $w_{\mathrm{sg}}$ the shared-expert gate vector ($\gamma = 1$ when the model has no shared gate). moe_expert_gemv::moe_weighted_sum_blend serves one token, with routed outputs by slot; moe_fp8_grouped_blend::moe_weighted_sum_blend_fp8_grouped serves $m$ tokens (grid of column tiles by tokens) and reads slot $i$ of token $t$ from sorted row $\pi(t,i)$; in both, 256-thread blocks each recompute the gate dot product and then handle one output column per thread. moe_unpermute_blend::moe_unpermute_blend fuses the unpermuting reduction with the blend, one block per token with 8 adjacent columns per thread, rounding the routed sum to BF16 before adding the gated shared term.'''
+explain.numerics = '''BF16 inputs and FP32 routing weights; the gate dot product is FP32 (strided per-thread sums, a warp shuffle tree, then the eight warp sums added in order) followed by the fast-exponential sigmoid; the combine accumulates in FP32 over slots in ascending order, adds the gated shared term last and rounds once to BF16 (RNE), except the unpermute variant, which also rounds the routed sum to BF16 first.'''
+explain.math = [
+  '''\begin{aligned} \gamma_t &= \sigma\Big(\sum_{j=1}^{d} x_{t,j}\, w_{\mathrm{sg},j}\Big) \\ y_{t,n} &= \mathrm{rn}_{\mathrm{bf16}}\Big(\sum_{i=1}^{k} p_{t,i}\, o_{\pi(t,i),n} + \gamma_t\, y^{\mathrm{sh}}_{t,n}\Big) \\ y_{t,n} &= \mathrm{rn}_{\mathrm{bf16}}\Big(\mathrm{rn}_{\mathrm{bf16}}\Big(\sum_{i=1}^{k} p_{t,i}\, o_{\pi(t,i),n}\Big) + \gamma_t\, y^{\mathrm{sh}}_{t,n}\Big) \quad \text{(unpermute variant)} \\ &\text{where } o_{\pi(t,i)} \text{ is the down output of slot } i \text{ of token } t \text{ (row } i \text{ for one token), } p_{t,i} \text{ its routing weight, } y^{\mathrm{sh}}_t \text{ the shared expert output} \end{aligned}''',
+]
 compute = "cuda_core"
 kernels = [
   "moe_expert_gemv::moe_weighted_sum_blend",
@@ -2217,6 +2522,11 @@ measurement = "qwen3.6-35b-a3b::moe_weighted_sum_blend_fp8_grouped @ decode C=16
 [[family]]
 id = "moe_weighted_sum_scale"
 description = "Weighted sum of the routed experts plus the ungated shared expert, one token"
+explain.about = '''The MoE combine for one token in models with an ungated shared expert: relu2::moe_weighted_sum_scale computes, one thread per hidden column, the routing-weighted sum of the $k$ routed expert outputs, multiplies it by the routed scaling factor $\lambda$ and adds the shared expert output.'''
+explain.numerics = '''BF16 expert outputs and FP32 weights; the weighted sum accumulates in FP32 over slots in ascending order, and the scaled sum plus the widened shared term is rounded once to BF16 (RNE).'''
+explain.math = [
+  '''y_n = \mathrm{rn}_{\mathrm{bf16}}\Big(\lambda \sum_{i=1}^{k} p_i\, o^{(i)}_n + y^{\mathrm{sh}}_n\Big)''',
+]
 compute = "memory"
 kernels = ["relu2::moe_weighted_sum_scale"]
 rows = [1, 1]
@@ -2246,6 +2556,14 @@ files = ["kernels/gb10/common/relu_squared.cu"]
 [[family]]
 id = "glm_mhc"
 description = "GLM-5 hyper-connection: mix GEMV, Sinkhorn pre-mix and collapse, post-mix, expand, mean"
+explain.about = '''Manifold-constrained hyper-connections: the residual is carried as $n_{hc}=4$ FP32 streams $x_1,\dots,x_{n_{hc}} \in \mathbb{R}^{d}$ ($d=4096$), and every attention or FFN site reads one collapsed BF16 row from them and writes its output back into all of them. The pre-mix takes the RMS of the flattened streams, a GEMV with the site's mixing matrix $\Phi \in \mathbb{R}^{(2+n_{hc})n_{hc} \times n_{hc}d}$ (24 rows: $n_{hc}$ pre gates, $n_{hc}$ post gates and an $n_{hc}\times n_{hc}$ comb matrix), sigmoid gates and a Sinkhorn normalisation of the comb matrix ($T=20$ iterations, ending on a column pass), then collapses the streams with the pre gates; the post-mix writes $\mathrm{post}_j\,u + \sum_i C_{ij}\,x_i$ back into each stream. Variants: the mix as one block per (token, mix row) with FP32 or BF16 weights and a separate finish kernel; fused pre-mix entries (glm5next_mhc_fused::glm5next_hc_pre_norm and its row-grouped, prefetching, split-K, four-token, cp.async-tiled and small-batch forms) that also run the site's RMSNorm on the collapsed row through a last-block-done tail; post-mix entries that first sum the tensor-parallel ranks' partial outputs (one-shot all-reduce reduce step), one of them fused with the next site's pre-mix; the embedding broadcast (expand) and the final unweighted stream mean (head).'''
+explain.numerics = '''Streams, mixes, gates and comb are FP32 (BF16 mixing weights are widened exactly); every dot product is a thread-strided FP32 sum followed by a fixed 256-wide tree, built without FMA contraction, so all variants except split-K (which reorders the mix sums) give identical bits. expf (not the fast intrinsic) for sigmoid and softmax, rsqrtf for the RMS, every Sinkhorn step a true division by $(\text{sum}+\varepsilon_{hc})$; the collapsed row and the normed row are each rounded once to BF16 (RNE), the rank sum is an FP32 sum in rank order rounded once to BF16 before the post-mix, and the post-mix output stays FP32.'''
+explain.math = [
+  '''\begin{aligned} r &= \Big(\tfrac{1}{n_{hc}d}\textstyle\sum_{i,k} x_{i,k}^2 + \varepsilon_n\Big)^{-1/2}, \qquad \mu_m = r\,\langle \Phi_m, [x_1;\dots;x_{n_{hc}}]\rangle,\quad m = 1,\dots,(2+n_{hc})n_{hc} \\ \mathrm{pre}_i &= \sigma(\alpha_0\,\mu_i + \beta_i) + \varepsilon_{hc}, \qquad \mathrm{post}_i = 2\,\sigma(\alpha_1\,\mu_{n_{hc}+i} + \beta_{n_{hc}+i}) \\ C^{(0)}_{ij} &= \operatorname{softmax}_j\big(\alpha_2\,\mu_{2n_{hc}+(i-1)n_{hc}+j} + \beta_{2n_{hc}+(i-1)n_{hc}+j}\big) + \varepsilon_{hc} \end{aligned}''',
+  '''\begin{aligned} \mathcal{C}(C)_{ij} &= \frac{C_{ij}}{\varepsilon_{hc} + \sum_{i^\prime} C_{i^\prime j}}, \qquad \mathcal{R}(C)_{ij} = \frac{C_{ij}}{\varepsilon_{hc} + \sum_{j^\prime} C_{ij^\prime}} \\ C &= (\mathcal{C}\circ\mathcal{R})^{T-1}\big(\mathcal{C}(C^{(0)})\big) \\ y &= \mathrm{rn}_{\mathrm{bf16}}\Big(\textstyle\sum_{i=1}^{n_{hc}} \mathrm{pre}_i\, x_i\Big), \qquad \hat y_k = \mathrm{rn}_{\mathrm{bf16}}\Big(y_k \big(\tfrac{1}{d}\textstyle\sum_{k^\prime} y_{k^\prime}^2 + \epsilon\big)^{-1/2} \gamma_k\Big) \end{aligned}''',
+  '''\begin{aligned} u &= \mathrm{rn}_{\mathrm{bf16}}\Big(\textstyle\sum_{\rho=0}^{R-1} u^{(\rho)}\Big), \qquad x^\prime_j = \mathrm{post}_j\, u + \textstyle\sum_{i=1}^{n_{hc}} C_{ij}\, x_i \\ x_i &= h \;\; (i = 1,\dots,n_{hc}) \;\;\text{(expand)}, \qquad y = \mathrm{rn}_{\mathrm{bf16}}\Big(\big(\textstyle\sum_{i} x_i\big)\cdot\tfrac{1}{n_{hc}}\Big) \;\;\text{(head)} \end{aligned}''',
+  '''\text{where } \alpha_{0,1,2} \text{ are the site scales, } \beta \text{ the mix biases, } \gamma \text{ the plain RMSNorm weight, } u^{(\rho)} \text{ the partial sublayer output of rank } \rho \text{, } h \text{ the BF16 embedding, } \varepsilon_n, \varepsilon_{hc} = 10^{-6}, \epsilon \text{ the stream-norm, hyper-connection and RMSNorm epsilons, } T = 20''',
+]
 compute = "memory"
 kernels = [
   "glm5next_mhc::glm5next_hc_mix", "glm5next_mhc::glm5next_hc_mix_bf16",
@@ -2336,6 +2654,12 @@ measurement = "glm-5.3-flash::glm5next_hc_post_rank_sum @ decode C=1 (R=2, MTP k
 [[family]]
 id = "kda_gates"
 description = "KDA per-channel bounded-sigmoid decay and beta sigmoid"
+explain.about = '''The Kimi Delta Attention gates computed from projections already in memory. kda_gate::kda_gate_bf16 turns the BF16 decay projection $f$ into a per-channel log decay $g_{h,i}$ with a bounded sigmoid (one block per token and head, threads striding over the $d_k$ channels), and kda_layer_ops::kda_sigmoid_bf16_f32 turns the beta projection into $\beta_h = \sigma(b_h)$, one thread per element. Unlike the Gated DeltaNet gate, the decay is a vector over key channels with a per-channel bias, and it stays in the log domain; the recurrence exponentiates it.'''
+explain.numerics = '''BF16 inputs widened exactly; FP32 arithmetic. The decay uses accurate expf for both $e^{A_h}$ and the sigmoid; beta uses __expf. Both outputs are stored as FP32.'''
+explain.math = [
+  '''\begin{aligned} g_{h,i} &= \lambda\, \sigma\!\big(e^{A_h}\,(f_{h,i} + \delta_{h,i})\big), \qquad i = 1, \dots, d_k \\ \beta_h &= \sigma(b_h) \end{aligned}''',
+  '''\text{where } A_h \text{ is the per-head learned log rate},\ \delta_{h,i} \text{ the per-channel bias and } \lambda < 0 \text{ the gate lower bound, so } g_{h,i} \in (\lambda, 0)''',
+]
 compute = "memory"
 kernels = ["kda_gate::kda_gate_bf16", "kda_layer_ops::kda_sigmoid_bf16_f32"]
 rows = [1, 65536]
@@ -2364,6 +2688,12 @@ files = ["kernels/gb10/common/kda_gate.cu", "kernels/gb10/common/kda_layer_ops.c
 [[family]]
 id = "kda_gates_w8a8"
 description = "KDA gate chain: f_b and g_b W8A8 with their activation quantization, the decay and the beta sigmoid, one launch over 1-8 rows"
+explain.about = '''The whole KDA decode gate chain in one launch for 1 to 8 token rows. The low-rank decay and output-gate up-projections $f = W_f x_f$ and $o_g = W_g x_g$ (rank $K = 128$, $N = H d_k$ outputs, FP8 E4M3 weights with one scale per output row) run as two segments of one grid, one 16-row output tile per warp. Each warp quantizes the token rows to E4M3 with a per-row scale in its prologue, issues four $16 \times 8 \times 32$ E4M3 MMAs with the tokens in the MMA's 8 columns, and rescales; the bounded-sigmoid decay is the epilogue of the $f$ segment and the beta sigmoid runs on block 0. kda_gates_w8a8_k128 is the one-token entry and kda_gates_w8a8_k128_rows the $1 \le m \le 8$ entry; each row's bytes are independent of the others.'''
+explain.numerics = '''Activation scale $s_a = \max(\max_k |x_k| / 448,\ 10^{-12})$ per row (an exact max), each value divided by $s_a$, clamped to $\pm 448$ and converted to E4M3 with round to nearest and saturation. E4M3 by E4M3 products accumulate in FP32 in the tensor core over the full $K = 128$; the result is scaled by $s_w \cdot s_a$ and rounded to BF16 (RNE), which is the stored $f$ and $o_g$. The decay epilogue widens that BF16 value and uses expf; beta uses __expf; decay and beta are FP32. Built without FMA contraction, so the bytes match the unfused chain.'''
+explain.math = [
+  '''\begin{aligned} s_a &= \max\!\Big(\tfrac{1}{448}\max_k |x_k|,\ 10^{-12}\Big), \qquad \hat x_k = \mathrm{sat}_{\mathrm{e4m3}}\big(x_k / s_a\big) \\ f_n &= \mathrm{rn}_{\mathrm{bf16}}\Big(\big(\textstyle\sum_{k=1}^{128} \hat W_{n,k}\, \hat x_k\big)\,(s_{w,n}\, s_a)\Big) \\ g_n &= \lambda\, \sigma\!\big(e^{A_{h(n)}}\,(f_n + \delta_n)\big), \qquad \beta_h = \sigma(b_h) \end{aligned}''',
+  '''\text{where } \hat W \text{ is the E4M3 weight with row scale } s_{w,n},\ h(n) = \lfloor n / d_k \rfloor,\ \delta_n \text{ the per-channel bias},\ \lambda < 0 \text{ the gate lower bound; } o_g \text{ is computed like } f \text{ from } x_g, W_g''',
+]
 compute = "tensor_core"
 mma = "mma.sync.m16n8k32.e4m3"
 kernels = ["kda_gates_w8a8::kda_gates_w8a8_k128", "kda_gates_w8a8::kda_gates_w8a8_k128_rows"]
@@ -2405,6 +2735,12 @@ measurement = "glm-5.3-flash::kda_gates_w8a8_k128_rows @ decode C=1 (R=2, MTP k=
 [[family]]
 id = "kda_recurrent"
 description = "KDA gated delta rule with per-channel decay, one token per launch; up to 4 tokens of one sequence with per-token state snapshots (seq_reg_snap)"
+explain.about = '''The Kimi Delta Attention recurrence: the gated delta rule with a per-key-channel decay $\operatorname{diag}(e^{g_t})$ instead of a scalar, for one head with $d_k = d_v = D = 128$ and an FP32 state $S \in \mathbb{R}^{D \times D}$ updated in place. Grid over heads, one thread per value column: pass one decays the column and forms $S^\top k$, pass two adds the delta-rule correction and reads out with the pre-scaled query. kda_recurrent_decode_bf16 reads and writes the column in global memory in both passes, _smem keeps the decayed column in shared memory between passes, and _seq_reg keeps it in registers. kda_recurrent_decode_bf16_seq_reg_snap steps $T \le 4$ tokens of one sequence with the column held in registers across tokens and stores the state after each of the first $T-1$ tokens, the snapshots a $T$-row speculative verify needs to roll back.'''
+explain.numerics = '''BF16 q, k, v widened exactly; FP32 log decay, beta, state and output. The decay is applied as expf of the log decay, the query is multiplied by the scale $1/\sqrt{D}$ (computed on the host in FP32) before the dot product, and both column sums run over $k = 1..D$ in order in FP32 without FMA contraction. All variants and the multi-token kernel give the per-token kernel's bits; no state clamp.'''
+explain.math = [
+  '''\begin{aligned} \tilde S &= \operatorname{diag}\!\big(e^{g_t}\big)\, S_{t-1} \\ u_t &= \beta_t\,\big(v_t - \tilde S^\top k_t\big) \\ S_t &= \tilde S + k_t\, u_t^\top \\ o_t &= S_t^\top \Big(\frac{q_t}{\sqrt{D}}\Big) \end{aligned}''',
+  '''\text{where } g_t \in \mathbb{R}^{D} \text{ is the per-channel log decay},\ \beta_t = \sigma(b_t),\ q_t, k_t \text{ L2-normalised by the conv; snapshots } S_1, \dots, S_{T-1} \text{ in the } T\text{-token form}''',
+]
 compute = "cuda_core"
 # 2026-10-22: `kda_recurrent_decode_bf16_seq_reg_snap` steps T <= 4 tokens of one sequence in one
 # launch, the state in registers, and stores the state after each of the first T - 1 (a K-row
@@ -2448,6 +2784,12 @@ measurement = "glm-5.3-flash::kda_recurrent_decode_bf16_seq_reg_snap @ decode C=
 [[family]]
 id = "kda_recurrent_rows"
 description = "KDA gated delta rule with per-channel decay, one token of each of up to 16 sequences per launch"
+explain.about = '''The KDA recurrence of kda_recurrent for one token of each of up to 16 different sequences in one launch, for batched decode: grid (heads, value-column slices, rows), each row reading its q, k, v, decay and beta at its own workspace row and updating its own state slot (a null state skips the row). kda_recurrent_decode_bf16_smem_rows keeps the decayed column in shared memory between the two passes, so the state is read once and written once; kda_recurrent_decode_bf16_rows_reg keeps it in registers with $D = 128$ fixed at compile time. Per row the expressions and their order are the one-token kernel's.'''
+explain.numerics = '''As kda_recurrent: BF16 q, k, v widened exactly, FP32 decay (expf of the log decay), beta, state and output, query pre-multiplied by $1/\sqrt{D}$, column sums over $k$ in order in FP32 without FMA contraction.'''
+explain.math = [
+  '''\begin{aligned} \tilde S_r &= \operatorname{diag}\!\big(e^{g_r}\big)\, S_r \\ u_r &= \beta_r\,\big(v_r - \tilde S_r^\top k_r\big) \\ S_r &\leftarrow \tilde S_r + k_r\, u_r^\top, \qquad o_r = S_r^\top \Big(\frac{q_r}{\sqrt{D}}\Big), \qquad r = 1, \dots, m \le 16 \end{aligned}''',
+  '''\text{where } r \text{ indexes the row (one sequence each) and } g_r \in \mathbb{R}^{D} \text{ is its per-channel log decay}''',
+]
 compute = "cuda_core"
 kernels = [
   "kda_recurrent::kda_recurrent_decode_bf16_smem_rows", "kda_recurrent::kda_recurrent_decode_bf16_rows_reg",
@@ -2470,6 +2812,12 @@ files = ["kernels/gb10/common/kda_recurrent.cu"]
 [[family]]
 id = "kda_o_norm"
 description = "KDA output norm: per-head RMSNorm gated by a sigmoid"
+explain.about = '''The KDA output norm: an RMS norm over each head of the FP32 recurrence output, multiplied by the norm weight and by a sigmoid of the BF16 output gate (Gated DeltaNet uses SiLU here). One block per (row, head) of $D = 128$ threads; the sum of squares is a two-level warp shuffle reduction.'''
+explain.numerics = '''FP32 input; BF16 gate and weight widened exactly; sum of squares in FP32 by a shuffle-down tree then a second warp reduction; scale rsqrtf(mean + eps); sigmoid via __expf; one BF16 (RNE) rounding at the store.'''
+explain.math = [
+  '''y_i = \mathrm{rn}_{\mathrm{bf16}}\Big(\frac{o_i}{\sqrt{\frac{1}{D}\sum_{j=1}^{D} o_j^2 + \epsilon}}\, \gamma_i\, \sigma(z_i)\Big)''',
+  '''\text{where } o \in \mathbb{R}^{D} \text{ is one head of the recurrence output},\ \gamma \text{ the norm weight and } z \text{ the output gate}''',
+]
 compute = "memory"
 kernels = ["kda_layer_ops::kda_o_norm_gated_bf16"]
 rows = [1, 65536]
@@ -2495,6 +2843,11 @@ measurement = "glm-5.3-flash::kda_o_norm_gated_bf16 @ decode C=1 (R=2, MTP k=1, 
 [[family]]
 id = "kda_pack"
 description = "KDA q|k|v pack of three projections"
+explain.about = '''Interleaves the three separately projected BF16 rows $q$, $k$, $v$ (each of width $n = H d_k$) into one $[q \,|\, k \,|\, v]$ row of width $3n$ per token, the layout the depthwise conv reads. One thread per channel and one grid row per token; it is a pure copy.'''
+explain.numerics = '''BF16 in and BF16 out; values are copied bit for bit with no arithmetic.'''
+explain.math = [
+  '''p_{t} = \big[\, q_t \;\; k_t \;\; v_t \,\big] \in \mathbb{R}^{3n}, \qquad p_{t,j} = q_{t,j},\ p_{t,n+j} = k_{t,j},\ p_{t,2n+j} = v_{t,j}''',
+]
 compute = "memory"
 kernels = ["kda_layer_ops::kda_pack_qkv_bf16"]
 rows = [1, 65536]
@@ -2515,6 +2868,11 @@ measurement = "glm-5.3-flash::kda_pack_qkv_bf16 @ decode C=1 (R=2, MTP k=1, TP=3
 [[family]]
 id = "layer_norm"
 description = "BF16 LayerNorm with weight and bias"
+explain.about = '''LayerNorm with weight and bias over BF16 rows $x \in \mathbb{R}^{d}$, written in place. One block per row: a first pass reduces the sum for the mean through a shared-memory halving tree, a second pass reduces the squared deviations from that mean, and a third pass normalises, scales and shifts every element.'''
+explain.numerics = '''BF16 widened exactly to FP32; both reductions are FP32 per-thread partials followed by a shared-memory halving tree, the variance is the biased two-pass estimate (divided by $d$), the root uses rsqrtf, and each output is rounded once to BF16 (RNE).'''
+explain.math = [
+  '''\begin{aligned} \mu &= \frac{1}{d}\sum_{j=1}^{d} x_j, \qquad v = \frac{1}{d}\sum_{j=1}^{d} (x_j - \mu)^2 \\ y_i &= \mathrm{rn}_{\mathrm{bf16}}\Bigl(\frac{x_i - \mu}{\sqrt{v + \epsilon}}\,\gamma_i + \beta_i\Bigr) \end{aligned}''',
+]
 compute = "memory"
 kernels = ["nllb_encoder::nllb_layernorm_bf16"]
 rows = [1, 65536]
@@ -2533,6 +2891,14 @@ files = ["kernels/gb10/common/nllb_encoder.cu"]
 [[family]]
 id = "dsa_indexer"
 description = "DSA lightning indexer: key store, pool compression, scores, top pools, token expansion"
+explain.about = '''The DeepSeek-sparse-attention lightning indexer, which picks the tokens each query row attends. Stage by stage: a store writes the row's normalised index key $k_s \in \mathbb{R}^{128}$ and per-channel gate $g_s$ into the indexer cache; pool compression folds every $K_P=4$ consecutive tokens into one pool key by a per-channel softmax over the pool's slots of gate plus a learned position term; the scores combine $H_I=32$ index heads as a weighted sum of ReLU dot products against each pool key, with pools that are incomplete or end after the query scored $-\infty$; a deterministic top-k keeps the best $\min(P, 2048/K_P)=512$ pools (score descending, ties to the lower pool index); expansion writes the selected pools' token ids and always appends the up to $K_P-1$ visible tokens of the incomplete tail pool, padding with $-1$. Kernels cover one sequence or many rows per launch with device-side geometry (graph replay safe), block-, warp- and lane-per-head score forms over scratch or persisted pool keys, a BF16 tensor-core score path with a cp.async key pipeline, bitonic, radix and multi-CTA radix top-k, a fused scores-plus-streaming-top-k kernel, a candidacy fold for the sequence-parallel selection, and an FP8 indexer cache that stores each completed pool key Walsh-Hadamard rotated in E4M3 with a power-of-two scale.'''
+explain.numerics = '''Keys and gates are BF16 widened to FP32; pool keys, queries, head weights and scores are FP32, with __expf in the pool softmax, FP32 lane-strided dot products reduced by a shuffle tree and the head terms summed in head order, no FMA contraction. The tensor-core score path rounds queries and pool keys to BF16 (RNE) and accumulates in FP32 (a different precision point); the FP8 cache quantises $y=\mathrm{FWHT}_{128}(\bar k)$ with scale $2^{\lceil \log_2(\max|y|/448)\rceil}$ (exponent clamped to $[-126,127]$) and saturating RNE E4M3, and reads back $\mathrm{FWHT}_{128}(\hat y\, s)/128$; all top-k variants implement one total order and emit identical slots for NaN-free scores.'''
+explain.math = [
+  '''\begin{aligned} \bar k_{p,c} &= \sum_{s=0}^{K_P-1} \frac{\exp\big(g_{pK_P+s,c} + a_{s,c}\big)}{\sum_{s^\prime} \exp\big(g_{pK_P+s^\prime,c} + a_{s^\prime,c}\big)}\; k_{pK_P+s,c} \\ I_{t,p} &= \begin{cases} \displaystyle\sum_{h=1}^{H_I} w_{t,h}\, \operatorname{relu}\!\Big(\tfrac{1}{\sqrt{D_I}}\,\langle q_{t,h}, \bar k_p\rangle\Big) & \text{if } (p+1)K_P \le S \text{ and } pK_P + K_P - 1 \le \tau_t \\ -\infty & \text{otherwise} \end{cases} \end{aligned}''',
+  '''\begin{aligned} \mathcal{P}_t &= \operatorname{top}_{k_t}\big(I_{t,\cdot}\big), \qquad k_t = \min\Big(\Big\lfloor \tfrac{\tau_t+1}{K_P} \Big\rfloor,\, \Big\lfloor \tfrac{\min(S, 2048)}{K_P} \Big\rfloor\Big) \\ \mathcal{T}_t &= \{\, pK_P + s : p \in \mathcal{P}_t,\ 0 \le s < K_P \,\} \,\cup\, \{\, K_P \lfloor n_t / K_P \rfloor + s : 0 \le s < n_t \bmod K_P \,\} \end{aligned}''',
+  '''\begin{aligned} y &= \mathrm{FWHT}_{128}(\bar k_p), \qquad \sigma_p = 2^{\lceil \log_2(\max_c |y_c| / 448) \rceil}, \qquad \hat y_c = \mathrm{sat}_{\mathrm{e4m3}}\big(y_c / \sigma_p\big) \\ \tilde k_p &= \tfrac{1}{128}\,\mathrm{FWHT}_{128}\big(\sigma_p\, \hat y\big) \end{aligned}''',
+  '''\text{where } w_{t,h} = H_I^{-1/2}\,(W_w x_t)_h,\ a \text{ the learned slot term, } D_I = 128,\ S \text{ the cached tokens, } \tau_t \text{ the query position, } n_t \text{ the visible tokens at or before } \tau_t''',
+]
 compute = "cuda_core"
 kernels = [
   "dsa_indexer::dsa_indexer_store", "dsa_indexer::dsa_write_geom",
@@ -2625,6 +2991,13 @@ measurement = "glm-5.3-flash::dsa_index_scores_heads_window @ decode C=1 (R=2, M
 [[family]]
 id = "glm_mla_decode"
 description = "GLM-5 sparse NoPE MLA decode over an FP8 latent cache (latent 512)"
+explain.about = '''Sparse multi-head latent attention for GLM-5 in its absorbed NoPE form: there is no rotary part, each cached token is its 512-wide latent row $c_s$ (keys and values are the same latent), and each head's query $q_h \in \mathbb{R}^{512}$ already carries the key up-projection, the value up-projection being applied afterwards in the output projection. One CTA of 16 warps runs per (head, row); the warps split the row's selection list (the indexer's token ids, $-1$ or out-of-range entries skipped, duplicates attended twice), gather four selected tokens at a time through the block table from the paged FP8 cache, and keep a per-warp online softmax, merged across warps in a shared-memory tree. A row with no valid token writes zeros.'''
+explain.numerics = '''Queries BF16 widened to FP32; cache bytes are E4M3 decoded exactly to FP32 and multiplied by the static per-layer scale $s_k$ (1.0 for this checkpoint). FP32 lane partials reduced by a warp butterfly, softmax scale $512^{-1/2}$, __expf for every exponential, FP32 output accumulation, no FMA contraction; one RNE rounding to BF16 of $o/\ell$ at the store.'''
+explain.math = [
+  '''\begin{aligned} z_{h,j} &= \frac{1}{\sqrt{512}}\,\big\langle q_h,\; s_k\,\hat c_{j}\big\rangle, \qquad j \in \mathcal{T}_t \\ o_h &= \mathrm{rn}_{\mathrm{bf16}}\Bigg(\frac{\sum_{j \in \mathcal{T}_t} e^{\,z_{h,j} - m_h}\, s_k\, \hat c_j}{\sum_{j \in \mathcal{T}_t} e^{\,z_{h,j} - m_h}}\Bigg), \qquad m_h = \max_{j} z_{h,j} \end{aligned}''',
+  '''\begin{aligned} m^\prime &= \max(m, z), \quad \ell^\prime = \ell\, e^{m - m^\prime} + e^{z - m^\prime}, \quad o^\prime = o\, e^{m - m^\prime} + e^{z - m^\prime}\, v \\ (m,\ell,o)_{a \oplus b} &= \Big(m^\ast,\; \ell_a e^{m_a - m^\ast} + \ell_b e^{m_b - m^\ast},\; o_a e^{m_a - m^\ast} + o_b e^{m_b - m^\ast}\Big), \quad m^\ast = \max(m_a, m_b) \end{aligned}''',
+  '''\text{where } \hat c_j \in \mathrm{E4M3}^{512} \text{ is cached token } j,\ s_k \text{ the cache scale, } \mathcal{T}_t \text{ the indexer selection of row } t''',
+]
 compute = "cuda_core"
 kernels = ["glm5next_dsa_mla_decode::glm5next_dsa_mla_decode_fp8"]
 rows = [1, 4096]
@@ -2661,6 +3034,13 @@ files = ["kernels/gb10/glm-5.3-flash/nvfp4/glm5next_dsa_mla_decode.cu"]
 [[family]]
 id = "glm_mla_decode_hb"
 description = "GLM-5 sparse NoPE MLA decode, head-batched on tensor cores, split + merge (latent 512)"
+explain.about = '''The same absorbed NoPE latent attention as glm_mla_decode (latent 512, keys equal values), batched over heads on BF16 tensor cores: because every head of a row attends the same selected tokens, one CTA per (split, row, group of 24 heads) gathers each 32-token tile of its slice of the selection once, widens it to BF16 in shared memory, computes $S^{\top} = \hat C\, Q^{\top}$ with m16n8k16 MMAs, runs an online softmax per head, and accumulates $O^{\top} \mathrel{+}= \hat C^{\top} P^{\top}$ with P split into a BF16 high and low part. With several splits each CTA writes its unnormalised FP32 partial $(m, \ell, o)$ and a merge kernel combines them per (head, row) in split order; with one split it writes the normalised output directly. The _phi entries carry P as one BF16 value (prefill), and the two prefill entries are byte-identical reschedules of it: a double-buffered pipeline with QK on all warps, and a warp-specialised producer/consumer kernel with named barriers.'''
+explain.numerics = '''E4M3 latent bytes widen exactly to BF16; QK accumulates in FP32 over four interleaved MMA chains combined as $((d_0+d_1)+(d_2+d_3))$, scaled by $s_k$ then by $512^{-1/2}$; softmax in FP32 with __expf; P is $\mathrm{rn}_{\mathrm{bf16}}(p) + \mathrm{rn}_{\mathrm{bf16}}(p - \mathrm{rn}_{\mathrm{bf16}}(p))$ (relative error at most $2^{-16}$; $2^{-9}$ for the _phi entries) into FP32 accumulators; $s_v$ and $1/\ell$ are applied at the store, which rounds once to BF16 (RNE). It differs from glm_mla_decode only in summation order and the P rounding, and a row's result never depends on the rows batched with it.'''
+explain.math = [
+  '''\begin{aligned} Z_{h,j} &= \Big(\big\langle \mathrm{bf16}(q_h),\, \hat c_j \big\rangle\, s_k\Big)\, \frac{1}{\sqrt{512}}, \qquad j \in \mathcal{T}_t^{(\varsigma)} \\ m^{(\varsigma)}_h &= \max_j Z_{h,j}, \qquad \ell^{(\varsigma)}_h = \sum_j e^{\,Z_{h,j} - m^{(\varsigma)}_h}, \qquad o^{(\varsigma)}_h = \sum_j \big(\pi^{\mathrm{hi}}_{h,j} + \pi^{\mathrm{lo}}_{h,j}\big)\, \hat c_j \\ \pi^{\mathrm{hi}}_{h,j} &= \mathrm{rn}_{\mathrm{bf16}}\big(e^{\,Z_{h,j} - m_h}\big), \qquad \pi^{\mathrm{lo}}_{h,j} = \mathrm{rn}_{\mathrm{bf16}}\big(e^{\,Z_{h,j} - m_h} - \pi^{\mathrm{hi}}_{h,j}\big) \end{aligned}''',
+  '''\begin{aligned} m^\ast_h &= \max_{\varsigma :\, \ell^{(\varsigma)}_h > 0} m^{(\varsigma)}_h, \qquad \omega_\varsigma = e^{\,m^{(\varsigma)}_h - m^\ast_h} = \exp\big(\mathrm{lse}^{(\varsigma)}_h - m^\ast_h\big) / \ell^{(\varsigma)}_h \\ o_h &= \mathrm{rn}_{\mathrm{bf16}}\Bigg(\frac{s_v \sum_{\varsigma} \omega_\varsigma\, o^{(\varsigma)}_h}{\sum_{\varsigma} \omega_\varsigma\, \ell^{(\varsigma)}_h}\Bigg), \qquad \mathrm{lse}^{(\varsigma)}_h = m^{(\varsigma)}_h + \ln \ell^{(\varsigma)}_h \end{aligned}''',
+  '''\text{where } \varsigma \text{ indexes the splits (contiguous runs of 32-token tiles), } \hat c_j \text{ the cached E4M3 latent widened to BF16, } s_k = s_v \text{ the cache scale}''',
+]
 compute = "tensor_core"
 mma = "mma.sync.m16n8k16.bf16"
 kernels = [
@@ -2706,6 +3086,12 @@ measurement = "glm-5.3-flash::glm5next_dsa_mla_decode_hb_fp8 @ decode C=1 (R=2, 
 [[family]]
 id = "glm_mla_latent_write"
 description = "GLM-5 latent cache write: RMSNorm + FP8 quantisation + paged store"
+explain.about = '''Writes one token's MLA latent into the paged FP8 latent cache: the BF16 kv_a projection row $c \in \mathbb{R}^{512}$ is RMS-normalised with GLM's plain weight (no $1+\gamma$ offset), multiplied by the reciprocal cache scale and stored as E4M3 at its slot. One block of exactly 512 threads per token (one thread per latent channel); the sum of squares is a warp butterfly followed by a cross-warp reduction; a slot of $-1$ skips the token. There is no rotary part, since GLM-5 latent attention is NoPE with one latent head.'''
+explain.numerics = '''BF16 input widened to FP32; FP32 sum of squares (warp shuffle tree, then a tree over the 16 warp sums), rsqrtf, products $(c_i r)\gamma_i$ then times $1/s_k$ in FP32 without FMA contraction; a single saturating round-to-nearest-even conversion to E4M3 with no intermediate BF16 rounding. The scale is a static per-layer value supplied by the host (1.0 for this checkpoint), not computed from the row.'''
+explain.math = [
+  '''\begin{aligned} r &= \Big(\frac{1}{512}\sum_{k=1}^{512} c_k^2 + \epsilon\Big)^{-1/2} \\ \hat c_i &= \mathrm{sat}_{\mathrm{e4m3}}\Big(\big(c_i\, r\, \gamma_i\big)\cdot \frac{1}{s_k}\Big), \qquad i = 1,\dots,512 \end{aligned}''',
+  '''\text{where } \gamma \text{ is the kv\_a RMSNorm weight, } \epsilon = 10^{-5},\ s_k \text{ the static cache scale read back by the decode kernels}''',
+]
 compute = "memory"
 kernels = ["glm5next_mla_latent_write::glm5next_mla_latent_write_fp8"]
 rows = [1, 1]
@@ -2737,6 +3123,12 @@ files = ["kernels/gb10/glm-5.3-flash/nvfp4/glm5next_mla_latent_write.cu"]
 [[family]]
 id = "glm_swiglu_clamp"
 description = "Clamped SwiGLU (swiglu_limit): clamp, SiLU and multiply in one pass"
+explain.about = '''GLM-5's clamped SwiGLU activation for the dense, shared-expert and routed FFNs, one thread per element over separate gate and up rows. The clamp is asymmetric: the gate is bounded above only, by the swiglu_limit $L$ (10.0 for this checkpoint, a runtime argument that must be positive), while up is clamped to $[-L, L]$ on both sides; then SiLU of the clamped gate times the clamped up. Three entries: BF16 output, FP32 output, and a BF16-output variant that also zero-fills the routed down projection's accumulation buffer in the same launch.'''
+explain.numerics = '''BF16 gate and up widened to FP32; fminf/fmaxf clamps, SiLU computed as $\hat g/(1+e^{-\hat g})$ with expf and a true division, product in FP32 without FMA contraction; one RNE rounding to BF16 at the store (none for the FP32-output entry). The same element expression is shared with the fused routed gate/up epilogue, so both round identically.'''
+explain.math = [
+  '''\begin{aligned} \hat g_i &= \min(g_i, L), \qquad \hat u_i = \min\big(\max(u_i, -L), L\big) \\ y_i &= \mathrm{rn}_{\mathrm{bf16}}\Big(\frac{\hat g_i}{1 + e^{-\hat g_i}}\cdot \hat u_i\Big) = \mathrm{rn}_{\mathrm{bf16}}\big(\operatorname{silu}(\hat g_i)\, \hat u_i\big) \end{aligned}''',
+  '''\text{where } g, u \text{ are the gate and up projections and } L \text{ the swiglu\_limit}''',
+]
 compute = "memory"
 # 2026-10-21: `_zero` also zeroes the routed down projection's output (a memset folded in).
 kernels = [
@@ -2765,6 +3157,12 @@ measurement = "glm-5.3-flash::glm5next_swiglu_clamp @ decode C=1 (R=2, MTP k=1, 
 [[family]]
 id = "glm_router_topk"
 description = "Sigmoid + correction-bias top-k routing over FP32 logits"
+explain.about = '''Noaux top-k routing for GLM-5's 288-expert MoE from FP32 router logits, one block per token: each expert's score is the sigmoid of its logit, experts are ranked by score plus the learned correction bias, and the top $k=8$ are taken (exact ties to the lower expert id); the bias is used for selection only, and the weights are the unbiased sigmoid scores, renormalised over the selected experts and multiplied by the routed scaling factor $\gamma_r=2.5$. glm5next_ffn::glm5next_router_topk does $k$ rounds of block-wide argmax; glm5next_ffn::glm5next_router_topk_rank produces the same ids and weights byte for byte by ranking within each run of 32 experts with warp shuffles, keeping at most $k$ per run and counting the kept experts ahead of each one. A slot no expert fills gets id $-1$ and weight 0; grouped routing is not used (one group).'''
+explain.numerics = '''FP32 throughout: sigmoid as $1/(1+e^{-z})$ with expf, the selection sum $s_e + b_e$, the renormalising sum in slot order, a true division by $(\sum + 10^{-20})$, then the scale multiply. An optional ladder mode rounds the score, the choice value, the running sum and each weight step to BF16 (RNE) to match a BF16 reference; the default is pure FP32.'''
+explain.math = [
+  '''\begin{aligned} s_e &= \sigma(z_e), \qquad \chi_e = s_e + b_e, \qquad e = 1,\dots,288 \\ \mathcal{E} &= \operatorname{top}_k(\chi) \;\;\text{(descending, ties to the lower } e\text{)} \\ w_{e} &= \gamma_r\, \frac{s_e}{\sum_{e^\prime \in \mathcal{E}} s_{e^\prime} + 10^{-20}}, \qquad e \in \mathcal{E} \end{aligned}''',
+  '''\text{where } z \text{ are the router logits, } b \text{ the correction bias (selection only), } k = 8,\ \gamma_r \text{ the routed scaling factor}''',
+]
 compute = "memory"
 kernels = ["glm5next_ffn::glm5next_router_topk", "glm5next_ffn::glm5next_router_topk_rank"]
 rows = [1, 65536]
@@ -2796,6 +3194,12 @@ measurement = "glm-5.3-flash::glm5next_router_topk_rank @ decode C=1 (R=2, MTP k
 [[family]]
 id = "glm_moe_combine"
 description = "Weighted routed sum plus the ungated shared expert"
+explain.about = '''Combines a token's MoE output: the $k$ routed expert outputs weighted by the router weights (which already include the routed scaling factor) plus the shared expert's output added unscaled, since GLM-5's shared expert has no gate. Grid of (token, column blocks), threads striding the hidden dimension; the indexed variants read routed slot $k$ of token $t$ from its expert-sorted row through a token-to-permutation map instead of from slot order, and the vec8 variants own eight consecutive elements per thread with 16-byte loads, all producing the same bytes.'''
+explain.numerics = '''BF16 expert and shared outputs widened to FP32, FP32 weights; one FP32 accumulator starting at zero summed over the slots in slot order with each product rounded before its add (no FMA contraction), then the shared value added, then a single RNE rounding to BF16.'''
+explain.math = [
+  '''y_{t,i} = \mathrm{rn}_{\mathrm{bf16}}\Big(\Big(\sum_{\kappa=1}^{k} w_{t,\kappa}\, e^{(\kappa)}_{t,i}\Big) + e^{\mathrm{sh}}_{t,i}\Big)''',
+  '''\text{where } e^{(\kappa)}_t \text{ is the output of the expert in routed slot } \kappa,\ w_{t,\kappa} \text{ its router weight, } e^{\mathrm{sh}}_t \text{ the shared expert output}''',
+]
 compute = "memory"
 kernels = ["glm5next_ffn::glm5next_moe_combine", "glm5next_ffn::glm5next_moe_combine_indexed", "glm5next_ffn::glm5next_moe_combine_vec8", "glm5next_ffn::glm5next_moe_combine_indexed_vec8"]
 rows = [1, 65536]
@@ -2921,6 +3325,13 @@ measurement = "glm-5.3-flash::glm5next_moe_combine @ decode C=1 (R=2, MTP k=1, T
 [[family]]
 id = "tp_rank_sum"
 description = "Rank-order FP32 sum of the TP ranks' BF16 partials after the one-shot exchange"
+explain.about = '''The reduce step of the one-shot all-reduce that sums tensor-parallel partial outputs over $n \ge 2$ ranks. After the exchange every rank holds its own BF16 partial and the other ranks' partials in peer slots; one thread per element sums all $n$ partials in rank order $0,\dots,n-1$ and rounds once, so every rank writes the same bytes. The family's all-gather (the vocabulary-sharded head's logits) is the collective's byte copy of each rank's BF16 slice into its rank-order place, with no arithmetic.'''
+explain.numerics = '''Each BF16 partial is widened exactly to FP32 and added in rank order as separate correctly rounded FP32 additions starting from 0, then rounded once to BF16 (round to nearest even). The order is fixed by rank, not by arrival, so the result is identical on every rank; with two ranks the bytes equal a single BF16 add except for the sign of $(-0) + (-0)$. The all-gather moves bytes unchanged.'''
+explain.math = [
+  '''y_i = \mathrm{rn}_{\mathrm{bf16}}\Big(\big(\cdots\big((0 + p^{(0)}_i) + p^{(1)}_i\big) + \cdots\big) + p^{(n-1)}_i\Big)''',
+  '''g = \big[\, x^{(0)} \;\big\|\; x^{(1)} \;\big\|\; \cdots \;\big\|\; x^{(n-1)} \,\big] \quad \text{(all-gather, bytes unchanged)}''',
+  '''\text{where } p^{(r)} \text{ is rank } r\text{'s BF16 partial and } x^{(r)} \text{ its slice of the gathered tensor}''',
+]
 compute = "memory"
 kernels = ["bf16_add::bf16_add_rank_sum"]
 rows = [1, 65536]
@@ -2937,6 +3348,11 @@ files = ["kernels/gb10/common/bf16_add.cu"]
 [[family]]
 id = "concat_in_place"
 description = "A feature-dim concat the producers write in place (no kernel)"
+explain.about = '''No kernel launches in this family. The GLM-5.3 MTP draft layer's projection input is the concatenation of the normalised token embedding and the normalised target hidden state, $[\,e \,\|\, h\,] \in \mathbb{R}^{2d}$. Each producer writes its half directly into its place in one $2d$-wide buffer, the embedding half in columns $0,\dots,d-1$ and the hidden half in columns $d,\dots,2d-1$, so the concat costs nothing beyond those writes.'''
+explain.numerics = '''No arithmetic: the two BF16 halves are written by their producers and read as one row, byte for byte.'''
+explain.math = [
+  '''c_t = \big[\, e_t \;\big\|\; h_t \,\big] \in \mathbb{R}^{2d}, \qquad c_{t,j} = e_{t,j}, \quad c_{t,d+j} = h_{t,j}, \qquad 0 \le j < d''',
+]
 compute = "memory"
 emitters = ["glm_mtp_halves"]
 rows = [1, 65536]
@@ -2954,6 +3370,14 @@ files = ["crates/model-arch/src/glm5next_mtp_head/hidden_half.rs"]
 [[family]]
 id = "screen_head"
 description = "Screened vocab-sharded LM head: INT8 scan, exact rescore, cross-rank best key"
+explain.about = '''The greedy verify head of a vocabulary-sharded LM head for two rows, which finds exactly the token the full BF16 head and its argmax would pick without reading the whole BF16 head. screen_head_scan reads an INT8 copy of this rank's head rows, with one FP32 scale per 128-weight block, and forms for every row a screen logit $S_i$ and a rigorous bound $\kappa E$ on its distance from the full head's FP32 sum $R_i$. A row whose upper bound falls below the best lower bound $L$ minus a BF16 rounding pad can be neither the argmax nor tied with it; screen_head_rescore recomputes the remaining candidates with the BF16 GEMV's own arithmetic and keys them in the order the BF16 argmax breaks ties, and screen_head_resolve keeps the largest key after the ranks exchange their best 16-byte keys. With mask ids the same test over the unmasked rows keeps the masked argmax as well.'''
+explain.numerics = '''The screen sums in FP32 and rounds $E$ up. $\kappa$ covers the INT8 quantization error ($|w - s q| \le \tfrac{s}{2}(1 + 2^{-20})$, checked exactly when the copy is built), the reference's FP32 summation error and the screen's own; the kernel adds $2^{-100}$ for underflow and makes every row a candidate past $2^{100}$. The rescore reproduces the BF16 GEMV's per-row FP32 arithmetic bit for bit (BF16 products exact in FP32, the same add order and shuffle tree, no FMA contraction) and rounds once to BF16, so the chosen token equals the full head's, ties included.'''
+explain.math = [
+  '''S_i = \sum_{b} s_{ib} \sum_{k \in b} x_k\, q_{ik}, \qquad s_{ib} = \frac{\max_{k \in b} |w_{ik}|}{127}, \qquad q_{ik} = \mathrm{rint}\Big(\frac{w_{ik}}{s_{ib}}\Big), \qquad |R_i - S_i| \le \kappa \sum_{b} s_{ib} \lVert x_b \rVert_1''',
+  '''\mathrm{lo}_i \le R_i \le \mathrm{up}_i, \qquad L = \max_j \mathrm{lo}_j, \qquad \mathrm{pad} = 2^{-7}\big(1 + 2^{-7}\big)|L| + 2^{-120}, \qquad \mathcal{C} = \{\, i : \mathrm{up}_i \ge L - \mathrm{pad} \,\}''',
+  '''\hat{y} = \operatorname*{arg\,max}_{\text{ranks},\; i \in \mathcal{C}} \mathrm{key}\big(\mathrm{rn}_{\mathrm{bf16}}(R_i),\, i\big) = \operatorname{argmax}_{\mathrm{bf16}}\big(\mathrm{rn}_{\mathrm{bf16}}(R)\big)''',
+  '''\text{where } w_i \text{ is head row } i\text{, } x \text{ the BF16 activation row, } R_i \text{ the full head's FP32 sum and key the order in which the BF16 argmax breaks ties}''',
+]
 compute = "cuda_core"
 kernels = ["screen_head::screen_head_scan", "screen_head::screen_head_rescore", "screen_head::screen_head_resolve"]
 rows = [2, 2]
@@ -2973,6 +3397,13 @@ files = ["kernels/gb10/common/screen_head.cu"]
 [[family]]
 id = "glm_mtp_head"
 description = "GLM-5.3 MTP draft LM head: FP8 vocab-shard GEMV and the cross-rank argmax exchange"
+explain.about = '''The LM head of the GLM-5.3 MTP draft layer under tensor parallelism. Each rank holds an FP8 E4M3 copy of its vocabulary shard, rows $v_0 \le n < v_0 + V_r$, with one FP32 scale per row, and dense_gemv_fp8w computes the shard's BF16 logits from the BF16 hidden row with 64 threads per output and four outputs per block. From the rank's local argmax, glm5next_mtp_xchg_pack writes the winning BF16 logit and the global token id as three base-256 digits into the rank's own lanes of a zeroed exchange buffer; a BF16 sum all-reduce delivers every rank's lanes unchanged, and glm5next_mtp_xchg_pick takes the highest logit, a tie going to the lowest rank, and rebuilds the token id from the winner's digits.'''
+explain.numerics = '''E4M3 weights are decoded exactly to FP32, multiplied by the BF16 activations widened to FP32 and summed in FP32, then scaled by the row's FP32 scale and rounded once to BF16. The exchange is exact: the logit lane is the head's BF16 output bit for bit, each digit is an integer $0,\dots,255$ that BF16 holds exactly, and every other rank's lanes are zero, so the BF16 sum changes nothing. The pick compares BF16 logits with a strict greater-than in rank order.'''
+explain.math = [
+  '''z_n = \mathrm{rn}_{\mathrm{bf16}}\Big(\sigma_n \sum_{k=0}^{K-1} x_k\, \mathrm{e4m3}(B_{nk})\Big), \qquad v_0 \le n < v_0 + V_r, \qquad \sigma_n \in \mathrm{fp32}''',
+  '''g^{(r)} = v^{(r)}_0 + \ell^{(r)} = 256^2 d^{(r)}_2 + 256\, d^{(r)}_1 + d^{(r)}_0, \qquad r^\star = \min\Big\{\, r : z^{(r)} = \max_{s} z^{(s)} \,\Big\}, \qquad \hat{y} = g^{(r^\star)}''',
+  '''\text{where } \ell^{(r)} \text{ is rank } r\text{'s local argmax, } z^{(r)} \text{ its BF16 logit and } d^{(r)}_j \text{ the base-256 digits of its global id}''',
+]
 compute = "cuda_core"
 kernels = ["gemv_fp8w::dense_gemv_fp8w", "glm5next_mtp_xchg::glm5next_mtp_xchg_pack", "glm5next_mtp_xchg::glm5next_mtp_xchg_pick"]
 rows = [1, 1]
@@ -2990,6 +3421,12 @@ files = ["kernels/gb10/common/dense_gemv_fp8w.cu", "kernels/gb10/common/glm5next
 [[family]]
 id = "w4a16_sw_moe"
 description = "W4A16 slot GEMV over a row's top-k routed experts (the GLM-5.3 MTP layer)"
+explain.about = '''The routed experts of the GLM-5.3 MTP layer at one row. One launch per projection runs the row's top-$k$ slots on a $(\lceil N/8 \rceil, k)$ grid: slot $s$ applies expert $e_s$, found through the per-expert pointer tables, to input row $s$ (a stride of 0 shares one row) and writes row $s$ of the output. A slot whose expert id is out of range, or names an expert this rank does not own, writes nothing, so the caller's pre-zeroed row stays. Each slot computes the one-warp NVFP4 GEMV: E2M1 weights with an E4M3 scale per 16 values and an FP32 tensor scale, dequantized on the fly against the BF16 activations. No routing weight is applied here.'''
+explain.numerics = '''As the one-warp NVFP4 GEMV: the scale $s_{\mathrm{g}}\,s_{nj}$ is formed in FP32, each 16-value chunk is accumulated with a fused multiply-add chain over activations widened from BF16 and folded with one FMA by the chunk scale, the warp's shuffle tree sums in FP32, and the output is rounded once to BF16.'''
+explain.math = [
+  '''y_{s,n} = \mathrm{rn}_{\mathrm{bf16}}\Big(\sum_{j=0}^{K/16-1} \big(s^{(e_s)}_{\mathrm{g}}\, s^{(e_s)}_{nj}\big) \sum_{i=0}^{15} q^{(e_s)}_{n,16j+i}\, x_{s,16j+i}\Big), \qquad s = 0,\dots,k-1''',
+  '''\text{where } e_s \text{ is slot } s\text{'s expert, } q^{(e)} \text{ its E2M1 values, } s^{(e)}_{nj} \text{ its E4M3 group scales and } s^{(e)}_{\mathrm{g}} \text{ its tensor scale}''',
+]
 compute = "cuda_core"
 kernels = ["w4a16_gemv::w4a16_gemv_sw_moe"]
 rows = [1, 1]

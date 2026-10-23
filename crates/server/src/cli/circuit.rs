@@ -234,7 +234,12 @@ const FAMILIES: [(&str, &str); 1] = [(
 
 /// 2026-10-02: The kernel families of the instance's hardware (the first `target` segment).
 pub(crate) fn families_for(inst: &Instance) -> Result<metrale_circuit::venn::Families> {
-    let hw = inst.target.split('/').next().unwrap_or_default();
+    families_of_class(inst.target.split('/').next().unwrap_or_default())
+}
+
+/// 2026-10-22: The kernel families embedded for hardware class `hw` (the blueprint export's
+/// kernel math).
+pub(crate) fn families_of_class(hw: &str) -> Result<metrale_circuit::venn::Families> {
     let text = FAMILIES
         .iter()
         .find(|(h, _)| *h == hw)
