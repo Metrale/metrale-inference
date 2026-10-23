@@ -221,6 +221,10 @@ fn installation_refuses_unmodelled_levers_and_another_split_count() {
             for lever in ["SELECT_ONCE=0", "SERVE_REF", "TOPK_MC=0"] {
                 assert!(e.contains(lever), "{lever}: {e}");
             }
+            // 2026-10-23: BF16 persisted keys (and the MMA scores over them): the rules model FP32.
+            let mut dl = layer(&gpu, &st, l, 0);
+            dl.select_kernels.rows.pool_keys_bf16 = true;
+            assert!(dsa::unmodelled(&dl)[0].contains("POOL_KEYS_BF16"));
             let mut dl = layer(&gpu, &st, l, 0);
             dl.decode_kernel = Glm5NextDsaDecodeKernel::resolve(&gpu, Some(4)).unwrap();
             let e = installed(&gpu, &c[0], &plans, &policy, &dl).err().unwrap();

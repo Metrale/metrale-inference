@@ -181,6 +181,7 @@ impl TransformerModel {
             config: &self.config,
             dispatch: &self.dispatch,
             moe_lora_route: self.decode_moe_route(),
+            ab_levers: metrale_model_layers::layer::AbLevers::NONE,
             derived: &self.derived,
             levers: &self.levers,
             settings: &self.settings,

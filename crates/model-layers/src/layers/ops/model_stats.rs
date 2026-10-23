@@ -21,6 +21,8 @@ pub struct ModelStats {
     pub moe_union: MoeUnionStats,
     /// 2026-09-25: One-shot latches for dumps and once-per-model log lines.
     pub dumped: DumpLatches,
+    /// 2026-10-23: The paired in-serve A/B instrument (`paired_ab.rs`), off unless set.
+    pub paired_ab: super::paired_ab::PairedAb,
 }
 
 /// 2026-09-25: Expert-union sampling counters for one model: calls seen, calls sampled, and the

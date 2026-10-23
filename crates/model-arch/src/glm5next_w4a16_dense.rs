@@ -366,7 +366,7 @@ fn proj_registered(
         // K 2048 take the M-row segmented GEMV, whose rows are these tiers' bytes (each the
         // one-row GEMV's); from K 2048 up the tier, unless `w4a16_gemv_pipe` takes the rows
         // (2026-10-21: `SegPlan::pipe_rows`; KDA o 31.2 -> 30.6 us at 2 rows).
-        if plan.seg_gemv(m) && (w4a16_gemv_seg_lone(k32) || plan.pipe_rows(m)) {
+        if plan.seg_gemv(m) && (w4a16_gemv_seg_lone(k32) || plan.lone_pipe(m)) {
             let segs = [W4a16Seg {
                 weight: e.w,
                 output: c,
@@ -433,7 +433,7 @@ pub fn proj_group(
 /// 2026-10-11: Whether a group of `m` rows runs as one `w4a16_gemv_seg` launch under `plan`
 /// (`SegPlan::seg_gemv`, unless the dequantize + cuBLASLt path takes the rows); then up to six
 /// members, else at most the row tiles' three.
-fn seg_gemv_group(plan: SegPlan, m: usize) -> bool {
+pub(crate) fn seg_gemv_group(plan: SegPlan, m: usize) -> bool {
     plan.seg_gemv(m)
         && (m == 1
             || !(crate::glm5next_w4a16_wide::takes(plan.dequant_min_rows, m)

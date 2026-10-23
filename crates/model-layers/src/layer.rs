@@ -12,7 +12,9 @@ use metrale_config::ModelConfig;
 use metrale_gpu_runtime::buffers::BufferArena;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
+mod ab_levers;
 mod one_row_path;
+pub use ab_levers::AbLevers;
 mod transformer_layer;
 pub use one_row_path::{split_segment_takes_decode_path, takes_decode_path};
 pub use transformer_layer::{
@@ -331,6 +333,9 @@ pub struct ForwardContext<'a> {
     /// draft passes, and `Refuse` on a kernel-batched multi-stream prefill. Read by the MoE
     /// LoRA fold hooks (`layers/moe/lora.rs`).
     pub moe_lora_route: MoeLoraRoute,
+    /// 2026-10-23: The paired A/B instrument's lever set for this pass (`ab_levers.rs`);
+    /// `AbLevers::NONE` outside the instrument.
+    pub ab_levers: AbLevers,
 }
 
 /// 2026-09-25: Per-pass descriptor for mid-chunk SSM tail capture: the reserved snapshot

@@ -175,6 +175,7 @@ pub(super) fn drafter_ctx<'a>(
         routed_lora_layers: None,
         midchunk_capture: None,
         moe_lora_route: ctx.moe_lora_route,
+        ab_levers: metrale_model_layers::layer::AbLevers::NONE,
     }
 }
 

@@ -366,6 +366,7 @@ impl TransformerModel {
             routed_lora_layers: None,
             midchunk_capture: None,
             moe_lora_route: self.decode_moe_route(),
+            ab_levers: metrale_model_layers::layer::AbLevers::NONE,
         };
 
         let prefill_ctx = ForwardContext {
@@ -397,6 +398,7 @@ impl TransformerModel {
             routed_lora_layers: self.routed_slot_layers(prefill_seq.adapter_slot),
             midchunk_capture: None,
             moe_lora_route: self.moe_lora_route(prefill_seq.adapter_slot),
+            ab_levers: metrale_model_layers::layer::AbLevers::NONE,
         };
 
         // 2026-09-25: Refuse a decode row routed to a non-active adapter, as

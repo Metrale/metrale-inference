@@ -33,6 +33,10 @@ pub struct DenseLevers {
     /// 2026-10-21: `METRALE_GLM_W4A16_GEMV_PIPE` (on unless switched off): under `gemv_seg`, the
     /// 1- and 2-row launches on `w4a16_gemv_pipe` (`glm5next_w4a16_seg::SegPlan::pipe_rows`).
     pub gemv_pipe: bool,
+    /// 2026-10-23: `METRALE_GLM_SWIGLU_DOWN_FOLD` (`glm5next_swiglu_down`).
+    pub swiglu_down: bool,
+    /// 2026-10-23: `METRALE_GLM_DENSE_SEGMENT` (`glm5next_dense_seg`).
+    pub dense_seg: bool,
     /// 2026-10-12: `METRALE_GLM_W4A16_TC_GEMM_MIN_ROWS` (`glm5next_w4a16_tc`): `None` off.
     pub tc_min_rows: Option<usize>,
     /// 2026-10-10: `METRALE_GLM_W4A16_DEQUANT_GEMM_MIN_ROWS` (`glm5next_w4a16_wide`): `None` off.
@@ -115,6 +119,8 @@ impl DenseLevers {
             gemv_rows: gemv_rows.map_or(0, |r| r as u32),
             gemv_seg: k.glm_w4a16_gemv_seg,
             gemv_pipe: k.glm_w4a16_gemv_pipe,
+            swiglu_down: k.glm_swiglu_down_fold,
+            dense_seg: k.glm_dense_segment,
             tc_min_rows,
             dequant_min_rows,
             fp8_dequant_min_rows,
@@ -142,6 +148,12 @@ impl DenseLevers {
             }
             if self.gemv_seg {
                 bail!("METRALE_GLM_W4A16_GEMV_SEG=1 {W4A16}");
+            }
+            if self.swiglu_down {
+                bail!("METRALE_GLM_SWIGLU_DOWN_FOLD=1 {W4A16}");
+            }
+            if self.dense_seg {
+                bail!("METRALE_GLM_DENSE_SEGMENT=1 {W4A16}");
             }
             if let Some(r) = self.tc_min_rows {
                 bail!("METRALE_GLM_W4A16_TC_GEMM_MIN_ROWS={r} {W4A16}");

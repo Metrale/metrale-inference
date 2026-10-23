@@ -276,6 +276,11 @@ pub fn unmodelled(levers: &crate::glm5next_layer::GlmLevers) -> Vec<&'static str
             d.batch_invariant,
             "METRALE_GLM_BATCH_INVARIANT (the one-row row-tile order)",
         ),
+        (
+            k.conv_one,
+            "METRALE_GLM_KDA_CONV_ONE (the rules name the snapshot copies, the conv and the advance \
+             as separate launches)",
+        ),
     ]
     .into_iter()
     .filter_map(|(set, what)| set.then_some(what))

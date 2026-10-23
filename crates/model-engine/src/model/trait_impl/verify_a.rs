@@ -174,6 +174,7 @@ impl TransformerModel {
                         routed_lora_layers: None,
                         midchunk_capture: None,
                         moe_lora_route: self.decode_moe_route(),
+                        ab_levers: metrale_model_layers::layer::AbLevers::NONE,
                     };
 
                     let h_t = hidden.offset(t * h * fp32);
@@ -214,6 +215,7 @@ impl TransformerModel {
                     routed_lora_layers: None,
                     midchunk_capture: None,
                     moe_lora_route: self.decode_moe_route(),
+                    ab_levers: metrale_model_layers::layer::AbLevers::NONE,
                 };
 
                 layer.decode_batched(
@@ -396,6 +398,7 @@ impl TransformerModel {
                 routed_lora_layers: None,
                 midchunk_capture: None,
                 moe_lora_route: self.decode_moe_route(),
+                ab_levers: metrale_model_layers::layer::AbLevers::NONE,
             };
 
             let h_t = hidden.offset(t * h * bf16);

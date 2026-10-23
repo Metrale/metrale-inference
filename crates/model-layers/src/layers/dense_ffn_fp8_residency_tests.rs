@@ -109,6 +109,7 @@ fn with_ctx(gpu: &MockGpuBackend, f: impl FnOnce(&ForwardContext, &BufferArena))
         routed_lora_layers: None,
         midchunk_capture: None,
         moe_lora_route: MoeLoraRoute::Fold,
+        ab_levers: crate::layer::AbLevers::NONE,
     };
     f(&ctx, &buffers);
 }

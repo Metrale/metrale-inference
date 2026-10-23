@@ -19,7 +19,6 @@ crates/model-layers/src/layers/mod.rs 502
 crates/model-layers/src/layers/qwen3_ssm/trait_layer.rs 501
 crates/server/src/cli/serve_args.rs 501
 crates/server/src/cli/serve_args/scheduling.rs 517
-crates/server/src/scheduler/verify_k2_step.rs 533
 .github/scripts/certification-selftest.sh 2778
 kernels/b300/common/dsa_indexer.cu 607
 kernels/b300/common/moe_w4a16_grouped_gemm.cu 589

@@ -86,6 +86,7 @@ impl TransformerModel {
                 routed_lora_layers: ctx.routed_lora_layers,
                 midchunk_capture: None,
                 moe_lora_route: ctx.moe_lora_route,
+                ab_levers: metrale_model_layers::layer::AbLevers::NONE,
             }
         };
 
@@ -291,6 +292,7 @@ impl TransformerModel {
             routed_lora_layers: None,
             midchunk_capture: None,
             moe_lora_route: self.decode_moe_route(),
+            ab_levers: metrale_model_layers::layer::AbLevers::NONE,
         };
 
         // 2026-09-25: Skip the linear-attention (SSM) layers; every other layer

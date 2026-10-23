@@ -132,4 +132,11 @@ fn an_unmodelled_lever_refuses_installation() {
         .unwrap();
     assert!(format!("{e:#}").contains("SWEEP_SERIAL=0"), "{e:#}");
     assert!(inst.sites().is_empty());
+    // 2026-10-23: The dense segment replaces the shared expert's launches the rules name.
+    let mut s = site(0);
+    s.k.levers.dense.dense_seg = true;
+    assert_eq!(
+        unmodelled(&s.k),
+        ["METRALE_GLM_DENSE_SEGMENT (the rules name the shared expert's separate launches)"]
+    );
 }

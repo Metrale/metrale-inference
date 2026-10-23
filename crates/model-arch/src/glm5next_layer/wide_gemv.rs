@@ -38,6 +38,8 @@ pub(crate) struct Batchm {
     pub(crate) narrow: KernelHandle,
     pub(crate) wide: KernelHandle,
     pub(crate) few: KernelHandle,
+    /// 2026-10-23: Outputs per 64-thread group block of `few` (4: the common entries).
+    pub(crate) few_npb: u32,
     pub(crate) out_bytes: usize,
 }
 
@@ -47,7 +49,15 @@ pub(crate) struct Batchm {
 pub struct FewGemv {
     pub bf16: KernelHandle,
     pub f32: KernelHandle,
+    /// 2026-10-23: Outputs per block of `f32` (`FEW_NPB` for the common entry).
+    pub f32_npb: u32,
+    /// 2026-10-23: `glm5next_router_gemv_npb1` (the paired A/B instrument's `router_npb1`);
+    /// `KernelHandle(0)` where the target lacks it.
+    pub router_npb1: KernelHandle,
 }
+
+/// 2026-10-23: `bmfew::N_PER_BLOCK`: outputs per block of the common few-row entries.
+pub const FEW_NPB: u32 = 4;
 
 impl FewGemv {
     pub fn resolve(gpu: &dyn GpuBackend) -> Self {
@@ -57,7 +67,27 @@ impl FewGemv {
         Self {
             bf16: entry("dense_gemv_bf16_batchm_few"),
             f32: entry("dense_gemv_bf16_batchm_few_fp32out"),
+            f32_npb: FEW_NPB,
+            router_npb1: metrale_model_layers::layers::try_kernel(
+                gpu,
+                "glm5next_router_gemv",
+                "glm5next_router_gemv_npb1",
+            ),
         }
+    }
+
+    /// 2026-10-23: These entries with the FP32 one at one output per block
+    /// (`glm5next_router_gemv_npb1`, the same bits); an error where the target lacks it.
+    pub fn with_router_npb1(self) -> Result<Self> {
+        anyhow::ensure!(
+            self.router_npb1.0 != 0,
+            "glm5next_router_gemv_npb1 is not built"
+        );
+        Ok(Self {
+            f32: self.router_npb1,
+            f32_npb: 1,
+            ..self
+        })
     }
 }
 
@@ -70,11 +100,16 @@ impl Batchm {
         few: FewGemv,
         out_bytes: usize,
     ) -> Self {
-        let few = if out_bytes == 4 { few.f32 } else { few.bf16 };
+        let (few, few_npb) = if out_bytes == 4 {
+            (few.f32, few.f32_npb)
+        } else {
+            (few.bf16, FEW_NPB)
+        };
         Self {
             narrow,
             wide,
             few,
+            few_npb,
             out_bytes,
         }
     }
@@ -87,6 +122,7 @@ impl From<KernelHandle> for Batchm {
             narrow,
             wide: KernelHandle(0),
             few: KernelHandle(0),
+            few_npb: FEW_NPB,
             out_bytes: 2,
         }
     }
@@ -115,11 +151,13 @@ pub(crate) fn fixed_entry(
 }
 
 /// 2026-10-23: One launch of a fixed-count batched entry (`wide` or `few`) over `m` rows: the
-/// launch [`glm_mm`] makes for one, and the plan executor's for a group that names one.
+/// launch [`glm_mm`] makes for one, and the plan executor's for a group that names one, at `npb`
+/// outputs per 64-thread group block.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn launch_fixed(
     gpu: &dyn GpuBackend,
     entry: KernelHandle,
+    npb: u32,
     a: DevicePtr,
     b: DevicePtr,
     c: DevicePtr,
@@ -129,8 +167,8 @@ pub(crate) fn launch_fixed(
     stream: u64,
 ) -> Result<()> {
     KernelLaunch::new(gpu, entry)
-        .grid([div_ceil(n as u32, 4), 1, 1])
-        .block([256, 1, 1])
+        .grid([div_ceil(n as u32, npb), 1, 1])
+        .block([64 * npb, 1, 1])
         .arg_ptr(a)
         .arg_ptr(b)
         .arg_ptr(c)
@@ -216,7 +254,13 @@ pub(crate) fn glm_mm(
         return ops::cublas_bf16_proj_dense(a, b, c, m as u32, n as u32, kk as u32, stream);
     }
     if let Some(entry) = fixed_entry(&batchm, m, &levers.dense) {
-        return launch_fixed(gpu, entry, a, b, c, m, n, kk, stream);
+        // 2026-10-23: The wide entries and the common few ones hold 4 outputs per block.
+        let npb = if entry.0 == batchm.few.0 {
+            batchm.few_npb
+        } else {
+            FEW_NPB
+        };
+        return launch_fixed(gpu, entry, npb, a, b, c, m, n, kk, stream);
     }
     ops::dense_mm_bf16(
         gpu,
@@ -265,6 +309,7 @@ mod tests {
             narrow: KernelHandle(20),
             wide: KernelHandle(wide),
             few: KernelHandle(few),
+            few_npb: FEW_NPB,
             out_bytes: 4,
         };
         let on = crate::glm5next_dense_levers::DenseLevers::declared();
@@ -329,6 +374,7 @@ mod tests {
             narrow,
             wide: KernelHandle(0),
             few: KernelHandle(0),
+            few_npb: FEW_NPB,
             out_bytes: 4,
         };
         let (a, w, c) = (

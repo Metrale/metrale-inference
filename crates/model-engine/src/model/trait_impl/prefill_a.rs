@@ -375,11 +375,11 @@ impl TransformerModel {
             // 2026-09-25: Hash-MoE token IDs for the processed tokens, uploaded above.
             token_ids: Some(self.buffers.token_ids()),
             host_token_ids: None,
-            // 2026-09-25: `Some` only when the request routes to a non-active
-            // adapter slot.
+            // 2026-09-25: `Some` only when the request routes to a non-active adapter slot.
             routed_lora_layers: self.routed_slot_layers(seq.adapter_slot),
             midchunk_capture: None,
             moe_lora_route: self.moe_lora_route(seq.adapter_slot),
+            ab_levers: metrale_model_layers::layer::AbLevers::NONE,
         };
 
         // 2026-09-25: 4. Forward through all layers. On a Marconi hit the KV

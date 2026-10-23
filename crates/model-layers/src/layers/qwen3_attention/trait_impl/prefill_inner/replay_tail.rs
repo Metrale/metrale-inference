@@ -114,6 +114,7 @@ impl Qwen3AttentionLayer {
             routed_lora_layers: ctx.routed_lora_layers,
             midchunk_capture: None,
             moe_lora_route: ctx.moe_lora_route,
+            ab_levers: crate::layer::AbLevers::NONE,
         };
         let tail_rows = num_tokens - cl;
         let tail = self.prefill_attention_paged(

@@ -113,6 +113,10 @@ pub fn unmodelled(k: &Glm5NextMlpKernels) -> Vec<&'static str> {
             !m.zero_in_swiglu,
             "METRALE_GLM_MOE_ZERO_IN_SWIGLU=0 (the rules zero expert_out in the SwiGLU)",
         ),
+        (
+            k.levers.dense.dense_seg,
+            "METRALE_GLM_DENSE_SEGMENT (the rules name the shared expert's separate launches)",
+        ),
     ]
     .into_iter()
     .filter_map(|(set, what)| set.then_some(what))

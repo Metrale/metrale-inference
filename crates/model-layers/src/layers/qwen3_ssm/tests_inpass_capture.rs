@@ -88,6 +88,7 @@ fn run(
         routed_lora_layers: None,
         midchunk_capture,
         moe_lora_route: crate::layer::MoeLoraRoute::Fold,
+        ab_levers: crate::layer::AbLevers::NONE,
     };
     let nk = config.linear_num_key_heads;
     let nv = config.linear_num_value_heads;

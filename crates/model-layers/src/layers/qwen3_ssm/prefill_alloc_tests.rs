@@ -57,6 +57,7 @@ fn ssm_qkvz_prefill_allocates_nothing_with_the_cublas_lever_armed() {
         routed_lora_layers: None,
         midchunk_capture: None,
         moe_lora_route: crate::layer::MoeLoraRoute::Fold,
+        ab_levers: crate::layer::AbLevers::NONE,
     };
 
     let m = 28_u32;

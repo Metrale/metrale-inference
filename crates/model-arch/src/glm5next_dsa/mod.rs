@@ -38,6 +38,9 @@
 //! * `dsa_expand_selection` writes -1 over the whole index row before it stores any index,
 //!   so every slot is written.
 
+mod pool_keys_bf16;
+pub use pool_keys_bf16::{DSA_SCORES_HEADS_BF16_MODULE, DSA_SCORES_MMA_PAGED_MODULE};
+
 use anyhow::{Result, bail};
 use metrale_config::ModelConfig;
 use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
@@ -162,6 +165,17 @@ pub struct DsaRowsKernels {
     /// [`Self::scores_heads_paged`]'s bytes and launch with a straight-line pool step
     /// (`select::scores::heads_kernel`). `KernelHandle(0)` whenever `scores_heads_paged` is.
     pub scores_heads_window: KernelHandle,
+    /// 2026-10-23: `METRALE_GLM_DSA_POOL_KEYS_BF16` ([`Self::with_bf16_pool_keys`]): the
+    /// persisted keys are BF16, [`Self::pool_keys_store`], [`Self::scores_heads_paged`] and
+    /// [`Self::scores_heads_window`] are their BF16-key instances (both
+    /// `dsa_index_scores_mma_paged_bf16` under `METRALE_GLM_DSA_DECODE_SCORES_MMA`), and nothing
+    /// may score them with [`Self::scores_warp_paged`] (an FP32 reader).
+    pub pool_keys_bf16: bool,
+    /// 2026-10-23: `dsa_index_scores_mma_paged_bf16`, resolved with [`Self::pool_keys_bf16`]
+    /// (`KernelHandle(0)` otherwise): the BF16 persisted keys on tensor cores, which
+    /// `METRALE_GLM_DSA_DECODE_SCORES_MMA` (or the paired A/B's `dsa_mma` arm) launches as both
+    /// lane-per-head handles.
+    pub scores_mma_paged: KernelHandle,
     /// 2026-10-21: `dsa_topk_mc.cu`'s `dsa_topk_mc_pass` and `dsa_topk_mc_collect`:
     /// [`Self::topk_radix`]'s selection over several CTAs per row (`select::topk_mc`). Not part
     /// of [`Self::ready`].
@@ -232,6 +246,8 @@ impl DsaRowsKernels {
             select_fused: pipe("dsa_select_fused_pipe"),
             scores_heads_paged: heads,
             scores_heads_window: heads_window,
+            pool_keys_bf16: false,
+            scores_mma_paged: KernelHandle(0),
             topk_mc_pass: e(plan::entry::TOPK_MC_PASS),
             topk_mc_collect: e(plan::entry::TOPK_MC_COLLECT),
             sm_count,

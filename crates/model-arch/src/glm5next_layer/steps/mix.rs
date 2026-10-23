@@ -65,6 +65,19 @@ impl Glm5NextLayer {
 
         match (&self.mixer, &kda_ctx) {
             (Glm5NextMixer::Kda { layer, ws, .. }, Some((kda, snaps))) => {
+                // 2026-10-23: The paired A/B's KDA levers for this step (`ab_levers.rs`).
+                let view;
+                let layer: &crate::glm5next_kda::Glm5NextKdaLayer =
+                    match super::ab_levers::kda_levers(layer.levers, ctx)? {
+                        Some(levers) => {
+                            view = crate::glm5next_kda::Glm5NextKdaLayer {
+                                levers,
+                                ..(**layer).clone()
+                            };
+                            &view
+                        }
+                        None => layer,
+                    };
                 // 2026-09-25: The chunked scan runs only for a prefill sub-chunk of more
                 // than one row that asked for no intermediates: it never materialises the
                 // state after an interior row, and its order differs from `decode_k`'s,
@@ -96,6 +109,19 @@ impl Glm5NextLayer {
                 Ok(ws.final_out)
             }
             (Glm5NextMixer::Dsa(layer), _) => {
+                // 2026-10-23: The paired A/B's DSA levers for this step (`ab_levers.rs`).
+                let view;
+                let layer: &crate::glm5next_dsa::layer::Glm5NextDsaLayer =
+                    match super::ab_levers::dsa_kernels(&layer.select_kernels, ctx)? {
+                        Some(select_kernels) => {
+                            view = crate::glm5next_dsa::layer::Glm5NextDsaLayer {
+                                select_kernels,
+                                ..(**layer).clone()
+                            };
+                            &view
+                        }
+                        None => layer,
+                    };
                 // 2026-09-25: DSA's `decode_k` writes its output projection over its input
                 // buffer. 2026-10-23: Under `--forward circuit` a captured pass with row
                 // metadata at an installed row count runs its plan (`glm5next_plan::dsa`),

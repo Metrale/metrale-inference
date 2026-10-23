@@ -271,7 +271,16 @@ impl MoeSteps<KernelHandle> {
             }
             RouterStep::Batched(entry) => {
                 crate::glm5next_layer::wide_gemv::launch_fixed(
-                    gpu, *entry, x, w.router, ws.logits, rows, n_e, h, stream,
+                    gpu,
+                    *entry,
+                    crate::glm5next_layer::wide_gemv::FEW_NPB,
+                    x,
+                    w.router,
+                    ws.logits,
+                    rows,
+                    n_e,
+                    h,
+                    stream,
                 )?;
             }
         }

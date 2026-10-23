@@ -303,7 +303,7 @@ step_exclusive_us = [20.704, 20.256, 28.416, 20.671, 20.511, 21.120, 20.352, 20.
 
 [[kernel]]
 kernel = "dense_gemv_bf16"
-site = "mtp_in.fc"
+site = "glm_mtp_in.fc"
 label = "MTP catch-up eh_proj M=1 N=4096 K=8192"
 note = "the catch-up eh_proj of the accepted token, a second fc launch per step"
 calls = 174
@@ -409,7 +409,7 @@ step_exclusive_us = [90.944, 89.280, 91.072, 87.168, 90.752, 85.856, 92.800, 89.
 
 [[kernel]]
 kernel = "dense_gemv_bf16"
-site = "mtp_in.fc"
+site = "glm_mtp_in.fc"
 label = "MTP eh_proj TP slice M=1 N=1408 K=8192"
 calls = 230
 total_us = 23919.648

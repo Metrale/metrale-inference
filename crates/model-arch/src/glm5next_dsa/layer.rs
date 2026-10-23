@@ -74,6 +74,7 @@ pub(crate) use workspace::batch_select_enabled;
 pub use workspace::{select_scratch_geometry, select_scratch_rows};
 
 /// 2026-09-25: One DSA block's weights on the device, already sharded for this rank.
+#[derive(Clone)]
 pub struct Glm5NextDsaWeights {
     pub q_a_proj: DevicePtr,
     pub q_a_layernorm: DevicePtr,
@@ -102,6 +103,7 @@ pub struct Glm5NextDsaWeights {
     pub ape: DevicePtr,
 }
 
+#[derive(Clone)]
 pub struct Glm5NextDsaLayer {
     pub cfg: Glm5NextDsaConfig,
     pub weights: Glm5NextDsaWeights,

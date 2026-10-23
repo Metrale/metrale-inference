@@ -341,6 +341,7 @@ impl Env {
             profile: false,
             comm: None,
             graph_capture: capture,
+            ab_levers: metrale_model_layers::layer::AbLevers::NONE,
             decode_step: true,
             gdn_exact_replay: false,
             gdn_write_on_accept: false,

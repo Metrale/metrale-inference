@@ -57,6 +57,22 @@ pub fn forward_dense(
             ws.max_rows
         );
     }
+    // 2026-10-23: One persistent launch under `METRALE_GLM_DENSE_SEGMENT` (`glm5next_dense_seg`).
+    let io = crate::glm5next_dense_seg::DenseSegIo {
+        x,
+        gate_w: w.gate_proj,
+        up_w: w.up_proj,
+        down_w: w.down_proj,
+        gate: ws.gate,
+        up: ws.up,
+        act: ws.act,
+        out,
+    };
+    let limit = cfg.swiglu_limit;
+    let seg = crate::glm5next_dense_seg::dense_segment;
+    if seg(gpu, &k.levers.dense, &io, limit, m, cfg.hidden, inter, stream)? {
+        return Ok(());
+    }
     // 2026-10-09: gate and up read `x` unchanged: one FP8 quantization under the FP8 tier.
     let stable = crate::glm5next_fp8_dense::stable_input(x);
     // 2026-10-09: One launch under `METRALE_GLM_W4A16_SEG` (`proj_group`), else one each.
@@ -100,17 +116,26 @@ pub fn forward_dense(
         )?;
     }
     drop(stable);
-    swiglu(
+    // 2026-10-23: One launch under `METRALE_GLM_SWIGLU_DOWN_FOLD` (`glm5next_swiglu_down`).
+    let (gate, up, limit) = (ws.gate, ws.up, cfg.swiglu_limit);
+    let down = w.down_proj;
+    if crate::glm5next_swiglu_down::swiglu_down(
         gpu,
-        k.swiglu,
-        ws.gate,
-        ws.up,
-        ws.act,
-        // 2026-09-25: Elementwise over all `m * inter` values.
-        m * inter,
-        cfg.swiglu_limit,
+        &k.levers.dense,
+        gate,
+        up,
+        limit,
+        down,
+        out,
+        m,
+        cfg.hidden,
+        inter,
         stream,
-    )?;
+    )? {
+        return Ok(());
+    }
+    // 2026-09-25: Elementwise over all `m * inter` values.
+    swiglu(gpu, k.swiglu, gate, up, ws.act, m * inter, limit, stream)?;
     gemm(
         gpu,
         &k.levers,
@@ -118,7 +143,7 @@ pub fn forward_dense(
         k.gemv,
         k.batchm(),
         ws.act,
-        w.down_proj,
+        down,
         out,
         m,
         cfg.hidden,

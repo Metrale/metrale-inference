@@ -299,6 +299,7 @@ fn check_dispatch_with(
         routed_lora_layers: None,
         midchunk_capture: None,
         moe_lora_route: MoeLoraRoute::Fold,
+        ab_levers: crate::layer::AbLevers::NONE,
     };
     let c = MultiSeqCtx::new(
         &layer,

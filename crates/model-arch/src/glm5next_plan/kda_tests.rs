@@ -459,4 +459,8 @@ fn installation_refuses_unmodelled_levers() {
     levers = served_levers();
     levers.kda.gates_rows = false;
     assert!(kda::unmodelled(&levers)[0].contains("GATES_ROWS"));
+    // 2026-10-23: The one-launch conv the rules do not name (bit-identical, but inert under a plan).
+    levers = served_levers();
+    levers.kda.conv_one = true;
+    assert!(kda::unmodelled(&levers)[0].contains("CONV_ONE"));
 }

@@ -14,7 +14,7 @@
 
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tokio::sync::mpsc;
 
 use super::serve::Prepared;
@@ -46,6 +46,7 @@ pub(crate) fn load_model(
 ) -> Result<Option<Prepared>> {
     // 2026-10-17: Resolved before the model loads, so a malformed value stops the load at once.
     let run_io = scheduler::run_io::RunIoSettings::from_settings(&settings)?;
+    let forced = resolve_forced_traj(settings.telemetry.paired_ab_traj.as_deref())?;
     let Some(engine::Engine {
         args,
         model,
@@ -276,6 +277,7 @@ pub(crate) fn load_model(
                 telemetry: metrale_telemetry::global(),
                 pipeline_faults: scheduler::PipelineFaults::NONE,
                 run_io,
+                forced,
                 dflash_rung,
             },
         );
@@ -399,3 +401,21 @@ pub(crate) fn load_model(
 #[cfg(test)]
 #[path = "serve_load_tests.rs"]
 mod tests;
+
+/// 2026-10-23: `METRALE_PAIRED_AB_TRAJ` (`scheduler::forced_traj`): `record`, or `replay:<path>`
+/// of a recording serve's rank-0 log, read here once; anything else stops the load.
+fn resolve_forced_traj(text: Option<&str>) -> Result<Option<scheduler::forced_traj::TrajMode>> {
+    use scheduler::forced_traj::{TrajMode, Trajectory};
+    let Some(text) = text.map(str::trim) else {
+        return Ok(None);
+    };
+    if text == "record" {
+        return Ok(Some(TrajMode::Record));
+    }
+    let Some(path) = text.strip_prefix("replay:") else {
+        anyhow::bail!("METRALE_PAIRED_AB_TRAJ `{text}`: expected `record` or `replay:<log>`");
+    };
+    let log = std::fs::read_to_string(path)
+        .with_context(|| format!("METRALE_PAIRED_AB_TRAJ: reading {path}"))?;
+    Ok(Some(TrajMode::Replay(Trajectory::parse(&log)?)))
+}

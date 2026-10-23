@@ -99,3 +99,52 @@ __device__ __forceinline__ void causal_conv1d_update_l2norm_body(
     }
 }
 
+
+// 2026-10-23: T consecutive tokens of ONE sequence (a K-row verify) through the conv, SiLU and
+// L2 with every conv window step in the same launch: grid (ceil(dim / 256)), block 256, each
+// thread carrying its channel's window in registers through the T tokens. Token t runs
+// causal_conv1d_update_l2norm_body on the window after tokens 0..t-1 (the window
+// causal_conv1d_update_l2norm_tokens builds for block (x, t): the same floats), so its output
+// is that kernel's. After token t < nsnap (at most three) the window is stored to snap[t]
+// (causal_conv1d_window_advance_to at T = t + 1, from the live window: the same floats), and
+// after the last token to conv_state (causal_conv1d_window_advance at T). Each thread reads its
+// window whole before writing it; no other thread touches that channel. d_conv <= 4.
+__device__ __forceinline__ void causal_conv1d_update_l2norm_tokens_snap_body(
+    float* __restrict__ conv_state,
+    const __nv_bfloat16* __restrict__ new_input,
+    const __nv_bfloat16* __restrict__ weight,
+    const float* __restrict__ bias,
+    __nv_bfloat16* __restrict__ output,
+    float* __restrict__ snap0,
+    float* __restrict__ snap1,
+    float* __restrict__ snap2,
+    unsigned int nsnap,
+    unsigned int dim,
+    unsigned int d_conv,
+    unsigned int qk_channels,
+    unsigned int head_dim,
+    float l2_eps,
+    unsigned int T
+) {
+    const unsigned int ch = blockIdx.x * blockDim.x + threadIdx.x;
+    const bool live = ch < dim;
+    float win[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    if (live) {
+        for (unsigned int s = 0; s < d_conv && s < 4u; ++s) win[s] = conv_state[(size_t)ch * d_conv + s];
+    }
+    float* const snaps[3] = {snap0, snap1, snap2};
+    for (unsigned int t = 0; t < T; ++t) {
+        // 2026-10-23: The body reuses its shared warp sums: every thread has read token t - 1's
+        // before token t writes them (block-uniform: no thread returns early).
+        if (t > 0) __syncthreads();
+        causal_conv1d_update_l2norm_body(nullptr, new_input, weight, bias, output, 0u, t, true, dim,
+                                         d_conv, qk_channels, head_dim, l2_eps, win);
+        if (live && t < nsnap && t < 3u) {
+            for (unsigned int s = 0; s < d_conv && s < 4u; ++s)
+                snaps[t][(size_t)ch * d_conv + s] = win[s];
+        }
+    }
+    if (live) {
+        for (unsigned int s = 0; s < d_conv && s < 4u; ++s) conv_state[(size_t)ch * d_conv + s] = win[s];
+    }
+}

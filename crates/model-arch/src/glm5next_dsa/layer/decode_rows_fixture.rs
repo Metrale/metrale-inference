@@ -134,6 +134,7 @@ impl Rig {
             routed_lora_layers: None,
             midchunk_capture: None,
             moe_lora_route: MoeLoraRoute::Fold,
+            ab_levers: metrale_model_layers::layer::AbLevers::NONE,
         }
     }
 
@@ -173,6 +174,8 @@ impl Rig {
                 gemv_batchm_few: crate::glm5next_layer::wide_gemv::FewGemv {
                     bf16: k(BATCHM_FEW),
                     f32: k(BATCHM_FEW_F32),
+                    f32_npb: crate::glm5next_layer::wide_gemv::FEW_NPB,
+                    router_npb1: k(0),
                 },
                 // 2026-10-21: Absent, so the fixture's launch sequences keep the two launches;
                 // `selector_pair_tests` sets it.
@@ -210,6 +213,8 @@ impl Rig {
                     select_fused: KernelHandle(0),
                     scores_heads_paged: KernelHandle(0),
                     scores_heads_window: KernelHandle(0),
+                    pool_keys_bf16: false,
+                    scores_mma_paged: KernelHandle(0),
                     topk_mc_pass: KernelHandle(0),
                     topk_mc_collect: KernelHandle(0),
                     sm_count: 0,

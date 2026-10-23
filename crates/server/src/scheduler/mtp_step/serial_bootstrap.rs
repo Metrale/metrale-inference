@@ -89,6 +89,14 @@ pub(super) fn bootstrap_seq(
         // to the standalone decode below.
     }
 
+    // 2026-10-23: `METRALE_PAIRED_AB_TRAJ` (`forced_traj`): a replay feeds the recorded token.
+    let traj = match crate::scheduler::forced_traj_hooks::feed(sched.forced.as_ref(), a, false) {
+        Ok(t) => t,
+        Err(e) => {
+            crate::scheduler::lifecycle::fail_sequence(a, format!("forced trajectory: {e:#}"));
+            return;
+        }
+    };
     // 2026-09-25: Standalone decode. Under EP the token is broadcast to
     // the worker first (`ep_broadcast_cmd_for_seq`).
     if let Err(e) = model.ep_broadcast_cmd_for_seq(a.seq.slot_idx as u32, a.last_token) {
@@ -119,6 +127,16 @@ pub(super) fn bootstrap_seq(
         }
     };
 
+    let tok = match (traj, sched.forced.as_ref()) {
+        (Some(at), Some(f)) => match f.boot_pick(at, a.last_token, tok) {
+            Ok(t) => t,
+            Err(e) => {
+                crate::scheduler::lifecycle::fail_sequence(a, format!("forced trajectory: {e:#}"));
+                return;
+            }
+        },
+        _ => tok,
+    };
     let lp = if let Some(k) = a.top_logprobs {
         extract_single_logprobs(model, logits, tok, k)
     } else {

@@ -315,6 +315,7 @@ impl Glm5NextKdaLayer {
                     conv_tokens: tokens,
                     conv_window: window,
                     recurrent_snap,
+                    conv_one: None,
                 };
                 self.stateful_tokens_snap_with(gpu, kernels, k, state, ws, snapshots, stream)
             }

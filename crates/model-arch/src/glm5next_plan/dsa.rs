@@ -344,6 +344,11 @@ pub fn unmodelled(layer: &crate::glm5next_dsa::layer::Glm5NextDsaLayer) -> Vec<&
             "an indexer cache without persisted BF16 pool keys (METRALE_GLM_DSA_POOL_KEYS=0, a \
              flat cache or --indexer-cache-dtype fp8; the rules score persisted keys)",
         ),
+        (
+            layer.select_kernels.rows.pool_keys_bf16,
+            "METRALE_GLM_DSA_POOL_KEYS_BF16 (and _DECODE_SCORES_MMA, which needs it): the rules \
+             model FP32 persisted pool keys",
+        ),
     ]
     .into_iter()
     .filter_map(|(set, what)| set.then_some(what))

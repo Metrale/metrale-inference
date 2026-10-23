@@ -260,14 +260,14 @@ note = "o_proj absorbed with kv_b_proj's value half"
 kernel = "dense_gemv_bf16"
 grid = [1024, 1, 1]
 pred = "rms_norm_vanilla"
-site = "mtp_in.fc"
+site = "glm_mtp_in.fc"
 label = "MTP catch-up eh_proj M=1 N=4096 K=8192"
 note = "the catch-up eh_proj of the accepted token, a second fc launch per step"
 
 [[launch]]
 kernel = "dense_gemv_bf16"
 grid = [352, 1, 1]
-site = "mtp_in.fc"
+site = "glm_mtp_in.fc"
 label = "MTP eh_proj TP slice M=1 N=1408 K=8192"
 
 [[launch]]

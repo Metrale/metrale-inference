@@ -75,6 +75,10 @@ pub struct SchedCtx {
     /// (`--prompt-lookup-shared-cache-mb`); `None` when off. Set once by
     /// `SchedulerCore::new`, only alongside `prompt_lookup`.
     pub shared_lookup: Option<crate::scheduler::shared_lookup_step::SharedLookup>,
+    /// 2026-10-23: The paired A/B instrument's forced-trajectory mode
+    /// (`METRALE_PAIRED_AB_TRAJ`, `forced_traj`); `None` when off. Set once by
+    /// `SchedulerCore::new`.
+    pub forced: Option<crate::scheduler::forced_traj::ForcedTraj>,
 }
 
 impl SchedCtx {
@@ -106,6 +110,7 @@ impl SchedCtx {
             prompt_lookup: None,
             prompt_lookup_stats: std::cell::Cell::new([0; 3]),
             shared_lookup: None,
+            forced: None,
         }
     }
 

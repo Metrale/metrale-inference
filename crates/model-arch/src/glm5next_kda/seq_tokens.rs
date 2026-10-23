@@ -99,6 +99,7 @@ impl Glm5NextKdaLayer {
             conv_tokens: s.conv_tokens,
             conv_window: s.conv_window,
             recurrent_snap: s.recurrent_snap,
+            conv_one: self.levers.kda.conv_one.then_some(s.conv_snap),
         };
         self.stateful_tokens_snap_with(gpu, kernels, k, state, ws, snapshots, stream)
     }
@@ -128,26 +129,30 @@ impl Glm5NextKdaLayer {
         }
         let (qkv, cd, d) = (c.qkv_dim(), c.conv_dim(), c.head_dim);
         let io = RowIo::workspace(c, ws, 0);
-        for (t, &(_, conv_dst)) in snapshots.iter().enumerate() {
-            let mut launch = if let Some(to) = kernels.advance_to {
-                KernelLaunch::new(gpu, to).arg_ptr(state.conv)
-            } else {
-                gpu.copy_d2d_async(state.conv, conv_dst, c.conv_state_elems() * 4, stream)?;
-                KernelLaunch::new(gpu, kernels.conv_window)
-            };
-            launch = launch.arg_ptr(conv_dst);
-            launch
-                .grid([div_ceil(cd as u32, 256), 1, 1])
-                .block([256, 1, 1])
-                .arg_ptr(io.qkv_in)
-                .arg_u32(cd as u32)
-                .arg_u32(c.conv_kernel as u32)
-                .arg_u32(t as u32 + 1)
-                .launch(stream)?;
+        if let Some(one) = kernels.conv_one {
+            self.conv_tokens_snap(gpu, one, k, state, io, snapshots, stream)?;
+        } else {
+            for (t, &(_, conv_dst)) in snapshots.iter().enumerate() {
+                let mut launch = if let Some(to) = kernels.advance_to {
+                    KernelLaunch::new(gpu, to).arg_ptr(state.conv)
+                } else {
+                    gpu.copy_d2d_async(state.conv, conv_dst, c.conv_state_elems() * 4, stream)?;
+                    KernelLaunch::new(gpu, kernels.conv_window)
+                };
+                launch = launch.arg_ptr(conv_dst);
+                launch
+                    .grid([div_ceil(cd as u32, 256), 1, 1])
+                    .block([256, 1, 1])
+                    .arg_ptr(io.qkv_in)
+                    .arg_u32(cd as u32)
+                    .arg_u32(c.conv_kernel as u32)
+                    .arg_u32(t as u32 + 1)
+                    .launch(stream)?;
+            }
+            // 2026-10-13: The snapshots above read the packed rows, so the pack ran in `front_end`.
+            let conv = (kernels.conv_tokens, kernels.conv_window);
+            self.conv_tokens_with(gpu, conv, k, state, ws, Pack::InFrontEnd, stream)?;
         }
-        // 2026-10-13: The snapshots above read the packed rows, so the pack ran in `front_end`.
-        let conv = (kernels.conv_tokens, kernels.conv_window);
-        self.conv_tokens_with(gpu, conv, k, state, ws, Pack::InFrontEnd, stream)?;
         let snap = |t: usize| snapshots.get(t).map_or(DevicePtr::NULL, |p| p.0);
         KernelLaunch::new(gpu, kernels.recurrent_snap)
             .grid([c.heads as u32, (d / SEQ_VB) as u32, 1])
@@ -171,6 +176,51 @@ impl Glm5NextKdaLayer {
             .arg_ptr(snap(1))
             .arg_ptr(snap(2))
             .arg_u32(snapshots.len() as u32)
+            .launch(stream)
+    }
+
+    /// 2026-10-23: each conv intermediate then [`Self::conv_tokens`] (packed rows) as one
+    /// `causal_conv1d_update_l2norm_tokens_snap` launch: the same bytes (the kernel's
+    /// invariant). Refuses a target without the kernel: the lever asked for it.
+    #[allow(clippy::too_many_arguments)]
+    fn conv_tokens_snap(
+        &self,
+        gpu: &dyn GpuBackend,
+        kernel: KernelHandle,
+        k: usize,
+        state: &KdaSeqState,
+        io: RowIo,
+        snapshots: &[(DevicePtr, DevicePtr)],
+        stream: u64,
+    ) -> Result<()> {
+        let c = &self.cfg;
+        let (cd, d) = (c.conv_dim(), c.head_dim);
+        if kernel.0 == 0 || snapshots.len() > 3 {
+            bail!(
+                "METRALE_GLM_KDA_CONV_ONE: no causal_conv1d_update_l2norm_tokens_snap for {} \
+                 intermediates on this target",
+                snapshots.len()
+            );
+        }
+        let snap = |t: usize| snapshots.get(t).map_or(DevicePtr::NULL, |p| p.1);
+        KernelLaunch::new(gpu, kernel)
+            .grid([div_ceil(cd as u32, 256), 1, 1])
+            .block([256, 1, 1])
+            .arg_ptr(state.conv)
+            .arg_ptr(io.qkv_in)
+            .arg_ptr(self.weights.conv.weight)
+            .arg_ptr(DevicePtr::NULL)
+            .arg_ptr(io.conv_out)
+            .arg_ptr(snap(0))
+            .arg_ptr(snap(1))
+            .arg_ptr(snap(2))
+            .arg_u32(snapshots.len() as u32)
+            .arg_u32(cd as u32)
+            .arg_u32(c.conv_kernel as u32)
+            .arg_u32(c.qk_channels() as u32)
+            .arg_u32(d as u32)
+            .arg_f32(c.l2_eps)
+            .arg_u32(k as u32)
             .launch(stream)
     }
 
@@ -281,6 +331,9 @@ pub(super) struct SnapKernels {
     pub conv_tokens: KernelHandle,
     pub conv_window: KernelHandle,
     pub recurrent_snap: KernelHandle,
+    /// 2026-10-23: `METRALE_GLM_KDA_CONV_ONE`: `causal_conv1d_update_l2norm_tokens_snap`, the
+    /// intermediates, the conv and the advance in one launch (the same bytes), else `None`.
+    pub conv_one: Option<KernelHandle>,
 }
 
 impl Glm5NextKdaLayer {

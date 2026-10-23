@@ -320,6 +320,7 @@ impl DeepseekV4MtpHead {
             routed_lora_layers: None,
             midchunk_capture: None,
             moe_lora_route: metrale_model_layers::layer::MoeLoraRoute::Skip,
+            ab_levers: metrale_model_layers::layer::AbLevers::NONE,
         };
 
         // 2026-09-25: `decode_inner_hc` reads the streams from

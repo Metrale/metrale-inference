@@ -90,6 +90,7 @@ fn run_case(
         routed_lora_layers: None,
         midchunk_capture: None,
         moe_lora_route: MoeLoraRoute::Fold,
+        ab_levers: crate::layer::AbLevers::NONE,
     };
     let start = gpu.launch_count();
     let allocs = gpu.alloc_count();

@@ -19,9 +19,12 @@ pub(crate) mod bench_cause;
 #[cfg(feature = "bench")]
 pub mod bench_certify;
 #[cfg(feature = "bench")]
+pub mod bench_forced_ab;
+#[cfg(feature = "bench")]
 mod bench_gate_check;
 #[cfg(feature = "bench")]
 pub mod bench_lease;
+pub mod bench_paired_ab;
 #[cfg(feature = "bench")]
 mod bench_print;
 #[cfg(feature = "bench")]

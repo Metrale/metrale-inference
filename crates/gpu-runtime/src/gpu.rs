@@ -493,10 +493,8 @@ pub trait GpuBackend: Send + Sync {
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod mock;
-
 #[cfg(any(test, feature = "test-utils"))]
 pub mod recording;
-
 #[cfg(test)]
 #[path = "gpu_tests.rs"]
 mod tests;

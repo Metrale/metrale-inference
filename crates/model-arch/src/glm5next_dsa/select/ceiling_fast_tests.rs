@@ -66,6 +66,10 @@ impl Case {
 
     /// 2026-10-21: (kernel, grid, args) of every launch of the pass at a 512k-token ceiling.
     fn run(&self, k: &Glm5NextDsaKernels) -> Vec<(u64, [u32; 3], Vec<MockArg>)> {
+        self.try_run(k).unwrap()
+    }
+
+    fn try_run(&self, k: &Glm5NextDsaKernels) -> Result<Vec<(u64, [u32; 3], Vec<MockArg>)>> {
         let c = Glm5NextDsaConfig {
             max_context: 524_288,
             ..cfg()
@@ -82,11 +86,12 @@ impl Case {
         inp.rows.pk_blk = self.pk_blk;
         let scratch = DsaSelectScratch::alloc(&gpu, &c, &sized, self.levers).unwrap();
         let launch = (self.launch)(contiguous_pool_count(c.index_kpool, c.max_context));
-        select_tokens(&gpu, k, &c, &geom, &inp, &scratch, launch, 7).unwrap();
-        gpu.launches_snapshot()
+        select_tokens(&gpu, k, &c, &geom, &inp, &scratch, launch, 7)?;
+        Ok(gpu
+            .launches_snapshot()
             .iter()
             .map(|l| (l.func, l.grid, l.args.clone()))
-            .collect()
+            .collect())
     }
 }
 
@@ -136,7 +141,10 @@ fn the_default_ceiling_pass_runs_the_heads_scores_and_the_multi_cta_top_k() {
         off.levers.scores_heads = false;
         let w = off.run(&k);
         assert_eq!(w[0].0, PAGED);
-        assert_eq!(w[0].2, l[0].2, "the heads kernel takes the warp kernel's arguments");
+        assert_eq!(
+            w[0].2, l[0].2,
+            "the heads kernel takes the warp kernel's arguments"
+        );
     }
 }
 
@@ -171,7 +179,11 @@ fn the_fast_kernels_stand_down_where_their_conditions_fail() {
     assert_eq!(Case::new(1).run(&no_heads)[0].0, PAGED);
     let mut odd = Case::new(1);
     odd.pk_blk = 162;
-    assert_eq!(odd.run(&fast_kernels())[0].0, PAGED, "pk_blk not a multiple of 4");
+    assert_eq!(
+        odd.run(&fast_kernels())[0].0,
+        PAGED,
+        "pk_blk not a multiple of 4"
+    );
     let mut no_collect = fast_kernels();
     no_collect.rows.topk_mc_collect = KernelHandle(0);
     assert_eq!(funcs(&Case::new(1).run(&no_collect))[1], RADIX);
@@ -215,6 +227,30 @@ fn the_window_walk_swaps_only_the_heads_kernel() {
     }
 }
 
+/// 2026-10-23: Over BF16 persisted keys (`METRALE_GLM_DSA_POOL_KEYS_BF16`) the passes launch
+/// what they launch over FP32 keys (the handles are the BF16 instances), but where the
+/// lane-per-head kernels stand down the pass is refused instead of falling back to
+/// `dsa_index_scores_warp_paged`, which reads FP32 keys.
+#[test]
+fn bf16_pool_keys_never_fall_back_to_the_fp32_reader() {
+    let mut k16 = fast_kernels();
+    k16.rows.pool_keys_bf16 = true;
+    for rows in [1usize, 2] {
+        assert_eq!(
+            Case::new(rows).run(&k16),
+            Case::new(rows).run(&fast_kernels())
+        );
+    }
+    let mut odd = Case::new(1);
+    odd.pk_blk = 162;
+    assert_eq!(odd.run(&fast_kernels())[0].0, PAGED);
+    let err = odd.try_run(&k16).unwrap_err().to_string();
+    assert!(err.contains("METRALE_GLM_DSA_POOL_KEYS_BF16"), "{err}");
+    let mut heads_off = Case::new(2);
+    heads_off.levers.scores_heads = false;
+    assert!(heads_off.try_run(&k16).is_err());
+}
+
 /// 2026-10-21: The CTA count is one per 4,096 pools between 16 and 32 (a function of the
 /// launch's pool count alone), and one row's workspace is `DSA_MC_WS_WORDS(C)` of
 /// dsa_topk_mc.cu (restated: h0 C x 256, h 3 x 256, 2 counters, 512 gt values and pools, C eq
@@ -232,5 +268,8 @@ fn the_multi_cta_geometry_is_fixed_by_the_pool_count() {
     ] {
         assert_eq!(topk_mc_ctas(pools), c, "{pools} pools");
     }
-    assert_eq!(topk_mc_ws_words(16), 16 * 256 + 768 + 2 + 1_024 + 16 + 16 * 512 + 16);
+    assert_eq!(
+        topk_mc_ws_words(16),
+        16 * 256 + 768 + 2 + 1_024 + 16 + 16 * 512 + 16
+    );
 }

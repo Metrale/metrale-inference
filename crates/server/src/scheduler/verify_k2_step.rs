@@ -6,6 +6,7 @@
 //! Owner: scheduler.
 //! Invariants: none beyond the types.
 
+use super::verify_k2_wire::{pair_fused_propose, propose_k2, send_fused_verdict};
 use super::*;
 
 // 2026-09-25: the counters are fields of the run's `SpecStats`
@@ -89,6 +90,15 @@ pub fn step_verify_k2(
         return;
     }
     sched.io.tel.mark(Phase::SyncSecondary, t_sync);
+    // 2026-10-23: `METRALE_PAIRED_AB_TRAJ` (`forced_traj`): a replay feeds the recorded tokens.
+    let traj = match super::forced_traj_hooks::k2_begin(sched.forced.as_ref(), a, drafts[0]) {
+        Ok(t) => t,
+        Err(e) => {
+            super::lifecycle::fail_sequence(a, format!("forced trajectory: {e:#}"));
+            return;
+        }
+    };
+    let fed_draft = traj.as_ref().map_or(drafts[0], |t| t.draft);
     let sync_us = sched
         .io
         .clock
@@ -103,12 +113,12 @@ pub fn step_verify_k2(
     // carries the command and both tokens, and the verdict below also starts the workers'
     // propose (`speculative::k2_wire`).
     let t_ep = sched.io.clock.now();
-    let tokens_k2 = [a.last_token, drafts[0]];
+    let tokens_k2 = [a.last_token, fed_draft];
     let fused = !dflash_verify_raw_argmax && model.k2_fused_wire();
     // 2026-10-11: `METRALE_GLM_MTP_DEVICE_STEP`: a draft on the device of an identity-pick
     // request lets every worker act on its own device verdict (`verify_k2_device_step`).
     // 2026-10-21: And the screened head where the picks need only argmaxes (`screen_picks`).
-    let flags = super::screen_picks::k2_flags(fused, drafts[0], a, verify_ctx);
+    let flags = super::screen_picks::k2_flags(fused, fed_draft, a, verify_ctx);
     let device_verdict = flags.device_verdict;
     if fused {
         if let Err(e) = model.ep_announce_k2_fused(a.seq.slot_idx as u32, tokens_k2, flags) {
@@ -176,10 +186,10 @@ pub fn step_verify_k2(
     // 2026-10-11: `METRALE_GLM_MTP_DEVICE_STEP`: a draft verified from the device reaches the host
     // as the row-1 token the verify recorded.
     // (A sentinel left unresolved could never equal `v0`, so it would only be rejected.)
-    let draft0 = if drafts[0] == metrale_model_layers::speculative::DEVICE_DRAFT {
-        a.seq.tokens.last().copied().unwrap_or(drafts[0])
+    let draft0 = if fed_draft == metrale_model_layers::speculative::DEVICE_DRAFT {
+        a.seq.tokens.last().copied().unwrap_or(fed_draft)
     } else {
-        drafts[0]
+        fed_draft
     };
 
     let (v0, v1) = if dflash_verify_raw_argmax && !sched.levers.dflash_masked_verify {
@@ -199,6 +209,18 @@ pub fn step_verify_k2(
             processed.first().copied().unwrap_or(v0_argmax),
             processed.get(1).copied().unwrap_or(v1_argmax),
         )
+    };
+    let (draft0, v0, v1) = match (&traj, sched.forced.as_ref()) {
+        (Some(t), Some(f)) => {
+            match super::forced_traj_hooks::k2_verdict(f, t, model, a, draft0, [v0, v1]) {
+                Ok([d, x, y]) => (d, x, y),
+                Err(e) => {
+                    super::lifecycle::fail_sequence(a, format!("forced trajectory: {e:#}"));
+                    return;
+                }
+            }
+        }
+        _ => (draft0, v0, v1),
     };
     let accepted = draft0 == v0;
 
@@ -464,70 +486,5 @@ pub fn step_verify_k2(
         model.decode_marconi_checkpoint(&mut a.seq);
         sched.io.tel.mark(Phase::MarconiCkpt, t_marconi);
         sched.io.tel.step_done(t_step, a.seq.seq_len);
-    }
-}
-
-/// 2026-10-11: The fused wire's verdict: accept bit, the token the propose starts from, the
-/// draft count (0 when the emits finished the sequence, so no rank proposes) and the propose
-/// position (`seq_len`, after a reject's pop). Returns the draft count sent, or `None`, after
-/// failing the sequence, when the send fails.
-fn send_fused_verdict(
-    model: &dyn Model,
-    a: &mut ActiveSeq,
-    accepted: bool,
-    next_token: u32,
-    num_drafts: usize,
-) -> Option<usize> {
-    let drafts = if a.finished {
-        0
-    } else {
-        crate::scheduler::spec_step::effective_drafts_under_grammar(a, num_drafts)
-    };
-    let verdict = metrale_model_layers::speculative::K2Verdict {
-        accepted,
-        next_token,
-        num_drafts: drafts as u32,
-        position: a.seq.seq_len as u32,
-    };
-    if let Err(e) = model.ep_send_k2_verdict(verdict) {
-        tracing::error!("EP send fused verify_k2 verdict: {e:#}");
-        super::lifecycle::fail_sequence(a, format!("EP send fused verify_k2 verdict: {e:#}"));
-        return None;
-    }
-    Some(drafts)
-}
-
-/// 2026-10-11: Rank 0's side of a propose a fused verdict announced (`drafts > 0`) when the step
-/// returns before its own propose: the same drafter forward, so the workers' collectives have a
-/// partner; its drafts are discarded. Nothing when no propose was announced.
-fn pair_fused_propose(model: &dyn Model, token: u32, a: &mut ActiveSeq, drafts: usize) {
-    if drafts == 0 {
-        return;
-    }
-    let position = a.seq.seq_len;
-    if let Err(e) = model.run_mtp_propose_announced(token, position, drafts, &mut a.seq, None) {
-        tracing::error!("fused verify_k2: pairing propose: {e:#}");
-    }
-}
-
-/// 2026-10-11: The propose after a K=2 verdict. `fused` is the draft count a fused verdict sent:
-/// the workers were already told, so it sends nothing; `None` (the unfused wire) lets
-/// `run_mtp_propose_multi` announce it.
-fn propose_k2(
-    model: &dyn Model,
-    fused: Option<usize>,
-    token: u32,
-    a: &mut ActiveSeq,
-    num_drafts: usize,
-    mask: Option<&[i32]>,
-) -> anyhow::Result<Vec<u32>> {
-    let position = a.seq.seq_len;
-    match fused {
-        // 2026-10-11: The lone draft may stay on the device (`METRALE_GLM_MTP_DEVICE_STEP`).
-        Some(n) => model.run_mtp_propose_announced_device(token, position, n, &mut a.seq, mask),
-        None => {
-            let n = crate::scheduler::spec_step::effective_drafts_under_grammar(a, num_drafts);
-            model.run_mtp_propose_multi(token, position, n, &mut a.seq, 0, mask)
-        }
     }
 }

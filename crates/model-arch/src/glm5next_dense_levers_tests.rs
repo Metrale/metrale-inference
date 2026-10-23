@@ -473,6 +473,8 @@ fn the_declared_defaults_are_the_old_unset_values() {
             gemv_rows: 0,
             gemv_seg: false,
             gemv_pipe: true,
+            swiglu_down: false,
+            dense_seg: false,
             tc_min_rows: None,
             dequant_min_rows: None,
             fp8_dequant_min_rows: None,

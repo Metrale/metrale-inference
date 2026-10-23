@@ -94,6 +94,57 @@ pub enum BenchmarkCommand {
     /// GPU-free. It refuses runs that were not measured alike, a vacuous width, and a grid
     /// the serve would not load.
     SpecCostTable(SpecCostTableArgs),
+    /// The verdict of a paired in-serve A/B run (`METRALE_PAIRED_AB`) from its serve log.
+    ///
+    /// GPU-free. Per request and per arm against A: the paired step difference with a BCa
+    /// interval, HAC ESS, TOST at the margin and one-sided superiority, Holm-corrected.
+    PairedAb(PairedAbArgs),
+    /// The verdict of serves that replayed one recorded trajectory (`METRALE_PAIRED_AB_TRAJ`).
+    ///
+    /// GPU-free. Step-matched control-minus-lever step time per request, the serve pair as the
+    /// unit (t interval, TOST, superiority, Holm), and McNemar on own acceptance per step.
+    ForcedAb(ForcedAbArgs),
+}
+
+/// 2026-10-23: `met benchmark forced-ab`.
+#[derive(clap::Args, Debug)]
+pub struct ForcedAbArgs {
+    /// Rank-0 logs of the control serves, in pair order (comma-separated).
+    #[arg(long, value_delimiter = ',')]
+    pub control: Vec<std::path::PathBuf>,
+    /// Rank-0 logs of the lever serves, pair `i` with control `i` (comma-separated).
+    #[arg(long, value_delimiter = ',')]
+    pub lever: Vec<std::path::PathBuf>,
+    /// The lever serves' paired-A/B arm under test; omitted: every arm (the lever serve-wide).
+    #[arg(long)]
+    pub lever_arm: Option<usize>,
+    /// Leading matched steps of each request to drop (graph capture).
+    #[arg(long)]
+    pub warm_steps: usize,
+    /// The equivalence margin, percent of the control step.
+    #[arg(long)]
+    pub margin_pct: f64,
+    /// Huber's tuning constant for the step differences.
+    #[arg(long)]
+    pub huber_k: f64,
+}
+
+/// 2026-10-23: `met benchmark paired-ab`.
+#[derive(clap::Args, Debug)]
+pub struct PairedAbArgs {
+    /// The rank-0 serve log holding the `PAIRED_AB` lines.
+    #[arg(long)]
+    pub log: std::path::PathBuf,
+    /// Leading arm cycles of each request to drop (each arm's first steps capture its graph).
+    #[arg(long)]
+    pub warm_cycles: usize,
+    /// The equivalence margin, percent of the A step (0.25 for the decode gates).
+    #[arg(long)]
+    pub margin_pct: f64,
+    /// Huber's tuning constant for the location of the cycle differences (1.345: 95%
+    /// efficiency at the normal).
+    #[arg(long)]
+    pub huber_k: f64,
 }
 
 #[derive(clap::Args, Debug)]

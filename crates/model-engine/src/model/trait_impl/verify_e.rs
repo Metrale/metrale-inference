@@ -11,8 +11,7 @@
 //! graph per `verify_batched_graph_key`. Embeds, KV-block allocation, the
 //! metadata, block-table and WY-table uploads, and the argmax readback run
 //! outside the graph; the uploads go to fixed addresses before every replay.
-//! `METRALE_NO_MTP_VERIFY_GRAPHS` (presence) or `METRALE_K4_DIAG=1` makes the
-//! forward eager.
+//! `METRALE_NO_MTP_VERIFY_GRAPHS` (presence) or `METRALE_K4_DIAG=1` makes the forward eager.
 //!
 //! Owner: model-engine (speculative verify).
 //! Invariants:
@@ -27,8 +26,8 @@
 use super::super::lm_head_vocab_tp::HeadRanks;
 use anyhow::{Result, bail, ensure};
 
-/// 2026-09-25: Byte offsets of the batched-verify metadata from `meta_base`,
-/// all derived from `R = verify_e2::VERIFY_ROW_CAP`:
+/// 2026-09-25: Byte offsets of the batched-verify metadata from `meta_base`, all derived from
+/// `R = verify_e2::VERIFY_ROW_CAP`:
 ///   positions  u32 × R at [0, 4R)
 ///   seq_slot   u32 × R at [4R, 8R)
 ///   slots      i64 × R at [8R, 16R)
@@ -364,6 +363,7 @@ impl TransformerModel {
                     config: &self.config,
                     dispatch: &self.dispatch,
                     moe_lora_route: self.decode_moe_route(),
+                    ab_levers: metrale_model_layers::layer::AbLevers::NONE,
                     derived: &self.derived,
                     levers: &self.levers,
                     settings: &self.settings,
