@@ -55,9 +55,27 @@ const ROWS_TESTED: [usize; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 const ROWS_TIMED: [usize; 3] = [1, 2, 4];
 const QIDX: usize = 32 * 128;
 const HEADS: usize = 32;
-const NAMES: [&str; 8] = ["q_a", "q_resid", "q_abs", "kv_a", "wk", "gate", "q_idx", "head weights"];
+const NAMES: [&str; 8] = [
+    "q_a",
+    "q_resid",
+    "q_abs",
+    "kv_a",
+    "wk",
+    "gate",
+    "q_idx",
+    "head weights",
+];
 /// 2026-10-21: Output bytes per row.
-const ROW_BYTES: [usize; 8] = [QA * 2, QA * 2, QABS * 2, KV * 2, IDX * 2, IDX * 2, QIDX * 4, HEADS * 4];
+const ROW_BYTES: [usize; 8] = [
+    QA * 2,
+    QA * 2,
+    QABS * 2,
+    KV * 2,
+    IDX * 2,
+    IDX * 2,
+    QIDX * 4,
+    HEADS * 4,
+];
 
 struct Kernels {
     w8a8: W8a8Kernels,
@@ -164,7 +182,14 @@ fn one(w: &Fp8Weight) -> Result<W8a8Weight> {
 
 /// 2026-10-21: The selector query and head weights at 2..=8 rows: two few-row FP32-out launches
 /// (today) or the pair launch; nothing at one row (that path is the M = 1 GEMV, unchanged).
-fn selector(g: &dyn GpuBackend, k: &Kernels, l: &Layer, b: &Bufs, pair: bool, s: u64) -> Result<()> {
+fn selector(
+    g: &dyn GpuBackend,
+    k: &Kernels,
+    l: &Layer,
+    b: &Bufs,
+    pair: bool,
+    s: u64,
+) -> Result<()> {
     if b.m < 2 {
         return Ok(());
     }
@@ -177,7 +202,13 @@ fn selector(g: &dyn GpuBackend, k: &Kernels, l: &Layer, b: &Bufs, pair: bool, s:
             .grid([(QIDX.div_ceil(4) + HEADS.div_ceil(4)) as u32, 1, 1])
             .block([256, 1, 1]);
         for (a, w, c, n, kk) in sets {
-            x = x.arg_ptr(a).arg_ptr(w).arg_ptr(c).arg_u32(n as u32).arg_u32(kk as u32).arg_u32(n as u32);
+            x = x
+                .arg_ptr(a)
+                .arg_ptr(w)
+                .arg_ptr(c)
+                .arg_u32(n as u32)
+                .arg_u32(kk as u32)
+                .arg_u32(n as u32);
         }
         return x.arg_u32(b.m as u32).launch(s);
     }
@@ -209,17 +240,68 @@ fn tail(g: &dyn GpuBackend, k: &Kernels, l: &Layer, b: &Bufs, s: u64) -> Result<
         .arg_f32(EPS)
         .launch(s)?;
     let qabs = one(&l.w[4])?;
-    w8a8_proj(g, &k.w8a8, &qabs, b.out[1], QA as u32, b.m, b.out[2], QABS as u32, &b.scratch, s)
+    w8a8_proj(
+        g,
+        &k.w8a8,
+        &qabs,
+        b.out[1],
+        QA as u32,
+        b.m,
+        b.out[2],
+        QABS as u32,
+        &b.scratch,
+        s,
+    )
 }
 
 /// 2026-10-21: Today's launches (`project_in`, then the indexer's wk and gate).
 fn old(g: &dyn GpuBackend, k: &Kernels, l: &Layer, b: &Bufs, s: u64) -> Result<()> {
     let (m, h) = (b.m, HID as u32);
-    w8a8_proj(g, &k.w8a8, &one(&l.w[0])?, b.hidden, h, m, b.out[0], QA as u32, &b.scratch, s)?;
+    w8a8_proj(
+        g,
+        &k.w8a8,
+        &one(&l.w[0])?,
+        b.hidden,
+        h,
+        m,
+        b.out[0],
+        QA as u32,
+        &b.scratch,
+        s,
+    )?;
     tail(g, k, l, b, s)?;
-    w8a8_proj(g, &k.w8a8, &one(&l.w[1])?, b.hidden, h, m, b.out[3], KV as u32, &b.scratch, s)?;
-    w8a8_gemv(g, &k.w8a8, &one(&l.w[2])?, &b.scratch, m, b.out[4], IDX as u32, s)?;
-    w8a8_gemv(g, &k.w8a8, &one(&l.w[3])?, &b.scratch, m, b.out[5], IDX as u32, s)?;
+    w8a8_proj(
+        g,
+        &k.w8a8,
+        &one(&l.w[1])?,
+        b.hidden,
+        h,
+        m,
+        b.out[3],
+        KV as u32,
+        &b.scratch,
+        s,
+    )?;
+    w8a8_gemv(
+        g,
+        &k.w8a8,
+        &one(&l.w[2])?,
+        &b.scratch,
+        m,
+        b.out[4],
+        IDX as u32,
+        s,
+    )?;
+    w8a8_gemv(
+        g,
+        &k.w8a8,
+        &one(&l.w[3])?,
+        &b.scratch,
+        m,
+        b.out[5],
+        IDX as u32,
+        s,
+    )?;
     selector(g, k, l, b, false, s)
 }
 
@@ -233,15 +315,65 @@ fn old_lever(name: &str) -> bool {
 fn new(g: &dyn GpuBackend, k: &Kernels, l: &Layer, b: &Bufs, swap: bool, s: u64) -> Result<()> {
     if old_lever("merge") {
         let (m, h) = (b.m, HID as u32);
-        w8a8_proj(g, &k.w8a8, &one(&l.w[0])?, b.hidden, h, m, b.out[0], QA as u32, &b.scratch, s)?;
+        w8a8_proj(
+            g,
+            &k.w8a8,
+            &one(&l.w[0])?,
+            b.hidden,
+            h,
+            m,
+            b.out[0],
+            QA as u32,
+            &b.scratch,
+            s,
+        )?;
         tail(g, k, l, b, s)?;
-        w8a8_proj(g, &k.w8a8, &one(&l.w[1])?, b.hidden, h, m, b.out[3], KV as u32, &b.scratch, s)?;
-        w8a8_gemv(g, &k.w8a8, &one(&l.w[2])?, &b.scratch, m, b.out[4], IDX as u32, s)?;
-        w8a8_gemv(g, &k.w8a8, &one(&l.w[3])?, &b.scratch, m, b.out[5], IDX as u32, s)?;
+        w8a8_proj(
+            g,
+            &k.w8a8,
+            &one(&l.w[1])?,
+            b.hidden,
+            h,
+            m,
+            b.out[3],
+            KV as u32,
+            &b.scratch,
+            s,
+        )?;
+        w8a8_gemv(
+            g,
+            &k.w8a8,
+            &one(&l.w[2])?,
+            &b.scratch,
+            m,
+            b.out[4],
+            IDX as u32,
+            s,
+        )?;
+        w8a8_gemv(
+            g,
+            &k.w8a8,
+            &one(&l.w[3])?,
+            &b.scratch,
+            m,
+            b.out[5],
+            IDX as u32,
+            s,
+        )?;
         return selector(g, k, l, b, !old_lever("pair"), s);
     }
     let (m, h) = (b.m, HID as u32);
-    w8a8_act_quant(g, &k.w8a8, W8a8Scale::PerRow, b.hidden, h, m, h, &b.scratch, s)?;
+    w8a8_act_quant(
+        g,
+        &k.w8a8,
+        W8a8Scale::PerRow,
+        b.hidden,
+        h,
+        m,
+        h,
+        &b.scratch,
+        s,
+    )?;
     let (wk, gate) = if swap { (3, 2) } else { (2, 3) };
     let segs = [(0, 0, QA), (1, 3, KV), (wk, 4, IDX), (gate, 5, IDX)].map(|(w, o, n)| SplitOut {
         w: l.w[w],
@@ -272,9 +404,15 @@ fn kernels(g: &dyn GpuBackend, split: bool) -> Result<Kernels> {
             KernelHandle(0)
         },
         rms: g.kernel("rms_norm_vanilla", "rms_norm_vanilla")?,
-        few_f32: g.kernel("dense_gemv_bf16_batchm_few", "dense_gemv_bf16_batchm_few_fp32out")?,
+        few_f32: g.kernel(
+            "dense_gemv_bf16_batchm_few",
+            "dense_gemv_bf16_batchm_few_fp32out",
+        )?,
         pair: if split {
-            g.kernel("dense_gemv_bf16_batchm_few", "dense_gemv_bf16_batchm_few_fp32out_pair")?
+            g.kernel(
+                "dense_gemv_bf16_batchm_few",
+                "dense_gemv_bf16_batchm_few_fp32out_pair",
+            )?
         } else {
             KernelHandle(0)
         },
@@ -306,7 +444,9 @@ fn main() -> Result<()> {
     let gpu = MetraleCudaBackend::new(0, &glm.modules)?;
     let g: &dyn GpuBackend = &gpu;
     let k = kernels(g, true)?;
-    println!("DSA proj-in gate: today's launches are the ORACLE (hidden {HID}, q_a {QA}, kv_a {KV}, wk/gate {IDX}, q_abs {QABS})\n");
+    println!(
+        "DSA proj-in gate: today's launches are the ORACLE (hidden {HID}, q_a {QA}, kv_a {KV}, wk/gate {IDX}, q_abs {QABS})\n"
+    );
     let want = oracle(g, &k)?;
     if let Ok(dir) = std::env::var("DSA_PROJ_BASE_PTX") {
         let base = MetraleCudaBackend::new(

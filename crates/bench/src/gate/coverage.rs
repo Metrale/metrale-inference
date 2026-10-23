@@ -1086,7 +1086,7 @@ pub const PROMOTION_CANDIDATES: &[GateCoverage] = &[
 
 /// 2026-09-26: Registered benchmarks that are not required gates, each with the reason
 /// (`every_excusal_names_a_real_benchmark_and_a_reason`).
-pub const NOT_REQUIRED: [(&str, &str); 13] = [
+pub const NOT_REQUIRED: [(&str, &str); 14] = [
     (
         "quick-speed-bench",
         "a single-user speed probe with no thresholds and no baseline — a MEASUREMENT tool, \
@@ -1153,6 +1153,12 @@ pub const NOT_REQUIRED: [(&str, &str); 13] = [
         "a calibration MEASUREMENT for the speculative cost model, with no baseline and no \
          bounds: it records the per-step verify and draft cost at each batch width so the \
          cost table can be fitted, and a calibration has nothing to regress against",
+    ),
+    (
+        "kernel-energy",
+        "a per-kernel energy MEASUREMENT (J/launch, W) with no serve, no baseline and no \
+         bounds: it writes docs/kernel-perf/measurements.toml evidence rows, and a measurement \
+         row has nothing to regress against",
     ),
     (
         "mlperf-agentic-subset",

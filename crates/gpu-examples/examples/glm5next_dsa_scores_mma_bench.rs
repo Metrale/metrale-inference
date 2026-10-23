@@ -325,12 +325,20 @@ fn ceiling_cases(gpu: &dyn GpuBackend, base: KernelHandle, rx: KernelHandle) -> 
     };
     let set_geom = |live: usize| -> Result<()> {
         let np2 = live.next_power_of_two().clamp(2, 2048) as i32;
-        let g = [(live * KP) as i32, live as i32 + 1, live as i32, live.min(SEL) as i32, np2];
+        let g = [
+            (live * KP) as i32,
+            live as i32 + 1,
+            live as i32,
+            live.min(SEL) as i32,
+            np2,
+        ];
         let b: Vec<u8> = g.iter().flat_map(|v| v.to_le_bytes()).collect();
         gpu.copy_h2d(&b, geom)?;
         Ok(())
     };
-    for live in [0usize, 1, 2, 300, 511, 512, 513, 4_096, 32_768, 131_072, MAX_POOLS] {
+    for live in [
+        0usize, 1, 2, 300, 511, 512, 513, 4_096, 32_768, 131_072, MAX_POOLS,
+    ] {
         set_geom(live)?;
         gpu.memset(sa, 0x7f, SEL * 4)?;
         gpu.memset(sb, 0x7f, SEL * 4)?;
@@ -438,7 +446,13 @@ fn main() -> Result<()> {
         );
         let geom = gpu.alloc(5 * 4)?;
         if q_rows == 1 {
-            let g = [s as i32, pools as i32 + 1, pools as i32, select_k as i32, 2048];
+            let g = [
+                s as i32,
+                pools as i32 + 1,
+                pools as i32,
+                select_k as i32,
+                2048,
+            ];
             let b: Vec<u8> = g.iter().flat_map(|v| v.to_le_bytes()).collect();
             gpu.copy_h2d(&b, geom)?;
             gpu.memset(io.out, 0, pools * 4)?;

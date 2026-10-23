@@ -32,6 +32,7 @@ example = [
     { name = "glm5next_w4a16_gemv_seg_bench", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_w4a16_gemv_seg_rows_bench", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_w4a16_gemv_pipe_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "kernel_energy_loop", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_batch_inv_bench", required-features = ["cuda", "gpu-examples"] },
     { name = "fp8_moe_grouped_routing_microtest", required-features = ["cuda", "gpu-examples"] },
     { name = "fp8_moe_grouped_exact_routing_microtest", required-features = ["cuda", "gpu-examples"] },
@@ -243,6 +244,13 @@ metrale-model-layers = { workspace = true }
 metrale-settings = { workspace = true }
 metrale-io-host-std = { workspace = true }
 metrale-kv-codec = { workspace = true }
+# 2026-10-22: The kernel_energy_loop harness: the power port, its NVML probes and host adapters,
+# the attribution core and the run order.
+metrale-abstract-io = { workspace = true }
+metrale-io-host-power = { workspace = true }
+metrale-power = { workspace = true }
+metrale-stats = { workspace = true }
+metrale-telemetry = { workspace = true }
 # 2026-10-21: The driver graph queries of `pdl_capture_gate` (edge types of a captured graph).
 cudarc = { workspace = true, features = ["std", "driver", "fallback-dynamic-loading", "cuda-version-from-build-system"], optional = true }
 anyhow = { workspace = true, features = ["std"] }

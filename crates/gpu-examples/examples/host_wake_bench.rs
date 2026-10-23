@@ -29,9 +29,7 @@ use anyhow::{Context, Result, ensure};
 use cudarc::driver::sys;
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
-use metrale_gpu_runtime::host_wake::{
-    KeeperConfig, KeeperMode, Role, WakeKeeper, os, select,
-};
+use metrale_gpu_runtime::host_wake::{KeeperConfig, KeeperMode, Role, WakeKeeper, os, select};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use metrale_settings::groups::device::DeviceSettings;
 
@@ -156,9 +154,16 @@ impl Rig<'_> {
             .launch(st)?;
         // SAFETY: host_task only touches statics; the generation is passed by value.
         let rc = unsafe {
-            sys::cuLaunchHostFunc(st as sys::CUstream, Some(host_task), self.generation as usize as *mut _)
+            sys::cuLaunchHostFunc(
+                st as sys::CUstream,
+                Some(host_task),
+                self.generation as usize as *mut _,
+            )
         };
-        ensure!(rc == sys::CUresult::CUDA_SUCCESS, "cuLaunchHostFunc: {rc:?}");
+        ensure!(
+            rc == sys::CUresult::CUDA_SUCCESS,
+            "cuLaunchHostFunc: {rc:?}"
+        );
         KernelLaunch::new(g, self.wait)
             .block([1, 1, 1])
             .arg_ptr(self.flag_dev)
@@ -217,7 +222,11 @@ fn setup(arm: Arm, core: u32, allowed: &[u32]) -> Result<Setup> {
         WakeKeeper::start(KeeperConfig {
             mode,
             cpu,
-            tids: if roles.is_empty() { vec![] } else { tids.clone() },
+            tids: if roles.is_empty() {
+                vec![]
+            } else {
+                tids.clone()
+            },
             roles,
             rescan: Duration::from_secs(1),
         })
@@ -314,7 +323,10 @@ fn main() -> Result<()> {
         .map(|(_, c)| c);
     println!("GPU interrupt core {core}; host function runs on tid {cb} ({comm:?})");
     for (t, c) in os::tasks()? {
-        println!("  thread {t} {c:?} role {:?}", metrale_gpu_runtime::host_wake::classify(&c));
+        println!(
+            "  thread {t} {c:?} role {:?}",
+            metrale_gpu_runtime::host_wake::classify(&c)
+        );
     }
     let neighbour = core + 1;
     let t1000 = KeeperMode::Timer { period_us: 1000 };
