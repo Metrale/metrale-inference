@@ -101,15 +101,15 @@ fn the_strict_prefill_switches_read_as_before_and_take_the_switch_spellings() {
 
 #[test]
 fn the_opt_in_switches_read_as_before_except_the_switch_spellings() {
-    let cases: [Field<bool>; 6] = [
+    // 2026-10-22: `METRALE_GLM_DSA_SCORES_PIPE` and `METRALE_GLM_DSA_TOPK_RADIX` left this list
+    // (default on): `the_default_on_decode_levers_turn_off_one_at_a_time` probes them.
+    let cases: [Field<bool>; 4] = [
         ("METRALE_GLM_DSA_HB_PREFILL_ONE_SPLIT", |l| {
             l.prefill.one_split
         }),
         ("METRALE_GLM_DSA_SCORES_TILED", |l| l.select.scores_tiled),
         ("METRALE_GLM_DSA_SCORES_MMA", |l| l.select.scores_mma),
-        ("METRALE_GLM_DSA_SCORES_PIPE", |l| l.select.scores_pipe),
         ("METRALE_GLM_DSA_SELECT_FUSED", |l| l.select.select_fused),
-        ("METRALE_GLM_DSA_TOPK_RADIX", |l| l.select.topk_radix),
     ];
     for (env, field) in cases {
         let changes = check(
@@ -302,10 +302,13 @@ fn the_check_dir_text_reads_as_before() {
 
 /// 2026-10-21: The default-on decode levers (the ceiling launch's radix top-k, the warp
 /// scores, the lane-per-head ceiling scores, the multi-CTA top-k) are on unset and `0`/`off` turn each off without touching the other.
-/// 2026-10-22: And the lane-per-head scores' straight-line walk.
+/// 2026-10-22: And the lane-per-head scores' straight-line walk, and (default on since today) the
+/// exact launch's radix top-k and the streamed tensor-core scores.
 #[test]
 fn the_default_on_decode_levers_turn_off_one_at_a_time() {
-    let cases: [Field<bool>; 5] = [
+    let cases: [Field<bool>; 7] = [
+        ("METRALE_GLM_DSA_TOPK_RADIX", |l| l.select.topk_radix),
+        ("METRALE_GLM_DSA_SCORES_PIPE", |l| l.select.scores_pipe),
         ("METRALE_GLM_DSA_DECODE_TOPK_RADIX", |l| l.select.decode_topk_radix),
         ("METRALE_GLM_DSA_SCORES_WARP", |l| l.select.scores_warp),
         ("METRALE_GLM_DSA_SCORES_HEADS", |l| l.select.scores_heads),
@@ -340,15 +343,18 @@ fn the_declared_defaults_are_the_old_unset_values() {
                 one_split: false,
                 p_hi: false,
                 pipe: false,
+                // 2026-10-22: Both default on, inert here: their parents are off.
                 tc: false,
                 tc_nanor: false,
             },
             select: DsaSelectLevers {
                 scores_tiled: false,
                 scores_mma: false,
-                scores_pipe: false,
+                // 2026-10-22: Default on (it reads only where the MMA scores run).
+                scores_pipe: true,
                 select_fused: false,
-                topk_radix: false,
+                // 2026-10-22: Default on.
+                topk_radix: true,
                 decode_topk_radix: true,
                 scores_warp: true,
                 scores_heads: true,
@@ -366,5 +372,50 @@ fn the_declared_defaults_are_the_old_unset_values() {
             sp_payload: Payload::Tokens,
             hb_check: None,
         }
+    );
+}
+
+/// 2026-10-22: `METRALE_GLM_DSA_HB_PREFILL_TC` and `METRALE_GLM_DSA_TC_NANOR` are on by default
+/// under their parents (head-batched decode, P-hi, one split, no pipe), and `0` turns each off;
+/// left at their defaults they are off without the parents, while a set `1` stays on so the
+/// attend refuses it as before.
+#[test]
+fn the_tc_levers_are_on_under_their_parents_and_0_turns_them_off() {
+    let parents = [
+        ("METRALE_GLM_DSA_DECODE_HB", "8"),
+        ("METRALE_GLM_DSA_HB_PREFILL_P_HI", "1"),
+        ("METRALE_GLM_DSA_HB_PREFILL_ONE_SPLIT", "1"),
+    ];
+    let at = |extra: &[(&'static str, &'static str)]| {
+        let pairs: Vec<(&str, &str)> = parents.iter().chain(extra).copied().collect();
+        new_with(&pairs, |l| (l.prefill.tc, l.prefill.tc_nanor)).unwrap()
+    };
+    assert_eq!(at(&[]), (true, true));
+    assert_eq!(
+        at(&[("METRALE_GLM_DSA_HB_PREFILL_TC", "0")]),
+        (false, false)
+    );
+    assert_eq!(at(&[("METRALE_GLM_DSA_TC_NANOR", "0")]), (true, false));
+    assert_eq!(
+        at(&[("METRALE_GLM_DSA_HB_PREFILL_PIPE", "1")]),
+        (false, false)
+    );
+    for missing in 0..parents.len() {
+        let pairs: Vec<(&str, &str)> = parents
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != missing)
+            .map(|(_, p)| *p)
+            .collect();
+        let tc = |l: &DsaLevers| (l.prefill.tc, l.prefill.tc_nanor);
+        assert_eq!(new_with(&pairs, tc), Some((false, false)), "{missing}");
+        let mut set = pairs.clone();
+        set.push(("METRALE_GLM_DSA_HB_PREFILL_TC", "1"));
+        assert_eq!(new_with(&set, tc), Some((true, true)), "{missing}: set TC");
+    }
+    let nanor = |l: &DsaLevers| l.prefill.tc_nanor;
+    assert_eq!(
+        new_at("METRALE_GLM_DSA_TC_NANOR", Some("1"), nanor),
+        Some(true)
     );
 }

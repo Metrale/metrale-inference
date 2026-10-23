@@ -158,7 +158,15 @@ impl MlpLevers {
             shared_fork: fork.unwrap_or(0),
             w4a4_grouped: k.glm_moe_w4a4_grouped,
             raster: parse_raster(&k.glm_moe_w4a4_raster).map_err(anyhow::Error::msg)?,
-            gu_fused: k.glm_moe_w4a4_gu_fused,
+            // 2026-10-22: On by default; left at its default it runs only on the grouped W4A4
+            // path (inert, reported once, without it); set to `1` without it, refused at load.
+            gu_fused: crate::glm5next_default_on::under_parent(
+                s,
+                "METRALE_GLM_MOE_W4A4_GU_FUSED",
+                k.glm_moe_w4a4_gu_fused,
+                k.glm_moe_w4a4_grouped,
+                "METRALE_GLM_MOE_W4A4_GROUPED=1",
+            ),
             nc: nc.map(|n| n as u32),
             sweep_serial: k.glm_moe_sweep_serial,
             zero_in_swiglu: k.glm_moe_zero_in_swiglu,

@@ -510,6 +510,7 @@ mod tests {
         let k = kernels(true);
         let mut off = kernels(true);
         off.levers.pre_c1 = false;
+        off.levers.pre_tile = false; // 2026-10-22: default on; pin the grids the tile takes over.
         let first_with = |k: &Glm5NextMhcKernels, t: u32| {
             let from = gpu.launch_count();
             launch(&gpu, k, &site(true), t, 4096, 4).unwrap();

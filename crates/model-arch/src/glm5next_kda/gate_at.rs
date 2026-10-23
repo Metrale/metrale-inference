@@ -18,7 +18,8 @@
 //!   refused ([`Glm5NextKdaLayer::gate_in_prepare_skips_gate`]).
 //! - One decision per forward ([`Glm5NextKdaLayer::gate_at_for`]), handed to both the front end
 //!   (which skips the gate launch) and the scan (which picks the `_graw` prepare).
-//! - The lever set without the `_graw` kernels fails the forward before any launch.
+//! - The lever set without the `_graw` kernels fails the forward before any launch. 2026-10-22:
+//!   no longer: the lever is on by default, so it is inert there (reported once).
 
 use super::*;
 
@@ -33,13 +34,32 @@ pub(crate) enum GateAt {
 
 impl Glm5NextKdaLayer {
     /// 2026-10-14: Where a forward on the 64-token scan (`chunked64`) computes the gate: in the
-    /// prepare when the lever is set (an error without the kernels), else in the front end.
+    /// prepare when the lever is set, else in the front end. 2026-10-22: The lever is on by
+    /// default, so without the kernels the gate stays in the front end (reported once) instead
+    /// of failing the forward.
     pub(crate) fn gate_at_for(&self, chunked64: bool) -> Result<GateAt> {
-        if !chunked64 || !self.levers.kda.gate_in_prepare {
+        if !chunked64 || !self.gate_in_prepare_on() {
             return Ok(GateAt::Kernel);
         }
-        self.gate_in_prepare_check()?;
         Ok(GateAt::Prepare)
+    }
+
+    /// 2026-10-22: The lever is set and [`Self::gate_in_prepare_check`] passes; a failed check
+    /// is reported once.
+    fn gate_in_prepare_on(&self) -> bool {
+        if !self.levers.kda.gate_in_prepare {
+            return false;
+        }
+        match self.gate_in_prepare_check() {
+            Ok(()) => true,
+            Err(e) => {
+                crate::glm5next_default_on::report_inert(
+                    "METRALE_GLM_KDA_GATE_IN_PREPARE",
+                    &format!("{e:#}"),
+                );
+                false
+            }
+        }
     }
 
     /// 2026-10-14: The refusal of [`GateAt::Prepare`], before any launch.
@@ -58,7 +78,8 @@ impl Glm5NextKdaLayer {
     /// lever is set and the 64-token scan applies. `record_verify_rows` refuses such a forward
     /// (it copies `ws.gate`).
     pub(crate) fn gate_in_prepare_skips_gate(&self, k: usize) -> Result<bool> {
-        Ok(self.levers.kda.gate_in_prepare && self.chunk64_applies(k, self.levers.kda.chunk64))
+        // 2026-10-22: `gate_in_prepare_on`, not the lever alone: an inert lever skips nothing.
+        Ok(self.gate_in_prepare_on() && self.chunk64_applies(k, self.levers.kda.chunk64))
     }
 
     /// 2026-10-14: f_b (head_dim -> heads * head_dim) into `ws.g_raw`, then, at

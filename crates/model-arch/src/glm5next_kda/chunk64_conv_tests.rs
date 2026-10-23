@@ -240,3 +240,31 @@ fn the_shape_check_takes_only_the_tile_shapes() {
         );
     }
 }
+
+/// 2026-10-22: The lever is on by default: the fused conv runs where the kernels and shape allow
+/// it; without a kernel it is off (no error), and a verify record of such a forward then has its
+/// packed rows (`chunk64_conv_skips_pack` agrees with the decision).
+#[test]
+fn without_the_kernels_the_default_keeps_the_conv_launch() {
+    let gpu = MockGpuBackend::new();
+    let mut on = layer(&gpu);
+    on.levers.kda.chunk64 = Some(64);
+    // The value the settings resolve under `METRALE_GLM_KDA_CHUNK64` (`levers_tests.rs`).
+    on.levers.kda.chunk64_conv = true;
+    assert!(on.chunk64_conv_on().unwrap());
+    for missing in [0, 1] {
+        let mut lay = layer(&gpu);
+        lay.levers.kda.chunk64 = Some(64);
+        lay.levers.kda.chunk64_conv = true;
+        if missing == 0 {
+            lay.kernels.seq.chunk64_prepare_conv = KernelHandle(0);
+        } else {
+            lay.kernels.seq.conv_window_parts = KernelHandle(0);
+        }
+        assert!(!lay.chunk64_conv_on().unwrap(), "{missing}");
+        assert!(!lay.chunk64_conv_skips_pack(64).unwrap(), "{missing}");
+    }
+    let mut off = layer(&gpu);
+    off.levers.kda.chunk64_conv = false;
+    assert!(!off.chunk64_conv_on().unwrap());
+}

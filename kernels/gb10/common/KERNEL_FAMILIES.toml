@@ -2819,6 +2819,9 @@ rows_above = 1
 cite = "crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:301"
 holds = "for r in paged_rows..n {"
 note = "DSA batched decode: indexer key, pool store and selection one row per launch unless METRALE_GLM_DSA_INDEXER_ROWS (2026-10-09: staged projections; captured paged rows store and select one launch per stage)"
+# 2026-10-22: The recipe's METRALE_GLM_DSA_INDEXER_ROWS=1 stages the rows and stores and selects them one
+# launch per stage (decode_rows.rs:255-293); the rules' groups cost what stays per row.
+unless = { glm_dsa_indexer_rows = "on" }
 
 # 2026-10-08: A K-row verify batches the KDA projections but walks the conv and the recurrence
 # one row at a time; the DSA latent write, indexer write and selection also run per row (the
@@ -2845,6 +2848,10 @@ rows_above = 1
 cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:203"
 holds = "for row in 0..k {"
 note = "DSA verify: latent write, indexer projections, store and selection one row per launch; 2026-10-21: the selection in one pass after the row loop under METRALE_GLM_DSA_VERIFY_SELECT_ONCE (layer/verify_select.rs)"
+# 2026-10-22: The recipe's METRALE_GLM_DSA_VERIFY_ROWS=1 batches the indexer projections, the key norm,
+# the selector query and weights, and (with VERIFY_SELECT_ONCE) the selection (decode_k.rs:165-192,
+# :360-364); the latent write and the store stay per row, which their per-row rules cost.
+unless = { glm_dsa_verify_rows = "on" }
 # 2026-10-22: GLM-5.3-Flash NVFP4, TP=3 rank 0, nsys: rows [2] are the MTP verify launches, rows [1] the MTP drafter's.
 [[family.evidence]]
 point = { shared_gate = "none" }

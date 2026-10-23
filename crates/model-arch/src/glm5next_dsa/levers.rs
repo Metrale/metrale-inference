@@ -17,6 +17,8 @@
 use anyhow::{Result, anyhow};
 use metrale_settings::InferenceServerSettings;
 
+use crate::glm5next_default_on::under_parent;
+
 use super::attend::HB_MAX_SPLITS;
 use super::sp_select::MinPoolsTable;
 use super::sp_select::lever::{self, Payload};
@@ -149,14 +151,38 @@ impl DsaLevers {
     pub fn from_settings(s: &InferenceServerSettings) -> Result<Self> {
         let k = &s.kernels;
         let (table, payload) = sp_resolve(s)?;
+        let hb = decode_hb(k.glm_dsa_decode_hb)?;
+        let (one_split, p_hi, pipe) = (
+            k.glm_dsa_hb_prefill_one_split,
+            k.glm_dsa_hb_prefill_p_hi,
+            k.glm_dsa_hb_prefill_pipe,
+        );
+        // 2026-10-22: TC and its NaN-test twin are on by default; left at their defaults they run
+        // only where their parents do (inert, reported once, elsewhere). Set to `1` without them,
+        // `for_prefill_tc` / `for_prefill_tc_nanor` still refuse them.
+        let tc = under_parent(
+            s,
+            "METRALE_GLM_DSA_HB_PREFILL_TC",
+            k.glm_dsa_hb_prefill_tc,
+            hb.is_some() && p_hi && one_split && !pipe,
+            "METRALE_GLM_DSA_DECODE_HB with METRALE_GLM_DSA_HB_PREFILL_P_HI=1 and \
+             METRALE_GLM_DSA_HB_PREFILL_ONE_SPLIT=1, without METRALE_GLM_DSA_HB_PREFILL_PIPE=1",
+        );
+        let tc_nanor = under_parent(
+            s,
+            "METRALE_GLM_DSA_TC_NANOR",
+            k.glm_dsa_tc_nanor,
+            tc,
+            "METRALE_GLM_DSA_HB_PREFILL_TC",
+        );
         Ok(Self {
-            decode_hb: decode_hb(k.glm_dsa_decode_hb)?,
+            decode_hb: hb,
             prefill: DsaPrefillLevers {
-                one_split: k.glm_dsa_hb_prefill_one_split,
-                p_hi: k.glm_dsa_hb_prefill_p_hi,
-                pipe: k.glm_dsa_hb_prefill_pipe,
-                tc: k.glm_dsa_hb_prefill_tc,
-                tc_nanor: k.glm_dsa_tc_nanor,
+                one_split,
+                p_hi,
+                pipe,
+                tc,
+                tc_nanor,
             },
             select: DsaSelectLevers {
                 scores_tiled: k.glm_dsa_scores_tiled,

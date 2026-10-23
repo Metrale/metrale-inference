@@ -4647,3 +4647,209 @@ when = { kv_cache_dtype = "fp8" }
 numerics = "reference"
 priority = 50
 cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:366-369; crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:376-386; crates/model-arch/src/glm5next_dsa/attend.rs:113-121,419-443"
+
+# 2026-10-22: The recipe's METRALE_GLM_DSA_DECODE_HB=8 (glm_dsa_decode_hb): every decode, verify
+# and batched-decode attend of up to 16 rows runs the head-batched tensor-core kernel at 8 splits
+# and the merge after it, one pair per launch group.
+
+[[rule]]
+id = "glm_mla_attend_hb"
+pattern = [{ op = "mla_attention", layer_kind = "deepseek_sparse_attention" }]
+kernels = [
+  { module = "glm5next_dsa_mla_decode_hb", func = "glm5next_dsa_mla_decode_hb_fp8" },
+  { module = "glm5next_dsa_mla_decode_hb", func = "glm5next_dsa_mla_merge" },
+]
+repeat = "once"
+emitter = "dsa"
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify"]
+when = { kv_cache_dtype = "fp8", glm_dsa_decode_hb = "8" }
+numerics = "reference"
+priority = 55
+cite = "crates/model-arch/src/glm5next_dsa/levers.rs:121-133,153 (glm_dsa_decode_hb, crates/settings/src/groups/kernels.rs:94); crates/model-arch/src/glm5next_dsa/attend.rs:118-151 (the head-batched decode and merge resolved); crates/model-arch/src/glm5next_dsa/attend/head_batched.rs:66-115 (hb decode over the rows, then the merge when splits > 1)"
+
+# 2026-10-22: The recipe's METRALE_GLM_DSA_VERIFY_ROWS=1 (glm_dsa_verify_rows): a captured 2..=16-row
+# verify takes the batched rows (decode_k.rs:165-175, :397-411). The indexer key joins project_in's
+# merged split launch (1..=8 rows; METRALE_GLM_DSA_PROJ_IN_MERGED, default on), the key norm runs
+# once over the rows, the selector query and head weights once each (the pair at 2..=8 rows,
+# METRALE_GLM_DSA_SELECTOR_PAIR, default on), and the rows are selected in one ceiling pass
+# (METRALE_GLM_DSA_VERIFY_SELECT_ONCE, default on) whose scores run the window kernel at 2..=8 rows
+# (METRALE_GLM_DSA_SCORES_HEADS_WINDOW, default on). The latent write and the indexer store stay
+# per row (the row loop, decode_k.rs:203). The compress gate joins the split launch too, but the
+# circuit holds it as unquantized BF16 (blocks/glm5_next_dsa.toml `idx_gate`), so it keeps its
+# per-row BF16 rule.
+
+[[rule]]
+id = "glm_w8a8_dsa_proj_in_split4_idx_verify"
+pattern = [
+  { op = "linear", role = "mla_q_a", weight = "fp8/channel", input = "fp8/token", keep = true, layer_kind = "deepseek_sparse_attention" },
+  { op = "linear", role = "mla_kv_a", weight = "fp8/channel", input = "fp8/token", keep = true, sibling = true, layer_kind = "deepseek_sparse_attention" },
+  { op = "linear", role = "index_k", weight = "fp8/channel", input = "fp8/token", sibling = true, layer_kind = "deepseek_sparse_attention" },
+]
+kernels = [{ module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb1_ku8_split4" }]
+repeat = "once"
+emitter = "glm_w8a8"
+rows = [2, 8]
+modes = ["verify"]
+when = { glm_dsa_verify_rows = "on" }
+numerics = "reference"
+priority = 35
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:165-175,186-192 (verify_rows, then project_in with the indexer's projections); crates/model-arch/src/glm5next_dsa/layer/proj_in_merged.rs:26-56 (q_a, kv_a, then wk and the compress gate), :59-71 (1..=8 rows, every projection on the FP8 tier); crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:257-283 (projected: only the key norm runs)"
+
+[[rule]]
+id = "glm_w8a8_index_k_once_verify"
+pattern = [{ op = "linear", role = "index_k", weight = "fp8/channel", input = "fp8/token", layer_kind = "deepseek_sparse_attention" }]
+kernels = [{ module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb2" }]
+repeat = "once"
+emitter = "glm_w8a8"
+rows = [9, 16]
+modes = ["verify"]
+when = { glm_dsa_verify_rows = "on" }
+numerics = "reference"
+priority = 35
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:186-192 (indexer_project_rows over the k rows); crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:276-310 (wk over the rows in groups of DENSE_GEMV_BATCHM_MAX_M 16, one call under METRALE_GLM_DSA_IDX_PROJ_WHOLE); crates/model-arch/src/glm5next_fp8_dense.rs:341-366; crates/model-layers/src/layers/ops/w8a8_decode.rs:259-267 (the mb2 entry above 8 rows)"
+
+[[rule]]
+id = "glm_index_k_norm_once_verify"
+pattern = [{ op = "layer_norm", layer_kind = "deepseek_sparse_attention" }]
+kernels = [{ module = "nllb_encoder", func = "nllb_layernorm_bf16" }]
+repeat = "once"
+emitter = "dsa"
+rows = [2, 16]
+modes = ["verify"]
+when = { glm_dsa_verify_rows = "on" }
+numerics = "reference"
+priority = 15
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:186-192; crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:314-324 (nllb_layernorm_bf16, grid n: one launch over the rows)"
+
+[[rule]]
+id = "glm_index_selector_pair_verify"
+pattern = [
+  { op = "linear", role = "index_weights", weight = "bf16", writes = "f32", keep = true, layer_kind = "deepseek_sparse_attention" },
+  { op = "linear", role = "index_q", weight = "bf16", writes = "f32", sibling = true, layer_kind = "deepseek_sparse_attention" },
+]
+kernels = [{ module = "dense_gemv_bf16_batchm_few", func = "dense_gemv_bf16_batchm_few_fp32out_pair" }]
+repeat = "once"
+emitter = "dense_gemv"
+rows = [2, 8]
+modes = ["verify"]
+when = { glm_dsa_verify_rows = "on" }
+numerics = "reference"
+priority = 30
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:186-190 (selector_query_rows, wide false); crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:173-182 (the pair first); crates/model-arch/src/glm5next_dsa/layer/selector_pair.rs (2..=8 rows, glm_dsa_selector_pair default on, crates/settings/src/groups/kernels.rs:118)"
+
+[[rule]]
+id = "glm_index_f32_gemv_wide_verify"
+pattern = [{ op = "linear", roles = ["index_q", "index_weights"], weight = "bf16", writes = "f32", layer_kind = "deepseek_sparse_attention" }]
+kernels = [{ module = "dense_gemv_bf16_batchm", func = "dense_gemv_bf16_batchm_wide_fp32out" }]
+repeat = "once"
+emitter = "dense_gemv"
+rows = [9, 16]
+modes = ["verify"]
+when = { glm_dsa_verify_rows = "on" }
+numerics = "reference"
+priority = 15
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:186-190; crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:183-231 (one batched FP32-out GEMV each over the rows)"
+
+[[rule]]
+id = "glm_index_select_once_verify"
+pattern = [{ op = "index_select", input = "f32", params = { pool = "index_kpool" } }]
+kernels = [
+  { module = "dsa_scores_heads_window", func = "dsa_index_scores_heads_window" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_pass" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_pass" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_pass" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_pass" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_collect" },
+  { module = "dsa_indexer_rows", func = "dsa_expand_selection_rows" },
+]
+repeat = "once"
+emitter = "dsa"
+rows = [2, 8]
+modes = ["verify"]
+when = { glm_dsa_verify_rows = "on" }
+numerics = "reference"
+priority = 25
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:176-184,360-364 (select_once only under verify_rows: one pass after the row loop); crates/model-arch/src/glm5next_dsa/layer/verify_select.rs:51-73,77-101 (glm_dsa_verify_select_once default on, crates/settings/src/groups/kernels.rs:116); crates/model-arch/src/glm5next_dsa/select/scores.rs:28-34,57-77 (the window kernel at 2..=8 rows, glm_dsa_scores_heads_window default on, crates/settings/src/groups/kernels.rs:106)"
+
+# 2026-10-22: The recipe's METRALE_GLM_DSA_INDEXER_ROWS=1 (glm_dsa_indexer_rows): a captured
+# batched decode of one row per sequence on paged caches stages the indexer key and key norm of
+# every row in one pass (indexer_project_rows), then stores and selects the rows in one launch per
+# stage (select_paged_rows). The compress gate runs in the same pass but the circuit holds it as
+# unquantized BF16, so it keeps its per-row BF16 rule.
+
+[[rule]]
+id = "glm_w8a8_index_k_once_few_ms"
+pattern = [{ op = "linear", role = "index_k", weight = "fp8/channel", input = "fp8/token", layer_kind = "deepseek_sparse_attention" }]
+kernels = [
+  { module = "w8a8_act_quant", func = "w8a8_act_quant_row" },
+  { module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb1_ku8" },
+]
+repeat = "once"
+emitter = "glm_w8a8"
+rows = [2, 8]
+modes = ["multi_seq"]
+when = { glm_dsa_indexer_rows = "on" }
+numerics = "reference"
+priority = 35
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:255-271 (staged: indexer_project_rows over the n rows); crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:276-310 (wk once over the rows; the activation quantization shared under stable_input); crates/model-arch/src/glm5next_fp8_dense.rs:341-366; crates/model-layers/src/layers/ops/w8a8_decode.rs:259-267 (the mb1_ku8 entry at 1..=8 rows)"
+
+[[rule]]
+id = "glm_w8a8_index_k_once_wide_ms"
+pattern = [{ op = "linear", role = "index_k", weight = "fp8/channel", input = "fp8/token", layer_kind = "deepseek_sparse_attention" }]
+kernels = [{ module = "w8a8_gemv", func = "w8a8_gemv_rowscale_mb2" }]
+repeat = "once"
+emitter = "glm_w8a8"
+rows = [9, 16]
+modes = ["multi_seq"]
+when = { glm_dsa_indexer_rows = "on" }
+numerics = "reference"
+priority = 35
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:255-271; crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:276-310; crates/model-arch/src/glm5next_fp8_dense.rs:341-366; crates/model-layers/src/layers/ops/w8a8_decode.rs:259-267 (the mb2 entry above 8 rows)"
+
+[[rule]]
+id = "glm_index_k_norm_once_ms"
+pattern = [{ op = "layer_norm", layer_kind = "deepseek_sparse_attention" }]
+kernels = [{ module = "nllb_encoder", func = "nllb_layernorm_bf16" }]
+repeat = "once"
+emitter = "dsa"
+rows = [2, 16]
+modes = ["multi_seq"]
+when = { glm_dsa_indexer_rows = "on" }
+numerics = "reference"
+priority = 15
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:255-271; crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:314-324 (nllb_layernorm_bf16, grid n)"
+
+[[rule]]
+id = "glm_index_store_rows"
+pattern = [{ op = "kpool_compress" }]
+kernels = [
+  { module = "dsa_indexer_rows", func = "dsa_indexer_store_rows" },
+  { module = "dsa_scores_warp", func = "dsa_pool_keys_store_rows" },
+]
+repeat = "once"
+emitter = "dsa"
+rows = [2, 16]
+modes = ["multi_seq"]
+when = { glm_dsa_indexer_rows = "on" }
+numerics = "reference"
+priority = 15
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:272-293 (paged_rows: every row one sequence's decode row on a paged cache, replay-safe); crates/model-arch/src/glm5next_dsa/layer/select_rows.rs:102-130 (the BF16 cache: one store launch over the rows, then the pool keys of all rows)"
+
+[[rule]]
+id = "glm_index_select_rows"
+pattern = [{ op = "index_select", input = "f32", params = { pool = "index_kpool" } }]
+kernels = [
+  { module = "dsa_indexer_rows", func = "dsa_write_geom_rows" },
+  { module = "dsa_indexer_rows", func = "dsa_pool_scores_rows" },
+  { module = "dsa_indexer_rows", func = "dsa_topk_pools_rows" },
+  { module = "dsa_indexer_rows", func = "dsa_expand_selection_rows" },
+]
+repeat = "once"
+emitter = "dsa"
+rows = [2, 16]
+modes = ["multi_seq"]
+when = { glm_dsa_indexer_rows = "on" }
+numerics = "reference"
+priority = 25
+cite = "crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:272-293; crates/model-arch/src/glm5next_dsa/layer/select_rows.rs:132-140 (the geometry of every row), :164-187 (the scores of every row from the staged keys), :189-214 (top pools and expansion, one launch each)"

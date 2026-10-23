@@ -75,8 +75,10 @@ const STRICT: [Field<bool>; 5] = [
 #[test]
 fn the_strict_switches_read_as_before_and_take_the_switch_spellings() {
     // 2026-10-17: `METRALE_GLM_MHC_PRE_TILE` had the same reader, as `parse_pre_tile`.
-    let tile: Field<bool> = ("METRALE_GLM_MHC_PRE_TILE", |l| l.pre_tile);
-    for (env, field) in STRICT.into_iter().chain([tile]) {
+    // 2026-10-22: It and `METRALE_GLM_SP_OVERLAP` are on by default now, so unset no longer reads
+    // as the old reader's off: `the_promoted_levers_are_on_by_default_and_0_turns_them_off`.
+    let promoted = |env: &str| env == "METRALE_GLM_SP_OVERLAP";
+    for (env, field) in STRICT.into_iter().filter(|(env, _)| !promoted(env)) {
         for probe in [
             None,
             Some("0"),
@@ -206,6 +208,7 @@ fn the_pre_slice_reads_as_before_but_trims() {
 }
 
 /// 2026-10-17: Every lever off at the declared defaults, as each old reader read unset.
+/// 2026-10-22: Except `pre_tile`, on by default since today.
 #[test]
 fn the_declared_defaults_are_the_old_unset_values() {
     let l = MhcLevers::from_settings(&defaults()).expect("defaults resolve");
@@ -219,7 +222,8 @@ fn the_declared_defaults_are_the_old_unset_values() {
             post_vec: false,
             post_sum_ctas: None,
             pre_tok: false,
-            pre_tile: false,
+            // 2026-10-22: Default on (`sp_overlap` is too, but off without SP-mHC).
+            pre_tile: true,
             pre_prefetch: false,
             pre_c1: true,
             pre_splitk: false,
@@ -238,4 +242,68 @@ fn the_decode_pre_norm_is_on_by_default_and_0_turns_it_off() {
     assert_eq!(at(Some("0")), Some(false));
     assert_eq!(at(Some("off")), Some(false));
     assert_eq!(at(Some("garbage")), None);
+}
+
+/// 2026-10-22: `METRALE_GLM_MHC_PRE_TILE` and `METRALE_GLM_SP_OVERLAP` are on by default and `0`
+/// turns each off; left at its default, the overlap is off without SP-mHC (no refusal), while a
+/// set `1` without it is still refused.
+#[test]
+fn the_promoted_levers_are_on_by_default_and_0_turns_them_off() {
+    let cases: [Field<bool>; 2] = [
+        ("METRALE_GLM_MHC_PRE_TILE", |l| l.pre_tile),
+        ("METRALE_GLM_SP_OVERLAP", |l| l.sp_overlap),
+    ];
+    for (env, field) in cases {
+        assert_eq!(new_at(env, None, field), Some(true), "{env}");
+        assert_eq!(new_at(env, Some("0"), field), Some(false), "{env}");
+        assert_eq!(new_at(env, Some("off"), field), Some(false), "{env}");
+        assert_eq!(new_at(env, Some("1"), field), Some(true), "{env}");
+        assert_eq!(new_at(env, Some("garbage"), field), None, "{env}");
+    }
+    assert_eq!(new(&[]).map(|l| l.sp_overlap), Some(false));
+    assert!(new(&[("METRALE_GLM_SP_OVERLAP", "1")]).is_none());
+}
+
+/// 2026-10-22: `METRALE_GLM_MHC_FUSED` is on by default, so `fused_runs` decides per site: the
+/// fused kernels in the build and a shape and BF16 `hc_fn` they take run fused; a missing kernel,
+/// an FP32 `hc_fn` or a shape they refuse keep the three launches instead of failing.
+#[test]
+fn the_fused_pre_norm_runs_only_where_the_kernels_take_the_site() {
+    use crate::glm5next_mhc::{Glm5NextMhcKernels, Glm5NextMhcSiteWeights};
+    use metrale_gpu_runtime::gpu::{DevicePtr, KernelHandle};
+    let gpu = metrale_gpu_runtime::gpu::mock::MockGpuBackend::new();
+    let k = Glm5NextMhcKernels::resolve(&gpu, MhcLevers::declared()).unwrap();
+    let site = |bf16| Glm5NextMhcSiteWeights {
+        hc_fn: DevicePtr(0x100),
+        hc_fn_bf16: bf16,
+        hc_scale: DevicePtr(0x200),
+        hc_base: DevicePtr(0x300),
+        mix: DevicePtr(0x400),
+        done: DevicePtr(0x480),
+        mix_tokens: crate::glm5next_mhc::MHC_MIX_MAX_TOKENS,
+    };
+    assert!(fused_runs(&k, &site(true), 4096, 4));
+    assert!(!fused_runs(&k, &site(false), 4096, 4));
+    assert!(!fused_runs(&k, &site(true), 4096, 5));
+    assert!(!fused_runs(&k, &site(true), 8194, 4));
+    let mut absent = k;
+    absent.hc_pre_norm = KernelHandle(0);
+    assert!(!fused_runs(&absent, &site(true), 4096, 4));
+    let mut absent_rows = k;
+    absent_rows.hc_pre_norm_rows = KernelHandle(0);
+    assert!(!fused_runs(&absent_rows, &site(true), 4096, 4));
+    assert!(
+        crate::glm5next_layer::GlmLevers::from_settings(&defaults())
+            .unwrap()
+            .mhc_fused,
+        "default on"
+    );
+    assert!(
+        !crate::glm5next_layer::GlmLevers::from_settings(
+            &settings_from(&[("METRALE_GLM_MHC_FUSED", "0")]).unwrap()
+        )
+        .unwrap()
+        .mhc_fused,
+        "0 turns it off"
+    );
 }

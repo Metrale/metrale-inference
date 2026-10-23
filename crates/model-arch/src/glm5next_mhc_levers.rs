@@ -9,7 +9,9 @@
 //! Invariants:
 //! - `METRALE_GLM_MHC_POST_PRE_FUSED`, `METRALE_GLM_SP_OVERLAP` and `METRALE_GLM_SP_PIPELINE` on
 //!   without `METRALE_GLM_SP_MHC` is an error, and so is the pipeline under the layer dump (whose
-//!   taps read the serial order): the resolve fails, not the first prefill.
+//!   taps read the serial order): the resolve fails, not the first prefill. 2026-10-22:
+//!   `METRALE_GLM_SP_OVERLAP` left at its default (on) is off without SP-mHC instead
+//!   (`glm5next_default_on::under_parent`); set to `1`, it is still refused.
 //! - A post-sum cap outside `1..=MAX_CTAS` (other than `0`, off) and a negative pre-mix slice are
 //!   errors.
 
@@ -64,9 +66,18 @@ impl MhcLevers {
     pub fn from_settings(s: &InferenceServerSettings) -> Result<Self> {
         let (k, t) = (&s.kernels, &s.telemetry);
         let sp_mhc = k.glm_sp_mhc;
+        // 2026-10-22: `METRALE_GLM_SP_OVERLAP` is on by default: without SP-mHC the default is
+        // inert (reported once); a set `1` is still refused below.
+        let sp_overlap = crate::glm5next_default_on::under_parent(
+            s,
+            "METRALE_GLM_SP_OVERLAP",
+            k.glm_sp_overlap,
+            sp_mhc,
+            "METRALE_GLM_SP_MHC=1",
+        );
         for (env, on) in [
             ("METRALE_GLM_MHC_POST_PRE_FUSED", k.glm_mhc_post_pre_fused),
-            ("METRALE_GLM_SP_OVERLAP", k.glm_sp_overlap),
+            ("METRALE_GLM_SP_OVERLAP", sp_overlap),
             ("METRALE_GLM_SP_PIPELINE", k.glm_sp_pipeline),
         ] {
             if on && !sp_mhc {
@@ -107,7 +118,7 @@ impl MhcLevers {
         };
         Ok(Self {
             sp_mhc,
-            sp_overlap: k.glm_sp_overlap,
+            sp_overlap,
             sp_pipeline: k.glm_sp_pipeline,
             post_pre_fused: k.glm_mhc_post_pre_fused,
             post_vec: k.glm_mhc_post_vec,
@@ -163,6 +174,31 @@ impl MhcLevers {
                 t::HC_PRE_TILE_KERNEL,
                 t::tile_smem_bytes()
             );
+        }
+    }
+}
+
+/// 2026-10-22: Whether `METRALE_GLM_MHC_FUSED` (default on) runs at this site: the fused kernels
+/// are in the build and take the site's shape and BF16 `hc_fn`. Where they do not, the site keeps
+/// the three launches of the lever-off build (reported once) instead of failing the forward.
+pub fn fused_runs(
+    kernels: &crate::glm5next_mhc::Glm5NextMhcKernels,
+    site: &crate::glm5next_mhc::Glm5NextMhcSiteWeights,
+    hidden: usize,
+    hc_mult: usize,
+) -> bool {
+    let why = if kernels.hc_pre_norm.0 == 0 || kernels.hc_pre_norm_rows.0 == 0 {
+        Some("the glm5next_mhc_fused kernels are not in this build".to_string())
+    } else if !site.hc_fn_bf16 {
+        Some("the site's hc_fn is FP32".to_string())
+    } else {
+        crate::glm5next_mhc_fused::hc_pre_norm_refusal(hidden as u32, hc_mult as u32)
+    };
+    match why {
+        None => true,
+        Some(why) => {
+            crate::glm5next_default_on::report_inert("METRALE_GLM_MHC_FUSED", &why);
+            false
         }
     }
 }

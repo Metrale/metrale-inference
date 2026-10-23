@@ -16,7 +16,8 @@
 //! Invariants:
 //! - Every check runs before the routed experts' first launch ([`GuPlan::new`]).
 //! - Off unless the lever is on (`MlpLevers::gu_fused`); the lever needs `METRALE_GLM_MOE_W4A4_GROUPED=1` and the three
-//!   fused entries, else the load is refused ([`check_at_load`]).
+//!   fused entries, else the load is refused ([`check_at_load`]). 2026-10-22: on by default, so
+//!   without the entries it is inert ([`runs`], reported once).
 
 use anyhow::{Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
@@ -46,16 +47,32 @@ pub(crate) fn check_ready(grouped: bool, ready: bool) -> Result<(), String> {
 }
 
 /// 2026-10-14: The load-time refusal of a lever this load cannot run, from the routed experts'
-/// precision plan.
+/// precision plan. 2026-10-22: The lever is on by default, so a build without the fused entries
+/// keeps the separate launches (reported once, [`runs`]); the grouped path missing is refused
+/// (the resolve turns the default off there, so only a set `1` reaches it).
 pub fn check_at_load(k: &Glm5NextMlpKernels) -> Result<()> {
     if !k.levers.mlp.gu_fused {
         return Ok(());
     }
-    check_ready(
-        k.levers.mlp.w4a4_grouped,
-        k.w4a4_grouped.gu.iter().all(|h| h.0 != 0),
-    )
-    .map_err(anyhow::Error::msg)
+    check_ready(k.levers.mlp.w4a4_grouped, true).map_err(anyhow::Error::msg)?;
+    runs(k);
+    Ok(())
+}
+
+/// 2026-10-22: Whether the routed experts take the fused launch: the lever is on and every fused
+/// entry resolved; a missing entry is reported once.
+pub(crate) fn runs(k: &Glm5NextMlpKernels) -> bool {
+    if !k.levers.mlp.gu_fused {
+        return false;
+    }
+    let ready = k.w4a4_grouped.gu.iter().all(|h| h.0 != 0);
+    if !ready {
+        crate::glm5next_default_on::report_inert(
+            LEVER,
+            "w4a4_grouped_gu_m32/_m64/_m128 is absent from this target's PTX",
+        );
+    }
+    ready
 }
 
 /// 2026-10-14: One routed site's fused launch, checked: the entry of tile `ti` and the down

@@ -368,3 +368,19 @@ fn the_declared_defaults_are_the_old_unset_values() {
         }
     );
 }
+
+/// 2026-10-22: `METRALE_GLM_MOE_W4A4_GU_FUSED` is on by default under
+/// `METRALE_GLM_MOE_W4A4_GROUPED=1` and `0` turns it off; left at its default it is off without
+/// the grouped path, while a set `1` there stays on for the load to refuse.
+#[test]
+fn the_fused_gate_up_is_on_under_the_grouped_path_and_0_turns_it_off() {
+    let grouped = ("METRALE_GLM_MOE_W4A4_GROUPED", "1");
+    let env = "METRALE_GLM_MOE_W4A4_GU_FUSED";
+    let gu = |l: &MlpLevers| l.gu_fused;
+    assert_eq!(new_with(&[grouped], gu), Some(true));
+    assert_eq!(new_with(&[grouped, (env, "0")], gu), Some(false));
+    assert_eq!(new_with(&[grouped, (env, "off")], gu), Some(false));
+    assert_eq!(new_with(&[], gu), Some(false));
+    assert_eq!(new_with(&[(env, "1")], gu), Some(true));
+    assert_eq!(new_with(&[grouped, (env, "garbage")], gu), None);
+}

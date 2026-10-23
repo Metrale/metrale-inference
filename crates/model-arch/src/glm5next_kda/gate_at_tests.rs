@@ -224,3 +224,33 @@ fn only_the_64_token_scan_moves_the_gate() {
     let gpu = MockGpuBackend::new();
     assert_eq!(layer(&gpu).gate_at_for(false).unwrap(), GateAt::Kernel);
 }
+
+/// 2026-10-22: The lever is on by default: on the 64-token scan the gate moves into the prepare
+/// when the kernels resolved; without them it stays in the front end (no error), and a verify
+/// record then has its gate rows (`gate_in_prepare_skips_gate` agrees with the decision).
+#[test]
+fn without_the_kernels_the_default_keeps_the_gate_launch() {
+    let gpu = MockGpuBackend::new();
+    let mut on = layer(&gpu);
+    on.levers.kda.chunk64 = Some(64);
+    // The value the settings resolve under `METRALE_GLM_KDA_CHUNK64` (`levers_tests.rs`).
+    on.levers.kda.gate_in_prepare = true;
+    assert_eq!(on.gate_at_for(true).unwrap(), GateAt::Prepare);
+    assert!(on.gate_in_prepare_skips_gate(64).unwrap());
+    for missing in [0, 1] {
+        let mut lay = layer(&gpu);
+        lay.levers.kda.chunk64 = Some(64);
+        lay.levers.kda.gate_in_prepare = true;
+        if missing == 0 {
+            lay.kernels.seq.chunk64_prepare_graw = KernelHandle(0);
+        } else {
+            lay.kernels.seq.chunk64_prepare_conv_graw = KernelHandle(0);
+        }
+        assert_eq!(lay.gate_at_for(true).unwrap(), GateAt::Kernel, "{missing}");
+        assert!(!lay.gate_in_prepare_skips_gate(64).unwrap(), "{missing}");
+    }
+    let mut off = layer(&gpu);
+    off.levers.kda.chunk64 = Some(64);
+    off.levers.kda.gate_in_prepare = false;
+    assert_eq!(off.gate_at_for(true).unwrap(), GateAt::Kernel);
+}

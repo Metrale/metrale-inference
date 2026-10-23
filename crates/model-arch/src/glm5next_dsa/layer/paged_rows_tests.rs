@@ -204,6 +204,9 @@ fn a_prefill_chunk_crossing_a_block_boundary_follows_the_table() {
     let rig = Rig::new();
     let mut layer = rig.layer();
     layer.indexer_cache = IndexerCache::Paged;
+    // 2026-10-22: `METRALE_GLM_DSA_INDEXER_ROWS` is on by default; this test pins the per-row
+    // placement it was written for (the staged rows have their own tests).
+    layer.levers.dsa_indexer_rows = false;
     let mut kv = rig.kv();
     let pool = kv.v_pool_ptr(0);
     let stride = kv.v_block_stride_bytes_for_layer(0);

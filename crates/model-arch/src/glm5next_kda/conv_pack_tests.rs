@@ -14,7 +14,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use super::super::decode_rows_tests::{
     CONV_TOKENS, CONV_TOKENS_PARTS, CONV_WINDOW, cfg, layer, seq_state, since,
 };
-use super::super::{GateAt, Glm5NextKdaWorkspace, Pack};
+use super::super::{GateAt, Glm5NextKdaLayer, Glm5NextKdaWorkspace, Pack};
 use super::conv_pack_spans;
 
 /// 2026-10-13: `kda_pack_qkv_bf16`'s mock handle in `decode_rows_tests::layer`.
@@ -120,21 +120,39 @@ fn the_fused_conv_reads_the_parts_and_writes_the_pack() {
     }
 }
 
-/// 2026-10-13: Without the lever (the test process does not set it), every caller packs in
-/// `front_end`, and `decode_k` launches the unfused pair.
+/// 2026-10-13: Without the lever, every caller packs in `front_end`, and `decode_k` launches the
+/// unfused pair. 2026-10-22: The lever is on by default, so the declared levers take the fused
+/// launch; `0` (the field off) keeps the pair, and so does a build without the fused kernel
+/// (inert, no longer an error).
 #[test]
-fn unset_lever_keeps_the_pack_in_front_end() {
+fn the_default_fuses_the_pack_and_0_or_no_kernel_keeps_it_in_front_end() {
     let gpu = MockGpuBackend::new();
-    let l = layer(&gpu);
-    assert_eq!(l.pack_for(true).unwrap(), Pack::InFrontEnd);
-    assert_eq!(l.pack_for(false).unwrap(), Pack::InFrontEnd);
-    let ws = Glm5NextKdaWorkspace::new(&gpu, &cfg(), 16).unwrap();
-    let st = seq_state(&gpu);
-    let hidden = gpu.alloc(16 * cfg().hidden * 2).unwrap();
-    let from = gpu.launch_count();
-    l.decode_k_with(&gpu, hidden, 7, &st, &ws, &[], 0, true)
-        .unwrap();
-    let got = funcs(&since(&gpu, from));
+    let run = |l: &Glm5NextKdaLayer| {
+        let ws = Glm5NextKdaWorkspace::new(&gpu, &cfg(), 16).unwrap();
+        let st = seq_state(&gpu);
+        let hidden = gpu.alloc(16 * cfg().hidden * 2).unwrap();
+        let from = gpu.launch_count();
+        l.decode_k_with(&gpu, hidden, 7, &st, &ws, &[], 0, true)
+            .unwrap();
+        funcs(&since(&gpu, from))
+    };
+    let on = layer(&gpu);
+    assert_eq!(on.pack_for(true).unwrap(), Pack::InConv);
+    assert_eq!(on.pack_for(false).unwrap(), Pack::InFrontEnd);
+    let got = run(&on);
+    assert!(!got.contains(&PACK) && got.contains(&CONV_TOKENS_PARTS));
+
+    let mut off = layer(&gpu);
+    off.levers.kda.conv_pack = false;
+    assert_eq!(off.pack_for(true).unwrap(), Pack::InFrontEnd);
+    assert_eq!(off.pack_for(false).unwrap(), Pack::InFrontEnd);
+    let got = run(&off);
     assert_eq!(got.iter().filter(|&&f| f == PACK).count(), 1);
     assert!(got.contains(&CONV_TOKENS) && !got.contains(&CONV_TOKENS_PARTS));
+
+    let mut no_kernel = layer(&gpu);
+    no_kernel.kernels.seq.conv_tokens_parts = metrale_gpu_runtime::gpu::KernelHandle(0);
+    assert_eq!(no_kernel.pack_for(true).unwrap(), Pack::InFrontEnd);
+    let got = run(&no_kernel);
+    assert_eq!(got.iter().filter(|&&f| f == PACK).count(), 1);
 }
