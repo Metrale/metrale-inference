@@ -10,7 +10,7 @@
 
 use anyhow::{Result, bail};
 use metrale_cache::kv_cache::PagedKvCache;
-use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
+use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use super::super::fp8_rows::{FP8_INDEX_HEAD_DIM, Fp8IndexerLayout};
@@ -31,7 +31,26 @@ pub enum IndexerPlace<'a> {
     Device { pos: DevicePtr, bt: DevicePtr },
 }
 
+/// 2026-10-23: The kernels of one indexer row's key norm and its device placement: the key
+/// LayerNorm, `dsa_indexer_store` and `dsa_pool_keys_store_rows`. The layer's own
+/// ([`Glm5NextDsaLayer::indexer_kernels`]) or a plan's (`glm5next_dsa::plan`).
+#[derive(Clone, Copy, Debug)]
+pub struct IndexerKernels {
+    pub k_norm: KernelHandle,
+    pub store: KernelHandle,
+    pub pool_keys: KernelHandle,
+}
+
 impl Glm5NextDsaLayer {
+    /// 2026-10-23: The indexer kernels this layer resolved at load.
+    pub fn indexer_kernels(&self) -> IndexerKernels {
+        IndexerKernels {
+            k_norm: self.select_kernels.k_norm,
+            store: self.select_kernels.indexer_store,
+            pool_keys: self.select_kernels.rows.pool_keys_store,
+        }
+    }
+
     /// 2026-10-09: A new sequence's indexer state, flat or paged per `indexer_cache`.
     pub fn alloc_dsa_state(&self, gpu: &dyn GpuBackend) -> Result<Glm5NextDsaState> {
         match self.indexer_cache {

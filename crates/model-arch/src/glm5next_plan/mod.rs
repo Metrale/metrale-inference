@@ -8,7 +8,8 @@
 //! Invariants:
 //! - [`DONE`] lists exactly the plan sites whose groups compile here, per block; every other
 //!   site is a declared legacy site of its block ([`CompiledSite::legacy`]), never dropped.
-//! - Compiling reads only the plan and the rank circuit: no lever, no environment.
+//! - Compiling reads only the plan, the rank circuit and (for a setting a rule's `when` names,
+//!   [`compile_dsa`]) the policy the plan was fused under: no lever, no environment.
 
 use anyhow::{Context, Result, ensure};
 use metrale_circuit::{Circuit, FusionPlan};
@@ -16,6 +17,9 @@ use metrale_model_layers::circuit_exec::family::{EmitterRegistry, GroupEmitter, 
 
 use crate::glm5next_mlp::forward::plan_moe::MoeSteps;
 
+pub mod dsa;
+#[cfg(test)]
+pub(crate) mod dsa_fixture;
 #[cfg(test)]
 pub(crate) mod fixture;
 #[cfg(test)]
@@ -31,6 +35,7 @@ pub struct GlmBlock {
     pub moe: moe::MoeSlots,
     pub mhc: mhc::MhcSlots,
     pub kda: kda::KdaSlots,
+    pub dsa: dsa::DsaSlots,
 }
 
 static MOE_ROUTER: moe::MoeRouter = moe::MoeRouter;
@@ -40,11 +45,13 @@ static MOE_BLEND: moe::MoeBlend = moe::MoeBlend { split: false };
 static MOE_BLEND_SPLIT: moe::MoeBlend = moe::MoeBlend { split: true };
 static GLM_HC: mhc::GlmHc = mhc::GlmHc;
 static KDA: kda::Kda = kda::Kda;
+static DSA: dsa::Dsa = dsa::Dsa;
 
 /// 2026-10-23: Every GLM emitter.
-static EMITTERS: [&dyn GroupEmitter<GlmBlock>; 7] = [
+static EMITTERS: [&dyn GroupEmitter<GlmBlock>; 8] = [
     &GLM_HC,
     &KDA,
+    &DSA,
     &MOE_ROUTER,
     &GLM_MOE_W4A4,
     &GLM_SWIGLU,
@@ -55,7 +62,7 @@ static EMITTERS: [&dyn GroupEmitter<GlmBlock>; 7] = [
 /// 2026-10-23: The plan-executed sites, `(block, template-local ids of a group)`, as the plan
 /// reports name them: the groups the emitters above compile. A group of a listed block whose
 /// locals are not here is a legacy site of that block.
-pub const DONE: [(&str, &[&str]); 20] = [
+pub const DONE: [(&str, &[&str]); 25] = [
     ("dsa", &["mix", "pre", "input_norm"]),
     ("kda", &["mix", "pre", "input_norm"]),
     ("dsa", &["o@all_reduce", "post"]),
@@ -69,6 +76,11 @@ pub const DONE: [(&str, &[&str]); 20] = [
     ("kda", &["fa_quant", "f_b", "gates", "ga_quant", "g_b"]),
     ("kda", &["recur"]),
     ("kda", &["out_norm"]),
+    ("dsa", &["kv_norm", "kv_write"]),
+    ("dsa", &["idx_k_norm"]),
+    ("dsa", &["pool"]),
+    ("dsa", &["select"]),
+    ("dsa", &["attend"]),
     ("moe", &["gate"]),
     ("moe", &["top_k"]),
     ("moe", &["gate", "top_k"]),
@@ -85,6 +97,7 @@ pub struct LayerPlans {
     pub moe: install::InstalledMoe,
     pub mhc: crate::glm5next_mhc_plan::InstalledMhc,
     pub kda: crate::glm5next_kda::plan::InstalledKda,
+    pub dsa: crate::glm5next_dsa::plan::InstalledDsa,
 }
 
 /// 2026-10-23: The GLM emitter registry.
@@ -222,6 +235,48 @@ pub fn compile_kda(
     let g = last.with_context(|| format!("layer {layer} has no KDA mixer in this plan"))?;
     Ok(CompiledSite {
         steps: block.kda.finish(&g)?,
+        executed,
+        legacy,
+    })
+}
+
+/// 2026-10-23: Layer `layer`'s DSA mixer in `plan` (over the rank circuit `circuit`, fused under
+/// `policy`): its own groups through the `dsa` emitter, its projection groups declared legacy
+/// sites. The attend's split count is the policy's `glm_dsa_decode_hb` (`dsa::hb_splits`).
+pub fn compile_dsa(
+    circuit: &Circuit,
+    plan: &FusionPlan,
+    layer: usize,
+    policy: &metrale_circuit::Policy,
+) -> Result<CompiledSite<crate::glm5next_dsa::plan::DsaSteps<metrale_circuit::KernelId>>> {
+    let reg = registry()?;
+    let mut block = GlmBlock::default();
+    block.dsa.hb_splits = dsa::hb_splits(policy)?;
+    let (mut executed, mut legacy) = (Vec::new(), Vec::new());
+    let mut last = None;
+    let groups = PlanGroup::all(circuit, plan)
+        .filter(|g| g.layer() == Some(layer) && g.block() == "dsa" && !mhc::is_site_group(g));
+    for g in groups {
+        if dsa::is_site_group(&g) {
+            reg.emit(&g, &mut block)?;
+            let kernels: Vec<String> = g.group.kernels.iter().map(|k| k.to_string()).collect();
+            executed.push(format!("{}: {}", g.site(), kernels.join(",")));
+            last = Some(g);
+        } else {
+            ensure!(
+                dsa::is_legacy_group(&g),
+                "layer {layer}: DSA group {} (rule `{}`, emitter `{}`) is neither the mixer's own \
+                 nor one of its projections",
+                g.site(),
+                g.group.rule,
+                g.group.emitter
+            );
+            legacy.push(g.site());
+        }
+    }
+    let g = last.with_context(|| format!("layer {layer} has no DSA mixer in this plan"))?;
+    Ok(CompiledSite {
+        steps: block.dsa.finish(&g)?,
         executed,
         legacy,
     })

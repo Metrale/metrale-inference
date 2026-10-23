@@ -32,14 +32,12 @@ use crate::glm5next_plan::fixture_site::{SMS, STREAM, gate};
 use crate::glm5next_plan::{compile_kda, kda};
 use metrale_model_layers::weight_map::DenseWeight;
 
-const CHILD: &str = "METRALE_TEST_GLM_KDA_W4A16_CHILD";
 const HIDDEN_IN: DevicePtr = DevicePtr(0x9200_0000);
 
 /// 2026-10-23: Run `body` in a child process of this test binary (only the test `name`) that
-/// publishes `--dense-quantization w4a16` before anything reads the tier; the parent asserts the
-/// child ran exactly that test and passed.
+/// publishes `--dense-quantization w4a16` before anything reads the tier.
 fn in_w4a16_process(name: &str, body: impl FnOnce()) {
-    if std::env::var_os(CHILD).is_some() {
+    let publish = || {
         let q =
             metrale_model_layers::layers::set_dense_quantization_from_cli(DenseQuantization::W4a16);
         assert_eq!(
@@ -47,25 +45,9 @@ fn in_w4a16_process(name: &str, body: impl FnOnce()) {
             DenseQuantization::W4a16,
             "the child published the tier first"
         );
-        body();
-        return;
-    }
+    };
     let path = format!("glm5next_plan::kda::tests::{name}");
-    let out = std::process::Command::new(std::env::current_exe().unwrap())
-        .args([path.as_str(), "--exact", "--nocapture", "--test-threads=1"])
-        .env(CHILD, "1")
-        .output()
-        .unwrap();
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(out.status.success(), "child `{path}` failed:\n{text}");
-    assert!(
-        text.contains("1 passed"),
-        "child `{path}` did not run the test:\n{text}"
-    );
+    crate::glm5next_plan::fixture::in_child_process(&path, publish, body);
 }
 
 /// 2026-10-23: The KDA layers of `c`.

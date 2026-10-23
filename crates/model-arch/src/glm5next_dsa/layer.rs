@@ -38,7 +38,6 @@
 use anyhow::{Context, Result};
 use metrale_cache::kv_cache::PagedKvCache;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
-use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use super::attend::Glm5NextDsaDecodeKernel;
 use super::paged::{IndexerCache, IndexerRowsDev};
@@ -49,6 +48,7 @@ use metrale_model_layers::layer::{ForwardContext, LayerState, TransformerLayer};
 
 mod attend_rows;
 mod decode_k;
+mod decode_plan;
 mod decode_rows;
 mod drafter_rows;
 mod host_rows;
@@ -57,16 +57,16 @@ mod kernels;
 mod prefill_rows;
 mod proj_gemm;
 mod proj_in_merged;
-mod selector_pair;
 mod row_ops;
 mod rows;
 mod select_rows;
+mod selector_pair;
 mod slot_upload;
 mod verify_select;
 mod workspace;
 
 pub use decode_rows::DsaRowSpan;
-pub use indexer_place::IndexerPlace;
+pub use indexer_place::{IndexerKernels, IndexerPlace};
 pub use kernels::Glm5NextDsaLayerKernels;
 pub use slot_upload::SlotUpload;
 pub use workspace::Glm5NextDsaWorkspace;
@@ -175,11 +175,13 @@ impl Glm5NextDsaLayer {
         place: IndexerPlace<'_>,
         stream: u64,
     ) -> Result<()> {
-        self.indexer_forward_with(gpu, hidden, state, kv_cache, place, true, stream)
+        let own = self.indexer_kernels();
+        self.indexer_forward_with(gpu, hidden, state, kv_cache, place, true, own, stream)
     }
 
     /// 2026-10-09: [`Self::indexer_forward`], with the selector head weights computed only
     /// when `head_weights` is set; `decode_rows` computes them for all its rows at once.
+    /// 2026-10-23: `own` are the key norm and placement kernels (the layer's, or a plan's).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn indexer_forward_with(
         &self,
@@ -189,6 +191,7 @@ impl Glm5NextDsaLayer {
         kv_cache: &PagedKvCache,
         place: IndexerPlace<'_>,
         head_weights: bool,
+        own: IndexerKernels,
         stream: u64,
     ) -> Result<()> {
         // 2026-09-25: Checked before any write: everything below writes row `state.len()`,
@@ -217,17 +220,7 @@ impl Glm5NextDsaLayer {
             self.cfg.hidden,
             stream,
         )?;
-        KernelLaunch::new(gpu, self.select_kernels.k_norm)
-            .grid([1, 1, 1])
-            .block([d.min(1024) as u32, 1, 1])
-            .shared_mem((d.min(1024) * 4) as u32)
-            .arg_ptr(k_dst)
-            .arg_ptr(self.weights.k_norm_weight)
-            .arg_ptr(self.weights.k_norm_bias)
-            .arg_u32(1)
-            .arg_u32(d as u32)
-            .arg_f32(self.rms_eps)
-            .launch(stream)?;
+        self.k_norm_rows(gpu, own.k_norm, k_dst, 1, stream)?;
 
         self.gemm(
             gpu,
@@ -265,7 +258,7 @@ impl Glm5NextDsaLayer {
             )?;
         }
 
-        self.store_indexer_row(gpu, state, kv_cache, place, pos, d, 0, stream)
+        self.store_indexer_row(gpu, state, kv_cache, place, pos, 0, own, stream)
     }
 
     /// 2026-09-25: The selector query projection and the selection for one query row, written
@@ -293,26 +286,7 @@ impl Glm5NextDsaLayer {
 
         let (q, weights) = match pre {
             Some(p) => p,
-            None => {
-                // 2026-09-25: The selector query `q_idx`, FP32 out.
-                self.gemm(
-                    gpu,
-                    self.kernels.gemm_f32,
-                    self.kernels.gemv_f32,
-                    // 2026-09-25: M = 1; see `pre` for the batched rows.
-                    KernelHandle(0),
-                    w.q_resid.offset(row * self.cfg.q_lora_rank * 2),
-                    self.weights.wq_b,
-                    w.q_idx,
-                    1,
-                    self.cfg.index_heads * self.cfg.index_head_dim,
-                    self.cfg.q_lora_rank,
-                    stream,
-                )?;
-                // 2026-09-25: `head_weights` comes from `indexer_forward`, which has the
-                // layer input.
-                (w.q_idx, w.head_weights)
-            }
+            None => self.selector_query_row(gpu, row, stream)?,
         };
 
         let inputs = DsaSelectInputs {
@@ -355,6 +329,34 @@ impl Glm5NextDsaLayer {
         use crate::glm5next_layer::profile;
         profile::end(profile::DSA_SELECT, t, gpu, stream);
         Ok(())
+    }
+}
+
+impl Glm5NextDsaLayer {
+    /// 2026-09-25: The selector query `q_idx` of row `row`, FP32 out, at M = 1 (`select_row`'s
+    /// `pre` carries the batched rows'); returns it with the head weights `indexer_forward` left
+    /// (it has the layer input).
+    pub(super) fn selector_query_row(
+        &self,
+        gpu: &dyn GpuBackend,
+        row: usize,
+        stream: u64,
+    ) -> Result<(DevicePtr, DevicePtr)> {
+        let w = &self.workspace;
+        self.gemm(
+            gpu,
+            self.kernels.gemm_f32,
+            self.kernels.gemv_f32,
+            KernelHandle(0),
+            w.q_resid.offset(row * self.cfg.q_lora_rank * 2),
+            self.weights.wq_b,
+            w.q_idx,
+            1,
+            self.cfg.index_heads * self.cfg.index_head_dim,
+            self.cfg.q_lora_rank,
+            stream,
+        )?;
+        Ok((w.q_idx, w.head_weights))
     }
 }
 

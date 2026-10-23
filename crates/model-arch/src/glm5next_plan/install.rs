@@ -29,12 +29,13 @@ use crate::glm5next_mlp::{Glm5NextMlpConfig, Glm5NextMlpKernels};
 /// 2026-10-23: The shapes the plan-vs-legacy launch gate covers.
 pub const GATED: [(Mode, u64); 2] = [(Mode::Decode, 1), (Mode::Verify, 2)];
 
-/// 2026-10-23: The policy settings the MoE, mHC and KDA rules read that come from this layer's
-/// levers and layout, as `(key, value)`.
+/// 2026-10-23: The policy settings the MoE, mHC, KDA and DSA rules read that come from this
+/// layer's levers and layout, as `(key, value)`. `glm_dsa_decode_hb` is the head-batched split
+/// count, `off` for the per-head kernel.
 pub fn plan_settings(
     k: &Glm5NextMlpKernels,
     cfg: &Glm5NextMlpConfig,
-) -> [(&'static str, String); 9] {
+) -> [(&'static str, String); 12] {
     let on = |b: bool| if b { "on" } else { "off" }.to_string();
     let l = &k.levers;
     let layout = match cfg.expert_shard {
@@ -51,6 +52,12 @@ pub fn plan_settings(
         ("glm_ar_fused_post", on(l.ar_fused_post)),
         ("glm_kda_row_reg", on(l.kda.row_reg)),
         ("glm_kda_verify_tokens", on(l.kda.verify_tokens)),
+        (
+            "glm_dsa_decode_hb",
+            l.dsa.decode_hb.map_or("off".to_string(), |n| n.to_string()),
+        ),
+        ("glm_dsa_verify_rows", on(l.dsa_verify_rows)),
+        ("glm_dsa_indexer_rows", on(l.dsa_indexer_rows)),
     ]
 }
 

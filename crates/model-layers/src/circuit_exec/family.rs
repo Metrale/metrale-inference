@@ -190,10 +190,13 @@ pub fn plan_kernel(gpu: &dyn GpuBackend, k: &KernelId) -> Result<KernelHandle> {
 /// 2026-10-23: One rank's fused plans over its circuit, as a layer installs plan execution
 /// from them: one plan per `(mode, rows)` the engine fused, in that order. The executed
 /// selection is `--forward circuit` (the engine's `ForwardSelect`); this carries only its data.
+/// 2026-10-23: With the policy the plans were fused under, whose settings a rule's `when` named
+/// (a family's emitter reads the value a matched setting carries, e.g. a split count).
 #[derive(Clone, Copy)]
 pub struct RankPlans<'a> {
     pub circuit: &'a Circuit,
     pub plans: &'a [FusionPlan],
+    pub policy: &'a metrale_circuit::Policy,
 }
 
 #[cfg(test)]

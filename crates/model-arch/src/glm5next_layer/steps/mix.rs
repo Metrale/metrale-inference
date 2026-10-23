@@ -97,18 +97,27 @@ impl Glm5NextLayer {
             }
             (Glm5NextMixer::Dsa(layer), _) => {
                 // 2026-09-25: DSA's `decode_k` writes its output projection over its input
-                // buffer.
-                layer.decode_k(
-                    normed,
-                    k,
-                    state,
-                    kv_cache,
-                    seq_len,
-                    block_table,
-                    ctx,
-                    stream,
-                    is_prefill,
-                )?;
+                // buffer. 2026-10-23: Under `--forward circuit` a captured pass with row
+                // metadata at an installed row count runs its plan (`glm5next_plan::dsa`),
+                // launch for launch what `decode_k` runs there; every other pass (eager, a
+                // prefill piece, no metadata) is the layer's own code.
+                let captured = crate::glm5next_dsa::plan::plan_rows(ctx, k, is_prefill).is_some();
+                match self.plans.dsa.get(k).filter(|_| captured) {
+                    Some(p) => layer.decode_k_plan(
+                        normed, k, state, kv_cache, seq_len, ctx, is_prefill, &p, stream,
+                    )?,
+                    None => layer.decode_k(
+                        normed,
+                        k,
+                        state,
+                        kv_cache,
+                        seq_len,
+                        block_table,
+                        ctx,
+                        stream,
+                        is_prefill,
+                    )?,
+                }
                 Ok(normed)
             }
             (Glm5NextMixer::Kda { .. }, None) => {

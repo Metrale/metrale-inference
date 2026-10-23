@@ -244,8 +244,8 @@ impl metrale_model_layers::circuit_exec::CircuitBindings for Glm5NextLayer {
         crate::glm5next_plan::install::live_policy(policy, &self.mlp_kernels, &self.mlp_cfg)
     }
 
-    /// 2026-10-23: A text layer's mHC sites and, on a routed layer, its MoE site; the MTP block
-    /// executes nothing from a plan.
+    /// 2026-10-23: A text layer's mHC sites, its KDA or DSA mixer and, on a routed layer, its
+    /// MoE site; the MTP block executes nothing from a plan.
     fn install_plans(
         &self,
         gpu: &dyn GpuBackend,
@@ -263,14 +263,21 @@ impl metrale_model_layers::circuit_exec::CircuitBindings for Glm5NextLayer {
             self.hidden,
             &self.plans.mhc,
         )?;
-        if let Glm5NextMixer::Kda { layer, .. } = &self.mixer {
-            sites.extend(crate::glm5next_plan::kda::install(
+        match &self.mixer {
+            Glm5NextMixer::Kda { layer, .. } => sites.extend(crate::glm5next_plan::kda::install(
                 gpu,
                 self.layer_idx,
                 plans,
                 layer,
                 &self.plans.kda,
-            )?);
+            )?),
+            Glm5NextMixer::Dsa(layer) => sites.extend(crate::glm5next_plan::dsa::install(
+                gpu,
+                self.layer_idx,
+                plans,
+                layer,
+                &self.plans.dsa,
+            )?),
         }
         if let Glm5NextMlpSite::Moe(w) = &self.mlp {
             sites.extend(self.plans.moe.install(
@@ -289,6 +296,7 @@ impl metrale_model_layers::circuit_exec::CircuitBindings for Glm5NextLayer {
     fn plan_sites(&self) -> Vec<String> {
         let mut s = self.plans.mhc.sites();
         s.extend(self.plans.kda.sites());
+        s.extend(self.plans.dsa.sites());
         s.extend(self.plans.moe.sites());
         s
     }

@@ -76,6 +76,7 @@ impl TransformerModel {
         let rp = RankPlans {
             circuit,
             plans: &plans,
+            policy: &policy,
         };
         let mut sites = Vec::new();
         for l in &self.layers {

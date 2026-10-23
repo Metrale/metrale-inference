@@ -141,6 +141,7 @@ impl Glm5NextDsaLayer {
             .launch(stream)?;
         self.store_pool_keys(
             gpu,
+            self.select_kernels.rows.pool_keys_store,
             super::rows::PoolKeyRows::Device {
                 rows: &rows,
                 pos: pos0,

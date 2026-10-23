@@ -54,15 +54,15 @@ fn the_layer_takes_the_vanilla_rmsnorm_not_the_plus_one_variant() {
 }
 
 /// 2026-09-25: The indexer's `k_norm` is a LayerNorm with a bias: the layer launches the
-/// `k_norm` kernel handle and passes `k_norm_bias`.
+/// `k_norm` kernel handle and passes `k_norm_bias`. 2026-10-23: the launch is `k_norm_rows`
+/// (`row_ops.rs`), on the handle `indexer_kernels` resolves (`indexer_place.rs`).
 #[test]
 fn the_indexer_norm_passes_a_bias() {
-    let src = include_str!("../layer.rs");
     assert!(
-        src.contains("k_norm_bias"),
+        include_str!("row_ops.rs").contains(".arg_ptr(self.weights.k_norm_bias)"),
         "indexer.k_norm.bias is REQUIRED; a weight-only bind drops mean subtraction too"
     );
-    assert!(src.contains("self.select_kernels.k_norm"));
+    assert!(include_str!("indexer_place.rs").contains("k_norm: self.select_kernels.k_norm"));
 }
 
 /// 2026-09-25: Q reaches the decode kernel in latent space. A raw `q_b_proj` is a well-formed

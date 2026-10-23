@@ -57,14 +57,15 @@ pub(crate) fn plan(
         .unwrap_or_else(|e| panic!("rank {rank} {mode:?} {rows}: {e}"))
 }
 
-/// 2026-10-23: The recipe's `env:` as `(name, value)` pairs.
-pub(crate) fn recipe_env() -> Vec<(String, String)> {
+/// 2026-10-23: The recipe's top-level section `section:` (`env`, `defaults`) as `(key, value)`
+/// pairs, comments and blank lines skipped, quotes stripped.
+pub(crate) fn recipe_section(section: &str) -> Vec<(String, String)> {
     let path = root().join(format!("recipes/{RECIPE}.yaml"));
     let text = std::fs::read_to_string(&path).unwrap();
     let mut out = Vec::new();
     let mut inside = false;
     for line in text.lines() {
-        if line == "env:" {
+        if line == format!("{section}:") {
             inside = true;
             continue;
         }
@@ -80,9 +81,15 @@ pub(crate) fn recipe_env() -> Vec<(String, String)> {
         }
         let (k, v) = t
             .split_once(':')
-            .unwrap_or_else(|| panic!("env line `{line}`"));
+            .unwrap_or_else(|| panic!("{section} line `{line}`"));
         out.push((k.trim().to_string(), v.trim().trim_matches('"').to_string()));
     }
+    out
+}
+
+/// 2026-10-23: The recipe's `env:` as `(name, value)` pairs.
+pub(crate) fn recipe_env() -> Vec<(String, String)> {
+    let out = recipe_section("env");
     assert!(
         out.len() > 30,
         "the recipe's env: section was not read ({} pairs)",
@@ -91,12 +98,53 @@ pub(crate) fn recipe_env() -> Vec<(String, String)> {
     out
 }
 
-/// 2026-10-23: The served layer levers: the recipe's `env:` over the declared defaults.
-pub(crate) fn served_levers() -> GlmLevers {
+/// 2026-10-23: The recipe's `defaults:` value of `key`.
+pub(crate) fn recipe_default(key: &str) -> String {
+    recipe_section("defaults")
+        .into_iter()
+        .find(|(k, _)| k == key)
+        .unwrap_or_else(|| panic!("the recipe's defaults: has no `{key}`"))
+        .1
+}
+
+/// 2026-10-23: The served startup settings: the recipe's `env:` over the declared defaults.
+pub(crate) fn served_settings() -> metrale_settings::InferenceServerSettings {
     let env = recipe_env();
     let pairs: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-    let s = metrale_model_layers::lever_equivalence::settings_from(&pairs).unwrap();
-    GlmLevers::from_settings(&s).unwrap()
+    metrale_model_layers::lever_equivalence::settings_from(&pairs).unwrap()
+}
+
+/// 2026-10-23: Run `body` in a child process of this test binary that runs only the test `path`
+/// (its full path in the binary), after `publish` set the process-wide tiers the body reads; the
+/// parent asserts the child ran exactly that test and passed. The tiers are published once per
+/// process, and the rest of this binary runs without them; nothing on the paths is mocked.
+pub(crate) fn in_child_process(path: &str, publish: impl FnOnce(), body: impl FnOnce()) {
+    const CHILD: &str = "METRALE_TEST_GLM_PLAN_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        publish();
+        body();
+        return;
+    }
+    let out = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([path, "--exact", "--nocapture", "--test-threads=1"])
+        .env(CHILD, "1")
+        .output()
+        .unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "child `{path}` failed:\n{text}");
+    assert!(
+        text.contains("1 passed"),
+        "child `{path}` did not run the test:\n{text}"
+    );
+}
+
+/// 2026-10-23: The served layer levers: the recipe's `env:` over the declared defaults.
+pub(crate) fn served_levers() -> GlmLevers {
+    GlmLevers::from_settings(&served_settings()).unwrap()
 }
 
 /// 2026-10-23: Rank `rank`'s MLP config under the recipe's `tensor_parallel: 3`, `ep_size: 1`,

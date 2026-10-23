@@ -130,9 +130,14 @@ fn installed(
     c: &Circuit,
     plans: &[metrale_circuit::FusionPlan],
     layer: usize,
+    policy: &metrale_circuit::Policy,
 ) -> InstalledMhc {
     let inst = InstalledMhc::default();
-    let rp = RankPlans { circuit: c, plans };
+    let rp = RankPlans {
+        circuit: c,
+        plans,
+        policy,
+    };
     let sites = install(&l.gpu, layer, Some(rp), &l.levers, &l.mhc, HIDDEN, &inst).unwrap();
     // 2026-10-23: Per gated run: two pre-norms and two post-mixes.
     assert_eq!(sites.len(), 4 * RUNS.len(), "layer {layer}: {sites:#?}");
@@ -155,7 +160,7 @@ fn every_plan_executed_mhc_site_launches_what_the_layer_launches() {
         let layers = text_layers(&c[rank]);
         assert_eq!(layers.len(), 45, "rank {rank}");
         for &layer_idx in &layers {
-            let inst = installed(&l, &c[rank], &plans, layer_idx);
+            let inst = installed(&l, &c[rank], &plans, layer_idx, &policy);
             for (_, rows) in RUNS {
                 let rows = rows as usize;
                 let a = run(&l, rank, rows, None, true).unwrap();
@@ -213,7 +218,7 @@ fn a_one_field_sabotage_turns_the_mhc_gate_red() {
         metrale_circuit::Mode::Verify,
         2,
     )];
-    let inst = installed_one(&l, &c[0], &plans);
+    let inst = installed_one(&l, &c[0], &plans, &policy);
     let a = run(&l, 0, 2, None, true).unwrap();
     assert_eq!(gate(&a, &run(&l, 0, 2, Some(&inst), true).unwrap()), None);
     let good = inst.get(2).unwrap();
@@ -232,9 +237,18 @@ fn a_one_field_sabotage_turns_the_mhc_gate_red() {
     }
 }
 
-fn installed_one(l: &Layer, c: &Circuit, plans: &[metrale_circuit::FusionPlan]) -> InstalledMhc {
+fn installed_one(
+    l: &Layer,
+    c: &Circuit,
+    plans: &[metrale_circuit::FusionPlan],
+    policy: &metrale_circuit::Policy,
+) -> InstalledMhc {
     let inst = InstalledMhc::default();
-    let rp = RankPlans { circuit: c, plans };
+    let rp = RankPlans {
+        circuit: c,
+        plans,
+        policy,
+    };
     install(&l.gpu, 4, Some(rp), &l.levers, &l.mhc, HIDDEN, &inst).unwrap();
     inst
 }
@@ -254,7 +268,7 @@ fn uninstalled_rows_run_the_layer_and_a_declined_exchange_is_an_error() {
         metrale_circuit::Mode::Verify,
         2,
     )];
-    let inst = installed_one(&l, &c[0], &plans);
+    let inst = installed_one(&l, &c[0], &plans, &policy);
     let a = run(&l, 0, 3, None, true).unwrap();
     assert_eq!(gate(&a, &run(&l, 0, 3, Some(&inst), true).unwrap()), None);
     let legacy = run(&l, 0, 2, None, false).unwrap();
@@ -287,6 +301,7 @@ fn installation_refuses_unmodelled_levers_and_unfusable_sites() {
     let rp = RankPlans {
         circuit: &c[0],
         plans: &plans,
+        policy: &policy,
     };
     let e = install(&l.gpu, 4, Some(rp), &l.levers, &l.mhc, HIDDEN, &inst)
         .err()

@@ -19,7 +19,7 @@ use metrale_model_layers::layer::{ForwardContext, LayerState};
 use super::super::paged::{IndexerCache, IndexerRowsDev};
 use super::super::select::DsaSelectInputs;
 use super::super::state::Glm5NextDsaState;
-use super::{Glm5NextDsaLayer, IndexerPlace, SlotUpload};
+use super::{Glm5NextDsaLayer, IndexerKernels, IndexerPlace, SlotUpload};
 
 /// 2026-10-21: Which rows `store_pool_keys` finishes: `n` rows at the device positions `pos`
 /// through the device block tables `bt` (`bt_stride` i32 apart per row, 0 for one sequence) of
@@ -50,10 +50,12 @@ impl Glm5NextDsaLayer {
     /// 2026-10-21: Persists the key of every pool these rows complete
     /// (`dsa_pool_keys_store_rows`), after the rows are in the cache; nothing for rows that
     /// keep no pool keys (a flat cache outside the MTP drafter, FP8, or
-    /// `METRALE_GLM_DSA_POOL_KEYS=0`).
+    /// `METRALE_GLM_DSA_POOL_KEYS=0`). 2026-10-23: `k` is the store kernel (the layer's
+    /// `rows.pool_keys_store`, or a plan's).
     pub(crate) fn store_pool_keys(
         &self,
         gpu: &dyn GpuBackend,
+        k: KernelHandle,
         which: PoolKeyRows<'_>,
         stream: u64,
     ) -> Result<()> {
@@ -76,7 +78,6 @@ impl Glm5NextDsaLayer {
                 Some(layout)
             }
         };
-        let k = self.select_kernels.rows.pool_keys_store;
         if k.0 == 0 {
             bail!(
                 "DSA layer {}: the pooled indexer rows need dsa_pool_keys_store_rows",
@@ -167,7 +168,8 @@ impl Glm5NextDsaLayer {
 
     /// 2026-09-26: `indexer_forward`'s last step: places the projected `k_normed` and `gate`
     /// at row `pos` (through `dsa_indexer_store` for [`IndexerPlace::Device`]), marks the row
-    /// valid in a flat cache, and advances `state` by one row.
+    /// valid in a flat cache, and advances `state` by one row. 2026-10-23: `own` names the
+    /// placement kernels (the layer's, or a plan's).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn store_indexer_row(
         &self,
@@ -176,13 +178,13 @@ impl Glm5NextDsaLayer {
         kv_cache: &PagedKvCache,
         place: IndexerPlace<'_>,
         pos: usize,
-        d: usize,
         // 2026-10-09: The staging row a device placement copies from: 0, or row `r` of the
         // batched indexer projections (`indexer_project_rows`).
         stage_row: usize,
+        own: IndexerKernels,
         stream: u64,
     ) -> Result<()> {
-        let w = &self.workspace;
+        let (w, d) = (&self.workspace, self.cfg.index_head_dim);
         match place {
             // 2026-09-25: Placement and the validity mark both use the device-side position;
             // a memset at `valid.offset(pos)` would fix a host address in a captured graph.
@@ -192,7 +194,7 @@ impl Glm5NextDsaLayer {
                     self.store_fp8_rows(gpu, &rows, stage_row, pd, bt, 0, 1, 1, stream)?;
                     return state.advance(1);
                 }
-                if self.select_kernels.indexer_store.0 == 0 {
+                if own.store.0 == 0 {
                     bail!(
                         "DSA layer {}: a device-placed indexer row needs dsa_indexer_store, \
                          which this target lacks",
@@ -201,7 +203,7 @@ impl Glm5NextDsaLayer {
                 }
                 // 2026-10-09: A flat state's rows are its own buffers and `bt` is unused (the
                 // launch passes NULL, 0, 0); a paged state's go through `bt`.
-                KernelLaunch::new(gpu, self.select_kernels.indexer_store)
+                KernelLaunch::new(gpu, own.store)
                     .grid([1, 1, 1])
                     .block([d.min(1024) as u32, 1, 1])
                     .arg_ptr(w.stage_k.offset(stage_row * d * 2))
@@ -217,6 +219,7 @@ impl Glm5NextDsaLayer {
                     .launch(stream)?;
                 self.store_pool_keys(
                     gpu,
+                    own.pool_keys,
                     PoolKeyRows::Device {
                         rows: &rows,
                         pos: pd,
@@ -237,6 +240,7 @@ impl Glm5NextDsaLayer {
             IndexerPlace::Host { block_table } if state.cache() == IndexerCache::Paged => self
                 .store_pool_keys(
                     gpu,
+                    own.pool_keys,
                     PoolKeyRows::Host {
                         pos,
                         block_table,
@@ -249,6 +253,7 @@ impl Glm5NextDsaLayer {
                 if let Some(rows) = state.flat_rows() {
                     self.store_pool_keys(
                         gpu,
+                        own.pool_keys,
                         PoolKeyRows::Flat {
                             rows: &rows,
                             pos0: pos,

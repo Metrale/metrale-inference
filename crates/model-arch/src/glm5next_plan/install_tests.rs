@@ -68,6 +68,7 @@ fn an_installed_site_runs_at_the_gated_rows_only() {
     let rp = RankPlans {
         circuit: &c[0],
         plans: &plans,
+        policy: &policy,
     };
     let inst = InstalledMoe::default();
     let sites = inst
@@ -122,6 +123,7 @@ fn an_unmodelled_lever_refuses_installation() {
     let rp = RankPlans {
         circuit: &c[0],
         plans: &plans,
+        policy: &policy,
     };
     let inst = InstalledMoe::default();
     let e = inst

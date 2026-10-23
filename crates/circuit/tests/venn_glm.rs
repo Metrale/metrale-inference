@@ -107,7 +107,7 @@ fn the_per_row_dsa_indexer_no_longer_flags_and_the_kda_verify_tops() {
         r.flags
             .iter()
             .all(|f| f.source
-                != "legacy: crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:301"),
+                != "legacy: crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:302"),
         "the per-row DSA indexer flags although its rows lever is on by default"
     );
     let top = &r.flags[0];

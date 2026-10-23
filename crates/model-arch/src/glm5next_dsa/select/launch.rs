@@ -182,6 +182,22 @@ pub(crate) fn index_scores_grid_x(geom: &DsaSelectGeometry, ceiling: Option<usiz
     ceiling.map_or(geom.n_pools as u32, pool_grid_x)
 }
 
+/// 2026-10-23: A ceiling launch's scalar arguments at `m` pools of `kp` keys: `(seq, pools, top-k
+/// tile, select_k)`. The kernels read the live values from the device geometry; these only fix
+/// what a capture at that ceiling passes.
+pub(crate) fn ceiling_args(
+    cfg: &Glm5NextDsaConfig,
+    kp: usize,
+    m: usize,
+) -> (usize, usize, usize, usize) {
+    (
+        m * kp,
+        m,
+        m.next_power_of_two().max(2).min(topk_tile()),
+        cfg.select_k(m),
+    )
+}
+
 /// 2026-10-11: The body of [`select_tokens`]; `compress` false skips `dsa_kpool_compress`, for
 /// a later row sub-pass over pools an earlier one on `stream` already compressed. 2026-10-15:
 /// `fold` ends the pass with `dsa_sel_fold` on the selected pools instead of the expansion
@@ -247,12 +263,7 @@ pub(super) fn run(
     // select_k from `geom_dev`, so the scalar arguments are unused. They are set from the
     // ceiling, so every capture at the same ceiling passes the same values.
     let (seq_a, npools_a, np2_a, selk_a) = match ceiling {
-        Some(m) => (
-            m * kp,
-            m,
-            m.next_power_of_two().max(2).min(topk_tile()),
-            cfg.select_k(m),
-        ),
+        Some(m) => ceiling_args(cfg, kp, m),
         None => (geom.seq, geom.n_pools, geom.topk_np2, geom.select_k),
     };
 
@@ -438,7 +449,7 @@ pub(super) fn run(
     if persisted {
         return scores::launch_expand_geom(
             gpu,
-            kernels,
+            kernels.rows.expand_selection,
             cfg,
             geom,
             inputs,
