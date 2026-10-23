@@ -380,7 +380,7 @@ pub(crate) fn run(a: CircuitHwArgs) -> Result<()> {
             }
             report_text(&tree, &reg, &texts, device, precision, command)?.text
         }
-        CircuitHwFormat::Plan => {
+        CircuitHwFormat::Plan | CircuitHwFormat::Explain => {
             let model = source(&tree).model(&ModelSpec {
                 checkpoint: &texts.id,
                 config_json: texts.config.as_deref(),
@@ -395,7 +395,11 @@ pub(crate) fn run(a: CircuitHwArgs) -> Result<()> {
                 (None, _) => bail!("--mode {} needs --rows", mode.name()),
             };
             let one = hardware::plan_one(&reg, device, &tree, &model, Run { mode, rows })?;
-            hardware::plan_text(&model.circuit, &one)
+            if a.format == CircuitHwFormat::Explain {
+                super::circuit_explain::explain_json(&model.circuit, &one)?
+            } else {
+                hardware::plan_text(&model.circuit, &one)
+            }
         }
     };
     match &a.out {

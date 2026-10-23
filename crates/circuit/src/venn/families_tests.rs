@@ -25,6 +25,9 @@ fn attn(extra: &str) -> String {
 [[family]]
 id = "attn"
 description = "toy"
+explain.about = "toy"
+explain.numerics = "toy"
+explain.math = ["x"]
 compute = "cuda_core"
 kernels = ["m::attn"]
 rows = [1, 64]
@@ -152,5 +155,26 @@ fn malformed_entries_are_refused() {
             .unwrap_err()
             .to_string()
             .contains("rows")
+    );
+}
+
+/// 2026-10-22: The gate that every family states its math: a family without `explain`, or
+/// with an empty `explain.math`, does not load.
+#[test]
+fn a_family_without_its_math_is_refused() {
+    let ok = attn("");
+    parse_families(&ok).unwrap();
+    let no_explain = ok
+        .lines()
+        .filter(|l| !l.starts_with("explain."))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let e = parse_families(&no_explain).unwrap_err().to_string();
+    assert!(e.contains("explain"), "{e}");
+    let empty = ok.replace("explain.math = [\"x\"]", "explain.math = []");
+    let e = parse_families(&empty).unwrap_err().to_string();
+    assert!(
+        e.contains("explain.math is empty") && e.contains("attn"),
+        "{e}"
     );
 }

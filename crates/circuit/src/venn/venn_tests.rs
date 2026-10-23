@@ -37,6 +37,9 @@ context_tokens = 4096
 [[family]]
 id = "embed"
 description = "toy"
+explain.about = "toy"
+explain.numerics = "toy"
+explain.math = ["x"]
 compute = "cuda_core"
 kernels = ["m::embed"]
 rows = [1, 128]
@@ -50,6 +53,9 @@ files = ["toy.cu"]
 [[family]]
 id = "norm"
 description = "toy"
+explain.about = "toy"
+explain.numerics = "toy"
+explain.math = ["x"]
 compute = "cuda_core"
 kernels = ["m::norm", "m::final_norm"]
 rows = [1, 128]
@@ -72,6 +78,9 @@ microbench = "toy"
 [[family]]
 id = "gemv"
 description = "toy"
+explain.about = "toy"
+explain.numerics = "toy"
+explain.math = ["x"]
 compute = "cuda_core"
 kernels = ["m::up", "m::down"]
 rows = [1, 128]
@@ -86,6 +95,9 @@ from = "dim:hidden"
 [[family]]
 id = "act"
 description = "toy"
+explain.about = "toy"
+explain.numerics = "toy"
+explain.math = ["x"]
 compute = "cuda_core"
 kernels = ["m::act"]
 rows = [1, 128]
@@ -99,6 +111,9 @@ files = ["toy.cu"]
 [[family]]
 id = "add"
 description = "toy"
+explain.about = "toy"
+explain.numerics = "toy"
+explain.math = ["x"]
 compute = "cuda_core"
 kernels = ["m::add"]
 rows = [1, 128]
@@ -112,6 +127,9 @@ files = ["toy.cu"]
 [[family]]
 id = "head"
 description = "toy"
+explain.about = "toy"
+explain.numerics = "toy"
+explain.math = ["x"]
 compute = "cuda_core"
 kernels = ["m::lm_head"]
 rows = [1, 128]

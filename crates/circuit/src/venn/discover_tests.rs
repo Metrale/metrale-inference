@@ -22,6 +22,9 @@ context_tokens = 4096
 [[family]]
 id = "gemv"
 description = "toy"
+explain.about = "toy"
+explain.numerics = "toy"
+explain.math = ["x"]
 compute = "cuda_core"
 kernels = ["m::gemv"]
 rows = [1, 128]
@@ -49,6 +52,9 @@ files = ["k/gemv.cu"]
 [[family]]
 id = "attn"
 description = "toy"
+explain.about = "toy"
+explain.numerics = "toy"
+explain.math = ["x"]
 compute = "cuda_core"
 kernels = ["m::attn"]
 rows = [1, 128]

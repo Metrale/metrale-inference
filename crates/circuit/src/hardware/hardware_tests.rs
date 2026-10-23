@@ -293,6 +293,9 @@ context_tokens = 1
 [[family]]
 id = "attn"
 description = "test"
+explain.about = "toy"
+explain.numerics = "toy"
+explain.math = ["x"]
 compute = "cuda_core"
 kernels = ["attn_a::attn"]
 rows = [1, 1]

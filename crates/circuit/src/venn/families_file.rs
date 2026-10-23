@@ -49,6 +49,7 @@ struct RooflineFile {
 struct FamilyFile {
     id: String,
     description: String,
+    explain: super::explain::ExplainFile,
     #[serde(default)]
     kernels: Vec<String>,
     #[serde(default)]
@@ -414,9 +415,11 @@ fn family(f: FamilyFile) -> Result<Family, FamilyError> {
         &points,
     )
     .map_err(field)?;
+    let explain = f.explain.validate().map_err(field)?;
     Ok(Family {
         id: f.id,
         description: f.description,
+        explain,
         kernels,
         emitters: f.emitters,
         rows: (f.rows[0], f.rows[1]),
