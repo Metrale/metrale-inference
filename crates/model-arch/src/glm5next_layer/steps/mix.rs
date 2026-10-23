@@ -105,6 +105,19 @@ impl Glm5NextLayer {
                 Ok(ws.final_out)
             }
             (Glm5NextMixer::Dsa(layer), _) => {
+                // 2026-10-23: The paired A/B's DSA levers for this step (`ab_levers.rs`).
+                let view;
+                let layer: &crate::glm5next_dsa::layer::Glm5NextDsaLayer =
+                    match super::ab_levers::dsa_kernels(&layer.select_kernels, ctx)? {
+                        Some(select_kernels) => {
+                            view = crate::glm5next_dsa::layer::Glm5NextDsaLayer {
+                                select_kernels,
+                                ..(**layer).clone()
+                            };
+                            &view
+                        }
+                        None => layer,
+                    };
                 // 2026-09-25: DSA's `decode_k` writes its output projection over its input
                 // buffer.
                 layer.decode_k(

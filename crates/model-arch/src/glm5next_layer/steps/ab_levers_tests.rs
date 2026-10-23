@@ -104,3 +104,57 @@ fn kda_conv_one_changes_the_kda_levers_only_on_its_arm() {
         "B would run A"
     );
 }
+
+/// 2026-10-23: BF16-key DSA kernels: the walks at 0x81/0x82, the tensor-core scores at 0x83.
+fn dsa_kernels() -> Glm5NextDsaKernels {
+    let gpu = MockGpuBackend::new();
+    let mut k = Glm5NextDsaKernels::resolve(&gpu).expect("mock resolves every kernel");
+    k.rows.pool_keys_bf16 = true;
+    k.rows.scores_heads_paged = KernelHandle(0x81);
+    k.rows.scores_heads_window = KernelHandle(0x82);
+    k.rows.scores_mma_paged = KernelHandle(0x83);
+    k
+}
+
+/// 2026-10-23: `dsa_mma`: A keeps the walks, B launches the tensor-core scores as both
+/// lane-per-head handles and changes nothing else.
+#[test]
+fn dsa_mma_swaps_only_the_lane_per_head_handles_on_the_b_arm() {
+    let k = dsa_kernels();
+    let n = names(&["swiglu_down", "dsa_mma"]);
+    assert!(dsa_apply(&k, &n, AbLevers::NONE).unwrap().is_none());
+    assert!(
+        dsa_apply(&k, &n, AbLevers::only(0)).unwrap().is_none(),
+        "another lever's arm"
+    );
+    let b = dsa_apply(&k, &n, AbLevers::only(1))
+        .unwrap()
+        .expect("B changes the kernels");
+    assert_eq!(
+        (b.rows.scores_heads_paged.0, b.rows.scores_heads_window.0),
+        (0x83, 0x83)
+    );
+    assert_eq!(b.rows.pool_keys_store.0, k.rows.pool_keys_store.0);
+    assert_eq!(b.rows.scores_warp_paged.0, k.rows.scores_warp_paged.0);
+    assert_eq!(b.rows.topk_radix.0, k.rows.topk_radix.0);
+}
+
+/// 2026-10-23: An arm that could only run A is refused: FP32 keys, or the MMA already default.
+#[test]
+fn dsa_mma_is_refused_where_b_would_be_a() {
+    let n = names(&["dsa_mma"]);
+    let mut fp32 = dsa_kernels();
+    fp32.rows.pool_keys_bf16 = false;
+    assert!(dsa_apply(&fp32, &n, AbLevers::only(0)).is_err());
+    assert!(
+        dsa_apply(&fp32, &n, AbLevers::NONE).is_err(),
+        "refused on every arm"
+    );
+    let mut on = dsa_kernels();
+    on.rows = on.rows.with_scores_mma();
+    assert!(dsa_apply(&on, &n, AbLevers::only(0)).is_err());
+    assert!(
+        apply(&kernels(), &n, AbLevers::only(0)).is_ok(),
+        "the MLP map ignores it"
+    );
+}

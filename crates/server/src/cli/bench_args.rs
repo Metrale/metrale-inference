@@ -99,6 +99,34 @@ pub enum BenchmarkCommand {
     /// GPU-free. Per request and per arm against A: the paired step difference with a BCa
     /// interval, HAC ESS, TOST at the margin and one-sided superiority, Holm-corrected.
     PairedAb(PairedAbArgs),
+    /// The verdict of serves that replayed one recorded trajectory (`METRALE_PAIRED_AB_TRAJ`).
+    ///
+    /// GPU-free. Step-matched control-minus-lever step time per request, the serve pair as the
+    /// unit (t interval, TOST, superiority, Holm), and McNemar on own acceptance per step.
+    ForcedAb(ForcedAbArgs),
+}
+
+/// 2026-10-23: `met benchmark forced-ab`.
+#[derive(clap::Args, Debug)]
+pub struct ForcedAbArgs {
+    /// Rank-0 logs of the control serves, in pair order (comma-separated).
+    #[arg(long, value_delimiter = ',')]
+    pub control: Vec<std::path::PathBuf>,
+    /// Rank-0 logs of the lever serves, pair `i` with control `i` (comma-separated).
+    #[arg(long, value_delimiter = ',')]
+    pub lever: Vec<std::path::PathBuf>,
+    /// The lever serves' paired-A/B arm under test; omitted: every arm (the lever serve-wide).
+    #[arg(long)]
+    pub lever_arm: Option<usize>,
+    /// Leading matched steps of each request to drop (graph capture).
+    #[arg(long)]
+    pub warm_steps: usize,
+    /// The equivalence margin, percent of the control step.
+    #[arg(long)]
+    pub margin_pct: f64,
+    /// Huber's tuning constant for the step differences.
+    #[arg(long)]
+    pub huber_k: f64,
 }
 
 /// 2026-10-23: `met benchmark paired-ab`.

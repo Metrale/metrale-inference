@@ -26,6 +26,7 @@ pub mod benchmarks;
 pub mod coherence;
 pub mod dynamic;
 pub mod executor;
+pub mod forced_ab;
 pub mod gate;
 pub mod hardware;
 pub mod headless;

@@ -30,14 +30,16 @@ pub(crate) mod io;
 mod lifecycle;
 #[cfg(test)]
 mod lifecycle_tests;
-#[cfg(test)]
-mod parked_deadline_tests;
 mod logit_dump;
 mod logit_processors;
 mod logprobs;
 mod mod_helpers;
+#[cfg(test)]
+mod parked_deadline_tests;
 pub use mod_helpers::capture_runtime_handle;
 pub mod dumps;
+pub mod forced_traj;
+mod forced_traj_hooks;
 pub mod levers;
 pub mod limits;
 mod mtp_accept_debug;
@@ -72,13 +74,13 @@ pub(crate) mod shared_lookup_step;
 mod shutdown_drain;
 #[cfg(test)]
 mod shutdown_drain_tests;
+#[cfg(test)]
+mod spec_pipeline_fixture;
 mod spec_step;
 mod ssm_decode_ring;
 #[cfg(test)]
 mod swap_out_tests;
 mod teardown;
-#[cfg(test)]
-mod spec_pipeline_fixture;
 #[cfg(test)]
 mod test_support;
 mod think_close;
@@ -91,6 +93,7 @@ mod verify_dflash_batch_step;
 mod verify_dflash_step;
 mod verify_k2_device_step;
 mod verify_k2_step;
+mod verify_k2_wire;
 mod verify_k3_step;
 mod verify_k4_batch_step;
 mod verify_k4_step;

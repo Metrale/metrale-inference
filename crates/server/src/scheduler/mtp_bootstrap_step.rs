@@ -92,6 +92,16 @@ pub(super) fn step_mtp_bootstrap_batched(
     refs.sort_by_key(|a| a.seq.ssm_slot_idx().unwrap_or(a.seq.slot_idx));
 
     let n = refs.len();
+    // 2026-10-23: `METRALE_PAIRED_AB_TRAJ` (`forced_traj`): a replay feeds the recorded tokens.
+    let trajs: Vec<Option<super::forced_traj::At>> = refs
+        .iter_mut()
+        .map(|a| {
+            super::forced_traj_hooks::feed(sched.forced.as_ref(), a, false).unwrap_or_else(|e| {
+                fail_sequence(a, format!("forced trajectory: {e:#}"));
+                None
+            })
+        })
+        .collect();
     let tokens: Vec<u32> = refs.iter().map(|a| a.last_token).collect();
 
     // 2026-09-25: One `decode_batch` for all n rows. A failure finishes every
@@ -191,6 +201,16 @@ pub(super) fn step_mtp_bootstrap_batched(
                 a.finished = true;
                 continue;
             }
+        };
+        let tok = match (trajs[j], sched.forced.as_ref()) {
+            (Some(at), Some(f)) => match f.boot_pick(at, a.last_token, tok) {
+                Ok(t) => t,
+                Err(e) => {
+                    fail_sequence(a, format!("forced trajectory: {e:#}"));
+                    continue;
+                }
+            },
+            _ => tok,
         };
         let lp = if let Some(k) = a.top_logprobs {
             extract_single_logprobs(model, row_logits, tok, k)

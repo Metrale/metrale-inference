@@ -83,6 +83,29 @@ pub fn paired_ab_cmd(args: PairedAbArgs) -> Result<i32> {
             if x.superior_holm { "WIN" } else { "-" }
         );
     }
+    // 2026-10-23: A replaying serve (`METRALE_PAIRED_AB_TRAJ`): each arm's own acceptance and
+    // row-0 agreement with the record, over steps whose previous step ran the same arm.
+    let traj = metrale_bench::forced_ab::parse_traj(&text)?;
+    if !traj.is_empty() {
+        let timed = metrale_bench::forced_ab::join(&steps, &traj);
+        println!(
+            "forced trajectory: {} replayed steps, {} timed",
+            traj.len(),
+            timed.len()
+        );
+        println!("arm | steps (prev same arm) | own acc | agree0 with record");
+        for (arm, (n, acc, agree)) in metrale_bench::forced_ab::acceptance_by_arm(&timed, plan.arms)
+            .iter()
+            .enumerate()
+        {
+            let pc = |x: usize| 100.0 * x as f64 / (*n).max(1) as f64;
+            println!(
+                "{arm} | {n} | {acc} ({:.2}%) | {agree} ({:.2}%)",
+                pc(*acc),
+                pc(*agree)
+            );
+        }
+    }
     if v.is_empty() {
         bail!("no request had 16 complete cycles after the warm-up");
     }

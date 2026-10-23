@@ -36,8 +36,24 @@ impl DsaRowsKernels {
         self.pool_keys_store = k("dsa_pool_keys_store_rows_bf16")?;
         self.scores_heads_paged = k("dsa_index_scores_heads_paged_bf16")?;
         self.scores_heads_window = k("dsa_index_scores_heads_window_bf16")?;
+        self.scores_mma_paged = gpu
+            .kernel(
+                DSA_SCORES_MMA_PAGED_MODULE,
+                "dsa_index_scores_mma_paged_bf16",
+            )
+            .context("METRALE_GLM_DSA_POOL_KEYS_BF16: dsa_index_scores_mma_paged_bf16")?;
         self.pool_keys_bf16 = true;
         Ok(self)
+    }
+}
+
+impl DsaRowsKernels {
+    /// 2026-10-23: These BF16-key kernels with [`Self::scores_mma_paged`] as both lane-per-head
+    /// handles (`METRALE_GLM_DSA_DECODE_SCORES_MMA`, the paired A/B's `dsa_mma` arm).
+    pub fn with_scores_mma(mut self) -> Self {
+        let mma = self.scores_mma_paged;
+        (self.scores_heads_paged, self.scores_heads_window) = (mma, mma);
+        self
     }
 }
 
@@ -65,13 +81,7 @@ impl Glm5NextDsaKernels {
                 "METRALE_GLM_DSA_DECODE_SCORES_MMA needs METRALE_GLM_DSA_POOL_KEYS_BF16"
             );
             // 2026-10-23: Both lane-per-head handles: one launch contract, any row count.
-            let mma = gpu
-                .kernel(
-                    DSA_SCORES_MMA_PAGED_MODULE,
-                    "dsa_index_scores_mma_paged_bf16",
-                )
-                .context("METRALE_GLM_DSA_DECODE_SCORES_MMA")?;
-            (k.rows.scores_heads_paged, k.rows.scores_heads_window) = (mma, mma);
+            k.rows = k.rows.with_scores_mma();
             tracing::info!(
                 "GLM DSA decode scores: BF16 tensor cores (dsa_index_scores_mma_paged_bf16)"
             );

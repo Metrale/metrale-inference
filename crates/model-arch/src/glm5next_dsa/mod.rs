@@ -170,6 +170,11 @@ pub struct DsaRowsKernels {
     /// `dsa_index_scores_mma_paged_bf16` under `METRALE_GLM_DSA_DECODE_SCORES_MMA`), and nothing
     /// may score them with [`Self::scores_warp_paged`] (an FP32 reader).
     pub pool_keys_bf16: bool,
+    /// 2026-10-23: `dsa_index_scores_mma_paged_bf16`, resolved with [`Self::pool_keys_bf16`]
+    /// (`KernelHandle(0)` otherwise): the BF16 persisted keys on tensor cores, which
+    /// `METRALE_GLM_DSA_DECODE_SCORES_MMA` (or the paired A/B's `dsa_mma` arm) launches as both
+    /// lane-per-head handles.
+    pub scores_mma_paged: KernelHandle,
     /// 2026-10-21: `dsa_topk_mc.cu`'s `dsa_topk_mc_pass` and `dsa_topk_mc_collect`:
     /// [`Self::topk_radix`]'s selection over several CTAs per row (`select::topk_mc`). Not part
     /// of [`Self::ready`].
@@ -246,6 +251,7 @@ impl DsaRowsKernels {
             scores_heads_paged: heads,
             scores_heads_window: heads_window,
             pool_keys_bf16: false,
+            scores_mma_paged: KernelHandle(0),
             topk_mc_pass: mc("dsa_topk_mc_pass"),
             topk_mc_collect: mc("dsa_topk_mc_collect"),
             sm_count,

@@ -72,4 +72,7 @@ pub struct SchedulerConfig {
     /// 2026-10-17: The stream-send deadline and diagnostic sink paths, resolved from the load's
     /// settings.
     pub run_io: crate::scheduler::run_io::RunIoSettings,
+    /// 2026-10-23: `METRALE_PAIRED_AB_TRAJ` (`forced_traj`): record or replay a token
+    /// trajectory; `None` when off. A replay's record is read by the host at serve start.
+    pub forced: Option<crate::scheduler::forced_traj::TrajMode>,
 }

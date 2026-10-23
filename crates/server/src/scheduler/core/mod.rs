@@ -119,6 +119,7 @@ impl SchedulerCore {
             telemetry,
             pipeline_faults,
             run_io,
+            forced,
         } = cfg;
         let spill: Option<Box<dyn io::SpillIo>> = if swap_space_gb > 0 {
             let max_bytes = swap_space_gb as u64 * 1024 * 1024 * 1024;
@@ -190,6 +191,18 @@ impl SchedulerCore {
                 );
                 sched.shared_lookup = Some(sl);
             }
+        }
+        // 2026-10-23: The forced trajectory acts on single-sequence MTP steps only.
+        if let Some(mode) = forced {
+            tracing::info!(
+                "PAIRED_AB_TRAJ: {}",
+                match &mode {
+                    crate::scheduler::forced_traj::TrajMode::Record => "record".to_string(),
+                    crate::scheduler::forced_traj::TrajMode::Replay(t) =>
+                        format!("replay of {} recorded requests", t.reqs.len()),
+                }
+            );
+            sched.forced = Some(crate::scheduler::forced_traj::ForcedTraj::new(mode));
         }
         let num_drafts = if use_mtp || use_self_speculative || use_ngram_speculative {
             num_drafts.max(1)

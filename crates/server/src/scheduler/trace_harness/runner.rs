@@ -370,6 +370,7 @@ fn run_scenario_inner(sc: &Scenario, build: DeviceBuilder) -> Vec<String> {
                     &crate::lever_equivalence::default_settings(),
                 )
                 .expect("the declared defaults resolve"),
+                forced: None,
             },
         );
     });

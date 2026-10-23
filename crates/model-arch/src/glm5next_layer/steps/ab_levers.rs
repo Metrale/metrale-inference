@@ -14,11 +14,12 @@
 use anyhow::{Result, bail};
 use metrale_model_layers::layer::{AbLevers, ForwardContext};
 
+use crate::glm5next_dsa::Glm5NextDsaKernels;
 use crate::glm5next_layer::GlmLevers;
 use crate::glm5next_mlp::Glm5NextMlpKernels;
 
 /// 2026-10-23: The registered levers.
-pub(super) const NAMES: [&str; 3] = [
+pub(super) const NAMES: [&str; 4] = [
     // 2026-10-23: The MoE router's few-row GEMV at one output per block
     // (`glm5next_router_gemv_npb1`): the instrument's known-small validation lever.
     "router_npb1",
@@ -26,6 +27,11 @@ pub(super) const NAMES: [&str; 3] = [
     "swiglu_down",
     // 2026-10-23: `METRALE_GLM_KDA_CONV_ONE` (`glm5next_kda/seq_tokens.rs`).
     "kda_conv_one",
+    // 2026-10-23: The verify scores over the BF16 persisted DSA keys on tensor cores
+    // (`dsa_index_scores_mma_paged_bf16`) instead of their lane-per-head walks: what
+    // `METRALE_GLM_DSA_DECODE_SCORES_MMA` changes. A `bounded` lever (not bit-identical): time it
+    // under the forced trajectory (`METRALE_PAIRED_AB_TRAJ`).
+    "dsa_mma",
 ];
 
 /// 2026-10-23: `base` under this pass's instrument levers.
@@ -64,8 +70,8 @@ pub(super) fn apply(
                 }
                 k.levers.dense.swiglu_down |= on.has(i);
             }
-            // 2026-10-23: A KDA lever: [`kda_levers`] applies it.
-            "kda_conv_one" => {}
+            // 2026-10-23: A KDA lever ([`kda_levers`]) and a DSA one ([`dsa_kernels`]).
+            "kda_conv_one" | "dsa_mma" => {}
             other => bail!(
                 "METRALE_PAIRED_AB: GLM-5.3 registers no lever `{other}` (registered: {})",
                 NAMES.join(", ")
@@ -105,6 +111,50 @@ pub(super) fn kda_apply(
         }
     }
     Ok((l != base).then_some(l))
+}
+
+/// 2026-10-23: The DSA layer's select kernels `base` under this pass's instrument levers;
+/// `None` when they are unchanged (off, or the A arm).
+pub(super) fn dsa_kernels(
+    base: &Glm5NextDsaKernels,
+    ctx: &ForwardContext,
+) -> Result<Option<Glm5NextDsaKernels>> {
+    let Some(run) = ctx
+        .stats
+        .paired_ab
+        .get(ctx.settings.telemetry.paired_ab.as_deref())?
+    else {
+        return Ok(None);
+    };
+    dsa_apply(base, &run.spec().names, ctx.ab_levers)
+}
+
+/// 2026-10-23: `base` with every DSA lever of `names` that `on` holds applied.
+pub(super) fn dsa_apply(
+    base: &Glm5NextDsaKernels,
+    names: &[String],
+    on: AbLevers,
+) -> Result<Option<Glm5NextDsaKernels>> {
+    let mut k = *base;
+    for (i, name) in names.iter().enumerate() {
+        if name == "dsa_mma" {
+            let r = &base.rows;
+            // 2026-10-23: Without BF16 keys there is no tensor-core path; with
+            // `METRALE_GLM_DSA_DECODE_SCORES_MMA` already on, both arms run it: B would be A.
+            if !r.pool_keys_bf16 || r.scores_mma_paged.0 == 0 {
+                bail!("METRALE_PAIRED_AB: `dsa_mma` needs METRALE_GLM_DSA_POOL_KEYS_BF16");
+            }
+            if r.scores_heads_window.0 == r.scores_mma_paged.0 {
+                bail!("METRALE_PAIRED_AB: `dsa_mma` needs METRALE_GLM_DSA_DECODE_SCORES_MMA off");
+            }
+            if on.has(i) {
+                k.rows = k.rows.with_scores_mma();
+            }
+        }
+    }
+    let changed = k.rows.scores_heads_window.0 != base.rows.scores_heads_window.0
+        || k.rows.scores_heads_paged.0 != base.rows.scores_heads_paged.0;
+    Ok(changed.then_some(k))
 }
 
 #[cfg(test)]

@@ -214,6 +214,7 @@ impl Rig {
                     scores_heads_paged: KernelHandle(0),
                     scores_heads_window: KernelHandle(0),
                     pool_keys_bf16: false,
+                    scores_mma_paged: KernelHandle(0),
                     topk_mc_pass: KernelHandle(0),
                     topk_mc_collect: KernelHandle(0),
                     sm_count: 0,

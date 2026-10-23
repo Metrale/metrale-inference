@@ -57,10 +57,10 @@ mod kernels;
 mod prefill_rows;
 mod proj_gemm;
 mod proj_in_merged;
-mod selector_pair;
 mod row_ops;
 mod rows;
 mod select_rows;
+mod selector_pair;
 mod slot_upload;
 mod verify_select;
 mod workspace;
@@ -74,6 +74,7 @@ pub(crate) use workspace::batch_select_enabled;
 pub use workspace::{select_scratch_geometry, select_scratch_rows};
 
 /// 2026-09-25: One DSA block's weights on the device, already sharded for this rank.
+#[derive(Clone)]
 pub struct Glm5NextDsaWeights {
     pub q_a_proj: DevicePtr,
     pub q_a_layernorm: DevicePtr,
@@ -102,6 +103,7 @@ pub struct Glm5NextDsaWeights {
     pub ape: DevicePtr,
 }
 
+#[derive(Clone)]
 pub struct Glm5NextDsaLayer {
     pub cfg: Glm5NextDsaConfig,
     pub weights: Glm5NextDsaWeights,
