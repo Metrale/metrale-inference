@@ -49,6 +49,26 @@ pub struct TracePlan {
     pub execution: BTreeMap<String, RunExecution>,
 }
 
+impl TracePlan {
+    /// 2026-10-23: What makes two captures one configuration: the dims, the KV length and who
+    /// executed each run. The bases and reasons are provenance (they name each capture's own usage
+    /// file), so they may differ between captures that pool.
+    fn configuration(
+        &self,
+    ) -> (
+        &BTreeMap<String, u64>,
+        Option<u64>,
+        Vec<(&String, ExecutedBy, &[String])>,
+    ) {
+        let exec = self
+            .execution
+            .iter()
+            .map(|(r, e)| (r, e.by, e.sites.as_slice()))
+            .collect();
+        (&self.dims, self.kv_tokens, exec)
+    }
+}
+
 /// 2026-10-23: Who issued a run's launches in the captured serve.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -293,7 +313,7 @@ pub fn pool(traces: &[Trace]) -> Result<Trace, String> {
     for t in traces {
         t.check()?;
         let same = t.step_kernel == first.step_kernel
-            && t.plan == first.plan
+            && t.plan.configuration() == first.plan.configuration()
             && t.tokens_per_step.as_ref().map(|x| x.value)
                 == first.tokens_per_step.as_ref().map(|x| x.value);
         if !same {

@@ -103,10 +103,9 @@ fn plan_shares(s: &mut String, h: &Headroom) {
             r.why
         );
     }
-    let (d, e): (f64, f64) = h
-        .shares
-        .iter()
-        .fold((0.0, 0.0), |(d, e), r| (d + r.describable_us, e + r.executed_us));
+    let (d, e): (f64, f64) = h.shares.iter().fold((0.0, 0.0), |(d, e), r| {
+        (d + r.describable_us, e + r.executed_us)
+    });
     let (dp, ep): (f64, f64) = h.shares.iter().fold((0.0, 0.0), |(d, e), r| {
         (d + r.describable_pct, e + r.executed_pct)
     });

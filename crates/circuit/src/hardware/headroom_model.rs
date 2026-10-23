@@ -15,9 +15,9 @@ use serde::Serialize;
 
 use super::HwError;
 pub use super::headroom_ci::{SiteCi, TotalsCi};
+pub use super::headroom_shares::PlanShare;
 pub use super::headroom_sites::Outside;
 use super::headroom_svg::Ceilings;
-pub use super::headroom_shares::PlanShare;
 pub use super::headroom_trace::ExecutedBy;
 use super::headroom_trace::{Stated, Trace};
 

@@ -411,7 +411,11 @@ fn the_report_plans_a_two_row_verify_where_verify_keyed_evidence_is_measured() {
             .expect("a down row")
     };
     let verify = table(Mode::Verify, 2);
-    assert_eq!(down(verify), Class::Shared, "rows [2] evidence at verify n=2");
+    assert_eq!(
+        down(verify),
+        Class::Shared,
+        "rows [2] evidence at verify n=2"
+    );
     assert_eq!(down(table(Mode::Decode, 1)), Class::SharedUnmeasured);
     let text = super::render_report(&r);
     assert!(

@@ -200,11 +200,12 @@ fn declared<'f>(
                 .join(" + ")
         }
     };
-    let fam = family_of(families, g, subject.circuit, node).ok_or_else(|| PipelineError::Undeclared {
-        node: node.id.clone(),
-        op: node.op.name(),
-        kernels: kernels(),
-    })?;
+    let fam =
+        family_of(families, g, subject.circuit, node).ok_or_else(|| PipelineError::Undeclared {
+            node: node.id.clone(),
+            op: node.op.name(),
+            kernels: kernels(),
+        })?;
     let fail = |detail: String| PipelineError::Declared {
         node: node.id.clone(),
         op: node.op.name(),

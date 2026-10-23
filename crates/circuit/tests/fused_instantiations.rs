@@ -42,7 +42,12 @@ fn fused_kernels(fusions: &str) -> BTreeSet<String> {
         if r["pattern"].as_array().map_or(0, Vec::len) < 2 {
             continue;
         }
-        for k in r.get("kernels").and_then(|k| k.as_array()).into_iter().flatten() {
+        for k in r
+            .get("kernels")
+            .and_then(|k| k.as_array())
+            .into_iter()
+            .flatten()
+        {
             out.insert(format!(
                 "{}::{}",
                 k["module"].as_str().expect("module"),
@@ -101,18 +106,31 @@ fn not_instantiation(
         let Some(rest) = text.lines().next().and_then(|l| l.strip_prefix(MARKER)) else {
             return Some(format!("{} has no `{MARKER}...` first line", f.display()));
         };
-        let Some((family, tpl)) = rest.split_once(" (").map(|(a, b)| (a, b.trim_end_matches(')')))
+        let Some((family, tpl)) = rest
+            .split_once(" (")
+            .map(|(a, b)| (a, b.trim_end_matches(')')))
         else {
-            return Some(format!("{}: marker is `{MARKER}<family> (<t>.cuh)`", f.display()));
+            return Some(format!(
+                "{}: marker is `{MARKER}<family> (<t>.cuh)`",
+                f.display()
+            ));
         };
         if !text.contains(&format!("#include \"{tpl}\"")) {
-            return Some(format!("{} does not include its template `{tpl}`", f.display()));
+            return Some(format!(
+                "{} does not include its template `{tpl}`",
+                f.display()
+            ));
         }
         if let Some(bad) = FORBIDDEN.iter().find(|b| text.contains(*b)) {
-            return Some(format!("{} holds `{bad}`: that belongs to the template", f.display()));
+            return Some(format!(
+                "{} holds `{bad}`: that belongs to the template",
+                f.display()
+            ));
         }
         if !fams.get(family).is_some_and(|ks| ks.contains(kernel)) {
-            return Some(format!("family `{family}` is not registered with `{kernel}`"));
+            return Some(format!(
+                "family `{family}` is not registered with `{kernel}`"
+            ));
         }
     }
     None
@@ -134,13 +152,15 @@ fn violations(class: &str) -> BTreeMap<String, String> {
     let fams = families(&common::read(&format!(
         "kernels/{class}/common/KERNEL_FAMILIES.toml"
     )));
-    fused_kernels(&common::read(&format!("kernels/{class}/common/FUSIONS.toml")))
-        .into_iter()
-        .filter_map(|k| {
-            let dir = common::root().join("kernels").join(class);
-            not_instantiation(&dir, &k, &fams).map(|why| (k, why))
-        })
-        .collect()
+    fused_kernels(&common::read(&format!(
+        "kernels/{class}/common/FUSIONS.toml"
+    )))
+    .into_iter()
+    .filter_map(|k| {
+        let dir = common::root().join("kernels").join(class);
+        not_instantiation(&dir, &k, &fams).map(|why| (k, why))
+    })
+    .collect()
 }
 
 #[test]
@@ -172,7 +192,11 @@ fn the_allowlist_only_shrinks() {
             "{class}: allowlisted kernels that are no longer hand-fused fusion kernels; remove \
              them from FUSED_HANDWRITTEN.toml and lower CEILING: {stale:?}"
         );
-        let ceiling = CEILING.iter().find(|(c, _)| *c == class).expect("ceiling").1;
+        let ceiling = CEILING
+            .iter()
+            .find(|(c, _)| *c == class)
+            .expect("ceiling")
+            .1;
         assert!(
             allowed.len() <= ceiling,
             "{class}: the allowlist grew to {} past its ceiling {ceiling}",
@@ -205,7 +229,11 @@ fn the_instantiation_check_refuses_handwritten_arithmetic() {
             good("k_loop").replace("fam_body<Id>(y);", "for (int i = 0; i < 4; ++i) y[i] = 0;"),
             Some("belongs to the template"),
         ),
-        ("k_bare", "extern \"C\" __global__ void k_bare() {}\n".into(), Some("first line")),
+        (
+            "k_bare",
+            "extern \"C\" __global__ void k_bare() {}\n".into(),
+            Some("first line"),
+        ),
         (
             "k_noinc",
             good("k_noinc").replace("#include \"fam_body.cuh\"\n", ""),
@@ -218,7 +246,10 @@ fn the_instantiation_check_refuses_handwritten_arithmetic() {
         let got = not_instantiation(&dir, &format!("{m}::{m}"), &fams);
         match want {
             None => assert_eq!(got, None, "{m}"),
-            Some(w) => assert!(got.as_deref().is_some_and(|g| g.contains(w)), "{m}: {got:?}"),
+            Some(w) => assert!(
+                got.as_deref().is_some_and(|g| g.contains(w)),
+                "{m}: {got:?}"
+            ),
         }
     }
     std::fs::remove_dir_all(&dir).ok();

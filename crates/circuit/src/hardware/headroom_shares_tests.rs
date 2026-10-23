@@ -39,9 +39,16 @@ fn share(t: &Trace) -> super::super::headroom::PlanShare {
 fn a_legacy_run_is_describable_but_executes_nothing() {
     let s = share(&stated_trace(legacy()));
     assert_eq!(s.by, ExecutedBy::Legacy);
-    assert!((s.describable_us - 13.0).abs() < 1e-9, "{}", s.describable_us);
+    assert!(
+        (s.describable_us - 13.0).abs() < 1e-9,
+        "{}",
+        s.describable_us
+    );
     assert_eq!((s.executed_us, s.executed_pct), (0.0, 0.0));
-    assert!((s.describable_pct - s.describable_us).abs() < 1e-9, "a 100 us step");
+    assert!(
+        (s.describable_pct - s.describable_us).abs() < 1e-9,
+        "a 100 us step"
+    );
 }
 
 #[test]
@@ -51,7 +58,10 @@ fn star_executes_every_measured_site_and_a_named_site_only_itself() {
     let one = share(&stated_trace(plan(&["head [lm_head]"])));
     assert_eq!(one.describable_us, all.describable_us);
     assert!((one.executed_us - 10.0).abs() < 1e-9, "{}", one.executed_us);
-    assert!(one.executed_us < one.describable_us, "the norm site stayed legacy");
+    assert!(
+        one.executed_us < one.describable_us,
+        "the norm site stayed legacy"
+    );
 }
 
 #[test]
