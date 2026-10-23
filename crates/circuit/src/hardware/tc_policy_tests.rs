@@ -69,7 +69,7 @@ fn families(up_unit: &str) -> Families {
         };
         let pipes = test_toy::pipelines(ops);
         s.push_str(&format!(
-            "[[family]]\nid = \"{id}\"\ndescription = \"toy\"\n{unit}\nkernels = [\"m::{id}\"{extra}]\nrows = [1, 128]\n{pipes}\nop = [{op}]\n[[family.point]]\nvalues = {{}}\nhow = \"instantiation\"\nfiles = [\"k.cu\"]\n"
+            "[[family]]\nid = \"{id}\"\ndescription = \"toy\"\nexplain.about = \"toy\"\nexplain.numerics = \"toy\"\nexplain.math = [\"x\"]\n{unit}\nkernels = [\"m::{id}\"{extra}]\nrows = [1, 128]\n{pipes}\nop = [{op}]\n[[family.point]]\nvalues = {{}}\nhow = \"instantiation\"\nfiles = [\"k.cu\"]\n"
         ));
     }
     parse_families(&s).unwrap_or_else(|e| panic!("toy families: {e}"))

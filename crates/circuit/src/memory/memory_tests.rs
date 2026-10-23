@@ -213,6 +213,9 @@ context_tokens = 16
 [[family]]
 id = "norm"
 description = "toy"
+explain.about = "toy"
+explain.numerics = "toy"
+explain.math = ["x"]
 compute = "memory"
 kernels = ["m::norm", "m::final_norm"]
 rows = [1, 128]

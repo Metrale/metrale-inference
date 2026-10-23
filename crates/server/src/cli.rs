@@ -342,6 +342,9 @@ pub enum CircuitHwFormat {
     /// One fused plan (`--mode`, `--rows`) as the stable text of `met circuit show`.
     #[value(name = "plan")]
     Plan,
+    /// The kernel math (families, formats) and tensor sizes of that plan, as JSON.
+    #[value(name = "explain")]
+    Explain,
 }
 
 /// `met circuit diff` options.

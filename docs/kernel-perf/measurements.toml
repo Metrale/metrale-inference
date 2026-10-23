@@ -3928,6 +3928,21 @@ source = "nsys f13_p1k.sqlite @ c5b9a80e6 (fast13: binary f4735654, profile glm5
 notes = "routed down union slots=16 N=4096 K=704; n=10343 calls, 9.3% of regime kernel time; peak class fp4; D=13.854 union experts (measured: mean distinct experts of the 2-row verify union over 27972 layer-calls (666 verify launches x 42 MoE layers), METRALE_GLM_LAYER_DUMP moe_ids, same p1k prompt, binary dcaefeec (e586b7c3a), dgx1, 2026-10-22) x down [4096,704] at compact scales; slot activations stored 768 wide; median solo 102.56 us (after every earlier-launched kernel ended: PDL wait or concurrent fork excluded); TP=3 rank 0, W4A4 experts, w4a16 dense, w8a8 DSA, fp8_e4m3 KV, MTP 1 draft forced, shared fork 2; nsys --cuda-graph-trace=node, 8 s window of the warm repeat; kernel times include PDL/fork overlap waits (see solo time)"
 
 [[m]]
+kernel = "glm-5.3-flash::glm5next_dense_seg_pipe_m2"
+file = "kernels/gb10/common/glm5next_dense_seg.cu"
+hardware = "gb10"
+model = "nvidia/GLM-5.3-Flash-NVFP4"
+regime = "microbench steady-state R=2 · shared expert segment gate|up+swiglu+down M=2 N=768+768 K=4096 / N=4096 K=768"
+time_us = 32.3
+bytes = 5350400
+flops = 37748736
+bound = "memory"
+floor_us = 21.488
+pct_of_floor = 66.52
+source = "glm5next_dense_seg_microtest @ ec5326efb (wt-mk megakernel), dgx1, 2026-10-23"
+notes = "shared expert segment M=2 inter=768 (TP=3 rank shard), P3 persistent segment (3 phases, ticket loop, 64 ns backoff cap); CUDA graph over NVFP4 weights rotated across 128 MB, 5 rounds alternating with the 3-launch control, median of round medians; control (w4a16_gemv_pipe_m2 gate|up + glm5next_swiglu_clamp + w4a16_gemv_pipe_m2 down) 27.7 us = x0.86; bit-identical to the control; in serve (paired arm dense_seg) -1.5..-1.7% of the step: the shared expert co-runs with the routed sweep on a side stream (separate-launch down median solo 0.00 us), the persistent grid removes that overlap"
+
+[[m]]
 kernel = "glm-5.3-flash::w4a16_gemv_pipe_m1"
 file = "kernels/gb10/common/w4a16_gemv_pipe.cu"
 hardware = "gb10"
