@@ -43,6 +43,7 @@ pub mod glm5next_skeleton;
 pub mod glm5next_sp_mhc;
 pub mod glm5next_sp_overlap;
 pub mod glm5next_sp_pipeline;
+pub mod glm5next_dense_seg;
 pub mod glm5next_swiglu_down;
 pub mod glm5next_tail_merge;
 pub mod glm5next_w4a16_dense;

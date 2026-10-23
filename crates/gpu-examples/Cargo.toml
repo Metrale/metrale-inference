@@ -33,6 +33,7 @@ example = [
     { name = "glm5next_w4a16_gemv_seg_rows_bench", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_w4a16_gemv_pipe_bench", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_swiglu_down_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dense_seg_microtest", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_kda_conv_one_microtest", required-features = ["cuda", "gpu-examples"] },
     { name = "kernel_energy_loop", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_batch_inv_bench", required-features = ["cuda", "gpu-examples"] },

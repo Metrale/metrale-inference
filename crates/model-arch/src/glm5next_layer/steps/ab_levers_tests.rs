@@ -75,6 +75,24 @@ fn swiglu_down_turns_on_the_fold_only_on_its_arm_and_needs_the_pipe() {
 }
 
 #[test]
+fn dense_seg_turns_on_the_segment_only_on_its_arm_and_needs_the_pipe() {
+    let mut k = kernels();
+    k.levers.dense.gemv_seg = true;
+    k.levers.dense.gemv_pipe = true;
+    let n = names(&["swiglu_down", "dense_seg"]);
+    let only = names(&["dense_seg"]);
+    let a = apply(&k, &n, AbLevers::only(0)).unwrap();
+    assert!(!a.levers.dense.dense_seg && a.levers.dense.swiglu_down);
+    let b = apply(&k, &n, AbLevers::only(1)).unwrap();
+    assert!(b.levers.dense.dense_seg && !b.levers.dense.swiglu_down);
+    k.levers.dense.gemv_seg = false;
+    let Err(e) = apply(&k, &only, AbLevers::NONE) else {
+        panic!("without the pipe the arm would measure A against A");
+    };
+    assert!(e.to_string().contains("`dense_seg` needs the W4A16 GEMV pipe"), "{e}");
+}
+
+#[test]
 fn kda_conv_one_changes_the_kda_levers_only_on_its_arm() {
     let mut base = crate::glm5next_layer::GlmLevers::declared();
     base.kda.verify_tokens = true;

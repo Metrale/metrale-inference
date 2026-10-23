@@ -206,6 +206,7 @@ pub(crate) fn prepare(gpu: &dyn GpuBackend, l: &DenseLevers) -> Result<()> {
         }
         // 2026-10-23: and the folded SwiGLU + down's, which the paired A/B can switch on.
         crate::glm5next_swiglu_down::prepare(gpu)?;
+        crate::glm5next_dense_seg::prepare(gpu)?;
     }
     if SMS.get().is_none() && (l.gemv_seg || l.seg != SegMode::Off) {
         let _ = SMS.set(gpu.sm_count()?);

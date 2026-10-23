@@ -433,7 +433,7 @@ pub fn proj_group(
 /// 2026-10-11: Whether a group of `m` rows runs as one `w4a16_gemv_seg` launch under `plan`
 /// (`SegPlan::seg_gemv`, unless the dequantize + cuBLASLt path takes the rows); then up to six
 /// members, else at most the row tiles' three.
-fn seg_gemv_group(plan: SegPlan, m: usize) -> bool {
+pub(crate) fn seg_gemv_group(plan: SegPlan, m: usize) -> bool {
     plan.seg_gemv(m)
         && (m == 1
             || !(crate::glm5next_w4a16_wide::takes(plan.dequant_min_rows, m)

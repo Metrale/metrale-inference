@@ -72,6 +72,8 @@ mod w4a16_tc_rows_seg;
 mod w4a16_gemv_seg;
 // 2026-10-21: Its pipelined twin over resident blocks (`w4a16_gemv_pipe.cu`).
 mod w4a16_gemv_pipe;
+// 2026-10-23: A persistent segment over a W4A16 GEMV chain (`w4a16_pipe_segment.cuh`).
+mod w4a16_pipe_segment;
 // 2026-09-25: Tensor-core BF16 GEMM with a 16-row M tile (`dense_gemm_m16_bf16`).
 #[path = "ops/dense_gemm_m16_bf16.rs"]
 mod dense_gemm_m16_bf16;
@@ -327,6 +329,7 @@ pub use ssm_mamba::*;
 pub use ssm_preproc::*;
 pub use ssm_ssd::*;
 pub use w4a16_gemv_pipe::*;
+pub use w4a16_pipe_segment::*;
 pub use w4a16_gemv_seg::*;
 pub use w4a16_tc_rows::*;
 pub use w4a16_tc_rows_seg::*;

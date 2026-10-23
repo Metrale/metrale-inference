@@ -19,7 +19,7 @@ use crate::glm5next_layer::GlmLevers;
 use crate::glm5next_mlp::Glm5NextMlpKernels;
 
 /// 2026-10-23: The registered levers.
-pub(super) const NAMES: [&str; 4] = [
+pub(super) const NAMES: [&str; 5] = [
     // 2026-10-23: The MoE router's few-row GEMV at one output per block
     // (`glm5next_router_gemv_npb1`): the instrument's known-small validation lever.
     "router_npb1",
@@ -32,6 +32,8 @@ pub(super) const NAMES: [&str; 4] = [
     // `METRALE_GLM_DSA_DECODE_SCORES_MMA` changes. A `bounded` lever (not bit-identical): time it
     // under the forced trajectory (`METRALE_PAIRED_AB_TRAJ`).
     "dsa_mma",
+    // 2026-10-23: `METRALE_GLM_DENSE_SEGMENT` (`glm5next_dense_seg`): the P3 persistent segment.
+    "dense_seg",
 ];
 
 /// 2026-10-23: `base` under this pass's instrument levers.
@@ -69,6 +71,13 @@ pub(super) fn apply(
                     bail!("METRALE_PAIRED_AB: `swiglu_down` needs the W4A16 GEMV pipe");
                 }
                 k.levers.dense.swiglu_down |= on.has(i);
+            }
+            "dense_seg" => {
+                // 2026-10-23: Without the pipe the segment never launches: B would run A.
+                if !k.levers.dense.gemv_seg || !k.levers.dense.gemv_pipe {
+                    bail!("METRALE_PAIRED_AB: `dense_seg` needs the W4A16 GEMV pipe");
+                }
+                k.levers.dense.dense_seg |= on.has(i);
             }
             // 2026-10-23: A KDA lever ([`kda_levers`]) and a DSA one ([`dsa_kernels`]).
             "kda_conv_one" | "dsa_mma" => {}

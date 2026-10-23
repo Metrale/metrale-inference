@@ -4461,6 +4461,32 @@ microtest = "glm5next_swiglu_down_microtest"
 priority = 140
 cite = "crates/model-arch/src/glm5next_mlp/forward/dense.rs:103-122 (glm5next_swiglu_down::swiglu_down before the unfolded pair); crates/model-arch/src/glm5next_swiglu_down.rs:56-79 (only where SegPlan::lone_pipe, crates/model-arch/src/glm5next_w4a16_seg.rs:260-269); kernels/gb10/common/glm5next_swiglu_down.cu:34-46"
 
+# 2026-10-23: METRALE_GLM_DENSE_SEGMENT (glm_dense_segment): the P3 persistent-segment prototype.
+# The shared expert's gate|up, clamp + SiLU and down as three dependent phases of ONE launch
+# (glm5next_dense_seg_pipe_m2: w4a16_gemv_pipe template phases in w4a16_pipe_segment.cuh over the
+# segment.cuh task loop), wherever both GEMVs run on the pipe. Bytes equal the three launches'.
+
+[[rule]]
+id = "glm_w4a16_pipe_shared_segment_2rows"
+pattern = [
+  { op = "linear", role = "shared_gate_up", weight = "nvfp4/g16", input = "bf16" },
+  { op = "swiglu_clamp", local = "shared_clamp", holds = "f32" },
+  { op = "silu_mul", local = "shared_act" },
+  { op = "linear", role = "shared_down", weight = "nvfp4/g16" },
+]
+kernels = [
+  { module = "glm5next_dense_seg", func = "glm5next_dense_seg_pipe_m2" },
+]
+repeat = "once"
+emitter = "glm_w4a16"
+rows = [2, 2]
+modes = ["multi_seq", "verify"]
+when = { glm_w4a16_gemv_seg = "on", glm_w4a16_gemv_rows = "2", glm_dense_segment = "on" }
+numerics = "bit_identical"
+microtest = "glm5next_dense_seg_microtest"
+priority = 150
+cite = "crates/model-arch/src/glm5next_mlp/forward/dense.rs:61-76 (glm5next_dense_seg::dense_segment before the separate launches); crates/model-arch/src/glm5next_dense_seg.rs:62-110 (only where group_on_pipe and SegPlan::lone_pipe); kernels/gb10/common/glm5next_dense_seg.cu:15-25"
+
 [[rule]]
 id = "glm_w4a16_seg_kda_qkv"
 pattern = [

@@ -189,9 +189,24 @@ struct PipeRowsIn {
     }
 };
 
+// 2026-10-23: The input stage of rows another block of the SAME launch wrote (a persistent
+// segment's later phase, w4a16_pipe_segment.cuh): PipeRowsIn's words, read through L2
+// (ld.global.cg), never the non-coherent path a const __restrict__ load may take.
+struct PipeRowsInCg {
+    const __nv_bfloat16* A;
+    unsigned int K;
+    __device__ __forceinline__ uint4 operator()(unsigned int m, unsigned int u) const {
+        return __ldcg((const uint4*)(A + (unsigned long long)m * K) + u);
+    }
+};
+
+// 2026-10-23: The body as block `vb` of a `vg`-block launch (w4a16_gemv_pipe_body is
+// <blockIdx.x, gridDim.x>): a persistent segment runs the blocks of a launch as tasks. Warp
+// ownership is a function of (vb, vg) only, so every output's arithmetic is unchanged.
 template <int M, int D, class In>
-__device__ __forceinline__ void w4a16_gemv_pipe_body(const In in, const PipeSeg (&seg)[6],
-                                                     unsigned int K) {
+__device__ __forceinline__ void w4a16_gemv_pipe_body_at(const In in, const PipeSeg (&seg)[6],
+                                                        unsigned int K, unsigned int vb,
+                                                        unsigned int vg) {
     extern __shared__ uint4 s_a[];
 
     const unsigned int K16 = K / 16;
@@ -200,8 +215,8 @@ __device__ __forceinline__ void w4a16_gemv_pipe_body(const In in, const PipeSeg 
     const unsigned int J = (K16 + 127) / 128;
     float* s_lut = (float*)(s_a + 256u * J * M);
     const unsigned int lane = threadIdx.x & 31u;
-    const unsigned int nw = gridDim.x * PIPE_WARPS;
-    const unsigned int warp_g = blockIdx.x * PIPE_WARPS + (threadIdx.x >> 5);
+    const unsigned int nw = vg * PIPE_WARPS;
+    const unsigned int warp_g = vb * PIPE_WARPS + (threadIdx.x >> 5);
 
     unsigned int total = 0;
     #pragma unroll
@@ -312,6 +327,12 @@ __device__ __forceinline__ void w4a16_gemv_pipe_body(const In in, const PipeSeg 
             }
         }
     }
+}
+
+template <int M, int D, class In>
+__device__ __forceinline__ void w4a16_gemv_pipe_body(const In in, const PipeSeg (&seg)[6],
+                                                     unsigned int K) {
+    w4a16_gemv_pipe_body_at<M, D>(in, seg, K, blockIdx.x, gridDim.x);
 }
 
 #define PIPE_PARAMS(i) \
