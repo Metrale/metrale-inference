@@ -2444,6 +2444,7 @@ dependencies = [
 name = "metrale-telemetry"
 version = "1.0.0-beta-preview"
 dependencies = [
+ "libloading",
  "metrale-abstract-io",
  "metrale-error",
  "metrale-gpu-sys",
