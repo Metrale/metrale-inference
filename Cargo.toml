@@ -48,6 +48,9 @@ members = [
     "crates/stats",
     "crates/power",
     "crates/io-hosts/power",
+    "crates/kg-derive",
+    "crates/io-hosts/kg",
+    "crates/kg-mcp",
 ]
 
 # 2026-10-17: A bare `cargo build` builds `met` only; CI and scripts name `--workspace` or `-p`.
@@ -140,6 +143,9 @@ io-uring = { version = "0.7", default-features = false }
 # 2026-10-17: latticedb-core is published on crates.io (0.3.4 = lattice-db main e94ccad); the
 # package is named `latticedb-core` and its lib target `lattice_core`, so `package` is required.
 lattice-core = { version = "0.3.4", package = "latticedb-core", default-features = false }
+# 2026-10-23: LatticeDB's durable `DiskStorage` (WAL + pages) under the knowledge graph's derived
+# store (metrale-kg-mcp); the same 0.3.4 as lattice-core. Library target `lattice_storage`.
+lattice-storage = { version = "0.3.4", package = "latticedb-storage", default-features = false }
 lazy_static = { version = "1", default-features = false }
 libc = { version = "0.2", default-features = false }
 libloading = { version = "0.9", default-features = false }
@@ -170,6 +176,8 @@ rand_chacha = { version = "0.9", default-features = false }
 rand_distr = { version = "0.5", default-features = false }
 ratatui = { version = "0.29", default-features = false }
 rayon = { version = "1.12", default-features = false }
+# 2026-10-23: The MCP server SDK under metrale-kg-mcp (design: rmcp 0.16, stdio transport).
+rmcp = { version = "0.16", default-features = false }
 regex = { version = "1.13", default-features = false }
 # 2026-10-22: The regex engines under `regex`, used directly where a no_std crate matches
 # (metrale-precision's `re:` targets); same version as `regex` resolves.
@@ -223,9 +231,11 @@ metrale-io-host-mem = { path = "crates/io-hosts/mem", version = "1.0.0-beta-prev
 metrale-io-host-fs-repo = { path = "crates/io-hosts/fs-repo", version = "1.0.0-beta-preview", default-features = false }
 metrale-io-host-std = { path = "crates/io-hosts/std", version = "1.0.0-beta-preview", default-features = false }
 metrale-io-host-power = { path = "crates/io-hosts/power", version = "1.0.0-beta-preview", default-features = false }
+metrale-io-host-kg = { path = "crates/io-hosts/kg", version = "1.0.0-beta-preview", default-features = false }
 metrale-kernel-root = { path = "crates/kernel-root", version = "1.0.0-beta-preview", default-features = false }
 metrale-kernel-tree = { path = "crates/kernel-tree", version = "1.0.0-beta-preview", default-features = false }
 metrale-kernels = { path = "crates/kernels", version = "1.0.0-beta-preview", default-features = false }
+metrale-kg-derive = { path = "crates/kg-derive", version = "1.0.0-beta-preview", default-features = false }
 metrale-model-arch = { path = "crates/model-arch", version = "1.0.0-beta-preview", default-features = false }
 metrale-model-engine = { path = "crates/model-engine", version = "1.0.0-beta-preview", default-features = false }
 metrale-model-layers = { path = "crates/model-layers", version = "1.0.0-beta-preview", default-features = false }

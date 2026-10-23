@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-io-host-kg"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: process hosts of the kernel knowledge graph: source reads and stamps, git log, the ledger.py validator, atomic record writes, and the OpenRouter embedder."
+
+[package.metadata.metrale]
+role = "host-std"
+
+# 2026-10-23: The only crate of the knowledge graph that touches the file system, processes or
+# the network (SBIO; delegated decision 2026-10-23, the io-hosts/power precedent).
+[dependencies]
+metrale-error = { workspace = true }
+metrale-kg-derive = { workspace = true }
+
+[lints]
+workspace = true

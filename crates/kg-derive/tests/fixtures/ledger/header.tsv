@@ -1,0 +1,2 @@
+ts	phase	id	hypothesis	predicted_us_saved	measured_delta	bitwise	verdict	profile	cost	commit	why_differed	depends_on
+2026-10-23T00:00Z	P1	a	hyp a	<=5 us	1k +1.0% [-0.5,+2.5]	IDENTICAL	WIN	-	1 h	abc1234	why a	-	-

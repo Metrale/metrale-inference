@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-kg-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: `metrale-kg`, the kernel knowledge graph's CLI and 5-tool MCP server over a LatticeDB index derived from the SSOT files."
+
+[package.metadata.metrale]
+role = "bin"
+
+# 2026-10-23: The one place a host is chosen for the knowledge graph. Never depends on met or
+# metrale-bench, and nothing depends on it (xtask depgraph ISOLATED_BINS; delegated decision
+# 2026-10-23).
+[[bin]]
+name = "metrale-kg"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+clap = { workspace = true, features = ["std", "derive", "help", "usage", "error-context"] }
+lattice-core = { workspace = true }
+lattice-storage = { workspace = true, features = ["native"] }
+metrale-abstract-io = { workspace = true }
+metrale-error = { workspace = true }
+metrale-io-host-kg = { workspace = true }
+metrale-io-host-std = { workspace = true }
+metrale-kg-derive = { workspace = true }
+rmcp = { workspace = true, features = ["server", "transport-io"] }
+serde_json = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["rt", "macros", "io-std", "sync", "time"] }
+
+[lints]
+workspace = true
