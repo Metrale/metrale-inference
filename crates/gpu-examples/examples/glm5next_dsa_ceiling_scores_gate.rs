@@ -29,6 +29,8 @@
 //!   cargo run --release -p metrale-gpu-examples --features cuda,gpu-examples \
 //!     --example glm5next_dsa_ceiling_scores_gate
 
+#[path = "common/dsa_mma_paged_gate.rs"]
+mod mma_paged;
 #[path = "common/dsa_pool_keys_store_gate.rs"]
 mod store;
 
@@ -101,6 +103,11 @@ struct Case {
     cand: DevicePtr,
     rows: usize,
     pools: usize,
+    /// 2026-10-23: The context, and the BF16 keys as dsa_index_scores_mma_pipe takes them
+    /// (`[pools, D]` contiguous) with each pool's visibility (its last token).
+    s: usize,
+    keys16: DevicePtr,
+    vis: DevicePtr,
 }
 
 /// 2026-10-21: Pool `p`'s key under the adversarial mix (every 9th pool special), else random.
@@ -216,6 +223,15 @@ fn build(gpu: &dyn GpuBackend, rng: &mut Rng, s: usize, rows: usize, short: bool
         pk_copies.push(up(gpu, &pk)?);
     }
     let (pk16, pkw) = bf16_slots(&pk);
+    let mut keys16 = vec![0u16; pools * D];
+    for p in 0..pools {
+        let t = p * KP;
+        let base = perm[t / BS] as usize * PK_BLK + ((t % BS) / KP) * D;
+        for d in 0..D {
+            keys16[p * D + d] = bf16_rn(pk[base + d]);
+        }
+    }
+    let vis: Vec<i32> = (0..pools).map(|p| (p * KP + KP - 1) as i32).collect();
     let mut pk16_copies = Vec::new();
     for _ in 0..copies {
         pk16_copies.push(up(gpu, &pk16)?);
@@ -235,6 +251,9 @@ fn build(gpu: &dyn GpuBackend, rng: &mut Rng, s: usize, rows: usize, short: bool
         cand: gpu.alloc(rows * MAX_POOLS)?,
         rows,
         pools,
+        s,
+        keys16: up(gpu, &keys16)?,
+        vis: up(gpu, &vis)?,
     })
 }
 
@@ -339,6 +358,8 @@ fn main() -> Result<()> {
     let heads = gpu.kernel("dsa_scores_warp", "dsa_index_scores_heads_paged")?;
     let window = gpu.kernel("dsa_scores_heads_window", "dsa_index_scores_heads_window")?;
     let news = [("heads", heads), ("window", window)];
+    let mma = gpu.kernel("dsa_scores_mma_paged", "dsa_index_scores_mma_paged_bf16")?;
+    let pipe = gpu.kernel("dsa_index_scores_pipe", "dsa_index_scores_mma_pipe")?;
     let news16 = [
         (
             "heads_bf16",
@@ -394,8 +415,15 @@ fn main() -> Result<()> {
                     );
                 }
             }
+            mma_paged::check(
+                &gpu,
+                mma,
+                pipe,
+                &c,
+                &[grid_new(&c), [1, 1, 1], [3 * sms, 1, 1]],
+            )?;
             println!(
-                "S={s:7} rows={rows} short={short:5}: identical (grids {sms}, 1, {}; FP32 and BF16 keys)",
+                "S={s:7} rows={rows} short={short:5}: identical (grids {sms}, 1, {}; FP32 and BF16 keys; mma = pipe)",
                 3 * sms
             );
             if ctxs.contains(&s) && rows <= 2 && !short {
@@ -414,6 +442,9 @@ fn main() -> Result<()> {
                 let t16 = graph_us(&gpu, &|i, st| {
                     launch(&gpu, k16.1, &c, pk16(i), grid_new(&c), st)
                 })?;
+                let tm = graph_us(&gpu, &|i, st| {
+                    launch(&gpu, mma, &c, pk16(i), grid_new(&c), st)
+                })?;
                 let gb = (c.pools * D * 4) as f64 / 1e3;
                 println!(
                     "  TIME S={s:7} rows={rows}: warp_paged {to:8.1} us ({:5.1} GB/s) | heads {tn:8.1} us ({:5.1} GB/s) | window {tw:8.1} us ({:5.1} GB/s) | window/heads {:.3}",
@@ -429,9 +460,14 @@ fn main() -> Result<()> {
                     if rows == 1 { "heads" } else { "window" },
                     t16 / if rows == 1 { tn } else { tw }
                 );
+                println!(
+                    "  TIME S={s:7} rows={rows}: mma_paged_bf16 {tm:8.1} us ({:5.1} GB/s of BF16 keys) | vs window {:.3}",
+                    gb / 2.0 / tm,
+                    tm / tw
+                );
             }
             for p in [
-                c.q, c.pk, c.pk16, c.pkw, c.w, c.bt, c.qpos, c.geom, c.out, c.cand,
+                c.q, c.pk, c.pk16, c.pkw, c.w, c.bt, c.qpos, c.geom, c.out, c.cand, c.keys16, c.vis,
             ]
             .into_iter()
             .chain(c.pk_copies.iter().copied())

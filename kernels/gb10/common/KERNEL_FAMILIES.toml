@@ -2561,6 +2561,9 @@ kernels = [
   "dsa_scores_heads_bf16::dsa_pool_keys_store_rows_bf16",
   "dsa_scores_heads_bf16::dsa_index_scores_heads_paged_bf16",
   "dsa_scores_heads_bf16::dsa_index_scores_heads_window_bf16",
+  # 2026-10-23: the BF16 persisted keys scored on BF16 tensor cores (METRALE_GLM_DSA_DECODE_SCORES_MMA,
+  # default off): dsa_index_scores_mma's bits for those keys, the window kernel's launch.
+  "dsa_scores_mma_paged::dsa_index_scores_mma_paged_bf16",
   # 2026-10-21: dsa_topk_pools_radix's selection over C CTAs per row (METRALE_GLM_DSA_TOPK_MC,
   # default on; the captured decode's ceiling top-k): four histogram passes and a collect.
   "dsa_topk_mc::dsa_topk_mc_pass",
@@ -2591,6 +2594,7 @@ kernel_compute."dsa_index_scores_pipe::dsa_pool_prep_bf16" = { compute = "memory
 kernel_compute."dsa_index_scores_pipe::dsa_index_scores_mma_pipe" = { compute = "tensor_core", mma = "mma.sync.m16n8k16.bf16" }
 kernel_compute."dsa_indexer_fp8::dsa_indexer_store_fp8" = { compute = "memory" }
 kernel_compute."dsa_index_scores_pipe::dsa_select_fused_pipe" = { compute = "tensor_core", mma = "mma.sync.m16n8k16.bf16" }
+kernel_compute."dsa_scores_mma_paged::dsa_index_scores_mma_paged_bf16" = { compute = "tensor_core", mma = "mma.sync.m16n8k16.bf16" }
 # 2026-10-22: Several rows in one launch: the `_rows` kernels take every row of a pass (a verify's
 # 2..8 and a multi-sequence decode's rows, each with its own geometry), the multi-CTA top-k up to
 # TOPK_MC_ROWS (16) rows (glm5next_dsa/select/topk.rs:36-38).
@@ -2603,7 +2607,7 @@ values = {}
 how = "instantiation"
 # 2026-10-09: The bodies live in dsa_indexer_body.cuh; dsa_indexer_rows.cu runs them for one
 # sequence per grid row (the batched decode's paged rows, METRALE_GLM_DSA_INDEXER_ROWS).
-files = ["kernels/gb10/common/dsa_indexer.cu", "kernels/gb10/common/dsa_indexer_body.cuh", "kernels/gb10/common/dsa_indexer_pools.cuh", "kernels/gb10/common/dsa_indexer_rows.cu", "kernels/gb10/common/dsa_scores_warp.cu", "kernels/gb10/common/dsa_scores_heads.cuh", "kernels/gb10/common/dsa_scores_heads_window.cu", "kernels/gb10/common/dsa_scores_heads_bf16.cu", "kernels/gb10/common/dsa_indexer_fp8.cu", "kernels/gb10/common/dsa_scores_mma.cuh", "kernels/gb10/common/dsa_index_scores_pipe.cu", "kernels/gb10/common/dsa_sel_fold.cu", "kernels/gb10/common/dsa_topk_stream.cuh", "kernels/gb10/common/dsa_topk_radix.cuh", "kernels/gb10/common/dsa_topk_mc.cu"]
+files = ["kernels/gb10/common/dsa_indexer.cu", "kernels/gb10/common/dsa_indexer_body.cuh", "kernels/gb10/common/dsa_indexer_pools.cuh", "kernels/gb10/common/dsa_indexer_rows.cu", "kernels/gb10/common/dsa_scores_warp.cu", "kernels/gb10/common/dsa_scores_heads.cuh", "kernels/gb10/common/dsa_scores_heads_window.cu", "kernels/gb10/common/dsa_scores_heads_bf16.cu", "kernels/gb10/common/dsa_scores_mma_paged.cuh", "kernels/gb10/common/dsa_scores_mma_paged.cu", "kernels/gb10/common/dsa_indexer_fp8.cu", "kernels/gb10/common/dsa_scores_mma.cuh", "kernels/gb10/common/dsa_index_scores_pipe.cu", "kernels/gb10/common/dsa_sel_fold.cu", "kernels/gb10/common/dsa_topk_stream.cuh", "kernels/gb10/common/dsa_topk_radix.cuh", "kernels/gb10/common/dsa_topk_mc.cu"]
 # 2026-10-22: GLM-5.3-Flash NVFP4, TP=3 rank 0, nsys: rows [2] are the MTP verify launches, rows [1] the MTP drafter's.
 [[family.evidence]]
 point = {}

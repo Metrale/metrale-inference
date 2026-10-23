@@ -85,38 +85,52 @@ __device__ __forceinline__ void dsa_sm_zero(float (&acc)[2][8][4]) {
             for (int c = 0; c < 4; ++c) acc[mt][nt][c] = 0.0f;
 }
 
+// 2026-10-23: Column tile nt (pools 8 nt .. 8 nt + 7 of the B tile at sbase) into acc0 / acc1
+// (m-tiles 0 / 1, zeroed by the caller): 2 x 8 MMAs, each accumulator taking k-steps 0..7 in
+// order. dsa_sm_tile_mma is this for nt = 0..7.
+__device__ __forceinline__ void dsa_sm_ntile_mma(float (&acc0)[4], float (&acc1)[4],
+                                                 const uint32_t (&a)[2][8][4], uint32_t sbase,
+                                                 unsigned int lane, unsigned int nt) {
+#pragma unroll
+    for (int kk = 0; kk < 4; ++kk) {
+        const unsigned int row = nt * 8u + (lane & 7u);
+        const unsigned int kof = (unsigned int)kk * 32u + (lane >> 3) * 8u;
+        uint32_t b0, b1, b2, b3;
+        dsa_sm_ldsm_x4(sbase + (row * DSA_SM_LD + kof) * 2u, b0, b1, b2, b3);
+        dsa_sm_mma(acc0, a[0][2 * kk], b0, b1);
+        dsa_sm_mma(acc1, a[1][2 * kk], b0, b1);
+        dsa_sm_mma(acc0, a[0][2 * kk + 1], b2, b3);
+        dsa_sm_mma(acc1, a[1][2 * kk + 1], b2, b3);
+    }
+}
+
 // 2026-10-12: One 64-pool tile: 2 x 8 x 8 MMAs into acc (zeroed by the caller) from the B tile
 // at shared address sbase; accumulator acc[mt][nt] takes k-steps 0..7 in order.
 __device__ __forceinline__ void dsa_sm_tile_mma(float (&acc)[2][8][4],
                                                 const uint32_t (&a)[2][8][4], uint32_t sbase,
                                                 unsigned int lane) {
 #pragma unroll
-    for (int nt = 0; nt < 8; ++nt) {
-#pragma unroll
-        for (int kk = 0; kk < 4; ++kk) {
-            const unsigned int row = (unsigned int)nt * 8u + (lane & 7u);
-            const unsigned int kof = (unsigned int)kk * 32u + (lane >> 3) * 8u;
-            uint32_t b0, b1, b2, b3;
-            dsa_sm_ldsm_x4(sbase + (row * DSA_SM_LD + kof) * 2u, b0, b1, b2, b3);
-            dsa_sm_mma(acc[0][nt], a[0][2 * kk], b0, b1);
-            dsa_sm_mma(acc[1][nt], a[1][2 * kk], b0, b1);
-            dsa_sm_mma(acc[0][nt], a[0][2 * kk + 1], b2, b3);
-            dsa_sm_mma(acc[1][nt], a[1][2 * kk + 1], b2, b3);
-        }
-    }
+    for (int nt = 0; nt < 8; ++nt)
+        dsa_sm_ntile_mma(acc[0][nt], acc[1][nt], a, sbase, lane, (unsigned int)nt);
 }
 
 // 2026-10-12: The score of column 8 nt + 2 tig + j of the tile: c0/c1 are rows g of columns
 // 2 tig, 2 tig + 1; c2/c3 rows g + 8. Each lane folds its four heads, then three xor-shuffles
 // over g add the 8 lane groups; every lane of the column ends with the same bits.
-__device__ __forceinline__ float dsa_sm_fold(const float (&acc)[2][8][4], const float (&wv)[2][2],
-                                             float scale, int nt, int j) {
-    float s = wv[0][0] * fmaxf(scale * acc[0][nt][j], 0.0f);
-    s += wv[0][1] * fmaxf(scale * acc[0][nt][2 + j], 0.0f);
-    s += wv[1][0] * fmaxf(scale * acc[1][nt][j], 0.0f);
-    s += wv[1][1] * fmaxf(scale * acc[1][nt][2 + j], 0.0f);
+// 2026-10-23: dsa_sm_fold of one column tile's accumulators (acc0 / acc1 = m-tiles 0 / 1).
+__device__ __forceinline__ float dsa_sm_fold_col(const float (&acc0)[4], const float (&acc1)[4],
+                                                 const float (&wv)[2][2], float scale, int j) {
+    float s = wv[0][0] * fmaxf(scale * acc0[j], 0.0f);
+    s += wv[0][1] * fmaxf(scale * acc0[2 + j], 0.0f);
+    s += wv[1][0] * fmaxf(scale * acc1[j], 0.0f);
+    s += wv[1][1] * fmaxf(scale * acc1[2 + j], 0.0f);
     s += __shfl_xor_sync(0xFFFFFFFFu, s, 4);
     s += __shfl_xor_sync(0xFFFFFFFFu, s, 8);
     s += __shfl_xor_sync(0xFFFFFFFFu, s, 16);
     return s;
+}
+
+__device__ __forceinline__ float dsa_sm_fold(const float (&acc)[2][8][4], const float (&wv)[2][2],
+                                             float scale, int nt, int j) {
+    return dsa_sm_fold_col(acc[0][nt], acc[1][nt], wv, scale, j);
 }

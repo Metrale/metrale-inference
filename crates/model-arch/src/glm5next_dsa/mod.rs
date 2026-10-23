@@ -38,7 +38,10 @@
 //! * `dsa_expand_selection` writes -1 over the whole index row before it stores any index,
 //!   so every slot is written.
 
-use anyhow::{Context, Result, bail, ensure};
+mod pool_keys_bf16;
+pub use pool_keys_bf16::{DSA_SCORES_HEADS_BF16_MODULE, DSA_SCORES_MMA_PAGED_MODULE};
+
+use anyhow::{Result, bail};
 use metrale_config::ModelConfig;
 use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
 
@@ -163,8 +166,9 @@ pub struct DsaRowsKernels {
     pub scores_heads_window: KernelHandle,
     /// 2026-10-23: `METRALE_GLM_DSA_POOL_KEYS_BF16` ([`Self::with_bf16_pool_keys`]): the
     /// persisted keys are BF16, [`Self::pool_keys_store`], [`Self::scores_heads_paged`] and
-    /// [`Self::scores_heads_window`] are their BF16-key instances, and nothing may score them
-    /// with [`Self::scores_warp_paged`] (an FP32 reader).
+    /// [`Self::scores_heads_window`] are their BF16-key instances (both
+    /// `dsa_index_scores_mma_paged_bf16` under `METRALE_GLM_DSA_DECODE_SCORES_MMA`), and nothing
+    /// may score them with [`Self::scores_warp_paged`] (an FP32 reader).
     pub pool_keys_bf16: bool,
     /// 2026-10-21: `dsa_topk_mc.cu`'s `dsa_topk_mc_pass` and `dsa_topk_mc_collect`:
     /// [`Self::topk_radix`]'s selection over several CTAs per row (`select::topk_mc`). Not part
@@ -184,9 +188,6 @@ pub const DSA_SCORES_WARP_MODULE: &str = "dsa_scores_warp";
 /// 2026-10-22: Module of the lane-per-head scores' straight-line walk:
 /// `dsa_scores_heads_window.cu`.
 pub const DSA_SCORES_HEADS_WINDOW_MODULE: &str = "dsa_scores_heads_window";
-
-/// 2026-10-23: Module of the persisted keys' BF16 store and scores: `dsa_scores_heads_bf16.cu`.
-pub const DSA_SCORES_HEADS_BF16_MODULE: &str = "dsa_scores_heads_bf16";
 
 /// 2026-10-14: Module of the streamed tensor-core scores: `dsa_index_scores_pipe.cu`.
 pub const DSA_SCORES_PIPE_MODULE: &str = "dsa_index_scores_pipe";
@@ -251,26 +252,6 @@ impl DsaRowsKernels {
         }
     }
 
-    /// 2026-10-23: These kernels with the persisted keys stored and scored as BF16
-    /// ([`Self::pool_keys_bf16`]); refused unless both lane-per-head walks resolved (the only
-    /// readers with a BF16-key instance) and the BF16-key module is in the build.
-    pub fn with_bf16_pool_keys(mut self, gpu: &dyn GpuBackend) -> Result<Self> {
-        ensure!(
-            self.scores_heads_paged.0 != 0 && self.scores_heads_window.0 != 0,
-            "METRALE_GLM_DSA_POOL_KEYS_BF16: needs dsa_index_scores_heads_paged and \
-             dsa_index_scores_heads_window (the BF16 keys' only readers)"
-        );
-        let k = |name: &str| {
-            gpu.kernel(DSA_SCORES_HEADS_BF16_MODULE, name)
-                .with_context(|| format!("METRALE_GLM_DSA_POOL_KEYS_BF16: {name}"))
-        };
-        self.pool_keys_store = k("dsa_pool_keys_store_rows_bf16")?;
-        self.scores_heads_paged = k("dsa_index_scores_heads_paged_bf16")?;
-        self.scores_heads_window = k("dsa_index_scores_heads_window_bf16")?;
-        self.pool_keys_bf16 = true;
-        Ok(self)
-    }
-
     /// 2026-10-21: Whether the persisted pool keys' store, scores and the geometry expansion
     /// they select through resolved.
     pub fn pool_keys_ready(&self) -> bool {
@@ -308,26 +289,6 @@ impl DsaRowsKernels {
 pub const MASKED_ATTN_MAX_KEYS: usize = 12_288;
 
 impl Glm5NextDsaKernels {
-    /// 2026-10-23: [`Self::resolve`] under the load's `METRALE_GLM_DSA_POOL_KEYS_BF16`
-    /// ([`DsaRowsKernels::with_bf16_pool_keys`]); refused with either lane-per-head lever off.
-    pub fn resolve_for(
-        gpu: &dyn GpuBackend,
-        s: &metrale_settings::InferenceServerSettings,
-    ) -> Result<Self> {
-        let mut k = Self::resolve(gpu)?;
-        let l = &s.kernels;
-        if l.glm_dsa_pool_keys_bf16 {
-            ensure!(
-                l.glm_dsa_scores_heads && l.glm_dsa_scores_heads_window,
-                "METRALE_GLM_DSA_POOL_KEYS_BF16 needs METRALE_GLM_DSA_SCORES_HEADS and \
-                 METRALE_GLM_DSA_SCORES_HEADS_WINDOW on"
-            );
-            k.rows = k.rows.with_bf16_pool_keys(gpu)?;
-            tracing::info!("GLM DSA persisted pool keys: BF16 (METRALE_GLM_DSA_POOL_KEYS_BF16)");
-        }
-        Ok(k)
-    }
-
     pub fn resolve(gpu: &dyn GpuBackend) -> Result<Self> {
         Ok(Self {
             kpool_compress: gpu.kernel(DSA_MODULE, "dsa_kpool_compress")?,
