@@ -41,6 +41,10 @@ pub struct LkbSources {
     pub headroom_dir: String,
     /// 2026-10-23: The inventory script the host runs (`scripts/kernel_perf.py`).
     pub inventory: String,
+    /// 2026-10-23: What `metrale-kg refresh` moves the checkout to: `git fetch <remote> <branch>`,
+    /// then a detached checkout of `<remote>/<branch>`. The checkout is a read-only source.
+    pub remote: String,
+    pub branch: String,
 }
 
 impl LkbSources {
@@ -63,6 +67,8 @@ impl LkbSources {
             &s.plans_dir,
             &s.headroom_dir,
             &s.inventory,
+            &s.remote,
+            &s.branch,
         ];
         for p in all {
             if p.starts_with('/') || p.split('/').any(|c| c == "..") || p.is_empty() {
@@ -70,6 +76,18 @@ impl LkbSources {
                     ErrorCode::KgConfig,
                     format!("sources.lkb {p}"),
                     "must be relative, non-empty, without .."
+                ));
+            }
+        }
+        for (k, v) in [("remote", &s.remote), ("branch", &s.branch)] {
+            let ok = !v.starts_with('-')
+                && v.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'));
+            if !ok {
+                return Err(error!(
+                    ErrorCode::KgConfig,
+                    format!("sources.lkb.{k}"),
+                    "must be a git ref name ([A-Za-z0-9._/-], not starting with -)"
                 ));
             }
         }
@@ -107,6 +125,8 @@ impl LkbSources {
 /// 2026-10-23: Facts the host computes that no SSOT file holds.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LkbFacts {
+    /// 2026-10-23: The checkout's HEAD when the facts were gathered (every answer names it).
+    pub head: String,
     /// 2026-10-23: `kernel_perf.py --json --partial` stdout, or why the script refused to build the
     /// inventory (its strict model rejects an LKB with, e.g., an unclassified kernel). A refusal is
     /// a finding and makes `owed_lkb` a declared unavailable section; the rest of the graph stays.

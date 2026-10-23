@@ -93,6 +93,9 @@ enum Cmd {
     ToolsList,
     /// Serve the 5 tools over MCP stdio.
     Serve,
+    /// Move the read-only LKB checkout to `[sources.lkb]` remote/branch (fetch + detached
+    /// checkout); the only command that changes a source. Prints the old and new commit.
+    Refresh,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -132,6 +135,7 @@ async fn run(cli: Cli) -> Result<()> {
             Ok(())
         }
         Cmd::Serve => serve(&cli.config, data).await,
+        Cmd::Refresh => refresh(&cli.config),
         Cmd::Status {
             campaign,
             sections,
@@ -154,6 +158,26 @@ async fn run(cli: Cli) -> Result<()> {
             tool(&cli.config, data, "kg_query", args).await
         }
     }
+}
+
+fn refresh(cfg_path: &std::path::Path) -> Result<()> {
+    let cfg = metrale_io_host_kg::fs::read_config(cfg_path)?;
+    let t = cfg.sources.lkb.as_ref().ok_or_else(|| {
+        metrale_error::error!(
+            metrale_error::ErrorCode::KgConfig,
+            "sources.lkb",
+            "is not configured: nothing to refresh"
+        )
+    })?;
+    let lkb = metrale_kg_derive::lkb_derive::LkbSources::parse(t)?;
+    let (old, new) =
+        metrale_io_host_kg::lkb::refresh(std::path::Path::new(&cfg.sources.root), &lkb)?;
+    let track = format!("{}/{}", lkb.remote, lkb.branch);
+    println!(
+        "{}",
+        serde_json::json!({"repo": lkb.repo, "track": track, "from": old, "to": new, "moved": old != new})
+    );
+    Ok(())
 }
 
 async fn tool(

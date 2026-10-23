@@ -39,8 +39,8 @@ pub struct App {
     clock: SystemClock,
 }
 
-/// 2026-10-23: Read and derive once (no store).
-pub fn derive_once(cfg: &Config, host: &FsSources) -> Result<(SourceSet, Bundle)> {
+/// 2026-10-23: Read and derive once (no store); also the LKB checkout's commit, if any.
+pub fn derive_once(cfg: &Config, host: &FsSources) -> Result<(SourceSet, Bundle, Option<String>)> {
     let src = host.read(cfg)?;
     let facts = match &cfg.sources.lkb {
         Some(t) => Some(metrale_io_host_kg::lkb::facts(
@@ -51,7 +51,7 @@ pub fn derive_once(cfg: &Config, host: &FsSources) -> Result<(SourceSet, Bundle)
         None => None,
     };
     let b = derive(cfg, &src, facts.as_ref())?;
-    Ok((src, b))
+    Ok((src, b, facts.map(|f| f.head)))
 }
 
 impl App {
@@ -61,7 +61,7 @@ impl App {
         let settings = resolve_settings(&cfg.embedder)?;
         let host = FsSources::new(&cfg);
         let stamp = host.stamp(&cfg)?;
-        let (_, bundle) = derive_once(&cfg, &host)?;
+        let (_, bundle, source_commit) = derive_once(&cfg, &host)?;
         let dir = match data_override {
             Some(d) => d.to_path_buf(),
             None => data_dir(&cfg.store.data_dir)?,
@@ -72,6 +72,7 @@ impl App {
         let fresh = Freshness {
             stale_reason: None,
             derived_at_ms: clock.now_unix_ms().0,
+            source_commit,
         };
         Ok(App {
             digest: digest(&bundle).hex(),
@@ -99,7 +100,7 @@ impl App {
             return false;
         }
         match derive_once(&self.cfg, &self.host) {
-            Ok((_, b)) => {
+            Ok((_, b, source_commit)) => {
                 let changed = digest(&b).hex() != self.digest;
                 if let Err(e) = self.store.lock().await.load(&b).await {
                     self.fresh.stale_reason = Some(format!("KgStore: {e}"));
@@ -111,6 +112,7 @@ impl App {
                 self.fresh = Freshness {
                     stale_reason: None,
                     derived_at_ms: self.clock.now_unix_ms().0,
+                    source_commit,
                 };
                 changed
             }
@@ -148,6 +150,9 @@ impl App {
             "stale".into(),
             Value::Bool(self.fresh.stale_reason.is_some()),
         );
+        if let Some(c) = &self.fresh.source_commit {
+            o.insert("source_commit".into(), Value::String(c.clone()));
+        }
         if let Some(r) = &self.fresh.stale_reason {
             o.insert("stale_reason".into(), Value::String(r.clone()));
         }

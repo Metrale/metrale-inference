@@ -23,6 +23,8 @@ pub struct Freshness {
     pub stale_reason: Option<String>,
     /// 2026-10-23: When the bundle was derived (unix ms, from the Clock port).
     pub derived_at_ms: i64,
+    /// 2026-10-23: The LKB checkout's commit the bundle was derived from (`None`: no LKB source).
+    pub source_commit: Option<String>,
 }
 
 fn ids(v: &[crate::id::KgId]) -> Value {
@@ -160,6 +162,10 @@ pub fn section(
         "freshness" => {
             let mut o = Map::new();
             o.insert("derived_at_ms".into(), Value::from(fresh.derived_at_ms));
+            o.insert(
+                "source_commit".into(),
+                fresh.source_commit.clone().map_or(Value::Null, Value::String),
+            );
             o.insert(
                 "stale_reason".into(),
                 fresh

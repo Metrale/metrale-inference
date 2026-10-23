@@ -14,6 +14,7 @@ fn fresh() -> Freshness {
     Freshness {
         stale_reason: None,
         derived_at_ms: 0,
+        source_commit: Some("381f9cb6ec3b".into()),
     }
 }
 
@@ -82,4 +83,18 @@ fn a_bare_or_misspelled_id_is_refused_with_the_closest_ids() {
         .unwrap_err()
         .to_string();
     assert!(!far.contains("did you mean"), "{far}");
+}
+
+#[test]
+fn freshness_names_the_source_commit_and_null_without_an_lkb() {
+    let b = derive(&common::config(), &common::sources(), None).unwrap();
+    let s = ["freshness".to_string()];
+    let v = status(&b, &common::config(), "glm/mk", &s, &fresh(), None).unwrap();
+    assert_eq!(v["freshness"]["source_commit"], "381f9cb6ec3b");
+    let none = Freshness {
+        source_commit: None,
+        ..fresh()
+    };
+    let v = status(&b, &common::config(), "glm/mk", &s, &none, None).unwrap();
+    assert!(v["freshness"]["source_commit"].is_null(), "{v}");
 }

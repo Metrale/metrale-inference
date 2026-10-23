@@ -65,6 +65,60 @@ pub fn parse_name_log(log: &str) -> BTreeMap<String, (String, String)> {
     out
 }
 
+fn head(repo: &Path) -> Result<String> {
+    Ok(run(
+        "git rev-parse",
+        Command::new("git").arg("-C").arg(repo).args(["rev-parse", "HEAD"]),
+    )?
+    .trim()
+    .to_string())
+}
+
+/// 2026-10-23: `metrale-kg refresh`: move the read-only LKB checkout to `<remote>/<branch>`
+/// (`git fetch`, then a detached checkout). Refuses a checkout with tracked changes, which would
+/// mean it is somebody's working tree, not a source. Returns (old HEAD, new HEAD).
+pub fn refresh(root: &Path, cfg: &LkbSources) -> Result<(String, String)> {
+    let repo = root.join(&cfg.repo);
+    let dirty = run(
+        "git status",
+        Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["status", "--porcelain", "--untracked-files=no"]),
+    )?;
+    if !dirty.trim().is_empty() {
+        return Err(error!(
+            ErrorCode::KgSource,
+            cfg.repo.clone(),
+            format!(
+                "has {} tracked changes; refresh only moves a clean read-only checkout",
+                dirty.lines().count()
+            )
+        ));
+    }
+    let old = head(&repo)?;
+    run(
+        "git fetch",
+        Command::new("git").arg("-C").arg(&repo).args([
+            "fetch",
+            "--quiet",
+            &cfg.remote,
+            &cfg.branch,
+        ]),
+    )?;
+    let target = format!("refs/remotes/{}/{}", cfg.remote, cfg.branch);
+    run(
+        "git checkout",
+        Command::new("git").arg("-C").arg(&repo).args([
+            "checkout",
+            "--quiet",
+            "--detach",
+            &target,
+        ]),
+    )?;
+    Ok((old, head(&repo)?))
+}
+
 /// 2026-10-23: The freshness stamp of the LKB facts: the checkout's HEAD and a hash of its
 /// dirty-file list under the hardware's kernels, so an edit or a commit there re-derives.
 pub fn repo_stamp(root: &Path, cfg: &LkbSources) -> Result<(String, u64, u128)> {
@@ -128,7 +182,9 @@ pub fn facts(root: &Path, cfg: &LkbSources, python: &str) -> Result<LkbFacts> {
         .filter_map(|l| l.split_once(' '))
         .map(|(s, d)| (s.to_string(), d.to_string()))
         .collect();
+    let head = head(&repo)?;
     Ok(LkbFacts {
+        head,
         inventory,
         file_last,
         commit_date,

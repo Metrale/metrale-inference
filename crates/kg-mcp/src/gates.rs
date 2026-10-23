@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 /// 2026-10-23: `derive`: the bundle JSONL to stdout or a file.
 pub fn derive_cmd(cfg_path: &Path, out: Option<&Path>) -> Result<()> {
     let cfg = read_config(cfg_path)?;
-    let (_, b) = derive_once(&cfg, &FsSources::new(&cfg))?;
+    let (_, b, _) = derive_once(&cfg, &FsSources::new(&cfg))?;
     let text = render(&b);
     match out {
         Some(p) => std::fs::write(p, text)?,
@@ -48,9 +48,9 @@ pub async fn check_cmd(cfg_path: &Path, roundtrip: bool) -> Result<()> {
     let cfg = read_config(cfg_path)?;
     let host = FsSources::new(&cfg);
     let t0 = clock.monotonic_ns().0;
-    let (_, a) = derive_once(&cfg, &host)?;
+    let (_, a, source_commit) = derive_once(&cfg, &host)?;
     let t1 = clock.monotonic_ns().0;
-    let (_, b) = derive_once(&cfg, &host)?;
+    let (_, b, _) = derive_once(&cfg, &host)?;
     let (da, db) = (digest(&a).hex(), digest(&b).hex());
     let mut by_code: BTreeMap<&str, u32> = BTreeMap::new();
     for f in &a.errors {
@@ -65,6 +65,7 @@ pub async fn check_cmd(cfg_path: &Path, roundtrip: bool) -> Result<()> {
         "digest": da, "digest_again": db, "fixpoint": da == db,
         "counts": {"nodes": a.nodes.len(), "edges": a.edges.len(), "texts": a.texts.len(), "sources": a.sources.len()},
         "findings_by_code": by_code, "fatal": fatal, "derive_ms": (t1 - t0) / 1_000_000,
+        "source_commit": source_commit,
     });
     let mut ok = da == db && fatal.is_empty();
     if roundtrip {
@@ -171,7 +172,7 @@ pub fn parity_cmd(cfg_path: &Path, campaign: &str, ledger_file: Option<&Path>) -
 pub fn tainted_cmd(cfg_path: &Path, campaign: &str) -> Result<()> {
     let cfg = read_config(cfg_path)?;
     let c = cfg.campaign(campaign)?;
-    let (_, b) = derive_once(&cfg, &FsSources::new(&cfg))?;
+    let (_, b, _) = derive_once(&cfg, &FsSources::new(&cfg))?;
     queries::ledger_valid(&b, &c.ledger)?;
     print!(
         "{}",
@@ -183,7 +184,7 @@ pub fn tainted_cmd(cfg_path: &Path, campaign: &str) -> Result<()> {
 /// 2026-10-23: `deps` in ledger.py's format.
 pub fn deps_cmd(cfg_path: &Path, id: &str) -> Result<()> {
     let cfg = read_config(cfg_path)?;
-    let (_, b) = derive_once(&cfg, &FsSources::new(&cfg))?;
+    let (_, b, _) = derive_once(&cfg, &FsSources::new(&cfg))?;
     let root = metrale_kg_derive::KgId::new(metrale_kg_derive::Label::LedgerEntry, id)?;
     let campaign = b.field(&root, "campaign").unwrap_or("").to_string();
     let c = cfg.campaign(&campaign)?;
