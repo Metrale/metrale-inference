@@ -21,6 +21,10 @@ pub mod dsa;
 #[cfg(test)]
 pub(crate) mod dsa_fixture;
 #[cfg(test)]
+mod dsa_mtp_tests;
+#[cfg(test)]
+pub(crate) mod dsa_sabotage;
+#[cfg(test)]
 pub(crate) mod fixture;
 #[cfg(test)]
 pub(crate) mod fixture_site;
@@ -62,7 +66,7 @@ static EMITTERS: [&dyn GroupEmitter<GlmBlock>; 8] = [
 /// 2026-10-23: The plan-executed sites, `(block, template-local ids of a group)`, as the plan
 /// reports name them: the groups the emitters above compile. A group of a listed block whose
 /// locals are not here is a legacy site of that block.
-pub const DONE: [(&str, &[&str]); 25] = [
+pub const DONE: [(&str, &[&str]); 30] = [
     ("dsa", &["mix", "pre", "input_norm"]),
     ("kda", &["mix", "pre", "input_norm"]),
     ("dsa", &["o@all_reduce", "post"]),
@@ -81,6 +85,11 @@ pub const DONE: [(&str, &[&str]); 25] = [
     ("dsa", &["pool"]),
     ("dsa", &["select"]),
     ("dsa", &["attend"]),
+    ("mtp_dsa", &["kv_norm", "kv_write"]),
+    ("mtp_dsa", &["idx_k_norm"]),
+    ("mtp_dsa", &["pool"]),
+    ("mtp_dsa", &["select"]),
+    ("mtp_dsa", &["attend"]),
     ("moe", &["gate"]),
     ("moe", &["top_k"]),
     ("moe", &["gate", "top_k"]),
@@ -240,13 +249,14 @@ pub fn compile_kda(
     })
 }
 
-/// 2026-10-23: Layer `layer`'s DSA mixer in `plan` (over the rank circuit `circuit`, fused under
-/// `policy`): its own groups through the `dsa` emitter, its projection groups declared legacy
-/// sites. The attend's split count is the policy's `glm_dsa_decode_hb` (`dsa::hb_splits`).
+/// 2026-10-23: The DSA mixer of `site` (a text layer's or the MTP block's) in `plan` (over the
+/// rank circuit `circuit`, fused under `policy`): its own groups through the `dsa` emitter, its
+/// projection groups declared legacy sites. The attend's split count is the policy's
+/// `glm_dsa_decode_hb` (`dsa::hb_splits`).
 pub fn compile_dsa(
     circuit: &Circuit,
     plan: &FusionPlan,
-    layer: usize,
+    site: dsa::DsaSite,
     policy: &metrale_circuit::Policy,
 ) -> Result<CompiledSite<crate::glm5next_dsa::plan::DsaSteps<metrale_circuit::KernelId>>> {
     let reg = registry()?;
@@ -254,9 +264,8 @@ pub fn compile_dsa(
     block.dsa.hb_splits = dsa::hb_splits(policy)?;
     let (mut executed, mut legacy) = (Vec::new(), Vec::new());
     let mut last = None;
-    let groups = PlanGroup::all(circuit, plan)
-        .filter(|g| g.layer() == Some(layer) && g.block() == "dsa" && !mhc::is_site_group(g));
-    for g in groups {
+    let layer = site.layer();
+    for g in PlanGroup::all(circuit, plan).filter(|g| site.holds(g)) {
         if dsa::is_site_group(&g) {
             reg.emit(&g, &mut block)?;
             let kernels: Vec<String> = g.group.kernels.iter().map(|k| k.to_string()).collect();

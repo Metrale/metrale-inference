@@ -41,8 +41,9 @@ pub(crate) const HIDDEN_IN: DevicePtr = DevicePtr(0x9300_0000);
 pub(crate) const SEQ_LEN: usize = 70_001;
 pub(crate) const BLOCK: usize = 16;
 
-/// 2026-10-23: Run `body` in a child process that publishes the served tiers first.
-pub(crate) fn in_served_process(name: &str, body: impl FnOnce()) {
+/// 2026-10-23: Run the test `name` of the test module `module` (its path in the binary) in a
+/// child process that publishes the served tiers first.
+pub(crate) fn in_served_process(module: &str, name: &str, body: impl FnOnce()) {
     let publish = || {
         use metrale_model_layers::layers::{
             set_dense_quantization_from_cli, set_dsa_quantization_from_cli,
@@ -56,7 +57,7 @@ pub(crate) fn in_served_process(name: &str, body: impl FnOnce()) {
             DsaQuantization::W8a8
         );
     };
-    in_child_process(&format!("glm5next_plan::dsa::tests::{name}"), publish, body);
+    in_child_process(&format!("{module}::{name}"), publish, body);
 }
 
 /// 2026-10-23: The DSA layers of `c`.
@@ -80,16 +81,16 @@ pub(crate) fn served_config(rank: usize) -> metrale_config::ModelConfig {
 
 /// 2026-10-23: What one rank's DSA layers share, as `DsaStack::new` builds it at load.
 pub(crate) struct Stack {
-    config: metrale_config::ModelConfig,
-    cfg: Glm5NextDsaConfig,
-    kernels: Glm5NextDsaKernels,
-    layer_kernels: Glm5NextDsaLayerKernels,
-    decode: Glm5NextDsaDecodeKernel,
-    owned: Arc<DsaOwnedLevers>,
-    ws: Arc<Glm5NextDsaWorkspace>,
-    format: IndexerRowFormat,
-    cache: crate::glm5next_dsa::paged::IndexerCache,
-    levers: GlmLevers,
+    pub(crate) config: metrale_config::ModelConfig,
+    pub(crate) cfg: Glm5NextDsaConfig,
+    pub(crate) kernels: Glm5NextDsaKernels,
+    pub(crate) layer_kernels: Glm5NextDsaLayerKernels,
+    pub(crate) decode: Glm5NextDsaDecodeKernel,
+    pub(crate) owned: Arc<DsaOwnedLevers>,
+    pub(crate) ws: Arc<Glm5NextDsaWorkspace>,
+    pub(crate) format: IndexerRowFormat,
+    pub(crate) cache: crate::glm5next_dsa::paged::IndexerCache,
+    pub(crate) levers: GlmLevers,
 }
 
 pub(crate) fn stack(gpu: &RecordingGpu, rank: usize, levers: GlmLevers) -> Stack {
@@ -131,39 +132,7 @@ pub(crate) fn stack(gpu: &RecordingGpu, rank: usize, levers: GlmLevers) -> Stack
 /// 2026-10-23: DSA layer `idx` (`attn` among the DSA layers) of `st`, its projections registered
 /// on the served tiers as the loader registers them.
 pub(crate) fn layer(gpu: &RecordingGpu, st: &Stack, idx: usize, attn: usize) -> Glm5NextDsaLayer {
-    let b = || gpu.alloc(64).unwrap();
-    let mut w = Glm5NextDsaWeights {
-        q_a_proj: b(),
-        q_a_layernorm: b(),
-        q_absorb: b(),
-        kv_a_proj: b(),
-        kv_a_layernorm: b(),
-        o_absorb: b(),
-        wk: b(),
-        k_norm_weight: b(),
-        k_norm_bias: b(),
-        compress_gate: b(),
-        wq_b: b(),
-        weights_proj: b(),
-        ape: b(),
-    };
-    let mut l = Glm5NextDsaLayer {
-        cfg: st.cfg,
-        weights: view(&w),
-        kernels: st.layer_kernels,
-        select_kernels: st.kernels,
-        decode_kernel: st.decode,
-        workspace: st.ws.clone(),
-        layer_idx: idx,
-        attn_layer_idx: attn,
-        rms_eps: st.config.rms_norm_eps as f32,
-        kv_scale: 1.0,
-        persist_bt: !st.levers.dsa_alloc_per_step,
-        indexer_cache: st.cache,
-        indexer_format: st.format,
-        levers: st.levers,
-        dsa_owned: st.owned.clone(),
-    };
+    let (mut l, mut w) = unregistered(gpu, st, idx, attn);
     let projs = l.dense_projections();
     {
         let mut slots = [
@@ -188,6 +157,51 @@ pub(crate) fn layer(gpu: &RecordingGpu, st: &Stack, idx: usize, attn: usize) -> 
     l.weights = w;
     gpu.take();
     l
+}
+
+/// 2026-10-23: DSA layer `idx` (`attn` among its KV cache's layers) of `st` with BF16
+/// projections, and its weights (for the tiers to register).
+pub(crate) fn unregistered(
+    gpu: &RecordingGpu,
+    st: &Stack,
+    idx: usize,
+    attn: usize,
+) -> (Glm5NextDsaLayer, Glm5NextDsaWeights) {
+    let b = || gpu.alloc(64).unwrap();
+    let w = Glm5NextDsaWeights {
+        q_a_proj: b(),
+        q_a_layernorm: b(),
+        q_absorb: b(),
+        kv_a_proj: b(),
+        kv_a_layernorm: b(),
+        o_absorb: b(),
+        wk: b(),
+        k_norm_weight: b(),
+        k_norm_bias: b(),
+        compress_gate: b(),
+        wq_b: b(),
+        weights_proj: b(),
+        ape: b(),
+    };
+    let l = Glm5NextDsaLayer {
+        cfg: st.cfg,
+        weights: view(&w),
+        kernels: st.layer_kernels,
+        select_kernels: st.kernels,
+        decode_kernel: st.decode,
+        workspace: st.ws.clone(),
+        layer_idx: idx,
+        attn_layer_idx: attn,
+        rms_eps: st.config.rms_norm_eps as f32,
+        kv_scale: 1.0,
+        persist_bt: !st.levers.dsa_alloc_per_step,
+        indexer_cache: st.cache,
+        indexer_format: st.format,
+        levers: st.levers,
+        dsa_owned: st.owned.clone(),
+    };
+    gpu.take();
+    (l, w)
 }
 
 pub(crate) fn view(w: &Glm5NextDsaWeights) -> Glm5NextDsaWeights {
@@ -224,16 +238,15 @@ pub(crate) struct Rig {
     env: Env,
     kv: PagedKvCache,
     meta: [AttnMetadataDev; 2],
+    seq_len: usize,
+    /// 2026-10-23: A flat indexer cache's state, kept across passes: its rows are buffers of the
+    /// state (a paged cache's are the KV blocks), so two passes compare only over one state.
+    flat: Option<Box<dyn LayerState>>,
 }
 
+/// 2026-10-23: [`rig_with`] over a text stack's paged KV cache: [`BLOCK`]-token blocks whose V
+/// blocks keep the persisted pool keys, a block table of the layer's whole DSA context.
 pub(crate) fn rig(gpu: &RecordingGpu, st: &Stack) -> Rig {
-    let mut small = metrale_config::ModelConfig::qwen3_next_80b_nvfp4();
-    small.hidden_size = 128;
-    small.intermediate_size = 128;
-    small.num_experts = 1;
-    small.num_experts_per_tok = 1;
-    small.moe_intermediate_size = 128;
-    small.vocab_size = 128;
     let v_block_bytes = IndexerRowFormat::text_stack_v_block_bytes(
         &st.config,
         BLOCK,
@@ -241,23 +254,38 @@ pub(crate) fn rig(gpu: &RecordingGpu, st: &Stack) -> Rig {
         served_settings().kernels.glm_dsa_pool_keys,
     )
     .unwrap();
-    let kv = PagedKvCache::new(
-        KvCacheConfig {
-            block_size: BLOCK,
-            num_kv_heads: 1,
-            head_dim: st.cfg.kv_lora_rank,
-            num_layers: 12,
-            dtype: KvCacheDtype::Fp8,
-            layer_dtypes: vec![],
-            layer_dims: vec![],
-            cache_blocks_per_seq: None,
-            v_block_bytes,
-        },
-        8,
-        gpu,
-    )
-    .unwrap();
+    let kv = KvCacheConfig {
+        block_size: BLOCK,
+        num_kv_heads: 1,
+        head_dim: st.cfg.kv_lora_rank,
+        num_layers: 12,
+        dtype: KvCacheDtype::Fp8,
+        layer_dtypes: vec![],
+        layer_dims: vec![],
+        cache_blocks_per_seq: None,
+        v_block_bytes,
+    };
     let mb = crate::glm5next_dsa::state::max_dsa_context(&st.cfg).div_ceil(BLOCK);
+    rig_with(gpu, st, kv, mb, SEQ_LEN)
+}
+
+/// 2026-10-23: A pass's context over a KV cache of `kv` and row metadata whose block tables hold
+/// `mb` blocks, its passes at `seq_len`.
+pub(crate) fn rig_with(
+    gpu: &RecordingGpu,
+    st: &Stack,
+    kv: KvCacheConfig,
+    mb: usize,
+    seq_len: usize,
+) -> Rig {
+    let mut small = metrale_config::ModelConfig::qwen3_next_80b_nvfp4();
+    small.hidden_size = 128;
+    small.intermediate_size = 128;
+    small.num_experts = 1;
+    small.num_experts_per_tok = 1;
+    small.moe_intermediate_size = 128;
+    small.vocab_size = 128;
+    let kv = PagedKvCache::new(kv, 8, gpu).unwrap();
     let meta = |rows: usize| {
         let positions = gpu.alloc(rows * 4).unwrap();
         AttnMetadataDev {
@@ -285,6 +313,8 @@ pub(crate) fn rig(gpu: &RecordingGpu, st: &Stack) -> Rig {
         },
         kv,
         meta: [meta(1), meta(2)],
+        seq_len,
+        flat: None,
     };
     gpu.take();
     r
@@ -333,8 +363,10 @@ impl Rig {
         self.env.ctx(gpu, self.meta[rows - 1], capture)
     }
 
-    /// 2026-10-23: One captured pass of `rows` rows over a fresh sequence state at [`SEQ_LEN`]:
-    /// from `plan`, or `decode_k`.
+    /// 2026-10-23: One captured pass of `rows` rows over a sequence state at the rig's length:
+    /// from `plan`, or `decode_k`. A paged cache's state is fresh each pass and adopts the rows
+    /// below that length from the KV blocks; a flat cache's is the rig's one state, holding them
+    /// (`check_lockstep` refuses a flat state behind the length and rewinds one ahead of it).
     pub(crate) fn run(
         &mut self,
         gpu: &RecordingGpu,
@@ -342,7 +374,21 @@ impl Rig {
         rows: usize,
         plan: Option<&DsaPlan>,
     ) -> anyhow::Result<Vec<Op>> {
-        let mut state: Box<dyn LayerState> = Box::new(l.alloc_dsa_state(gpu)?);
+        let mut fresh;
+        let state: &mut Box<dyn LayerState> = match l.indexer_cache {
+            crate::glm5next_dsa::paged::IndexerCache::Paged => {
+                fresh = Box::new(l.alloc_dsa_state(gpu)?) as Box<dyn LayerState>;
+                &mut fresh
+            }
+            crate::glm5next_dsa::paged::IndexerCache::Flat => match &mut self.flat {
+                Some(st) => st,
+                none => {
+                    let mut dsa = l.alloc_dsa_state(gpu)?;
+                    dsa.advance(self.seq_len)?;
+                    none.insert(Box::new(dsa))
+                }
+            },
+        };
         let ctx = self.env.ctx(gpu, self.meta[rows - 1], true);
         let kv = &mut self.kv;
         let r = match plan {
@@ -351,7 +397,7 @@ impl Rig {
                 rows,
                 state.as_mut(),
                 kv,
-                SEQ_LEN,
+                self.seq_len,
                 &ctx,
                 false,
                 p,
@@ -362,7 +408,7 @@ impl Rig {
                 rows,
                 state.as_mut(),
                 kv,
-                SEQ_LEN,
+                self.seq_len,
                 &mut Vec::new(),
                 &ctx,
                 STREAM,
@@ -375,7 +421,13 @@ impl Rig {
     }
 }
 
-/// 2026-10-23: Layer `l`'s DSA plans installed from `plans` (rank circuit `c`).
+/// 2026-10-23: Text layer `l`'s site.
+pub(crate) fn text(layer: usize) -> dsa::DsaSite {
+    dsa::DsaSite::Text { layer }
+}
+
+/// 2026-10-23: The DSA plans of `layer` installed from `plans` (rank circuit `c`) at its text
+/// site.
 pub(crate) fn installed(
     gpu: &RecordingGpu,
     c: &Circuit,
@@ -383,13 +435,25 @@ pub(crate) fn installed(
     policy: &metrale_circuit::Policy,
     layer: &Glm5NextDsaLayer,
 ) -> anyhow::Result<(InstalledDsa, Vec<String>)> {
+    installed_at(gpu, c, plans, policy, layer, text(layer.layer_idx))
+}
+
+/// 2026-10-23: The DSA plans of `layer` installed from `plans` (rank circuit `c`) at `site`.
+pub(crate) fn installed_at(
+    gpu: &RecordingGpu,
+    c: &Circuit,
+    plans: &[metrale_circuit::FusionPlan],
+    policy: &metrale_circuit::Policy,
+    layer: &Glm5NextDsaLayer,
+    site: dsa::DsaSite,
+) -> anyhow::Result<(InstalledDsa, Vec<String>)> {
     let inst = InstalledDsa::default();
     let rp = RankPlans {
         circuit: c,
         plans,
         policy,
     };
-    let sites = dsa::install(gpu, layer.layer_idx, Some(rp), layer, &inst)?;
+    let sites = dsa::install(gpu, site, Some(rp), layer, &inst)?;
     Ok((inst, sites))
 }
 

@@ -48,7 +48,7 @@ mod head_sweep;
 mod head_xchg;
 mod hidden_half;
 mod init;
-mod kv_pool;
+pub(crate) mod kv_pool;
 mod levers;
 mod proposer;
 mod rows;
@@ -173,7 +173,7 @@ pub struct Glm5NextMtpHead {
 /// 2026-09-25: Rows the GLM drafter can ever be asked for: the served context, clamped to
 /// the rows its DSA indexer cache reserves. `max_dsa_context` is `max_context` (the serve's
 /// `--max-seq-len`) rounded down to whole `index_kpool` pools, so the cap follows the config.
-fn drafter_context_rows(max_seq_len: usize, cfg: &crate::glm5next_dsa::Glm5NextDsaConfig) -> usize {
+pub(crate) fn drafter_context_rows(max_seq_len: usize, cfg: &crate::glm5next_dsa::Glm5NextDsaConfig) -> usize {
     max_seq_len.min(crate::glm5next_dsa::state::max_dsa_context(cfg))
 }
 

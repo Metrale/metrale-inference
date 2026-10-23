@@ -85,15 +85,16 @@ fn every_moe_site_compiles_into_the_served_steps() {
 }
 
 /// 2026-10-23: [`DONE`] is exactly the sites the emitters compile over both runs (a dense layer,
-/// a DSA and a KDA layer: MoE, mHC and the KDA and DSA mixers' own groups): every compiled group's
-/// locals are listed, and every listed entry is compiled by some run.
+/// a DSA and a KDA layer: MoE, mHC and the KDA and DSA mixers' own groups) and the draft (the MTP
+/// block's DSA mixer): every compiled group's locals are listed, and every listed entry is
+/// compiled by some run.
 #[test]
 fn the_done_list_is_what_compiles() {
     let (c, rules, policy) = ranks();
     let mut seen = BTreeSet::new();
-    for (mode, rows) in RUNS {
+    for (mode, rows) in RUNS.into_iter().chain([(Mode::Draft, 1)]) {
         let p = plan(&c, &rules, &policy, 0, mode, rows);
-        let layers = [Some(0), Some(3), Some(4)];
+        let layers = [Some(0), Some(3), Some(4), None];
         for g in PlanGroup::all(&c[0], &p).filter(|g| layers.contains(&g.layer())) {
             let moe = moe_site_group(&g) && !g.locals().iter().all(|l| l.starts_with("shared_"));
             let mixer = kda::is_site_group(&g) || dsa::is_site_group(&g);

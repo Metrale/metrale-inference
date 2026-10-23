@@ -106,6 +106,12 @@ impl DraftProposer for Glm5NextMtpHead {
         metrale_model_layers::speculative::mtp_ep_propose_enabled()
     }
 
+    /// 2026-10-23: The MTP block, whose DSA mixer installs from the draft plan
+    /// (`Glm5NextLayer::install_plans`).
+    fn circuit_block(&self) -> Option<&dyn metrale_model_layers::circuit_exec::CircuitBindings> {
+        Some(&self.module.layer)
+    }
+
     /// 2026-10-11: A context row normalises into the state's own `concat`
     /// (`drafter_write_kv_row`), so the drafter prefill can run at the end of each sequence's
     /// target prefill, while the shared capture is still its own; at the first propose instead,
