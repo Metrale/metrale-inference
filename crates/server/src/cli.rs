@@ -56,6 +56,7 @@ mod circuit_memory_weights;
 mod circuit_paint;
 mod circuit_precision;
 mod circuit_venn;
+mod circuit_whatif;
 #[cfg(feature = "bench")]
 pub(crate) mod doctor;
 pub(crate) mod flag_values;
@@ -188,6 +189,8 @@ pub enum CircuitAction {
     /// How far each launch site of a step is from its roofline floor, what the step and tok/s
     /// would be at that floor (Amdahl), and the time no kernel runs; from a capture when given.
     Headroom(Box<circuit_headroom::CircuitHeadroomArgs>),
+    /// Critical path, slack and exact per-site upside of a captured step; what-if rewrites.
+    Whatif(Box<circuit_whatif::CircuitWhatIfArgs>),
 }
 
 /// `met circuit memory` options. Serve settings come from `--recipe` (`recipes/<id>.yaml`) and the
