@@ -134,8 +134,7 @@ pub enum Command {
     /// `sync-recipes` that was never run, or a signing identity created in a
     /// scratch METRALE_HOME whose key was never committed.
     ///
-    /// Exits non-zero when anything is wrong, so a provisioning script can gate
-    /// on it.
+    /// Exits non-zero when anything is wrong, so a provisioning script can gate on it.
     #[cfg_attr(not(feature = "bench"), command(hide = true))]
     Doctor,
     /// Show a recipe's architecture circuit and the fused kernel plan the engine runs.
