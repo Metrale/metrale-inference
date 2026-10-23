@@ -89,7 +89,35 @@ fn dense_seg_turns_on_the_segment_only_on_its_arm_and_needs_the_pipe() {
     let Err(e) = apply(&k, &only, AbLevers::NONE) else {
         panic!("without the pipe the arm would measure A against A");
     };
-    assert!(e.to_string().contains("`dense_seg` needs the W4A16 GEMV pipe"), "{e}");
+    assert!(
+        e.to_string()
+            .contains("`dense_seg` needs the W4A16 GEMV pipe"),
+        "{e}"
+    );
+}
+
+#[test]
+fn dense_seg_budget_sets_the_segment_and_its_sms_only_on_its_arm() {
+    let mut k = kernels();
+    k.levers.dense.gemv_seg = true;
+    k.levers.dense.gemv_pipe = true;
+    let n = names(&["swiglu_down", "dense_seg@24"]);
+    let a = apply(&k, &n, AbLevers::only(0)).unwrap();
+    assert!(!a.levers.dense.dense_seg && a.levers.dense.dense_seg_sms.is_none());
+    let b = apply(&k, &n, AbLevers::only(1)).unwrap();
+    assert!(b.levers.dense.dense_seg && !b.levers.dense.swiglu_down);
+    assert_eq!(b.levers.dense.dense_seg_sms.map(|s| s.get()), Some(24));
+    for bad in ["dense_seg@0", "dense_seg@", "dense_seg@x", "dense_seg@-3"] {
+        let Err(e) = apply(&k, &names(&[bad]), AbLevers::NONE) else {
+            panic!("`{bad}` must be refused on every arm");
+        };
+        assert!(e.to_string().contains("the SM budget"), "{bad}: {e}");
+    }
+    k.levers.dense.gemv_pipe = false;
+    let Err(e) = apply(&k, &names(&["dense_seg@24"]), AbLevers::NONE) else {
+        panic!("without the pipe the arm would measure A against A");
+    };
+    assert!(e.to_string().contains("needs the W4A16 GEMV pipe"), "{e}");
 }
 
 #[test]
