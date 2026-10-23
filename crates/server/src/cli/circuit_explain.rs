@@ -30,6 +30,9 @@ struct Doc {
     schema: &'static str,
     #[serde(flatten)]
     math: metrale_circuit::explain::KernelMath,
+    /// 2026-10-22: The family that runs each node (`Families::of_group`, as the venn report
+    /// and the compute tags resolve it), by circuit node id; a node no family lists is absent.
+    nodes: BTreeMap<String, String>,
     tensors: BTreeMap<String, Tensor>,
 }
 
@@ -37,12 +40,25 @@ struct Doc {
 pub(crate) fn explain_json(c: &Circuit, one: &OnePlan) -> Result<String> {
     let manifest = &one.resolved.families;
     let plan = &one.planned.plan;
+    let mut nodes = BTreeMap::new();
+    for g in &plan.groups {
+        for &i in &g.nodes {
+            let n = c
+                .nodes
+                .get(i)
+                .ok_or_else(|| anyhow!("plan node {i} is not in the circuit"))?;
+            if let Some(f) = manifest.of_group(&g.kernels, &g.emitter, &n.op) {
+                nodes.insert(n.id.clone(), f.id.clone());
+            }
+        }
+    }
     let named: Vec<&str> = plan
         .groups
         .iter()
         .flat_map(|g| g.kernels.iter())
         .filter_map(|k| manifest.families.iter().find(|f| f.kernels.contains(k)))
         .map(|f| f.id.as_str())
+        .chain(nodes.values().map(String::as_str))
         .collect();
     let formats = plan
         .edge_formats
@@ -66,7 +82,12 @@ pub(crate) fn explain_json(c: &Circuit, one: &OnePlan) -> Result<String> {
     let doc = Doc {
         schema: "kernel-math/v1",
         math,
+        nodes,
         tensors,
     };
     Ok(serde_json::to_string(&doc)? + "\n")
 }
+
+#[cfg(test)]
+#[path = "circuit_explain_tests.rs"]
+mod circuit_explain_tests;
