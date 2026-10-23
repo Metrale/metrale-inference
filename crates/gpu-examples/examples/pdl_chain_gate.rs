@@ -217,7 +217,7 @@ fn main() -> Result<()> {
     let off = MetraleCudaBackend::new(0, &glm.modules)?;
     let on = MetraleCudaBackend::new(0, &glm.modules)?;
     // 2026-10-21: The reference runs the old kernels; the new arms the levers `Variant` names.
-    let v = Variant::from_env();
+    let v = Variant::from_env()?;
     let (ko, kv, kn) = (
         Kern::resolve(&off, Variant::OLD)?,
         Kern::resolve(&off, v)?,

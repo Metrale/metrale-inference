@@ -118,16 +118,24 @@ pub(crate) fn served_settings() -> metrale_settings::InferenceServerSettings {
 /// (its full path in the binary), after `publish` set the process-wide tiers the body reads; the
 /// parent asserts the child ran exactly that test and passed. The tiers are published once per
 /// process, and the rest of this binary runs without them; nothing on the paths is mocked.
+/// 2026-10-23: The child is marked by its arguments, `--skip <CHILD>` (a filter no test name
+/// holds), not by the environment: this crate reads no process environment (`env-ban`).
 pub(crate) fn in_child_process(path: &str, publish: impl FnOnce(), body: impl FnOnce()) {
     const CHILD: &str = "METRALE_TEST_GLM_PLAN_CHILD";
-    if std::env::var_os(CHILD).is_some() {
+    if std::env::args().any(|a| a == CHILD) {
         publish();
         body();
         return;
     }
     let out = std::process::Command::new(std::env::current_exe().unwrap())
-        .args([path, "--exact", "--nocapture", "--test-threads=1"])
-        .env(CHILD, "1")
+        .args([
+            path,
+            "--exact",
+            "--nocapture",
+            "--test-threads=1",
+            "--skip",
+            CHILD,
+        ])
         .output()
         .unwrap();
     let text = format!(

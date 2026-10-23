@@ -45,7 +45,6 @@ crates/gpu-examples/examples/glm5next_dsa_hb_bench.rs
 crates/gpu-examples/examples/glm5next_dsa_hb_layer_parity.rs
 crates/gpu-examples/examples/glm5next_dsa_hb_replay.rs
 crates/gpu-examples/examples/glm5next_dsa_proj_tier_bench.rs
-crates/gpu-examples/examples/glm5next_dsa_scores_mma_bench/main.rs
 crates/gpu-examples/examples/glm5next_dsa_scores_tiled_bench.rs
 crates/gpu-examples/examples/glm5next_dsa_sp_select_gate.rs
 crates/gpu-examples/examples/glm5next_expert_tp_bench/main.rs

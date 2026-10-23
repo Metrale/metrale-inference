@@ -310,13 +310,14 @@ fn old(g: &dyn GpuBackend, k: &Kernels, l: &Layer, b: &Bufs, s: u64) -> Result<(
 
 /// 2026-10-21: `DSA_PROJ_OLD=merge` / `=pair` keeps that lever on today's launches in the new
 /// arm (to time each lever alone; the byte gate is unchanged either way).
-fn old_lever(name: &str) -> bool {
-    std::env::var("DSA_PROJ_OLD").is_ok_and(|v| v.split(',').any(|x| x == name))
+fn old_lever(name: &str) -> Result<bool> {
+    Ok(metrale_gpu_examples::env_var("DSA_PROJ_OLD")?
+        .is_some_and(|v| v.split(',').any(|x| x == name)))
 }
 
 /// 2026-10-21: The merged launches; `swap` exchanges the wk and gate weights (the control).
 fn new(g: &dyn GpuBackend, k: &Kernels, l: &Layer, b: &Bufs, swap: bool, s: u64) -> Result<()> {
-    if old_lever("merge") {
+    if old_lever("merge")? {
         let (m, h) = (b.m, HID as u32);
         w8a8_proj(
             g,
@@ -363,7 +364,7 @@ fn new(g: &dyn GpuBackend, k: &Kernels, l: &Layer, b: &Bufs, swap: bool, s: u64)
             IDX as u32,
             s,
         )?;
-        return selector(g, k, l, b, !old_lever("pair"), s);
+        return selector(g, k, l, b, !old_lever("pair")?, s);
     }
     let (m, h) = (b.m, HID as u32);
     w8a8_act_quant(
@@ -385,7 +386,7 @@ fn new(g: &dyn GpuBackend, k: &Kernels, l: &Layer, b: &Bufs, swap: bool, s: u64)
     });
     w8a8_gemv_split4(g, k.split4, &segs, &b.scratch, m, s)?;
     tail(g, k, l, b, s)?;
-    selector(g, k, l, b, !old_lever("pair"), s)
+    selector(g, k, l, b, !old_lever("pair")?, s)
 }
 
 fn main() -> Result<()> {
@@ -402,7 +403,7 @@ fn main() -> Result<()> {
         "DSA proj-in gate: today's launches are the ORACLE (hidden {HID}, q_a {QA}, kv_a {KV}, wk/gate {IDX}, q_abs {QABS})\n"
     );
     let want = oracle(g, &k)?;
-    if let Ok(dir) = std::env::var("DSA_PROJ_BASE_PTX") {
+    if let Some(dir) = metrale_gpu_examples::env_var("DSA_PROJ_BASE_PTX")? {
         let base = MetraleCudaBackend::new(
             0,
             &metrale_gpu_examples::base_ptx::with_base(&glm.modules, &dir)?,
@@ -427,7 +428,7 @@ fn main() -> Result<()> {
         }
         poison(g, &b)?;
         new(g, &k, &l, &b, true, 0)?;
-        if !old_lever("merge") && outs(g, &b)?[4] == want[i][4] {
+        if !old_lever("merge")? && outs(g, &b)?[4] == want[i][4] {
             bail!("M={m}: control (wk and gate weights swapped) did not move wk");
         }
         println!("  M={m}  every output BYTE-IDENTICAL; control differs");

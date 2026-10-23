@@ -114,7 +114,9 @@ pub fn price(
                 "segment {k} (`{block}`): its unattributed reads differ across ranks {base:?}: a sliced node is attributed to no part"
             ));
         }
-        if std::env::var_os("ROTATE_DUMP").is_some() {
+        // 2026-10-23: A debug dump, chosen when the test compiles (`ROTATE_DUMP=1 cargo test`):
+        // this pure crate's tests read no process environment (`env-ban`).
+        if option_env!("ROTATE_DUMP").is_some() {
             eprintln!("seg {k} {block} base {:.0} parts {:?}", base[0], parts);
         }
         let parts: Vec<Vec<f64>> = parts.values().cloned().collect();

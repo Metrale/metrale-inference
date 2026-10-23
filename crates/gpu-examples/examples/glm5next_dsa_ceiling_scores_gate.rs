@@ -379,8 +379,7 @@ fn main() -> Result<()> {
     let mut rng = Rng(0x6a09_e667_f3bc_c908);
     store::gate(&gpu, &mut rng)?;
     println!("{sms} SMs");
-    let ctxs: Vec<usize> = std::env::var("GLM_CTX")
-        .ok()
+    let ctxs: Vec<usize> = metrale_gpu_examples::env_var("GLM_CTX")?
         .map(|v| v.split(',').filter_map(|x| x.trim().parse().ok()).collect())
         .unwrap_or_else(|| vec![1_024, 16_384, 65_536, 131_072, 262_144, 524_288]);
     // 2026-10-21: Identity at odd lengths and short rows too, then the timed contexts.

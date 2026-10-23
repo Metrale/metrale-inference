@@ -76,12 +76,16 @@ fn every_family_of_the_manifest_has_its_math() {
 #[test]
 #[ignore = "needs node and KaTeX 0.18.4: METRALE_KATEX=<katex.mjs> cargo test -p metrale-circuit --test kernel_math -- --ignored"]
 fn every_entry_renders_in_katex_strict_mode() {
-    let katex = std::env::var("METRALE_KATEX").expect("METRALE_KATEX=<path to katex.mjs>");
+    // 2026-10-23: Read when the test compiles (cargo rebuilds when it changes), so this pure
+    // crate's tests read no process environment (`env-ban`); the command above sets it for both.
+    let Some(katex) = option_env!("METRALE_KATEX") else {
+        panic!("METRALE_KATEX=<path to katex.mjs>")
+    };
     let json = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("kernel_math.json");
     std::fs::write(&json, serde_json::to_string(&table()).unwrap()).unwrap();
     let out = std::process::Command::new("node")
         .arg(common::root().join("scripts/check_kernel_math.mjs"))
-        .arg(&katex)
+        .arg(katex)
         .arg(&json)
         .output()
         .expect("node on PATH");

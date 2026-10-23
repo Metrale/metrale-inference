@@ -244,8 +244,7 @@ fn main() -> Result<()> {
     let warp_k = gpu.kernel("dsa_scores_warp", "dsa_index_scores_warp")?;
     edge_cases(&gpu, topk_k, topk_rx)?;
     ceiling_cases(&gpu, topk_k, topk_rx)?;
-    let shapes: Vec<(usize, usize)> = std::env::var("GLM_BENCH_SHAPES")
-        .ok()
+    let shapes: Vec<(usize, usize)> = metrale_gpu_examples::env_var("GLM_BENCH_SHAPES")?
         .map(|v| {
             v.split(',')
                 .filter_map(|x| {
