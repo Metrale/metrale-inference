@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use metrale_cache::kv_cache::{KvCacheConfig, KvCacheDtype, PagedKvCache};
+use metrale_cache::kv_cache::{KvCacheConfig, PagedKvCache};
 use metrale_circuit::Circuit;
 use metrale_gpu_runtime::buffers::BufferArena;
 use metrale_gpu_runtime::gpu::recording::{Op, RecordingGpu};
@@ -259,7 +259,9 @@ pub(crate) fn rig(gpu: &RecordingGpu, st: &Stack) -> Rig {
         num_kv_heads: 1,
         head_dim: st.cfg.kv_lora_rank,
         num_layers: 12,
-        dtype: KvCacheDtype::Fp8,
+        dtype: metrale_kv_codec::KvPair::named("fp8")
+            .expect("fp8 is a registered KV format")
+            .into(),
         layer_dtypes: vec![],
         layer_dims: vec![],
         cache_blocks_per_seq: None,

@@ -19,7 +19,6 @@ crates/kernels/tests/kernel_shadow_detector.rs 2
 crates/model-arch/src/deepseek_v4_mtp.rs 2
 crates/model-arch/src/dflash_head/from_weights/kernel_handles.rs 10
 crates/model-arch/src/dflash_head/from_weights.rs 2
-crates/model-arch/src/glm5next_dsa/fp8_rows_tests.rs 2
 crates/model-arch/src/glm5next_dsa/layer/decode_rows_fixture.rs 2
 crates/model-arch/src/glm5next_dsa/layer/paged_rows_tests.rs 2
 crates/model-arch/src/glm5next_mtp_head/kv_pool.rs 1
