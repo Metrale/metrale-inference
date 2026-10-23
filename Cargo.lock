@@ -2404,6 +2404,7 @@ version = "1.0.0-beta-preview"
 dependencies = [
  "libm",
  "metrale-error",
+ "serde",
 ]
 
 [[package]]
