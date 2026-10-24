@@ -13,7 +13,7 @@ use metrale_model_weights::weights::{DeferredTensor, WeightDtype, WeightStore};
 
 use super::super::expert_tp::host_expert;
 use super::super::expert_tp::tests::{HIDDEN, LAYER, bytes_of, packed_expert_id, qualified, shard};
-use super::{Buffered, Prepared};
+use super::{Buffered, Prepared, WAVE};
 use crate::glm5next_mlp::expert_tp::{
     ExpertSlice, expert_slice, slice_expert_cols, slice_expert_rows,
 };
@@ -49,7 +49,7 @@ fn prepared_packed_experts_equal_the_sequential_reads() {
     let gpu = MockGpuBackend::new();
     for r in 0..3 {
         let s = expert_slice(full, 3, r).unwrap();
-        let prepared = Prepared::new(&sh.store, LAYER, ids.clone(), &s).unwrap();
+        let prepared = Prepared::new(&sh.store, LAYER, ids.clone(), &s);
         for id in ids.clone() {
             let seq = host_expert(
                 &sh.store,
@@ -77,6 +77,36 @@ fn prepared_packed_experts_equal_the_sequential_reads() {
             );
         }
     }
+}
+
+/// 2026-10-24: Across wave boundaries, taken in order and in reverse, every expert is still the
+/// sequential path's.
+#[test]
+fn waves_hand_over_every_expert_in_any_order() {
+    let (full, ids) = (336usize, 1usize..WAVE + 4);
+    let t: Tensors = ids
+        .clone()
+        .flat_map(|id| packed_expert_id(full, id))
+        .collect();
+    let sh = shard("prep-waves", &t);
+    let gpu = MockGpuBackend::new();
+    let s = expert_slice(full, 3, 1).unwrap();
+    let seq = |id| {
+        let b = Buffered {
+            gpu: &gpu,
+            store: &sh.store,
+        };
+        host_expert(&sh.store, &b, LAYER, id, &s).unwrap()
+    };
+    let forward = Prepared::new(&sh.store, LAYER, ids.clone(), &s);
+    for id in ids.clone() {
+        assert_eq!(forward.take(id).unwrap(), seq(id), "forward {id}");
+    }
+    let reverse = Prepared::new(&sh.store, LAYER, ids.clone(), &s);
+    for id in ids.clone().rev() {
+        assert_eq!(reverse.take(id).unwrap(), seq(id), "reverse {id}");
+    }
+    assert!(reverse.take(ids.start).is_err(), "taken twice");
 }
 
 /// 2026-10-24: A 16-bit expert (the MTP layer's form) quantized on the worker pool is the
@@ -114,7 +144,7 @@ fn prepared_bf16_experts_equal_the_sequential_quantization() {
     let sh = shard("prep-bf16", &t);
     let gpu = MockGpuBackend::new();
     let s = expert_slice(full, 3, 1).unwrap();
-    let prepared = Prepared::new(&sh.store, LAYER, 0..3, &s).unwrap();
+    let prepared = Prepared::new(&sh.store, LAYER, 0..3, &s);
     for id in 0..3 {
         let seq = host_expert(
             &sh.store,
@@ -148,10 +178,7 @@ fn a_moved_offset_is_caught() {
         );
     }
     let s = expert_slice(full, 3, 0).unwrap();
-    let got = Prepared::new(&store, LAYER, 5..6, &s)
-        .unwrap()
-        .take(5)
-        .unwrap();
+    let got = Prepared::new(&store, LAYER, 5..6, &s).take(5).unwrap();
     let want = oracle(&t, 5, &s);
     assert_eq!(
         (got[0].0.clone(), got[0].1.clone()),
@@ -169,7 +196,7 @@ fn take_once_in_range_and_resident_is_refused() {
     let t: Tensors = packed_expert_id(full, 2);
     let sh = shard("prep-take", &t);
     let s = expert_slice(full, 3, 2).unwrap();
-    let p = Prepared::new(&sh.store, LAYER, 2..3, &s).unwrap();
+    let p = Prepared::new(&sh.store, LAYER, 2..3, &s);
     assert!(p.take(3).unwrap_err().to_string().contains("outside"));
     p.take(2).unwrap();
     assert!(p.take(2).unwrap_err().to_string().contains("twice"));
@@ -193,8 +220,8 @@ fn take_once_in_range_and_resident_is_refused() {
         }
     }
     let e = Prepared::new(&store, LAYER, 2..3, &s)
-        .err()
-        .expect("resident must be refused");
+        .take(2)
+        .expect_err("resident must be refused");
     let e = format!("{e:#}");
     assert!(e.contains("METRALE_GLM_EXPERT_FAST_LOAD=0"), "{e}");
 }

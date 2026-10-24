@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-24: Prepare one MoE layer's tp-layout routed experts on the host, all at once and in
-//! parallel, from `O_DIRECT` shard reads (`METRALE_GLM_EXPERT_FAST_LOAD`, default on).
+//! 2026-10-24: Prepare one MoE layer's tp-layout routed experts on the host in parallel, a wave
+//! at a time, from `O_DIRECT` shard reads (`METRALE_GLM_EXPERT_FAST_LOAD`, default on).
 //!
 //! **WHY.** Under `--moe-expert-layout tp` every routed-expert tensor is deferred, and the
 //! binder read each one with its own buffered `open + seek + read_exact` into a fresh `Vec` on
 //! the loading thread, then sliced it (and quantized the MTP layer's 16-bit experts) before the
 //! upload. GLM-5.3 TP=3 boots spent 213-243 s in the 45-layer build at ~0.3 GB/s of expert reads,
 //! against 1.85 GB/s for the fast weight loader (DEV-LOOP-SPEED.md item 3). Here a worker pool
-//! does the reads, slices and quantizations of every expert of the layer before the first
-//! upload; the upload stays on the loading thread, in expert order, into the same slab.
+//! does the reads, slices and quantizations of a wave of [`WAVE`] experts before their uploads;
+//! the uploads stay on the loading thread, in expert order, into the same slab.
 //!
 //! The bytes are the same: [`ExpertBytes`] is the one place the two paths differ (buffered or
 //! `O_DIRECT` reads of the same ranges), and `expert_tp::sliced_proj` is shared, so every
@@ -22,6 +22,7 @@
 //! - The `O_DIRECT` source reads deferred tensors only; a resident routed-expert tensor (which
 //!   the tp layout's defer hook never leaves) is an error, not a device read-back.
 //! - A prepared expert is taken once; a second take, or an id outside the layer, is an error.
+//! - At most one wave's host projections are held at a time.
 
 use std::ops::Range;
 use std::sync::Mutex;
@@ -116,7 +117,7 @@ impl ExpertBytes for Direct<'_> {
 /// 2026-10-24: How the tp-layout binder reads routed experts, resolved once from the settings.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ExpertLoad {
-    /// 2026-10-24: `METRALE_GLM_EXPERT_FAST_LOAD`: prepare each layer with [`Prepared::new`].
+    /// 2026-10-24: `METRALE_GLM_EXPERT_FAST_LOAD`: prepare each layer's experts with [`Prepared`].
     pub fast: bool,
     /// 2026-10-24: `METRALE_GLM_EXPERT_DIGEST`: the file `expert_digest` appends to.
     pub digest: Option<std::path::PathBuf>,
@@ -136,49 +137,59 @@ impl ExpertLoad {
     }
 }
 
-/// 2026-10-24: One layer's routed experts `ids`, prepared on the host for the tp layout.
-pub(super) struct Prepared {
+/// 2026-10-24: The experts one [`Prepared`] wave reads at once: enough to keep every rayon
+/// worker on an `O_DIRECT` read, few enough that a wave's host copies stay ~0.3 GB (a whole
+/// GLM-5.3 layer is ~1.35 GB per rank, held at once and then kept by the allocator's per-thread
+/// arenas after the free).
+pub(super) const WAVE: usize = 64;
+
+/// 2026-10-24: One layer's routed experts `ids`, prepared on the host for the tp layout, a
+/// [`WAVE`] at a time as the binder takes them.
+pub(super) struct Prepared<'a> {
+    store: &'a WeightStore,
+    layer: usize,
+    slice: ExpertSlice,
     ids: Range<usize>,
-    slots: Mutex<Vec<Option<[HostProj; 3]>>>,
+    state: Mutex<Waves>,
 }
 
-impl Prepared {
-    /// 2026-10-24: Read, slice and (for 16-bit experts) quantize every expert of `ids` of
-    /// `layer` under slice `s` on the rayon pool, from [`Direct`] reads. The first expert's
-    /// error, by id, is the error.
+/// 2026-10-24: The current wave's projections and the layer's running totals.
+struct Waves {
+    wave: Range<usize>,
+    slots: Vec<Option<[HostProj; 3]>>,
+    taken: Vec<bool>,
+    bytes: u64,
+    secs: f64,
+}
+
+impl<'a> Prepared<'a> {
+    /// 2026-10-24: Nothing is read until the first [`Self::take`].
     pub(super) fn new(
-        store: &WeightStore,
+        store: &'a WeightStore,
         layer: usize,
         ids: Range<usize>,
         s: &ExpertSlice,
-    ) -> Result<Self> {
-        let t = std::time::Instant::now();
-        let src = Direct {
-            store,
-            bytes: AtomicU64::new(0),
+    ) -> Self {
+        let state = Waves {
+            wave: ids.start..ids.start,
+            slots: Vec::new(),
+            taken: vec![false; ids.len()],
+            bytes: 0,
+            secs: 0.0,
         };
-        let slots = ids
-            .clone()
-            .into_par_iter()
-            .map(|id| host_expert(store, &src, layer, id, s).map(Some))
-            .collect::<Result<Vec<_>>>()?;
-        let (gb, secs) = (
-            src.bytes.load(Ordering::Relaxed) as f64 / 1e9,
-            t.elapsed().as_secs_f64(),
-        );
-        tracing::info!(
-            "glm5_next layer {layer}: {} routed experts prepared on the host in {secs:.2}s \
-             ({gb:.2} GB O_DIRECT, {:.2} GB/s)",
-            ids.len(),
-            gb / secs.max(1e-9),
-        );
-        Ok(Self {
+        Self {
+            store,
+            layer,
+            slice: *s,
             ids,
-            slots: Mutex::new(slots),
-        })
+            state: Mutex::new(state),
+        }
     }
 
-    /// 2026-10-24: Expert `id`'s projections (gate, up, down), handed over once.
+    /// 2026-10-24: Expert `id`'s projections (gate, up, down), handed over once. An id outside
+    /// the current wave starts the next one at `id`: read, slice and (for 16-bit experts)
+    /// quantize up to [`WAVE`] experts on the rayon pool from [`Direct`] reads. The first
+    /// error by id is the error.
     pub(super) fn take(&self, id: usize) -> Result<[HostProj; 3]> {
         if !self.ids.contains(&id) {
             bail!(
@@ -186,13 +197,48 @@ impl Prepared {
                 self.ids
             );
         }
-        let mut slots = self
-            .slots
+        let mut st = self
+            .state
             .lock()
             .map_err(|_| anyhow::anyhow!("prepared experts: lock poisoned"))?;
-        slots[id - self.ids.start]
+        if std::mem::replace(&mut st.taken[id - self.ids.start], true) {
+            bail!("prepared experts: expert {id} was taken twice");
+        }
+        if !st.wave.contains(&id) {
+            self.read_wave(&mut st, id..(id + WAVE).min(self.ids.end))?;
+        }
+        let at = id - st.wave.start;
+        st.slots[at]
             .take()
-            .with_context(|| format!("prepared experts: expert {id} was taken twice"))
+            .with_context(|| format!("prepared experts: expert {id} was not prepared"))
+    }
+
+    fn read_wave(&self, st: &mut Waves, wave: Range<usize>) -> Result<()> {
+        let t = std::time::Instant::now();
+        let src = Direct {
+            store: self.store,
+            bytes: AtomicU64::new(0),
+        };
+        let (layer, s) = (self.layer, &self.slice);
+        st.slots = wave
+            .clone()
+            .into_par_iter()
+            .map(|id| host_expert(self.store, &src, layer, id, s).map(Some))
+            .collect::<Result<Vec<_>>>()?;
+        st.wave = wave;
+        st.bytes += src.bytes.load(Ordering::Relaxed);
+        st.secs += t.elapsed().as_secs_f64();
+        if st.wave.end == self.ids.end {
+            let gb = st.bytes as f64 / 1e9;
+            tracing::info!(
+                "glm5_next layer {layer}: {} routed experts prepared on the host in {:.2}s \
+                 ({gb:.2} GB O_DIRECT, {:.2} GB/s, waves of {WAVE})",
+                self.ids.len(),
+                st.secs,
+                gb / st.secs.max(1e-9),
+            );
+        }
+        Ok(())
     }
 }
 

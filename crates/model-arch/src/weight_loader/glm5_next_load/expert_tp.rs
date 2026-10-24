@@ -52,8 +52,8 @@ pub(super) fn is_routed_expert_tensor(name: &str) -> bool {
 /// [`slab_label`].
 /// 2026-10-21: `pack`: the layer's scale packing; `None` keeps every scale plain (the MTP layer,
 /// whose 16-bit experts run W4A16).
-/// 2026-10-24: Under `load.fast` a sliced layer's experts are all prepared here, before the
-/// binder is returned ([`Prepared::new`]); under `load.digest` every sliced expert's uploaded
+/// 2026-10-24: Under `load.fast` a sliced layer's experts are prepared in parallel waves as the
+/// binder takes them ([`Prepared`]); under `load.digest` every sliced expert's uploaded
 /// buffers are digested ([`ExpertDigest`]).
 pub(super) fn routed_expert_binder<'a>(
     gpu: &'a dyn GpuBackend,
@@ -69,7 +69,7 @@ pub(super) fn routed_expert_binder<'a>(
     );
     let prepared = match shard {
         ExpertShard::Sliced(s) if load.fast => {
-            Some(Prepared::new(store, layer, cfg.local_expert_range(), &s)?)
+            Some(Prepared::new(store, layer, cfg.local_expert_range(), &s))
         }
         _ => None,
     };
