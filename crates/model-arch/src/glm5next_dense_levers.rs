@@ -37,10 +37,11 @@ pub struct DenseLevers {
     pub gemv_pipe: bool,
     /// 2026-10-23: `METRALE_GLM_SWIGLU_DOWN_FOLD` (`glm5next_swiglu_down`).
     pub swiglu_down: bool,
-    /// 2026-10-23: `METRALE_GLM_DENSE_SEGMENT` (`glm5next_dense_seg`).
-    pub dense_seg: bool,
+    /// 2026-10-23: `METRALE_GLM_DENSE_SEGMENT` (`glm5next_dense_seg`). 2026-10-24: Where it runs.
+    pub dense_seg: crate::glm5next_dense_seg::DenseSeg,
     /// 2026-10-23: The segment's SM budget (GRAPH-THEORY-MAP E2): only its CTAs on SMs below it
-    /// take tasks; `None`: every SM. Set by the paired A/B lever `dense_seg@<sms>` only.
+    /// take tasks; `None`: every SM. Set by the paired A/B lever `dense_seg@<sms>` only, for the
+    /// legacy forward; a planned shared expert runs at its group's `sm_budget`.
     pub dense_seg_sms: Option<NonZeroU32>,
     /// 2026-10-12: `METRALE_GLM_W4A16_TC_GEMM_MIN_ROWS` (`glm5next_w4a16_tc`): `None` off.
     pub tc_min_rows: Option<usize>,
@@ -125,7 +126,7 @@ impl DenseLevers {
             gemv_seg: k.glm_w4a16_gemv_seg,
             gemv_pipe: k.glm_w4a16_gemv_pipe,
             swiglu_down: k.glm_swiglu_down_fold,
-            dense_seg: k.glm_dense_segment,
+            dense_seg: crate::glm5next_dense_seg::DenseSeg::parse(&k.glm_dense_segment)?,
             dense_seg_sms: None,
             tc_min_rows,
             dequant_min_rows,
@@ -158,7 +159,7 @@ impl DenseLevers {
             if self.swiglu_down {
                 bail!("METRALE_GLM_SWIGLU_DOWN_FOLD=1 {W4A16}");
             }
-            if self.dense_seg {
+            if self.dense_seg == crate::glm5next_dense_seg::DenseSeg::Everywhere {
                 bail!("METRALE_GLM_DENSE_SEGMENT=1 {W4A16}");
             }
             if let Some(r) = self.tc_min_rows {

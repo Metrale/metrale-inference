@@ -32,6 +32,9 @@ pub struct MoeSlots {
     pub act: Option<ActStep<KernelId>>,
     pub down: Option<ProjStep<KernelId>>,
     pub blend: Option<BlendStep<KernelId>>,
+    /// 2026-10-24: What the plan names for the shared expert (its group: the segment or not, its
+    /// rule's `sm_budget`); `None` when the site has no shared-expert group.
+    pub shared: Option<crate::glm5next_dense_seg::DenseSite>,
 }
 
 /// 2026-10-23: `(func, entry list, rows it serves, _k64 twin)` of every routed sweep entry a plan
@@ -370,6 +373,10 @@ impl MoeSlots {
             act: self.act.with_context(|| need("SwiGLU"))?,
             down,
             blend: self.blend.with_context(|| need("combine"))?,
+            shared: self.shared.unwrap_or(crate::glm5next_dense_seg::DenseSite::Planned {
+                segment: false,
+                sms: None,
+            }),
         })
     }
 }

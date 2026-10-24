@@ -135,13 +135,55 @@ fn an_unmodelled_lever_refuses_installation() {
         .unwrap();
     assert!(format!("{e:#}").contains("SWEEP_SERIAL=0"), "{e:#}");
     assert!(inst.sites().is_empty());
-    // 2026-10-23: The dense segment replaces the shared expert's launches the rules name.
+}
+
+/// 2026-10-24: The dense segment is modelled: under `plan` (the default) the live policy says so,
+/// the verify-2 plan's shared expert takes the segment rule and the compiled site names it with
+/// its `sm_budget` (32); the rule takes 2 rows only, so decode 1 names the separate launches.
+/// Under the kill switch the policy says off and no site names the segment. A step whose levers
+/// would change the installed segment (a paired A/B `dense_seg@24` arm) is refused.
+#[test]
+fn the_dense_segment_budget_reaches_the_planned_shared_expert() {
+    use crate::glm5next_dense_seg::{DenseSeg, DenseSite};
+    let (c, rules, policy) = ranks();
+    let avail = AvailableKernels::all_named_by(&rules);
     let mut s = site(0);
-    s.k.levers.dense.dense_seg = true;
-    assert_eq!(
-        unmodelled(&s.k),
-        ["METRALE_GLM_DENSE_SEGMENT (the rules name the shared expert's separate launches)"]
-    );
+    s.k.levers.dense.dense_seg = DenseSeg::Plan;
+    assert!(unmodelled(&s.k).is_empty(), "{:?}", unmodelled(&s.k));
+    let live = live_policy(&policy, &s.k, &s.cfg).unwrap();
+    assert_eq!(live.settings["glm_dense_segment"], "on");
+    let fused = |p: &metrale_circuit::Policy, m, r| {
+        metrale_circuit::fuse(&c[0], &rules, &avail, p, m, r).unwrap()
+    };
+    let shared = |p: &metrale_circuit::Policy, m, r| {
+        compile_moe(&c[0], &fused(p, m, r), 4).unwrap().steps.shared
+    };
+    let sms = std::num::NonZeroU32::new(32);
+    assert_eq!(shared(&live, Mode::Verify, 2), DenseSite::Planned { segment: true, sms });
+    let separate = DenseSite::Planned { segment: false, sms: None };
+    assert_eq!(shared(&live, Mode::Decode, 1), separate);
+    let mut off = site(0);
+    off.k.levers.dense.dense_seg = DenseSeg::Off;
+    let killed = live_policy(&policy, &off.k, &off.cfg).unwrap();
+    assert_eq!(killed.settings["glm_dense_segment"], "off");
+    assert_eq!(shared(&killed, Mode::Verify, 2), separate);
+    let plans = [fused(&live, Mode::Verify, 2)];
+    let rp = RankPlans {
+        circuit: &c[0],
+        plans: &plans,
+        policy: &live,
+    };
+    let w = weights(4, false);
+    let inst = InstalledMoe::default();
+    inst.install(&s.gpu, 4, Some(rp), &s.k, &s.cfg, &w, &s.ws).unwrap();
+    let mut arm = s.k;
+    arm.levers.dense.dense_seg = DenseSeg::Everywhere;
+    arm.levers.dense.dense_seg_sms = std::num::NonZeroU32::new(24);
+    let e = inst
+        .run(&s.gpu, &arm, &s.cfg, &w, &s.ws, X, OUT, 2, STREAM)
+        .unwrap_err();
+    assert!(format!("{e:#}").contains("--forward legacy"), "{e:#}");
+    assert!(inst.run(&s.gpu, &s.k, &s.cfg, &w, &s.ws, X, OUT, 2, STREAM).unwrap());
 }
 
 /// 2026-10-23: The boot's shapes for GLM TP=3 with one draft (`--num-drafts 1`): from the shapes

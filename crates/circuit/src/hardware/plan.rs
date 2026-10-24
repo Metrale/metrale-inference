@@ -317,6 +317,7 @@ fn placeholder(op: &crate::ir::OpKind, input: Option<crate::format::Format>) -> 
         numerics: Numerics::Reference,
         runs: Vec::new(),
         path: None,
+        sm_budget: None,
         priority: i64::MIN,
         cite: "no rule of this class covers the op on this device".into(),
     }
