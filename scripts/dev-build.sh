@@ -30,14 +30,12 @@ fi
 model="$1"
 shift
 
-# 2026-10-17: The cache cap is required by the build (no default inside it).
-# This is the value dev builds pass: room for many full kernel sets of every
-# model a developer cycles through. METRALE_PTX_CACHE_MAX_BYTES overrides it.
-DEV_PTX_CACHE_MAX_BYTES=$((4 * 1024 * 1024 * 1024))
-
+# 2026-10-24: The cache cap (required by the build, no default inside it), the
+# iter profile's incremental + bundled-lld link and the PTX cache switch come from
+# scripts/devloop/build_env.sh, which cargo-guard.sh shares.
 export METRALE_TARGET_MODEL="$model"
-export METRALE_PTX_CACHE=1
-export METRALE_PTX_CACHE_MAX_BYTES="${METRALE_PTX_CACHE_MAX_BYTES:-$DEV_PTX_CACHE_MAX_BYTES}"
+. "$(dirname "$(readlink -f "$0")")/devloop/build_env.sh"
+devloop_build_env build --profile iter "$@"
 
 CARGO="${CARGO:-cargo}"
 exec "$CARGO" build --profile iter "$@"
