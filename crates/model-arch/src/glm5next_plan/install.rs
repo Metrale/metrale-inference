@@ -96,6 +96,16 @@ pub fn live_policy(
         };
         *v = value;
     }
+    // 2026-10-24: The DSA levers whose kernels the rules model as `differs` twins.
+    let s = &k.levers.dsa.select;
+    for (on, lever) in [
+        (s.pool_keys_bf16, "glm_dsa_pool_keys_bf16"),
+        (s.decode_scores_mma, "glm_dsa_decode_scores_mma"),
+    ] {
+        if on {
+            p.opt_in_levers.insert(lever.to_string());
+        }
+    }
     Ok(p)
 }
 
