@@ -2648,7 +2648,7 @@ pipeline.hc_post = { in = ["bf16", "f32", "f32", "f32"], compute = "f32", out = 
 pipeline.hc_contract = { in = ["f32"], compute = "f32", out = ["bf16"] }
 # 2026-10-22: `move` is the format the copy reads: the required move step is the first input's
 # format (crates/circuit/src/pipeline/require.rs:218), the BF16 embedding `h`; the kernel widens
-# it to the FP32 highway on the store (glm5next_mhc.cu:706-709).
+# it to the FP32 highway on the store (glm5next_mhc.cu:703-706).
 pipeline.hc_expand = { in = ["bf16"], move = "bf16", out = ["f32"] }
 # 2026-10-22: The fused pre-norm entries (glm5next_hc_pre_norm*, the recipe's glm_mhc_fused) also
 # run the site's RMSNorm on the collapsed BF16 row (rms_norm_vanilla's expressions,
