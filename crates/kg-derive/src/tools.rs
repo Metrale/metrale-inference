@@ -27,7 +27,8 @@ pub const SECTIONS: &[&str] = &[
 ];
 
 /// 2026-10-23: The sections of a default `kg_status` (none named): compact, every list capped at
-/// [`LIST_CAP`] with its total beside it. `schema` and `files` come only when named.
+/// [`LIST_CAP`] with its total beside it. `schema`, `files` and `calibration` (the retrospective,
+/// design §5; it alone took the default answer to 1488 of 1500 tokens) come only when named.
 pub const DEFAULT_SECTIONS: &[&str] = &[
     "progress",
     "blocked",
@@ -35,7 +36,6 @@ pub const DEFAULT_SECTIONS: &[&str] = &[
     "claims",
     "owed_lkb",
     "dangling",
-    "calibration",
     "freshness",
 ];
 

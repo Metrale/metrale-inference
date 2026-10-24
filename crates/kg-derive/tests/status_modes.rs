@@ -23,12 +23,8 @@ fn fresh() -> Freshness {
 fn one_unavailable_section_does_not_take_down_the_others() {
     let b = derive(&common::config(), &common::sources(), None).unwrap();
     let v = status(&b, &common::config(), "glm/mk", &[], &fresh(), None).unwrap();
-    assert_eq!(
-        v["calibration"]["unavailable"], true,
-        "{}",
-        v["calibration"]
-    );
-    assert_eq!(v["calibration"]["code"], "NotImplemented");
+    assert_eq!(v["owed_lkb"]["unavailable"], true, "{}", v["owed_lkb"]);
+    assert_eq!(v["owed_lkb"]["code"], "KgSource");
     assert!(
         v["progress"].is_object() && v["blocked"]["first"].is_array(),
         "{v}"

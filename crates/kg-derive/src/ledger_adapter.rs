@@ -16,7 +16,7 @@ use crate::claims;
 use crate::id::{KgId, Label, Rel};
 use crate::ledger::{RETRACTS, Table, refs};
 use crate::prelude::*;
-use crate::text::{commit_shas, design_refs, env_levers, first_number, principle_ids};
+use crate::text::{commit_shas, design_refs, env_levers, number_with_unit, principle_ids};
 use metrale_error::{ErrorCode, error};
 use serde_json::Value;
 
@@ -167,11 +167,7 @@ pub fn derive(
             b.error(&e, &at);
         }
         let pred = col(r, "predicted_us_saved");
-        let predicted = if pred.contains("us") {
-            first_number(&pred)
-        } else {
-            None
-        };
+        let predicted = number_with_unit(&pred, "us");
         let meas = measured(&col(r, "measured_delta"));
         p.insert("campaign".into(), Value::String(campaign.to_string()));
         p.insert("row".into(), Value::from(i + 1));

@@ -8,7 +8,7 @@
 //! Invariants:
 //! - Every path is repo-relative in config and root-relative (`<repo>/<path>`) in the source set.
 //! - A parser refusal is a `KgBadRow` finding at the file, never a silent skip of the file.
-//! - Order: inventory, families, rules, allowlist, instances, circuits, plans, headroom,
+//! - Order: inventory, families, rules, critical pairs, allowlist, instances, circuits, plans, headroom,
 //!   measurements (later steps edge into nodes earlier steps define).
 
 use crate::bundle::Builder;
@@ -16,7 +16,7 @@ use crate::id::Label;
 use crate::lkb::{families, handwritten, inventory, kernels};
 use crate::lkb_circuits::{circuit, instances, plan};
 use crate::lkb_headroom::{predicted_by, report};
-use crate::lkb_rules::{measurements, rules};
+use crate::lkb_rules::{critical_pairs, measurements, rules};
 use crate::prelude::*;
 use crate::sources::SourceSet;
 use metrale_error::{ErrorCode, Result, error};
@@ -39,6 +39,8 @@ pub struct LkbSources {
     pub circuits_dir: String,
     pub plans_dir: String,
     pub headroom_dir: String,
+    /// 2026-10-23: The critical-pairs allowlist (`kernels/circuits/CRITICAL_PAIRS.toml`, P4).
+    pub critical_pairs: String,
     /// 2026-10-23: The inventory script the host runs (`scripts/kernel_perf.py`).
     pub inventory: String,
     /// 2026-10-23: What `metrale-kg refresh` moves the checkout to: `git fetch <remote> <branch>`,
@@ -66,6 +68,7 @@ impl LkbSources {
             &s.circuits_dir,
             &s.plans_dir,
             &s.headroom_dir,
+            &s.critical_pairs,
             &s.inventory,
             &s.remote,
             &s.branch,
@@ -100,13 +103,14 @@ impl LkbSources {
     }
 
     /// 2026-10-23: The files and directories the host reads, root-relative.
-    pub fn files(&self) -> [String; 5] {
+    pub fn files(&self) -> [String; 6] {
         [
             self.families.as_str(),
             self.fusions.as_str(),
             self.handwritten.as_str(),
             self.measurements.as_str(),
             self.instances.as_str(),
+            self.critical_pairs.as_str(),
         ]
         .map(|p| self.path(p))
     }
@@ -201,6 +205,13 @@ pub fn derive(b: &mut Builder, cfg: &LkbSources, src: &SourceSet, facts: &LkbFac
     match metrale_circuit::runtime::parse_rule_set(rtext) {
         Ok(set) => rules(b, &rp, rtext, &set.rules, &set.runtime, &emitters),
         Err(e) => rejected(b, &rp, format!("{e}")),
+    }
+
+    let cp = cfg.path(&cfg.critical_pairs);
+    let ctext = need(src, &cp)?;
+    match metrale_circuit::critical_report::parse_allowlist(ctext) {
+        Ok(pairs) => critical_pairs(b, &cp, ctext, &pairs),
+        Err(e) => rejected(b, &cp, e),
     }
 
     let hp = cfg.path(&cfg.handwritten);

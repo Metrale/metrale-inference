@@ -197,6 +197,55 @@ pub fn progress(b: &Bundle, campaign: &str) -> BTreeMap<String, BTreeMap<String,
     out
 }
 
+/// 2026-10-23: How a verdict settles a predicted saving (P4 calibration, declared): `hit` = WIN;
+/// `miss` = LOSS/NULL/REFUTED; every other verdict leaves it `open`.
+pub fn outcome(verdict_kind: &str) -> &'static str {
+    match verdict_kind {
+        "WIN" => "hit",
+        "LOSS" | "NULL" | "REFUTED" => "miss",
+        _ => "open",
+    }
+}
+
+/// 2026-10-23: One ledger row that predicted a saving (`predicted_us > 0`), for calibration.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Prediction {
+    pub id: KgId,
+    pub verdict: String,
+    pub predicted_us: f64,
+    /// The measured column as parsed (`<isl>k <est>% [lo,hi]`); `None` when nothing parsed.
+    pub measured: Option<Value>,
+    /// The headroom sites it cites (`PREDICTED_BY`) with their `upside_us`.
+    pub sites: Vec<(KgId, Option<f64>)>,
+}
+
+/// 2026-10-23: Every row of `campaign` that predicted a saving, in file order (queries part
+/// "Calibration"). Units are never converted: a measured % stays a %.
+pub fn calibration(b: &Bundle, campaign: &str) -> Vec<Prediction> {
+    ledger_rows(b, campaign)
+        .into_iter()
+        .filter_map(|n| {
+            let predicted_us = n.p.get("predicted_us").and_then(Value::as_f64)?;
+            (predicted_us > 0.0).then(|| Prediction {
+                id: n.id.clone(),
+                verdict: s(n, "verdict_kind").to_string(),
+                predicted_us,
+                measured: n.p.get("measured").filter(|v| !v.is_null()).cloned(),
+                sites: b
+                    .out(&n.id, Rel::PredictedBy)
+                    .map(|e| {
+                        let up = b
+                            .node(&e.to)
+                            .and_then(|h| h.p.get("upside_us"))
+                            .and_then(Value::as_f64);
+                        (e.to.clone(), up)
+                    })
+                    .collect(),
+            })
+        })
+        .collect()
+}
+
 /// 2026-10-23: `Unresolved` nodes with what referenced each.
 pub fn dangling(b: &Bundle) -> Vec<(KgId, Vec<KgId>)> {
     unresolved(b, false)

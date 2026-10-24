@@ -114,3 +114,58 @@ fn decisions_levers_profiles_and_commits_come_from_their_text() {
         "fenced lines are not headings"
     );
 }
+
+#[test]
+fn calibration_lists_each_predicted_saving_with_its_settled_outcome() {
+    use metrale_kg_derive::queries::calibration;
+    use metrale_kg_derive::status::{Freshness, status};
+    let got = |src: &metrale_kg_derive::SourceSet| -> Vec<(String, String, f64)> {
+        let b = derive(&common::config(), src, None).unwrap();
+        calibration(&b, "glm/mk")
+            .into_iter()
+            .map(|p| (p.id.to_string(), p.verdict, p.predicted_us))
+            .collect()
+    };
+    // p0-x predicts 0 us: not a saving, so not listed.
+    assert_eq!(
+        got(&common::sources()),
+        [
+            ("ledger:l2-pf".into(), "NULL".into(), 315.0),
+            ("ledger:seg".into(), "LOSS".into(), 100.0)
+        ]
+    );
+    let fresh = Freshness {
+        // 2026-10-23: test value: the clock and freshness are not under test.
+        stale_reason: None,
+        derived_at_ms: 0,
+        source_commit: None,
+        newest_change: None,
+    };
+    let sec = |src: &metrale_kg_derive::SourceSet| {
+        let b = derive(&common::config(), src, None).unwrap();
+        let names = ["calibration".to_string()];
+        status(&b, &common::config(), "glm/mk", &names, &fresh, None).unwrap()["calibration"]
+            .clone()
+    };
+    let v = sec(&common::sources());
+    assert_eq!((v["hit"].as_u64(), v["miss"].as_u64()), (Some(0), Some(2)), "{v}");
+    assert_eq!(v["hit_rate"], 0.0);
+    assert_eq!(v["rows"][0]["measured"]["1k"][0], -0.53, "{v}");
+
+    // Negative: the answer moves with the fact. seg turns into a WIN, l2-pf predicts nothing.
+    let mut src = common::sources();
+    let l = src.files.get_mut("c/LEDGER.tsv").unwrap();
+    *l = l
+        .replace("\tLOSS\tmkp3", "\tWIN\tmkp3")
+        .replace("<=315 us/step", "0 us/step");
+    assert_eq!(got(&src), [("ledger:seg".into(), "WIN".into(), 100.0)]);
+    let v = sec(&src);
+    assert_eq!((v["hit"].as_u64(), v["miss"].as_u64()), (Some(1), Some(0)), "{v}");
+    assert_eq!(v["hit_rate"], 1.0);
+
+    // The predicted saving is the number that carries `us`, not the first digit in the field.
+    let mut src = common::sources();
+    let l = src.files.get_mut("c/LEDGER.tsv").unwrap();
+    *l = l.replace("<=315 us/step", "K=2 warm, upside 267 us/step");
+    assert_eq!(got(&src)[0], ("ledger:l2-pf".into(), "NULL".into(), 267.0));
+}

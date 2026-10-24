@@ -202,6 +202,31 @@ pub fn first_number(text: &str) -> Option<f64> {
     Some(if neg { -v } else { v })
 }
 
+/// 2026-10-23: The first number written with the unit `unit` (`315 us/step`, `315us`): a
+/// whitespace token holding a number, followed by a token that is the unit (then a non-letter),
+/// or ending in it. `None` when no number carries the unit, so `verify 4 ... us` is not 4.
+pub fn number_with_unit(text: &str, unit: &str) -> Option<f64> {
+    let is_unit = |t: &str| {
+        t.strip_prefix(unit)
+            .is_some_and(|rest| !rest.starts_with(|c: char| c.is_ascii_alphabetic()))
+    };
+    let toks: Vec<&str> = text.split_whitespace().collect();
+    toks.iter().enumerate().find_map(|(i, t)| {
+        let glued = t
+            .find(unit)
+            .filter(|&k| k > 0 && t.as_bytes()[k - 1].is_ascii_digit() && is_unit(&t[k..]));
+        if let Some(k) = glued {
+            return first_number(&t[..k]);
+        }
+        let next = toks.get(i + 1).copied()?;
+        if is_unit(next) && t.bytes().any(|c| c.is_ascii_digit()) {
+            first_number(t)
+        } else {
+            None
+        }
+    })
+}
+
 /// 2026-10-23: The text of every backtick span.
 pub fn backtick_spans(text: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -214,4 +239,22 @@ pub fn backtick_spans(text: &str) -> Vec<String> {
         parts.next();
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::number_with_unit;
+
+    #[test]
+    fn only_a_number_that_carries_the_unit_is_taken() {
+        let us = |t| number_with_unit(t, "us");
+        assert_eq!(us("<=315 us/step at p1k"), Some(315.0));
+        assert_eq!(us("120-240 us/step (STATE.md)"), Some(120.0));
+        assert_eq!(us("k=24 -90 us (-0.275%)"), Some(-90.0));
+        assert_eq!(us("~5us/step"), Some(5.0));
+        assert_eq!(us("microtest K=2: upside 267 us/step"), Some(267.0));
+        assert_eq!(us("launch-identical; +360 sites/rank"), None);
+        assert_eq!(us("boot no longer refused at verify 4"), None);
+        assert_eq!(us("4 users"), None);
+    }
 }

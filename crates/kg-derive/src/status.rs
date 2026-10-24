@@ -223,13 +223,7 @@ pub fn section(
         }
 
         "owed_lkb" => owed_section(b, instance)?,
-        "calibration" => {
-            return Err(error!(
-                ErrorCode::NotImplemented,
-                name.to_string(),
-                "prediction calibration (P4)"
-            ));
-        }
+        "calibration" => calibration_section(b, campaign),
 
         "freshness" => {
             let mut o = Map::new();
@@ -370,6 +364,60 @@ fn owed_section(b: &Bundle, instance: Option<&str>) -> Result<Value> {
     o.insert("owed_landed".into(), Value::from(landed));
     o.insert("rows".into(), Value::from(out));
     Ok(Value::Object(o))
+}
+
+/// 2026-10-23: Predicted savings against their verdicts ([`queries::outcome`]): the counts,
+/// `hit_rate` = hit / (hit + miss) (`null` while nothing is settled), and each row with its
+/// measurement and `predicted_over_upside` per cited headroom site.
+fn calibration_section(b: &Bundle, campaign: &str) -> Value {
+    let preds = queries::calibration(b, campaign);
+    let mut counts: BTreeMap<&str, u64> = [("hit", 0), ("miss", 0), ("open", 0)].into();
+    let rows: Vec<Value> = preds
+        .iter()
+        .map(|p| {
+            let out = queries::outcome(&p.verdict);
+            *counts.entry(out).or_insert(0) += 1;
+            let sites: Vec<Value> = p
+                .sites
+                .iter()
+                .map(|(sid, up)| {
+                    let mut s = Map::new();
+                    s.insert("id".into(), Value::String(sid.to_string()));
+                    s.insert("upside_us".into(), up.map_or(Value::Null, Value::from));
+                    let ratio = up.filter(|u| *u > 0.0).map(|u| p.predicted_us / u);
+                    s.insert(
+                        "predicted_over_upside".into(),
+                        ratio.map_or(Value::Null, Value::from),
+                    );
+                    Value::Object(s)
+                })
+                .collect();
+            let mut o = Map::new();
+            o.insert("id".into(), Value::String(p.id.to_string()));
+            o.insert("verdict".into(), Value::String(p.verdict.clone()));
+            o.insert("outcome".into(), Value::String(out.into()));
+            o.insert("predicted_us".into(), Value::from(p.predicted_us));
+            o.insert("measured".into(), p.measured.clone().unwrap_or(Value::Null));
+            o.insert("sites".into(), Value::from(sites));
+            Value::Object(o)
+        })
+        .collect();
+    let settled = counts["hit"] + counts["miss"];
+    let mut o = Map::new();
+    o.insert("predicted".into(), Value::from(preds.len()));
+    for (k, v) in &counts {
+        o.insert((*k).into(), Value::from(*v));
+    }
+    o.insert(
+        "hit_rate".into(),
+        if settled == 0 {
+            Value::Null
+        } else {
+            Value::from(counts["hit"] as f64 / settled as f64)
+        },
+    );
+    o.insert("rows".into(), Value::from(rows));
+    Value::Object(o)
 }
 
 /// 2026-10-23: A section that cannot be computed, as a declared mode (PCND): the others are

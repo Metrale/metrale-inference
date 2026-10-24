@@ -15,6 +15,7 @@ use crate::id::{KgId, Label, Rel};
 use crate::lkb::line_of;
 use crate::prelude::*;
 use crate::text::{commit_shas, design_refs};
+use metrale_circuit::critical_report::Allowed;
 use metrale_circuit::rules::{Numerics, Rule};
 use metrale_circuit::runtime::RuntimeRoute;
 use metrale_circuit::venn::MeasurementRow;
@@ -234,6 +235,36 @@ pub fn measurements(
         }
         if let Some(c) = commit.and_then(|c| KgId::new(Label::Commit, c).ok()) {
             b.edge(&id, Rel::AtCommit, &c, 1.0, &at);
+        }
+    }
+}
+
+/// 2026-10-23: `CRITICAL_PAIRS.toml` (P4; GRAPH-THEORY-MAP experiment #3) through
+/// `metrale_circuit::critical_report::parse_allowlist` → one `CriticalPair` per entry
+/// (`cpair:<a>~<b>`, ids sorted), `OVERLAPS` both rules. Every entry is a pair the plan resolves by
+/// rule priority alone and that the shrink-only gate allowlists, so `resolved_by = "priority"`
+/// and `allowlisted = true` are what the file states, not defaults.
+pub fn critical_pairs(b: &mut Builder, path: &str, text: &str, pairs: &[Allowed]) {
+    let mut cursor = 1;
+    for a in pairs {
+        let (x, y) = (&a.rules.0, &a.rules.1);
+        let line = line_of(text, &format!("\"{x}\""), cursor);
+        cursor = line;
+        let at = format!("{path}:{line}");
+        let Ok(id) = KgId::new(Label::CriticalPair, format!("{x}~{y}")) else {
+            continue;
+        };
+        let mut p = BTreeMap::new();
+        p.insert("rules".into(), Value::from(vec![x.clone(), y.clone()]));
+        p.insert("why".into(), Value::String(a.why.clone()));
+        p.insert("resolved_by".into(), Value::String("priority".into()));
+        p.insert("allowlisted".into(), Value::Bool(true));
+        b.define(id.clone(), at.clone(), &format!("{a:?}"), p);
+        b.text(&id, "why", &a.why);
+        for r in [x, y] {
+            if let Ok(rid) = KgId::new(Label::FusionRule, r.clone()) {
+                b.edge(&id, Rel::Overlaps, &rid, 1.0, &at);
+            }
         }
     }
 }
