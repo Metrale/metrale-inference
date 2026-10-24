@@ -20,10 +20,14 @@
 //! - 2026-10-23: The fused shapes are the ones the sites install (`plan_shapes`) that the serve
 //!   runs: decode n=1, the serve's verify widths (`ForwardSelect::Circuit::verify_rows`, one
 //!   source; a width no site covers is refused, `rank_plan_shapes`), and the draft row.
+//! - 2026-10-23: The plans fuse under the communicator's one-shot bound, and every planned
+//!   collective's path must be the communicator's for its payload, else the boot is refused
+//!   (`circuit_exec::collectives`, CERF `CollectivePathMismatch`).
 
 use anyhow::{Context, Result, bail, ensure};
 use metrale_circuit::Mode;
 use metrale_model_layers::circuit_exec::family::RankPlans;
+use metrale_model_layers::circuit_exec::collectives;
 use metrale_model_layers::circuit_exec::rank_shapes::rank_plan_shapes;
 use metrale_model_layers::circuit_exec::{Fusions, TargetModules, kernels, load_served};
 
@@ -76,6 +80,12 @@ impl TransformerModel {
                 "the draft block derives another plan policy than layer 0"
             );
         }
+        // 2026-10-23: The one-shot payload bound is the communicator's, resolved once here.
+        let comm = self
+            .comm
+            .as_deref()
+            .context("--forward circuit on a tensor-parallel rank without a communicator")?;
+        let policy = collectives::with_comm_bound(&policy, comm.oneshot_max_bytes())?;
         let available = kernels::available_in(&loaded.rules, &modules.0)?;
         // 2026-10-23: The shapes the sites install, checked against the serve's verify widths.
         let mut installed: Vec<(Mode, u64)> =
@@ -95,6 +105,14 @@ impl TransformerModel {
                 .with_context(|| format!("fusing rank {rank} {mode:?} at {rows} rows"))?;
             plans.push(p);
         }
+        // 2026-10-23: Every planned collective's path is the communicator's for its payload.
+        let state = comm
+            .path_state()
+            .context("--forward circuit on a tensor-parallel rank: the communicator reports no paths")?;
+        let checked = collectives::check_paths(circuit, &plans, &state)
+            .map_err(anyhow::Error::from)
+            .with_context(|| format!("--forward circuit on TP rank {rank}/{world}"))?;
+        tracing::info!("circuit: rank {rank}/{world}: {checked} planned collectives match the communicator");
         let rp = RankPlans {
             circuit,
             plans: &plans,

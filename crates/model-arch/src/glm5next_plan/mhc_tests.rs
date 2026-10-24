@@ -316,6 +316,13 @@ fn installation_refuses_unmodelled_levers_and_unfusable_sites() {
         .err()
         .unwrap();
     assert!(format!("{e:#}").contains("PRE_C1=0"), "{e:#}");
+    let mut levers = served_levers();
+    levers.ar_fused_post = false;
+    let l = layer(0, served_world(), levers);
+    let e = install(&l.gpu, 4, Some(rp), &l.levers, &l.mhc, HIDDEN, &inst)
+        .err()
+        .unwrap();
+    assert!(format!("{e:#}").contains("glm_ar_fused_post off"), "{e:#}");
     let mut l = layer(0, served_world(), served_levers());
     l.mhc.ffn.hc_fn_bf16 = false;
     let e = install(&l.gpu, 4, Some(rp), &l.levers, &l.mhc, HIDDEN, &inst)

@@ -13,7 +13,7 @@ use std::ptr;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use crate::ar_path::ArPath;
+use metrale_circuit::CollectivePath;
 use super::{
     ALL_REDUCE_DTYPE_BYTES, COLLECTIVE_TIMEOUT_SECS, NcclBackend, RENDEZVOUS_TIMEOUT_SECS,
 };
@@ -23,82 +23,71 @@ use metrale_gpu_sys::nccl::{self, NcclDataType, NcclRedOp};
 
 impl CommBackend for NcclBackend {
     fn all_reduce(&self, ptr: u64, bytes: usize) -> Result<()> {
-        self.begin_submission("all_reduce", Dtype::Bf16, bytes, self.legacy_stream, None)?;
-        match self.ar_path(bytes) {
-            ArPath::TwoRank => return self.all_reduce_2rank(ptr, bytes, self.legacy_stream),
-            ArPath::OneShot => return self.all_reduce_oneshot(ptr, bytes, self.legacy_stream),
-            ArPath::Nccl => {}
-        }
-        // 2026-09-26: In place on `ptr`; `recv_buffer` is not used, so its
-        // capacity does not bound this path.
-        let count = bytes / ALL_REDUCE_DTYPE_BYTES;
-        let comm = *self.comm.lock();
-        let result = unsafe {
-            nccl::ncclAllReduce(
-                ptr as *const _,
-                ptr as *mut _,
-                count,
-                NcclDataType::Bfloat16,
-                NcclRedOp::Sum,
-                comm,
-                self.legacy_stream,
-            )
-        };
-        nccl::check_nccl(result, "ncclAllReduce")?;
-        self.check_async_error(comm);
-        Ok(())
+        self.all_reduce_via(self.ar_path(bytes), ptr, bytes, None)
     }
 
     fn all_reduce_async(&self, ptr: u64, bytes: usize, compute_stream: u64) -> Result<()> {
-        self.begin_submission(
-            "all_reduce_async",
-            Dtype::Bf16,
-            bytes,
-            self.comm_stream,
-            None,
-        )?;
-        let path = self.ar_path(bytes);
-        if path != ArPath::Nccl {
-            nccl::record_event(self.compute_done_event, compute_stream)?;
-            nccl::stream_wait_event(self.comm_stream, self.compute_done_event)?;
-            if path == ArPath::TwoRank {
-                self.all_reduce_2rank(ptr, bytes, self.comm_stream)?;
-            } else {
-                self.all_reduce_oneshot(ptr, bytes, self.comm_stream)?;
-            }
-            nccl::record_event(self.comm_done_event, self.comm_stream)?;
-            nccl::stream_wait_event(compute_stream, self.comm_done_event)?;
-            return Ok(());
-        }
+        self.all_reduce_via(self.ar_path(bytes), ptr, bytes, Some(compute_stream))
+    }
 
-        // 2026-09-26: In place on `ptr`; `recv_buffer` is not used.
-        let count = bytes / ALL_REDUCE_DTYPE_BYTES;
-        let comm = *self.comm.lock();
-
-        nccl::record_event(self.compute_done_event, compute_stream)?;
-
-        nccl::stream_wait_event(self.comm_stream, self.compute_done_event)?;
-
-        let result = unsafe {
-            nccl::ncclAllReduce(
-                ptr as *const _,
-                ptr as *mut _,
-                count,
-                NcclDataType::Bfloat16,
-                NcclRedOp::Sum,
-                comm,
-                self.comm_stream,
-            )
+    /// 2026-10-23: The only all-reduce executor: `path` as named, refused (CERF
+    /// `CollectivePathRefused`) where this communicator cannot run it, never on another path.
+    /// Blocking on the legacy stream without `compute_stream`, else on the comm stream ordered
+    /// against it, as `all_reduce` and `all_reduce_async` ran before.
+    fn all_reduce_via(
+        &self,
+        path: CollectivePath,
+        ptr: u64,
+        bytes: usize,
+        compute_stream: Option<u64>,
+    ) -> Result<()> {
+        let (what, stream) = match compute_stream {
+            None => ("all_reduce", self.legacy_stream),
+            Some(_) => ("all_reduce_async", self.comm_stream),
         };
-        nccl::check_nccl(result, "ncclAllReduce (async)")?;
-
-        nccl::record_event(self.comm_done_event, self.comm_stream)?;
-
-        nccl::stream_wait_event(compute_stream, self.comm_done_event)?;
-
-        self.check_async_error(comm);
-
+        self.begin_submission(what, Dtype::Bf16, bytes, stream, None)?;
+        crate::ar_path::runnable(path, &self.path_state(), bytes)?;
+        if let Some(cs) = compute_stream {
+            nccl::record_event(self.compute_done_event, cs)?;
+            nccl::stream_wait_event(self.comm_stream, self.compute_done_event)?;
+        }
+        match path {
+            CollectivePath::TwoRank => self.all_reduce_2rank(ptr, bytes, stream)?,
+            CollectivePath::OneShot => self.all_reduce_oneshot(ptr, bytes, stream)?,
+            CollectivePath::Nccl => {
+                // 2026-09-26: In place on `ptr`; `recv_buffer` is not used, so its
+                // capacity does not bound this path.
+                let count = bytes / ALL_REDUCE_DTYPE_BYTES;
+                let comm = *self.comm.lock();
+                let result = unsafe {
+                    nccl::ncclAllReduce(
+                        ptr as *const _,
+                        ptr as *mut _,
+                        count,
+                        NcclDataType::Bfloat16,
+                        NcclRedOp::Sum,
+                        comm,
+                        stream,
+                    )
+                };
+                nccl::check_nccl(result, "ncclAllReduce")?;
+                if compute_stream.is_none() {
+                    self.check_async_error(comm);
+                }
+            }
+        }
+        if let Some(cs) = compute_stream {
+            nccl::record_event(self.comm_done_event, self.comm_stream)?;
+            nccl::stream_wait_event(cs, self.comm_done_event)?;
+            if path == CollectivePath::Nccl {
+                self.check_async_error(*self.comm.lock());
+            }
+        }
         Ok(())
+    }
+
+    fn path_state(&self) -> Option<crate::ar_path::PathState> {
+        Some(NcclBackend::path_state(self))
     }
 
     fn oneshot_max_bytes(&self) -> usize {

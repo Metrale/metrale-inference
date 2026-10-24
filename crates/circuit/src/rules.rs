@@ -319,7 +319,10 @@ pub struct Rule {
     pub cite: String,
     /// 2026-09-30: A `per_run` rule's selectors (`[[rule.run]]`), in file order; empty for any
     /// other repeat.
-    pub runs: Vec<crate::runs::RunSelect>,
+    pub runs: Vec<crate::runs::RunSelect>,    /// 2026-10-23: For a rule that lowers an all-reduce (or an all-gather run as one): the path
+    /// the communicator takes ([`crate::collective`]), copied onto each group it forms; `None` for
+    /// every other rule. A `one_shot` rule is taken only within the policy's payload bound.
+    pub path: Option<crate::collective::CollectivePath>,
 }
 
 impl Rule {

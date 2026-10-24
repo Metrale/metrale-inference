@@ -123,6 +123,26 @@ values = {}
 how = "instantiation"
 files = ["kernels/gb10/common/embed_from_argmax.cu"]
 
+# 2026-10-23: The library all-reduce a planned collective takes past the one-shot bound.
+[[family]]
+id = "all_reduce_nccl"
+description = "Collective summed by the library's all-reduce in place (no kernel of ours)"
+explain.about = '''No kernel of ours launches in this family. Each rank hands its BF16 partial $x^{(r)} \in \mathbb{R}^{m \times d}$ to `ncclAllReduce` with the sum operator, in place, and every rank gets the full sum back. The plan takes this path where the payload of $m \cdot d \cdot 2$ bytes is past the one-shot bound (`all_reduce_oneshot_max_kb`, or the one-shot disabled at 0) at three or more ranks; an all-gather the engine runs as the sum of zero-padded slices takes the same call.'''
+explain.numerics = '''The library chooses the reduction order (its ring or tree algorithm for the message size and topology) and rounds to BF16 along it, so the sum's bits may depend on the payload size and the rank count, unlike the one-shot's FP32 sum in rank order.'''
+explain.math = [
+  '''y = \sum_{r=0}^{N-1} x^{(r)} \in \mathbb{R}^{m \times d}, \qquad \text{on every rank}''',
+]
+compute = "memory"
+emitters = ["tp_all_reduce"]
+rows = [1, 65536]
+pipeline.all_reduce = { in = ["bf16"], reduce = "bf16", out = ["bf16"] }
+pipeline.all_gather = { in = ["bf16"], move = "bf16", out = ["bf16"] }
+op = [{ op = "all_reduce" }, { op = "all_gather" }]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = ["crates/comm/src/nccl_backend/comm_impl.rs"]
+
 [[family]]
 id = "argmax_host"
 description = "Greedy token on the host from copied logits (no kernel)"

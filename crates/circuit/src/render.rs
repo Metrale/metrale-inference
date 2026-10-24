@@ -242,6 +242,10 @@ fn group_line(circuit: &Circuit, plan: &FusionPlan, g: usize) -> String {
         members.join(","),
         grp.rule
     );
+    // 2026-10-23: A collective group's all-reduce path ([`crate::collective`]).
+    if let Some(p) = grp.path {
+        line.push_str(&format!(" path={p}"));
+    }
     let mut fused = Vec::new();
     let mut writes = Vec::new();
     for &n in &grp.nodes {
