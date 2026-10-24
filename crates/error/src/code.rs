@@ -87,6 +87,13 @@ error_registry! {
         /// commit) and retired it: (the step's error). Sent to the client as an error frame,
         /// never as a finish.
         SequenceFailed = 0x0200 => "the sequence failed: {}",
+        /// 2026-10-24: `/v1/embeddings` on a model whose capabilities say it generates: (model).
+        EmbedNotSupported = 0x0201 => "{} is a generative model; it does not compute embeddings",
+        /// 2026-10-24: A generation request on an embedding model (`generates = false`):
+        /// (model).
+        GenerateNotSupported = 0x0202 => "{} is an embedding model; it does not generate",
+        /// 2026-10-24: An embedding input the model refuses: (input index, reason).
+        EmbedInputInvalid = 0x0203 => "embedding input {}: {}",
         /// 2026-10-17: A device driver call returned a failure status: (call, status).
         DeviceDriver = 0x0280 => "{} failed: driver status {}",
     }
