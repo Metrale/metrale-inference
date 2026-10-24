@@ -33,6 +33,7 @@ fn group(rule: &str, kernels: &[&str], repeat: Repeat, comm: &[(&str, u64)], emi
         nodes: Vec::new(),
         runs: Vec::new(),
         path: None,
+        sm_budget: None,
     }
 }
 

@@ -363,9 +363,10 @@ pub fn forward_moe_pieces(
     // 2026-10-11: Under `METRALE_GLM_SHARED_FORK` the shared expert starts here on its side
     // stream (it reads only `x`) and joins before the combine.
     let fork = ws.shared_fork.as_ref().filter(|f| f.takes(rows));
+    let dense_site = crate::glm5next_dense_seg::DenseSite::Legacy;
     if let Some(f) = fork {
         f.fork(gpu, stream, |side, scratch| {
-            pieces::shared_expert(gpu, k, cfg, w, x, ws, scratch, row_pieces, side)
+            pieces::shared_expert(gpu, k, cfg, w, x, ws, scratch, row_pieces, dense_site, side)
         })?;
     }
 
@@ -430,6 +431,7 @@ pub fn forward_moe_pieces(
             ws,
             ws.dense_scratch(),
             row_pieces,
+            dense_site,
             stream,
         )?,
     }

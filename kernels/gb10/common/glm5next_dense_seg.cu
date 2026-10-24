@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-// metrale: instantiates w4a16_gemv (w4a16_gemv_pipe.cuh)
+// metrale: instantiates glm_dense_seg (w4a16_pipe_segment.cuh)
 
 // 2026-10-23: glm5next_dense_seg_pipe_m<M>: GLM-5.3's dense MLP / shared expert (gate|up, clamped
 // SwiGLU, down) as one persistent segment (w4a16_pipe_segment.cuh over segment.cuh and the pipe

@@ -52,6 +52,7 @@ struct RuleFile {
     #[serde(default)]
     run: Vec<RunFile>,
     path: Option<String>,
+    sm_budget: Option<core::num::NonZeroU32>,
 }
 
 /// 2026-09-30: `[[rule.run]]`: a per-run selector (`crate::runs::RunSelect`).
@@ -249,6 +250,8 @@ fn rule(mut r: RuleFile) -> Result<Rule, RuleError> {
         pattern.push(pattern_op(&r.id, p)?);
     }
     let path = collective_path(&r, &pattern, &comm).map_err(|d| shape(&d))?;
+    crate::collective::check_sm_budget(r.sm_budget, kernels.len(), &comm)
+        .map_err(|d| shape(&d))?;
     Ok(Rule {
         pattern,
         kernels,
@@ -266,6 +269,7 @@ fn rule(mut r: RuleFile) -> Result<Rule, RuleError> {
         cite: r.cite,
         runs,
         path,
+        sm_budget: r.sm_budget,
         id: r.id,
     })
 }

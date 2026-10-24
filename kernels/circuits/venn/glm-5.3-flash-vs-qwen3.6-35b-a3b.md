@@ -138,7 +138,7 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 | 46 | decode | `kda.pre` ×34 (`hc_pre`, in bf16) | glm_mhc: instantiation in `glm5next_mhc.cu` +5; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (5.6 µs) | none | reuse, then microbench at this point |
 | 47 | decode | `dsa.post` ×11 (`hc_post`, in bf16) | glm_mhc: instantiation in `glm5next_mhc.cu` +5; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (3.3 µs) | none | reuse, then microbench at this point |
 | 48 | decode | `moe.post_norm` ×42 (`rms_norm`, in bf16) | glm_mhc: instantiation in `glm5next_mhc.cu` +5; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (2.8 µs) | none | reuse, then microbench at this point; also rms_norm: Policy variant (weight_form); also rms_norm_act_quant: Policy variant (weight_form) |
-| 49 | decode | `moe.shared_clamp` ×42 (`swiglu_clamp`, in bf16) | glm_swiglu_clamp: instantiation in `glm5next_ffn.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (2.8 µs) | none | reuse, then microbench at this point |
+| 49 | decode | `moe.shared_clamp` ×42 (`swiglu_clamp`, in bf16) | glm_dense_seg: instantiation in `glm5next_dense_seg.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (2.8 µs) | none | reuse, then microbench at this point |
 | 50 | decode | `kda.input_norm` ×34 (`rms_norm`, in bf16) | glm_mhc: instantiation in `glm5next_mhc.cu` +5; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (2.2 µs) | none | reuse, then microbench at this point; also rms_norm: Policy variant (weight_form) |
 | 51 | decode | `moe.shared_act` ×42 (`silu_mul`, in bf16) | moe_grouped_tc: `moe_nvfp4_grouped_tc::moe_expert_gate_up_act_nvfp4_grouped_tc` (qwen3.6-35b-a3b-nvfp4-declared `l0.moe_ffn.experts_act`) | Shared | none | - | 0.0% (2.1 µs) | microbench: standalone grouped decode layer (sort, gate+up, down), 256 experts top-8 uniform routing, 4 layers of distinct weights, 2026-09-28: 140 us at M=1, 822 us at M=8, 2280 us at M=32, 3150 us at M=64 (~222 GB/s, 89% of the floor); 30 W vs 43-51 W for the CUDA-core kernel | reuse (optimized at this point) |
 | 52 | decode | `dsa.pre` ×11 (`hc_pre`, in bf16) | glm_mhc: instantiation in `glm5next_mhc.cu` +5; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (1.8 µs) | none | reuse, then microbench at this point |
@@ -451,8 +451,9 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 | 17 | silu_mul | - | `mlp.act`, `moe.experts_act`, `moe.shared_act` | 0.0% (verify n=4) |
 | 18 | argmax_host | - | `head.argmax` | 0.0% (multi_seq n=128) |
 | 19 | moe_weighted_sum_scale | shared_gate=none | `moe.blend` | 0.0% (decode n=1) |
-| 20 | glm_router_topk | scoring=sigmoid_bias | `moe.top_k` | 0.0% (multi_seq n=128) |
-| 21 | embed_copy | - | `embed.embed` | 0.0% (multi_seq n=128) |
-| 22 | layer_norm | - | `dsa.idx_k_norm` | 0.0% (multi_seq n=128) |
-| 23 | glm_mla_latent_write | weight_form=plain | `dsa.kv_norm` | 0.0% (decode n=1) |
-| 24 | glm_mla_latent_write | kv_dtype=fp8 layout=latent | `dsa.kv_write` | 0.0% (decode n=1) |
+| 20 | glm_dense_seg | - | `moe.shared_clamp` | 0.0% (decode n=1) |
+| 21 | glm_router_topk | scoring=sigmoid_bias | `moe.top_k` | 0.0% (multi_seq n=128) |
+| 22 | embed_copy | - | `embed.embed` | 0.0% (multi_seq n=128) |
+| 23 | layer_norm | - | `dsa.idx_k_norm` | 0.0% (multi_seq n=128) |
+| 24 | glm_mla_latent_write | weight_form=plain | `dsa.kv_norm` | 0.0% (decode n=1) |
+| 25 | glm_mla_latent_write | kv_dtype=fp8 layout=latent | `dsa.kv_write` | 0.0% (decode n=1) |

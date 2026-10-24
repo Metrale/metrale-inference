@@ -246,3 +246,26 @@ fn path_loads_on_a_collective_with_its_launches_only() {
         assert!(e.to_string().contains(want), "{e}");
     }
 }
+
+/// 2026-10-24: `sm_budget` loads onto a rule of one kernel and no exchange; absent it is `None`;
+/// zero, and a rule of two kernels, are refused.
+#[test]
+fn an_sm_budget_loads_on_a_one_kernel_rule_only() {
+    assert_eq!(parse_rules(OK).unwrap()[0].sm_budget, None);
+    let with = |t: &str, v: &str| {
+        t.replace("priority = 100", &format!("priority = 100\nsm_budget = {v}"))
+    };
+    let r = &parse_rules(&with(OK, "32")).unwrap()[0];
+    assert_eq!(r.sm_budget.map(|k| k.get()), Some(32));
+    assert!(parse_rules(&with(OK, "0")).is_err());
+    let two = with(OK, "32").replace(
+        r#"kernels = [{ module = "norm", func = "residual_add_rms_norm" }]"#,
+        r#"kernels = [{ module = "norm", func = "a" }, { module = "norm", func = "b" }]"#,
+    );
+    match parse_rules(&two) {
+        Err(RuleError::Shape { detail, .. }) => {
+            assert!(detail.contains("sm_budget = 32"), "{detail}")
+        }
+        other => panic!("{other:?}"),
+    }
+}
