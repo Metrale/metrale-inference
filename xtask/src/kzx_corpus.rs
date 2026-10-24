@@ -123,10 +123,13 @@ struct Plan {
     digest: [u8; 32],
 }
 
+/// 2026-10-23: A kernel's family: its name, its parameter bindings and its class byte.
+type FamilySpec = (String, Vec<(String, String)>, u8);
+
 #[derive(Serialize)]
 struct KernelSpec {
     id: (String, String),
-    family: Option<(String, Vec<(String, String)>, u8)>,
+    family: Option<FamilySpec>,
     arch: String,
     kind: u8,
     launch: (String, Vec<u8>, u32, (u32, u32, u32), String, u64),

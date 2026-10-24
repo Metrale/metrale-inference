@@ -12,7 +12,7 @@ use alloc::collections::BTreeMap;
 use super::graph::{Edge, EdgeKind, Node, NodeKind, f_of, ix, node_of, s_of};
 use super::maxplus::{Latency, median};
 use super::scenario::{PdlOffStats, Prologue, Scenario, Sel, bad};
-use super::sim::{Resources, cap_of};
+use super::sim::{SimResources, cap_of};
 
 impl Scenario {
     pub(super) fn add(
@@ -253,7 +253,7 @@ impl Scenario {
         &mut self,
         select: &[Sel],
         sms: f64,
-        r: &Resources,
+        r: &SimResources,
     ) -> metrale_error::Result<usize> {
         if !(sms.is_finite() && sms > 0.0 && sms <= r.sms) {
             return Err(bad(

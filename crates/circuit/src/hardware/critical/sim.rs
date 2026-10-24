@@ -25,7 +25,7 @@ use crate::prelude::*;
 use alloc::collections::BinaryHeap;
 use core::cmp::{Ordering, Reverse};
 
-use super::graph::{EdgeKind, Graph, NodeKind, f_of, ix, node_of};
+use super::graph::{CriticalGraph, EdgeKind, NodeKind, f_of, ix, node_of};
 
 /// 2026-10-23: One SM's limits.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -42,7 +42,7 @@ pub struct SmLimits {
 
 /// 2026-10-23: The shared resources.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Resources {
+pub struct SimResources {
     /// 2026-10-23: SMs.
     pub sms: f64,
     /// 2026-10-23: Per SM.
@@ -67,7 +67,7 @@ pub fn per_sm(threads: u32, regs: u32, smem: u32, l: &SmLimits) -> u32 {
 }
 
 /// 2026-10-23: The SM capacity node `i` wants while resident, in SM units (0: not a kernel).
-pub fn cap_of(g: &Graph, i: usize, r: &Resources) -> f64 {
+pub fn cap_of(g: &CriticalGraph, i: usize, r: &SimResources) -> f64 {
     let n = &g.nodes[i];
     if n.kind != NodeKind::Kernel || n.ctas == 0 {
         return 0.0;
@@ -102,7 +102,7 @@ struct Res {
 
 /// 2026-10-23: Rates of `res` (ordered oldest first): granted capacity share, then the DRAM
 /// scale over the progressing kernels' demand.
-fn rate_law(res: &mut [Res], cap: &[f64], bw: &[f64], r: &Resources) {
+fn rate_law(res: &mut [Res], cap: &[f64], bw: &[f64], r: &SimResources) {
     let mut free = r.sms;
     let mut demand = 0.0;
     for x in res.iter_mut() {
@@ -140,7 +140,7 @@ fn bandwidth(bytes: &[f64], solo: &[f64]) -> Vec<f64> {
 /// 2026-10-23: Solo work of every kernel: what the rate law integrates to over its measured
 /// running interval (three fixed-point rounds, since a kernel's DRAM demand depends on it).
 /// Non-kernel nodes keep `work`.
-pub fn solo_work(g: &Graph, work: &[f64], bytes: &[f64], r: &Resources) -> Vec<f64> {
+pub fn solo_work(g: &CriticalGraph, work: &[f64], bytes: &[f64], r: &SimResources) -> Vec<f64> {
     let cap: Vec<f64> = (0..g.nodes.len()).map(|i| cap_of(g, i, r)).collect();
     let mut solo = work.to_vec();
     let kernels: Vec<usize> = (0..g.nodes.len())
@@ -200,12 +200,12 @@ pub fn solo_work(g: &Graph, work: &[f64], bytes: &[f64], r: &Resources) -> Vec<f
 /// `Duration`/`PdlWait` weights are replaced by progress), `solo` each kernel's solo work,
 /// `bytes` each kernel's DRAM bytes, `cap` (optional) overrides of the capacity a node wants.
 pub fn simulate(
-    g: &Graph,
+    g: &CriticalGraph,
     w: &[f64],
     solo: &[f64],
     bytes: &[f64],
     cap_over: &[(usize, f64)],
-    r: &Resources,
+    r: &SimResources,
 ) -> Vec<f64> {
     let nn = g.nodes.len();
     let mut cap: Vec<f64> = (0..nn).map(|i| cap_of(g, i, r)).collect();
@@ -352,7 +352,7 @@ fn weighted_quantile(mut v: Vec<(f64, f64)>, q: f64) -> f64 {
 
 /// 2026-10-23: The measured schedule cut into maximal intervals during which the same
 /// byte-reading kernels do their in-context work: `(length us, kernels)`.
-fn intervals(g: &Graph, work: &[f64], bytes: &[f64]) -> Vec<(f64, Vec<usize>)> {
+fn intervals(g: &CriticalGraph, work: &[f64], bytes: &[f64]) -> Vec<(f64, Vec<usize>)> {
     let mut marks: Vec<(f64, bool, usize)> = Vec::new();
     for i in 0..g.nodes.len() {
         if g.nodes[i].kind != NodeKind::Kernel
@@ -394,7 +394,7 @@ fn intervals(g: &Graph, work: &[f64], bytes: &[f64]) -> Vec<(f64, Vec<usize>)> {
 /// rest), so the measured schedule is feasible and the shared bus binds only where a rewrite
 /// overlaps more DRAM traffic than the capture did. Returns the calibration and the bytes.
 pub fn calibrate_dram(
-    g: &Graph,
+    g: &CriticalGraph,
     work: &[f64],
     bytes: &[f64],
     peak: f64,

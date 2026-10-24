@@ -7,7 +7,7 @@
 //! Owner: metrale-circuit (hardware).
 //! Invariants:
 //! - Node `v` has events `2v` (start) and `2v + 1` (finish).
-//! - [`Graph::assemble`] refuses a cycle ([`ErrorCode::CriticalCaptureInvalid`] for a capture,
+//! - [`CriticalGraph::assemble`] refuses a cycle ([`ErrorCode::CriticalCaptureInvalid`] for a capture,
 //!   [`ErrorCode::WhatIfInvalid`] for a rewrite), so every graph carries a topological order.
 
 use crate::prelude::*;
@@ -138,7 +138,7 @@ impl Node {
 
 /// 2026-10-23: The event graph.
 #[derive(Debug, Clone)]
-pub struct Graph {
+pub struct CriticalGraph {
     /// 2026-10-23: The capture's fingerprint (named in errors).
     pub source: String,
     /// 2026-10-23: Nodes.
@@ -174,7 +174,7 @@ pub fn f_of(i: usize) -> u32 {
     s_of(i) | 1
 }
 
-/// 2026-10-23: An event or edge index as stored: [`Graph::assemble`] refuses a graph whose
+/// 2026-10-23: An event or edge index as stored: [`CriticalGraph::assemble`] refuses a graph whose
 /// events or edges do not fit `u32`, so the saturation is unreachable on an assembled graph.
 pub fn ix(k: usize) -> u32 {
     u32::try_from(k).unwrap_or(u32::MAX)
@@ -185,7 +185,7 @@ pub fn node_of(v: u32) -> usize {
     (v / 2) as usize
 }
 
-impl Graph {
+impl CriticalGraph {
     /// 2026-10-23: Index the edges and order the events; refuse a cycle.
     pub fn assemble(
         source: &str,
@@ -194,7 +194,7 @@ impl Graph {
         nodes: Vec<Node>,
         anchors: Vec<u32>,
         dropped: BTreeMap<EdgeKind, usize>,
-    ) -> metrale_error::Result<Graph> {
+    ) -> metrale_error::Result<CriticalGraph> {
         let nv = t.len();
         if nv != 2 * nodes.len()
             || u32::try_from(edges.len()).is_err()
@@ -252,7 +252,7 @@ impl Graph {
                 )
             ));
         }
-        Ok(Graph {
+        Ok(CriticalGraph {
             source: source.to_string(),
             nodes,
             t,
@@ -272,7 +272,7 @@ impl Graph {
         &self,
         edges: Vec<Edge>,
         extra: Vec<(Node, f64, f64)>,
-    ) -> metrale_error::Result<Graph> {
+    ) -> metrale_error::Result<CriticalGraph> {
         let mut nodes = self.nodes.clone();
         let mut t = self.t.clone();
         for (n, s, f) in extra {
@@ -280,7 +280,7 @@ impl Graph {
             t.push(s);
             t.push(f);
         }
-        Graph::assemble(
+        CriticalGraph::assemble(
             &self.source,
             t,
             edges,

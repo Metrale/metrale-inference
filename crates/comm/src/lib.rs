@@ -24,6 +24,33 @@ mod collective_wait;
 pub mod nccl_backend;
 #[cfg(feature = "nccl")]
 pub use nccl_backend::NcclBackend;
+#[cfg(feature = "nccl")]
+pub use nccl_backend::{ALL_REDUCE_DTYPE_BYTES, CommLevers, required_model_recv_bytes};
+
+/// 2026-10-23: Bootstrap the multi-rank communicator of this build (NCCL) and return it as a
+/// [`CommBackend`], so a caller outside this crate names no vendor (VBOP). The arguments and
+/// errors are `NcclBackend::new`'s.
+#[cfg(feature = "nccl")]
+pub fn bootstrap(
+    rank: usize,
+    world_size: usize,
+    master_addr: &str,
+    master_port: u16,
+    stream: u64,
+    recv_capacity: usize,
+    levers: CommLevers<'_>,
+) -> Result<std::sync::Arc<dyn CommBackend>> {
+    let backend = NcclBackend::new(
+        rank,
+        world_size,
+        master_addr,
+        master_port,
+        stream,
+        recv_capacity,
+        levers,
+    )?;
+    Ok(std::sync::Arc::new(backend))
+}
 
 /// 2026-10-10: Where a one-shot exchange left the other ranks' BF16 partials
 /// ([`CommBackend::exchange_partials`]): rank `r != rank` at

@@ -28,14 +28,27 @@ fn select_takes_roles_and_listed_tids_once() {
         (5, KEEPER_NAME),
     ]);
     let mut known = BTreeSet::new();
-    let got: Vec<i32> = select(&t, &[Role::CudaDriver, Role::NcclProxy], &[4, 5], &mut known)
-        .iter()
-        .map(|p| p.tid)
-        .collect();
+    let got: Vec<i32> = select(
+        &t,
+        &[Role::DriverHelper, Role::CollectiveProxy],
+        &[4, 5],
+        &mut known,
+    )
+    .iter()
+    .map(|p| p.tid)
+    .collect();
     assert_eq!(got, vec![2, 3, 4]);
-    assert!(select(&t, &[Role::CudaDriver, Role::NcclProxy], &[4], &mut known).is_empty());
+    assert!(
+        select(
+            &t,
+            &[Role::DriverHelper, Role::CollectiveProxy],
+            &[4],
+            &mut known
+        )
+        .is_empty()
+    );
     let mut fresh = BTreeSet::new();
-    let only_cuda: Vec<i32> = select(&t, &[Role::CudaDriver], &[], &mut fresh)
+    let only_cuda: Vec<i32> = select(&t, &[Role::DriverHelper], &[], &mut fresh)
         .iter()
         .map(|p| p.tid)
         .collect();
@@ -78,7 +91,7 @@ fn keeper_pins_present_and_later_threads_and_stops() {
     let k = WakeKeeper::start(KeeperConfig {
         mode: KeeperMode::Timer { period_us: 1000 },
         cpu,
-        roles: vec![Role::NcclProxy],
+        roles: vec![Role::CollectiveProxy],
         tids: vec![],
         rescan: Duration::from_millis(10),
     })

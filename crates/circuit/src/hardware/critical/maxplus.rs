@@ -19,7 +19,7 @@ use crate::prelude::*;
 
 use alloc::collections::BTreeMap;
 
-use super::graph::{EdgeKind, Graph, node_of};
+use super::graph::{CriticalGraph, EdgeKind, node_of};
 
 /// 2026-10-23: One launch latency per edge kind: the median measured gap over the edges of
 /// that kind that bound their target (the latest-arriving incoming edge); a kind that never
@@ -47,7 +47,7 @@ pub fn median(v: &mut [f64]) -> f64 {
 }
 
 /// 2026-10-23: Fit [`Latency`] on the capture's own window.
-pub fn fit_latency(g: &Graph) -> Latency {
+pub fn fit_latency(g: &CriticalGraph) -> Latency {
     let mut gaps: BTreeMap<EdgeKind, Vec<f64>> = BTreeMap::new();
     for v in 0..g.t.len() {
         let v32 = u32::try_from(v).unwrap_or(u32::MAX);
@@ -83,7 +83,7 @@ pub fn fit_latency(g: &Graph) -> Latency {
 /// 2026-10-23: Per node, its work in context: an operation's duration, or for a programmatic
 /// successor the part after the last predecessor it waits on finished; an API call's host time,
 /// or 0 for a call that blocks on the GPU (its wait is the `Sync` edge's).
-pub fn work_in_context(g: &Graph) -> Vec<f64> {
+pub fn work_in_context(g: &CriticalGraph) -> Vec<f64> {
     let mut wait = vec![f64::NEG_INFINITY; g.nodes.len()];
     let mut blocking = vec![false; g.nodes.len()];
     for e in &g.edges {
@@ -109,7 +109,7 @@ pub fn work_in_context(g: &Graph) -> Vec<f64> {
 
 /// 2026-10-23: Edge weights from per-node work, the capture's host gaps and programmatic start
 /// offsets, and `lat` (`None`: every latency edge its measured gap, the replay).
-pub fn weights(g: &Graph, work: &[f64], lat: Option<&Latency>) -> Vec<f64> {
+pub fn weights(g: &CriticalGraph, work: &[f64], lat: Option<&Latency>) -> Vec<f64> {
     g.edges
         .iter()
         .enumerate()
@@ -125,7 +125,7 @@ pub fn weights(g: &Graph, work: &[f64], lat: Option<&Latency>) -> Vec<f64> {
 }
 
 /// 2026-10-23: Earliest time of every event under weights `w`.
-pub fn longest(g: &Graph, w: &[f64]) -> Vec<f64> {
+pub fn longest(g: &CriticalGraph, w: &[f64]) -> Vec<f64> {
     let mut at = vec![f64::NEG_INFINITY; g.t.len()];
     for &v in &g.topo {
         let inc = g.incoming(v);
@@ -145,7 +145,7 @@ pub fn longest(g: &Graph, w: &[f64]) -> Vec<f64> {
 }
 
 /// 2026-10-23: The mean step between the first and the last anchor, microseconds.
-pub fn step_us(g: &Graph, at: &[f64]) -> f64 {
+pub fn step_us(g: &CriticalGraph, at: &[f64]) -> f64 {
     let (a, b) = (
         g.anchors[0] as usize,
         g.anchors[g.anchors.len() - 1] as usize,
@@ -155,7 +155,7 @@ pub fn step_us(g: &Graph, at: &[f64]) -> f64 {
 
 /// 2026-10-23: The critical chain: the edges that bind, walked back from the last anchor to the
 /// first, latest first.
-pub fn critical_chain(g: &Graph, w: &[f64], at: &[f64]) -> Vec<u32> {
+pub fn critical_chain(g: &CriticalGraph, w: &[f64], at: &[f64]) -> Vec<u32> {
     let stop = at[g.anchors[0] as usize];
     let mut v = g.anchors[g.anchors.len() - 1];
     let mut chain = Vec::new();
@@ -175,7 +175,7 @@ pub fn critical_chain(g: &Graph, w: &[f64], at: &[f64]) -> Vec<u32> {
 
 /// 2026-10-23: Latest time of every event that keeps the last anchor at `at`; `+inf` for an
 /// event the last anchor does not depend on.
-pub fn latest(g: &Graph, w: &[f64], at: &[f64]) -> Vec<f64> {
+pub fn latest(g: &CriticalGraph, w: &[f64], at: &[f64]) -> Vec<f64> {
     let mut late = vec![f64::INFINITY; g.t.len()];
     let last = g.anchors[g.anchors.len() - 1] as usize;
     late[last] = at[last];

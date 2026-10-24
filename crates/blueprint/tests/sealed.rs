@@ -18,7 +18,7 @@ use metrale_blueprint::resolve::{self, no_store};
 use metrale_blueprint::resolve_sealed::{
     full_sealed, lite_sealed, resolve_unsealed, unseal, verify_ciphertexts,
 };
-use metrale_blueprint::sealing::Placement;
+use metrale_blueprint::sealing::CiphertextPlacement;
 use metrale_error::ErrorCode;
 
 fn open(w: &World, f: &[u8]) -> Opened {
@@ -48,7 +48,7 @@ fn plain_and_sealed_lite_and_full_share_one_identity_and_one_body_signature() {
         &plain_lite,
         &[&recipient(7)],
         "acme",
-        Placement::Remote { base: BASE },
+        CiphertextPlacement::Remote { base: BASE },
         0,
     );
     let files = [&plain_lite, &plain_full, &sealed_full, &remote.file];
@@ -84,7 +84,14 @@ fn plaintexts(w: &World, f: &[u8], key: &metrale_seal::HybridSecret) -> Vec<Vec<
 fn every_recipient_opens_every_module_to_its_plaintext() {
     let w = world();
     let (a, b) = (recipient(7), recipient(8));
-    let out = seal_for(&w, &w.signed(), &[&b, &a], "acme", Placement::Inline, 0);
+    let out = seal_for(
+        &w,
+        &w.signed(),
+        &[&b, &a],
+        "acme",
+        CiphertextPlacement::Inline,
+        0,
+    );
     assert_eq!(out.recipients.len(), 2);
     assert!(out.recipients[0] < out.recipients[1], "written sorted");
     for key in [&a, &b] {
@@ -177,7 +184,7 @@ fn remote_ciphertexts_are_named_by_their_hash_only() {
         &w.signed(),
         &[&recipient(7)],
         "acme-corp",
-        Placement::Remote { base: BASE },
+        CiphertextPlacement::Remote { base: BASE },
         0,
     );
     let o = open(&w, &out.file);
@@ -233,7 +240,7 @@ fn sealing_is_deterministic_in_its_randomness_and_fresh_per_run() {
         &w.signed(),
         &[&recipient(7)],
         "acme",
-        Placement::Inline,
+        CiphertextPlacement::Inline,
         0,
     )
     .file;
@@ -242,7 +249,7 @@ fn sealing_is_deterministic_in_its_randomness_and_fresh_per_run() {
         &w.signed(),
         &[&recipient(7)],
         "acme",
-        Placement::Inline,
+        CiphertextPlacement::Inline,
         0,
     )
     .file;
@@ -251,7 +258,7 @@ fn sealing_is_deterministic_in_its_randomness_and_fresh_per_run() {
         &w.signed(),
         &[&recipient(7)],
         "acme",
-        Placement::Inline,
+        CiphertextPlacement::Inline,
         1,
     )
     .file;
@@ -277,7 +284,7 @@ fn sealing_refuses_what_it_cannot_state() {
                     customer_id: customer,
                     issued_ms: NOW,
                     codec: Codec::Kzx,
-                    placement: Placement::Inline,
+                    placement: CiphertextPlacement::Inline,
                 },
                 run_random(0, n),
                 &w.leaf,

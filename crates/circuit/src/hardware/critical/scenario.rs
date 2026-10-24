@@ -21,9 +21,9 @@ use alloc::collections::BTreeMap;
 use metrale_error::{ErrorCode, error};
 use serde::Deserialize;
 
-use super::graph::{EdgeKind, Graph, Node, NodeKind, ix, node_of};
+use super::graph::{CriticalGraph, EdgeKind, Node, NodeKind, ix, node_of};
 use super::maxplus::{Latency, weights};
-use super::sim::{Resources, cap_of};
+use super::sim::{SimResources, cap_of};
 
 /// 2026-10-23: Selects operations by attributed site (`block.local`) and/or kernel name.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -111,7 +111,7 @@ pub enum Prologue {
 #[derive(Debug, Clone)]
 pub struct Scenario {
     /// 2026-10-23: The graph.
-    pub g: Graph,
+    pub g: CriticalGraph,
     /// 2026-10-23: Per node, work in context (max-plus).
     pub work: Vec<f64>,
     /// 2026-10-23: Per node, the capture's work in context (before any rewrite): a programmatic
@@ -233,7 +233,7 @@ impl Scenario {
         ratio: f64,
         extra: f64,
         cap: Option<f64>,
-        r: &Resources,
+        r: &SimResources,
     ) {
         let lead = run[0];
         let sum = |v: &[f64]| run.iter().map(|&m| v[m]).sum::<f64>();
@@ -266,7 +266,7 @@ impl Scenario {
         &mut self,
         rw: &Rewrite,
         lat: &Latency,
-        r: &Resources,
+        r: &SimResources,
     ) -> metrale_error::Result<usize> {
         let sels: Vec<&Sel> = match rw {
             Rewrite::Shrink { select, .. } => vec![select],

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-10-23: Shape tests for the GLM mHC launchers (`glm5next_mhc.rs`).
+
 use super::*;
 
 /// 2026-09-25: `mix_hc` is the pre, post and comb row counts added, for `hc_mult` 1 to 8.

@@ -344,7 +344,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-kda-recurrent-cu-kda-recurrent-decode-bf16-seq-reg-snap"></a>
 
-### `kda_recurrent_decode_bf16_seq_reg_snap` — [kernels/gb10/common/kda_recurrent.cu](../../kernels/gb10/common/kda_recurrent.cu#L512)
+### `kda_recurrent_decode_bf16_seq_reg_snap` — [kernels/gb10/common/kda_recurrent.cu](../../kernels/gb10/common/kda_recurrent.cu#L498)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
