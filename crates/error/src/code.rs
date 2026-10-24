@@ -279,11 +279,78 @@ error_registry! {
         /// refused, never run on another path: (the path, bytes, why).
         CollectivePathRefused = 0x0723 => "the {} path cannot run {} bytes here: {}",
     }
+    /// 2026-10-23: `0x0800–0x08FF`: the kernel knowledge graph (`metrale-kg-derive`,
+    /// `metrale-io-host-kg`, `metrale-kg-mcp`; DESIGN-kernel-knowledge-graph.md). Confirmed
+    /// 2026-10-23 by delegated decision (the owner's reserved block). Sub-blocks: bundle
+    /// integrity `0x0800–0x080F`, sources and records `0x0810–0x081F`, embedder `0x0820–0x082F`,
+    /// store and tools `0x0830–0x083F`.
+    KnowledgeGraph = 0x0800..=0x08FF {
+        /// 2026-10-23: A record names a node no source defines: (where, the reference).
+        KgDanglingRef = 0x0800 => "{} references {}, which no source defines",
+        /// 2026-10-23: Two records derive the same id: (id, first source, second source).
+        KgDuplicateId = 0x0801 => "id {} is derived twice ({} and {})",
+        /// 2026-10-23: Two typed ids hash to one u64 point id: (id, id, point id).
+        KgIdCollision = 0x0802 => "ids {} and {} collide on point id {}",
+        /// 2026-10-23: A LEDGER.tsv row its checker refuses: (where, reason).
+        KgBadLedgerRow = 0x0803 => "{}: {}",
+        /// 2026-10-23: A record that is not in its file's row format: (where, reason).
+        KgBadRow = 0x0804 => "{}: {}",
+        /// 2026-10-23: More node labels than a collection holds: (needed, limit).
+        KgTooManyLabels = 0x0805 => "the ontology needs {} labels; a collection holds {}",
+        /// 2026-10-23: A field matched the secrets denylist and was dropped: (where, pattern).
+        KgSecretRedacted = 0x0806 => "{}: a field matched the secrets denylist ({}) and was dropped",
+        /// 2026-10-23: A LEDGER `gate` claim outside the grammar: (where, claim, reason).
+        KgBadClaim = 0x0807 => "{}: claim `{}`: {}",
+        /// 2026-10-23: An id that does not parse as `<label-prefix>:<key>`: (id, reason).
+        KgBadId = 0x0808 => "id `{}`: {}",
+        /// 2026-10-23: A memory `[[wikilink]]` to a memory not written yet: a deliberate forward
+        /// reference (the memory rules), reported apart from integrity errors: (at, target).
+        KgForwardLink = 0x0809 => "{} links to {}, which is not written yet",
+        /// 2026-10-23: The LKB's own inventory script refused to build (its model is strict):
+        /// (script, its first refusal line and count). The graph keeps the rest of the LKB.
+        KgInventoryRefused = 0x080A => "{} refused to build the kernel inventory: {}",
+        /// 2026-10-23: The inventory script built the inventory but reported a problem other than
+        /// an unclassified kernel: (script, `kind: text`). Not fatal; the inventory is kept.
+        KgInventoryProblem = 0x080B => "{} reports an inventory problem: {}",
+        /// 2026-10-23: A whole LKB file its own reader refuses (fatal; every node of it would be
+        /// missing): (path, the reader's error).
+        KgLkbFileRejected = 0x080C => "{} is refused as a whole by its reader: {}",
+        /// 2026-10-23: A config field missing or invalid; there is no default: (field, reason).
+        KgConfig = 0x0810 => "kg config {}: {}",
+        /// 2026-10-23: A source its host could not read or stat: (path, reason).
+        KgSource = 0x0811 => "kg source {}: {}",
+        /// 2026-10-23: A file's own validator refused a record; the file is unchanged:
+        /// (validator, its output).
+        KgValidatorRejected = 0x0812 => "validator {} refused the record: {}",
+        /// 2026-10-23: A record write that could not complete: (path, reason).
+        KgRecordWrite = 0x0813 => "kg record {}: {}",
+        /// 2026-10-23: The bundle could not be re-derived; results are stale: (reason).
+        KgStaleBundle = 0x0814 => "the bundle is stale: {}",
+        /// 2026-10-23: The embedder is in its declared unavailable mode or failed: (reason).
+        KgEmbedderUnavailable = 0x0820 => "embedder unavailable: {}",
+        /// 2026-10-23: The embedder kept rate-limiting: (attempts).
+        KgEmbedRateLimited = 0x0821 => "embedder still rate-limited or failing (HTTP 429/5xx) after {} attempts",
+        /// 2026-10-23: An embedder response outside its protocol: (reason).
+        KgEmbedProtocol = 0x0822 => "embedder response: {}",
+        /// 2026-10-23: An embedding of another width than the config declares: (got, declared).
+        KgEmbedDim = 0x0823 => "embedder returned dimension {}; the config declares {}",
+        /// 2026-10-23: The provider refused a request it should accept by what we sent (e.g. an
+        /// input-length refusal when every input is within `max_input_chars`): (what it said and
+        /// the request shape).
+        KgEmbedderFault = 0x0824 => "embedder fault: {}",
+        /// 2026-10-23: A Cypher text `kg_query` refuses: (reason).
+        KgCypherRejected = 0x0830 => "cypher refused: {}",
+        /// 2026-10-23: A graph store operation failed: (operation, reason).
+        KgStore = 0x0831 => "kg store {}: {}",
+        /// 2026-10-23: A tool argument outside its schema: (argument, reason).
+        KgToolArgument = 0x0832 => "kg tool argument {}: {}",
+        /// 2026-10-23: An id that names no node: (id).
+        KgUnknownId = 0x0833 => "no node {}",
+    }
     /// 2026-10-22: `0x0900–0x09FF`: power and energy (DESIGN-kernel-energy.md): the power port
     /// and its meters `0x0900–0x090F`, energy attribution `0x0910–0x091F`, power traces
     /// `0x0920–0x092F`, statistics (`metrale-stats`) `0x0930–0x093F`, cost `0x0940–0x094F`,
-    /// measurement rows `0x0950–0x095F`, external meters `0x0960–0x096F`. `0x0800` is left to
-    /// the next block an owner confirms.
+    /// measurement rows `0x0950–0x095F`, external meters `0x0960–0x096F`.
     Energy = 0x0900..=0x09FF {
         /// 2026-10-22: A power source that cannot be opened here: (source, reason).
         PowerSourceUnavailable = 0x0900 => "power source {} is unavailable: {}",

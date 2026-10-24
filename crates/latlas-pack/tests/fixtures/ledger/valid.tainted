@@ -1,0 +1,7 @@
+a	retracted by z
+b	depends on a
+c	depends on a
+d	depends on a
+e	depends on b
+g	depends on d
+h	depends on g

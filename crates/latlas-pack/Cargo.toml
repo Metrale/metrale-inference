@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-latlas-pack"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: the metrale pack for Latlas: campaign records and the LKB into a Latlas bundle, and the ledger closures ledger.py agrees with; no_std, no I/O."
+
+# 2026-10-23: Pure (DESIGN-latlas.md §5.3, K1): was metrale-kg-derive; the generic core is
+# latlas-core (Avarok-Cybersecurity/latlas). Hosts live in metrale-io-host-kg, the binary in
+# metrale-kg-mcp. no_std + alloc, forbid(unsafe_code), builds for both wasm32 targets (NSCC).
+[dependencies]
+# 2026-10-23: The Latlas core, the claude-code adapters and the registry error the core's API
+# returns (CLER: the binary maps it into Metrale's 0x0800 block at its edge).
+latlas-adapters = { workspace = true }
+# 2026-10-23: The score's pack contract (`Checks`), implemented in src/check.rs (K2).
+latlas-check = { workspace = true }
+latlas-core = { workspace = true }
+latlas-error = { workspace = true }
+# 2026-10-23: The LKB readers (families, rules, measurements, instances, plans, critical pairs):
+# the schema owners, never re-parsed here (SSOT).
+metrale-circuit = { workspace = true }
+serde = { workspace = true, features = ["alloc", "derive"] }
+serde_json = { workspace = true, features = ["alloc"] }
+toml = { workspace = true, features = ["serde", "parse"] }
+
+# 2026-10-23: The embed pipeline test drives the core's async embed loop with an in-memory clock.
+[dev-dependencies]
+latlas-ports = { workspace = true }
+
+[lints]
+workspace = true
+
+[package.metadata.metrale]
+role = "core"
