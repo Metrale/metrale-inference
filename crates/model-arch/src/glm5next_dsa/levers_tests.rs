@@ -103,17 +103,13 @@ fn the_strict_prefill_switches_read_as_before_and_take_the_switch_spellings() {
 fn the_opt_in_switches_read_as_before_except_the_switch_spellings() {
     // 2026-10-22: `METRALE_GLM_DSA_SCORES_PIPE` and `METRALE_GLM_DSA_TOPK_RADIX` left this list
     // (default on): `the_default_on_decode_levers_turn_off_one_at_a_time` probes them.
-    let cases: [Field<bool>; 6] = [
+    let cases: [Field<bool>; 4] = [
         ("METRALE_GLM_DSA_HB_PREFILL_ONE_SPLIT", |l| {
             l.prefill.one_split
         }),
         ("METRALE_GLM_DSA_SCORES_TILED", |l| l.select.scores_tiled),
         ("METRALE_GLM_DSA_SCORES_MMA", |l| l.select.scores_mma),
         ("METRALE_GLM_DSA_SELECT_FUSED", |l| l.select.select_fused),
-        ("METRALE_GLM_DSA_POOL_KEYS_BF16", |l| l.select.pool_keys_bf16),
-        ("METRALE_GLM_DSA_DECODE_SCORES_MMA", |l| {
-            l.select.decode_scores_mma
-        }),
     ];
     for (env, field) in cases {
         let changes = check(
@@ -310,14 +306,25 @@ fn the_check_dir_text_reads_as_before() {
 /// exact launch's radix top-k and the streamed tensor-core scores.
 #[test]
 fn the_default_on_decode_levers_turn_off_one_at_a_time() {
-    let cases: [Field<bool>; 7] = [
+    let cases: [Field<bool>; 9] = [
         ("METRALE_GLM_DSA_TOPK_RADIX", |l| l.select.topk_radix),
         ("METRALE_GLM_DSA_SCORES_PIPE", |l| l.select.scores_pipe),
-        ("METRALE_GLM_DSA_DECODE_TOPK_RADIX", |l| l.select.decode_topk_radix),
+        ("METRALE_GLM_DSA_DECODE_TOPK_RADIX", |l| {
+            l.select.decode_topk_radix
+        }),
         ("METRALE_GLM_DSA_SCORES_WARP", |l| l.select.scores_warp),
         ("METRALE_GLM_DSA_SCORES_HEADS", |l| l.select.scores_heads),
-        ("METRALE_GLM_DSA_SCORES_HEADS_WINDOW", |l| l.select.scores_heads_window),
+        ("METRALE_GLM_DSA_SCORES_HEADS_WINDOW", |l| {
+            l.select.scores_heads_window
+        }),
         ("METRALE_GLM_DSA_TOPK_MC", |l| l.select.topk_mc),
+        // 2026-10-24: Default on (LEDGER dsa-step3-gpu).
+        ("METRALE_GLM_DSA_POOL_KEYS_BF16", |l| {
+            l.select.pool_keys_bf16
+        }),
+        ("METRALE_GLM_DSA_DECODE_SCORES_MMA", |l| {
+            l.select.decode_scores_mma
+        }),
     ];
     for (env, f) in cases {
         assert_eq!(new_at(env, None, f), Some(true), "{env}");
@@ -327,7 +334,11 @@ fn the_default_on_decode_levers_turn_off_one_at_a_time() {
         assert_eq!(new_at(env, Some("garbage"), f), None, "{env}");
         for (other, g) in cases {
             if other != env {
-                assert_eq!(new_at(env, Some("0"), g), Some(true), "{env}=0 leaves {other}");
+                assert_eq!(
+                    new_at(env, Some("0"), g),
+                    Some(true),
+                    "{env}=0 leaves {other}"
+                );
             }
         }
     }
@@ -335,7 +346,8 @@ fn the_default_on_decode_levers_turn_off_one_at_a_time() {
 
 /// 2026-10-17: Every lever off at the declared defaults, as each old reader read unset.
 /// 2026-10-21: except `decode_topk_radix`, `scores_warp`, `scores_heads` and `topk_mc`, new
-/// default-on levers with no old reader. 2026-10-22: and `scores_heads_window`.
+/// default-on levers with no old reader. 2026-10-22: and `scores_heads_window`. 2026-10-24: and
+/// `pool_keys_bf16` / `decode_scores_mma`.
 #[test]
 fn the_declared_defaults_are_the_old_unset_values() {
     let s = defaults();
@@ -364,8 +376,9 @@ fn the_declared_defaults_are_the_old_unset_values() {
                 scores_heads: true,
                 scores_heads_window: true,
                 topk_mc: true,
-                pool_keys_bf16: false,
-                decode_scores_mma: false,
+                // 2026-10-24: Default on (LEDGER dsa-step3-gpu).
+                pool_keys_bf16: true,
+                decode_scores_mma: true,
             },
             serve_ref: false,
             sp_agreement: 0,
