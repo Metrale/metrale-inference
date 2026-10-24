@@ -18,13 +18,18 @@ Two sources feed a snapshot:
           hardware, compiled or not. Gives (a) only. It is the only view of
           hardware with no compiler on this host (strix, strix-hip, metal).
 
-Normalisation, so a move or a deletion elsewhere in the module does not show
-as a change. Each rule removes a name the compiler derives from position or
-path, never an instruction:
+Normalisation (scripts/lib/ptx_canon.py), so a move or a deletion elsewhere
+in the module, or a second compile of the same source, does not show as a
+change. Each rule removes a name, never an instruction:
   - per-function counters: `$L__BB<f>_<n>`, `__local_depot<f>`, `$L__tmp<n>`;
+  - virtual registers (`%r`, `%rd`, `%f`, `%p`, ...) renamed in first-use
+    order per function, and the `.reg` counts; nvcc numbers them differently
+    from one compile of an unchanged file to the next;
   - module-numbered symbols (`$str`, `$str$<n>`, `__unnamed_<n>`) renamed in
     first-use order within the entry's closure;
-  - `_INTERNAL_<hash>_<len>_<file>_<hash>` TU ids (they encode the path);
+  - `_INTERNAL_<hash>_<len>_<file>_<hash>` TU ids (they encode the path), and
+    in a mangled name the per-compile digits after them, cut by the length
+    prefix;
   - byte-array initialisers that decode to a path ending in a kernel source
     extension (device asserts embed the staged path) become `<PATH>`;
   - `.file`/`.loc` debug lines and comments.
@@ -36,8 +41,9 @@ Trailing `// callseq N` comments (module-numbered) are dropped with all comments
 Usage:
   kernel_neutrality.py snapshot-ptx --profile-dir target/release --out gb10.json [--keep-dir D]
   kernel_neutrality.py explain BASE.json HEAD.json TARGET MODULE KERNEL
+  kernel_neutrality.py rehash SNAP.json --out SNAP2.json
   kernel_neutrality.py snapshot-source --root . --out src.json
-  kernel_neutrality.py diff BASE.json HEAD.json [--expect-deleted names.txt]
+  kernel_neutrality.py diff BASE.json HEAD.json [--expect-deleted names.txt] [--noise BASE2.json]
 
 `--expect-deleted` lists `module::kernel` (or `kernel`) lines. The diff passes
 only if the removed entries are exactly those, nothing is added, and every
@@ -63,15 +69,11 @@ import tempfile
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))
+from ptx_canon import canonical_text, kernel_hashes  # noqa: E402
+
 BENCH_LOCK = Path(os.environ.get("METRALE_BENCH_LOCK", "/workspace/claude-state/glm/agentic/BENCH_ACTIVE"))
 
-_TOP = re.compile(r"^(?:\.visible\s+|\.weak\s+|\.extern\s+)*\.(entry|func)\s+(?:\([^)]*\)\s*)?([A-Za-z_$][\w$]*)")
-_DECL = re.compile(r"^(?:\.visible\s+|\.weak\s+|\.extern\s+)*\.(global|const|shared)\b.*?([A-Za-z_$][\w$]*)\s*(?:\[[^\]]*\])*\s*(?:=|;)")
-_IDENT = re.compile(r"[A-Za-z_$%][\w$]*")
-_NUMBERED = re.compile(r"^(\$str(\$\d+)?|__unnamed_\d+)$")
-_INTERNAL = re.compile(r"[0-9a-f]{8}_\d+_[A-Za-z0-9_]*?_(?:cu|cuh|hip)_[0-9a-f]{8}")
-_BYTES = re.compile(r"=\s*\{([\d,\s]+)\}")
-_PATH_EXT = (".cu", ".cuh", ".h", ".hip", ".metal")
 _PTXAS_ENTRY = re.compile(r"Compiling entry function '([^']+)'")
 _PTXAS_PROPS = re.compile(r"(\d+) bytes stack frame, (\d+) bytes spill stores, (\d+) bytes spill loads")
 _PTXAS_USED = re.compile(r"Used (\d+) registers(.*)")
@@ -102,142 +104,6 @@ def wait_clear() -> None:
             print("kernel_neutrality: waiting, a GPU bench holds the lock", file=sys.stderr)
             announced = True
         time.sleep(30)
-
-
-# ── PTX parsing ───────────────────────────────────────────────────────────
-def split_module(text: str):
-    """Top-level items of one PTX module: {name: (kind, lines)} plus entry order."""
-    lines = [re.sub(r"\s*//.*$", "", ln) for ln in text.splitlines()
-             if not ln.lstrip().startswith((".file", ".loc"))]
-    lines = [ln for ln in lines if ln.strip()]
-    items: dict[str, tuple[str, list[str]]] = {}
-    entries: list[str] = []
-    i = 0
-    while i < len(lines):
-        ln = lines[i]
-        m = _TOP.match(ln)
-        if m:
-            kind, name = m.group(1), m.group(2)
-            j = i
-            body = [ln]
-            if not ln.rstrip().endswith(";"):
-                depth = 0
-                opened = False
-                while j < len(lines):
-                    cur = lines[j] if j > i else ln
-                    if j > i:
-                        body.append(cur)
-                    depth += cur.count("{") - cur.count("}")
-                    opened = opened or "{" in cur
-                    if opened and depth == 0:
-                        break
-                    if not opened and cur.rstrip().endswith(";"):
-                        break
-                    j += 1
-            prev = items.get(name)
-            if prev is None or len(body) > len(prev[1]):
-                items[name] = ("entry" if kind == "entry" else "func", body)
-            if kind == "entry" and ln.lstrip().startswith(".visible") and name not in entries:
-                entries.append(name)
-            i = j + 1
-            continue
-        d = _DECL.match(ln)
-        if d and not ln.startswith(("\t", " ")):
-            items[d.group(2)] = ("decl", [ln])
-        i += 1
-    return items, entries
-
-
-def _mask_bytes(line: str) -> str:
-    m = _BYTES.search(line)
-    if not m:
-        return line
-    try:
-        s = bytes(int(x) for x in m.group(1).split(",") if x.strip()).rstrip(b"\0").decode()
-    except (ValueError, UnicodeDecodeError):
-        return line
-    if "/" in s and s.endswith(_PATH_EXT):
-        return re.sub(r"\[\d+\]", "[]", line[: m.start()]) + "= <PATH>;"
-    return line
-
-
-def _normalise_body(body: list[str]) -> list[str]:
-    out = []
-    for ln in body:
-        ln = re.sub(r"\$L__BB\d+_", "$L__BB_", ln)
-        ln = re.sub(r"__local_depot\d+", "__local_depot", ln)
-        ln = re.sub(r"\$L__tmp\d+", "$L__tmp", ln)
-        ln = _INTERNAL.sub("<TU>", ln)
-        out.append(ln.rstrip())
-    return out
-
-
-def _mask_assert_lines(body: list[str]) -> tuple[list[str], list[int]]:
-    """Mask the line-number immediate (param2) of each `__assertfail` call block.
-
-    Returns the masked body and the masked values, so a diff can still report them."""
-    out, vals, start = list(body), [], None
-    for i, ln in enumerate(body):
-        t = ln.strip()
-        if t == "{":
-            start = i
-        elif t == "}" and start is not None:
-            block = body[start:i]
-            if any("__assertfail" in b for b in block):
-                for j in range(start, i):
-                    m = re.match(r"(\s*st\.param\.b32\s+\[param2\],\s*)(\d+);", out[j])
-                    if m:
-                        vals.append(int(m.group(2)))
-                        out[j] = m.group(1) + "<L>;"
-            start = None
-    return out, vals
-
-
-def _canonical(items: dict, names: set[str], e: str) -> tuple[list[str], list]:
-    """The lines an entry's hash covers: its body, then every declaration it reaches, renamed."""
-    order: list[str] = []
-    seen = {e}
-    stack = [e]
-    while stack:
-        cur = stack.pop()
-        for ln in items[cur][1]:
-            for tok in _IDENT.findall(ln):
-                if tok in names and tok not in seen:
-                    seen.add(tok)
-                    order.append(tok)
-                    stack.append(tok)
-    rename = {}
-    for tok in [e] + order:
-        if _NUMBERED.match(tok):
-            rename[tok] = f"$G{len(rename)}"
-
-    def sub(ln: str) -> str:
-        return _IDENT.sub(lambda m: rename.get(m.group(0), m.group(0)), ln)
-
-    masked, alines = _mask_assert_lines(_normalise_body(items[e][1]))
-    out = [sub(ln) for ln in masked]
-    for tok in sorted(order, key=lambda t: rename.get(t, t)):
-        out.append(f"\0{rename.get(tok, tok)}\0")
-        out.extend(_mask_bytes(sub(ln)) for ln in _mask_assert_lines(_normalise_body(items[tok][1]))[0])
-    return out, alines
-
-
-def kernel_hashes(text: str) -> dict[str, dict]:
-    items, entries = split_module(text)
-    names = set(items)
-    result = {}
-    for e in entries:
-        lines, alines = _canonical(items, names, e)
-        h = hashlib.sha256()
-        for ln in lines:
-            h.update(ln.encode() + (b"" if ln.startswith("\0") else b"\n"))
-        result[e] = {"hash": h.hexdigest()[:24], "assert_line": alines}
-    return result
-
-
-def canonical_text(text: str, entry: str) -> list[str]:
-    items, _ = split_module(text)
-    return _canonical(items, set(items), entry)[0]
 
 
 # ── ptxas ─────────────────────────────────────────────────────────────────
@@ -370,6 +236,19 @@ def explain(base: dict, head: dict, target: str, module: str, kernel: str) -> in
     return 0
 
 
+def rehash(snap: dict) -> dict:
+    """Recompute every entry hash of a --keep-dir snapshot with the current canonical form (ptxas kept)."""
+    cache: dict[str, dict] = {}
+    for t, mods in snap["files"].items():
+        for mod, sha in mods.items():
+            if sha not in cache:
+                ptx = gzip.decompress((Path(snap["keep_dir"]) / f"{sha}.ptx.gz").read_bytes()).decode()
+                cache[sha] = kernel_hashes(ptx)
+            for k, v in snap["targets"][t][mod].items():
+                v.update(hash=cache[sha][k]["hash"], assert_line=cache[sha][k]["assert_line"])
+    return snap
+
+
 def snapshot_source(root: Path) -> dict:
     sys.path.insert(0, str(root / "scripts" / "lib"))
     import kernel_perf_inventory as inventory  # noqa: E402
@@ -384,8 +263,12 @@ def snapshot_source(root: Path) -> dict:
 
 
 # ── diff ──────────────────────────────────────────────────────────────────
-def diff(base: dict, head: dict, expect: set[str] | None) -> int:
-    removed, added, changed, regs, aline, gone_t, new_t = [], [], [], [], [], [], []
+def diff(base: dict, head: dict, expect: set[str] | None, noise: list[dict]) -> int:
+    """`noise` holds rebuilds of the base: an entry whose hash already differs between two builds of
+    the base source is compiler nondeterminism, so its head change is reported but not failed."""
+    removed, added, changed, regs, aline, gone_t, new_t, noisy = [], [], [], [], [], [], [], []
+    varies = {(t, mod, k) for n in noise for t, ms in base["targets"].items() for mod, ks in ms.items()
+              for k, v in ks.items() if n["targets"].get(t, {}).get(mod, {}).get(k, v)["hash"] != v["hash"]}
     for t in sorted(set(base["targets"]) | set(head["targets"])):
         if t not in head["targets"]:
             gone_t.append(t)
@@ -403,7 +286,7 @@ def diff(base: dict, head: dict, expect: set[str] | None) -> int:
             for k in sorted(set(bk) & set(hk)):
                 a, b = bk[k], hk[k]
                 if a.get("hash") != b.get("hash"):
-                    changed.append((t, mod, k))
+                    (noisy if (t, mod, k) in varies else changed).append((t, mod, k))
                 if a.get("ptxas") != b.get("ptxas"):
                     regs.append((t, mod, k, a.get("ptxas"), b.get("ptxas")))
                 if a.get("assert_line") != b.get("assert_line"):
@@ -414,6 +297,9 @@ def diff(base: dict, head: dict, expect: set[str] | None) -> int:
     print(f"removed entries: {len(removed)} ({len({(m, k) for _, m, k in removed})} distinct module::kernel)")
     print(f"added entries: {len(added)}")
     print(f"hash changed: {len(changed)}")
+    if noise:
+        print(f"entries that differ between base builds: {len(varies)}; of those changed in head "
+              f"(tolerated): {len(noisy)}")
     print(f"ptxas changed: {len(regs)}")
     print(f"assert line arg changed (informational): {len(aline)}")
     for t in gone_t:
@@ -422,6 +308,8 @@ def diff(base: dict, head: dict, expect: set[str] | None) -> int:
         print(f"  TARGET NEW {t}")
     for row in added[:50]:
         print("  ADDED", *row)
+    for row in noisy[:20]:
+        print("  NOISY", *row)
     for row in changed[:50]:
         print("  HASH", *row)
     for row in regs[:50]:
@@ -470,12 +358,20 @@ def main(argv: list[str]) -> int:
     c.add_argument("base", type=Path)
     c.add_argument("head", type=Path)
     c.add_argument("--expect-deleted", type=Path)
+    c.add_argument("--noise", type=Path, action="append", default=[],
+                   help="a second snapshot of the base build (repeatable); see diff()")
+    r = sp.add_parser("rehash")
+    r.add_argument("snapshot", type=Path)
+    r.add_argument("--out", type=Path, required=True)
     e = sp.add_parser("explain")
     for arg in ("base", "head"):
         e.add_argument(arg, type=Path)
     for arg in ("target", "module", "kernel"):
         e.add_argument(arg)
     ns = ap.parse_args(argv)
+    if ns.cmd == "rehash":
+        ns.out.write_text(json.dumps(rehash(json.loads(ns.snapshot.read_text())), sort_keys=True))
+        return 0
     if ns.cmd == "explain":
         return explain(json.loads(ns.base.read_text()), json.loads(ns.head.read_text()),
                        ns.target, ns.module, ns.kernel)
@@ -489,7 +385,8 @@ def main(argv: list[str]) -> int:
     if ns.expect_deleted:
         expect = {ln.strip() for ln in ns.expect_deleted.read_text().splitlines()
                   if ln.strip() and not ln.startswith("#")}
-    return diff(json.loads(ns.base.read_text()), json.loads(ns.head.read_text()), expect)
+    return diff(json.loads(ns.base.read_text()), json.loads(ns.head.read_text()), expect,
+                [json.loads(p.read_text()) for p in ns.noise])
 
 
 if __name__ == "__main__":
