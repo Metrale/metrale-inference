@@ -104,7 +104,10 @@ pub(super) fn k4_apply_verdict(
             // 2026-09-25: the SSM state cannot be trusted after a failed
             // commit, so the sequence ends.
             tracing::error!("commit_accepted_prefix (K={k_rows} accept-{k_rows}): {e:#}");
-            a.finished = true;
+            crate::scheduler::lifecycle::fail_sequence(
+                a,
+                format!("commit_accepted_prefix (K={k_rows} accept-{k_rows}): {e:#}"),
+            );
             return;
         }
     } else {
@@ -125,7 +128,13 @@ pub(super) fn k4_apply_verdict(
                 "commit_accepted_prefix (K={k_rows} accept-{}): {e:#}",
                 na + 1
             );
-            a.finished = true;
+            crate::scheduler::lifecycle::fail_sequence(
+                a,
+                format!(
+                    "commit_accepted_prefix (K={k_rows} accept-{}): {e:#}",
+                    na + 1
+                ),
+            );
             return;
         }
         for j in 0..na {

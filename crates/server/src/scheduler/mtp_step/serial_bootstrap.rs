@@ -101,14 +101,17 @@ pub(super) fn bootstrap_seq(
     // the worker first (`ep_broadcast_cmd_for_seq`).
     if let Err(e) = model.ep_broadcast_cmd_for_seq(a.seq.slot_idx as u32, a.last_token) {
         tracing::error!(target: "met::scheduler::mtp_step", "EP broadcast bootstrap token: {e:#}");
-        a.finished = true;
+        crate::scheduler::lifecycle::fail_sequence(
+            a,
+            format!("EP broadcast bootstrap token: {e:#}"),
+        );
         return;
     }
     let logits = match model.decode(a.last_token, &mut a.seq, 0) {
         Ok(l) => l,
         Err(e) => {
             tracing::error!(target: "met::scheduler::mtp_step", "bootstrap decode error: {e:#}");
-            a.finished = true;
+            crate::scheduler::lifecycle::fail_sequence(a, format!("bootstrap decode error: {e:#}"));
             return;
         }
     };
@@ -122,7 +125,7 @@ pub(super) fn bootstrap_seq(
         Ok(t) => t,
         Err(e) => {
             tracing::error!(target: "met::scheduler::mtp_step", "bootstrap sample error: {e:#}");
-            a.finished = true;
+            crate::scheduler::lifecycle::fail_sequence(a, format!("bootstrap sample error: {e:#}"));
             return;
         }
     };

@@ -83,6 +83,10 @@ error_registry! {
     /// 2026-10-17: `0x0200–0x02FF`: sched-core (the `Device` trait, scheduler, lora) and the
     /// device backends. Sub-blocks: sched-core `0x0200–0x027F`, device backends `0x0280–0x02FF`.
     SchedDevice = 0x0200..=0x02FF {
+        /// 2026-10-23: A scheduler step failed for a sequence (a forward, a collective, a verify
+        /// commit) and retired it: (the step's error). Sent to the client as an error frame,
+        /// never as a finish.
+        SequenceFailed = 0x0200 => "the sequence failed: {}",
         /// 2026-10-17: A device driver call returned a failure status: (call, status).
         DeviceDriver = 0x0280 => "{} failed: driver status {}",
     }
