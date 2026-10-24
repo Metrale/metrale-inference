@@ -309,6 +309,15 @@ pub struct ModelConfig {
     #[serde(skip)]
     pub vision: Option<VisionConfig>,
 
+    /// 2026-10-24: Set by an embedding family's parser: the model pools hidden states into
+    /// one vector per input and does not generate (`crate::embedding`).
+    #[serde(skip)]
+    pub embedding: Option<crate::embedding::EmbeddingSpec>,
+    /// 2026-10-24: `rope_scaling` of type `llama3`, set by the parsers that map it; every other
+    /// family leaves it `None`.
+    #[serde(skip)]
+    pub rope_llama3: Option<crate::embedding::Llama3Rope>,
+
     /// 2026-09-26: Set by `finalize_config` from `quantization_config`. When that leaves it
     /// `None`, serve fills it from a sibling `hf_quant_config.json`
     /// (`merge_sidecar_quant_config`).

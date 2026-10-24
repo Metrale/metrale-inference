@@ -257,6 +257,7 @@ pub(crate) fn default_conv_kernel() -> usize {
 }
 
 mod dispatch;
+pub mod embedding;
 mod factory;
 mod gguf;
 pub mod indexer_cache_dtype;
