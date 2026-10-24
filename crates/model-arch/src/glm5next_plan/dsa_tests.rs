@@ -226,10 +226,13 @@ fn installation_refuses_unmodelled_levers_and_another_split_count() {
             for lever in ["SELECT_ONCE=0", "SERVE_REF", "TOPK_MC=0"] {
                 assert!(e.contains(lever), "{lever}: {e}");
             }
-            // 2026-10-23: BF16 persisted keys (and the MMA scores over them): the rules model FP32.
+            // 2026-10-24: BF16 persisted keys under a plan that reads FP32 ones (the lever not
+            // opted in): refused at install, not left to read the other format.
             let mut dl = layer(&gpu, &st, l, 0);
             dl.select_kernels.rows.pool_keys_bf16 = true;
-            assert!(dsa::unmodelled(&dl)[0].contains("POOL_KEYS_BF16"));
+            assert!(dsa::unmodelled(&dl).is_empty());
+            let e = installed(&gpu, &c[0], &plans, &policy, &dl).err().unwrap();
+            assert!(format!("{e:#}").contains("reads F32 pool keys"), "{e:#}");
             let mut dl = layer(&gpu, &st, l, 0);
             dl.decode_kernel = Glm5NextDsaDecodeKernel::resolve(&gpu, Some(4)).unwrap();
             let e = installed(&gpu, &c[0], &plans, &policy, &dl).err().unwrap();
@@ -276,4 +279,47 @@ fn a_per_row_verify_selection_is_refused() {
     p.groups[i].repeat = metrale_circuit::rules::Repeat::PerRow;
     let e = compile_dsa(&c[0], &p, text(l), &policy).err().unwrap();
     assert!(format!("{e:#}").contains("in one pass"), "{e:#}");
+}
+
+/// 2026-10-24: `glm_dsa_pool_keys_bf16` opted in names the BF16 store and lane-per-head
+/// readers; `glm_dsa_decode_scores_mma` on top names the tensor-core scores. Each installs only
+/// on a layer that resolved the same kernels, and is refused on one that did not.
+#[test]
+fn the_bf16_pool_key_levers_select_their_twins_and_must_match_the_layer() {
+    in_served_process(
+        TESTS,
+        "the_bf16_pool_key_levers_select_their_twins_and_must_match_the_layer",
+        || {
+            let (c, rules, base) = ranks();
+            let gpu = RecordingGpu::new(SMS);
+            let st = stack(&gpu, 0, served_world(), served_levers());
+            let l = dsa_layers(&c[0])[0];
+            let mut bf16 = base.clone();
+            bf16.opt_in_levers.insert("glm_dsa_pool_keys_bf16".into());
+            let mut mma = bf16.clone();
+            mma.opt_in_levers.insert("glm_dsa_decode_scores_mma".into());
+            for (policy, want_mma) in [(&bf16, false), (&mma, true)] {
+                let p = plan(&c, &rules, policy, 0, Mode::Decode, 1);
+                let s = compile_dsa(&c[0], &p, text(l), policy).unwrap().steps;
+                assert_eq!(s.select.pool_keys, PoolKeys::Bf16);
+                assert_eq!(
+                    matches!(s.select.scores, ScoresStep::Mma(_)),
+                    want_mma,
+                    "{:?}",
+                    s.select.scores
+                );
+                let plans = [p];
+                let mut dl = layer(&gpu, &st, l, 0);
+                let e = installed(&gpu, &c[0], &plans, policy, &dl).err().unwrap();
+                assert!(format!("{e:#}").contains("reads Bf16 pool keys"), "{e:#}");
+                dl.select_kernels.rows = dl.select_kernels.rows.with_bf16_pool_keys(&gpu).unwrap();
+                if want_mma {
+                    let e = installed(&gpu, &c[0], &plans, policy, &dl).err().unwrap();
+                    assert!(format!("{e:#}").contains("tensor-core"), "{e:#}");
+                    dl.select_kernels.rows = dl.select_kernels.rows.with_scores_mma();
+                }
+                installed(&gpu, &c[0], &plans, policy, &dl).unwrap();
+            }
+        },
+    );
 }

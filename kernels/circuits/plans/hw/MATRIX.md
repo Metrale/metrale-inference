@@ -201,7 +201,11 @@ Rule kernels a matrix model's policy could select that the device cannot run (th
 | dsa_indexer_rows::dsa_pool_scores_rows | not compiled for this class | 2 |
 | dsa_indexer_rows::dsa_topk_pools_rows | not compiled for this class | 2 |
 | dsa_indexer_rows::dsa_write_geom_rows | not compiled for this class | 2 |
+| dsa_scores_heads_bf16::dsa_index_scores_heads_paged_bf16 | not compiled for this class | 2 |
+| dsa_scores_heads_bf16::dsa_index_scores_heads_window_bf16 | not compiled for this class | 1 |
+| dsa_scores_heads_bf16::dsa_pool_keys_store_rows_bf16 | not compiled for this class | 2 |
 | dsa_scores_heads_window::dsa_index_scores_heads_window | not compiled for this class | 1 |
+| dsa_scores_mma_paged::dsa_index_scores_mma_paged_bf16 | not compiled for this class | 2 |
 | dsa_scores_warp::dsa_index_scores_heads_paged | not compiled for this class | 2 |
 | dsa_scores_warp::dsa_index_scores_warp | not compiled for this class | 2 |
 | dsa_scores_warp::dsa_pool_keys_store_rows | not compiled for this class | 2 |

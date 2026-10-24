@@ -214,9 +214,14 @@ impl GroupEmitter<GlmBlock> for Dsa {
             set(&mut s.k_norm, step, "key-norm")
         } else if locals == POOL {
             g.expect_kernels(self.id(), 3)?;
+            let keys = if is(&ks[1], entry::POOL_KEYS_BF16) {
+                ks[1].clone()
+            } else {
+                want(&ks[1], entry::POOL_KEYS)?
+            };
             let pool = (
                 want(&ks[0], entry::STORE)?,
-                want(&ks[1], entry::POOL_KEYS)?,
+                keys,
                 want(&ks[2], entry::WRITE_GEOM)?,
             );
             set(&mut s.pool, pool, "indexer-placement")
@@ -249,7 +254,8 @@ impl GroupEmitter<GlmBlock> for Dsa {
 
 /// 2026-10-23: The selection group's step: the scores (lane-per-head; the window walk for a
 /// verify's rows), `select::TOPK_MC_PASSES` top-k passes, the collect and the expansion, once
-/// per row at one row or once over a verify's rows.
+/// per row at one row or once over a verify's rows. 2026-10-24: The scores kernel also names the
+/// pool keys it reads: the FP32 walks, their BF16-key instances, or the BF16 tensor-core scores.
 fn select_step(g: &PlanGroup<'_>) -> Result<SelectStep<KernelId>> {
     let passes = crate::glm5next_dsa::select::TOPK_MC_PASSES as usize;
     let ks = &g.group.kernels;
@@ -265,10 +271,20 @@ fn select_step(g: &PlanGroup<'_>) -> Result<SelectStep<KernelId>> {
         g.rows,
         g.group.repeat
     );
-    let scores = if is(&ks[0], entry::SCORES_HEADS_PAGED) {
-        ScoresStep::HeadsPaged(ks[0].clone())
+    let k = ks[0].clone();
+    let (pool_keys, scores) = if is(&k, entry::SCORES_HEADS_PAGED) {
+        (PoolKeys::F32, ScoresStep::HeadsPaged(k))
+    } else if is(&k, entry::SCORES_HEADS_PAGED_BF16) {
+        (PoolKeys::Bf16, ScoresStep::HeadsPaged(k))
+    } else if is(&k, entry::SCORES_HEADS_WINDOW_BF16) {
+        (PoolKeys::Bf16, ScoresStep::HeadsWindow(k))
+    } else if is(&k, entry::SCORES_MMA_PAGED_BF16) {
+        (PoolKeys::Bf16, ScoresStep::Mma(k))
     } else {
-        ScoresStep::HeadsWindow(want(&ks[0], entry::SCORES_HEADS_WINDOW)?)
+        (
+            PoolKeys::F32,
+            ScoresStep::HeadsWindow(want(&k, entry::SCORES_HEADS_WINDOW)?),
+        )
     };
     let topk_pass = want(&ks[1], entry::TOPK_MC_PASS)?;
     for k in &ks[2..=passes] {
@@ -278,7 +294,7 @@ fn select_step(g: &PlanGroup<'_>) -> Result<SelectStep<KernelId>> {
         );
     }
     Ok(SelectStep {
-        pool_keys: PoolKeys::F32,
+        pool_keys,
         scores,
         topk_pass,
         topk_collect: want(&ks[passes + 1], entry::TOPK_MC_COLLECT)?,
@@ -291,6 +307,17 @@ impl DsaSlots {
     pub fn finish(self, g: &PlanGroup<'_>) -> Result<DsaSteps<KernelId>> {
         let need = |what: &str| format!("the layer's DSA plan has no {what} group");
         let (store, pool_keys, write_geom) = self.pool.with_context(|| need("placement"))?;
+        let select = self.select.with_context(|| need("selection"))?;
+        let stored = if is(&pool_keys, entry::POOL_KEYS_BF16) {
+            PoolKeys::Bf16
+        } else {
+            PoolKeys::F32
+        };
+        ensure!(
+            stored == select.pool_keys,
+            "the placement stores {stored:?} pool keys; the selection reads {:?}",
+            select.pool_keys
+        );
         Ok(DsaSteps {
             rows: usize::try_from(g.rows)?,
             latent_write: self.latent_write.with_context(|| need("latent-write"))?,
@@ -298,7 +325,7 @@ impl DsaSlots {
             store,
             pool_keys,
             write_geom,
-            select: self.select.with_context(|| need("selection"))?,
+            select,
             attend: self.attend.with_context(|| need("attend"))?,
         })
     }
@@ -344,15 +371,42 @@ pub fn unmodelled(layer: &crate::glm5next_dsa::layer::Glm5NextDsaLayer) -> Vec<&
             "an indexer cache without persisted BF16 pool keys (METRALE_GLM_DSA_POOL_KEYS=0, a \
              flat cache or --indexer-cache-dtype fp8; the rules score persisted keys)",
         ),
-        (
-            layer.select_kernels.rows.pool_keys_bf16,
-            "METRALE_GLM_DSA_POOL_KEYS_BF16 (and _DECODE_SCORES_MMA, which needs it): the rules \
-             model FP32 persisted pool keys",
-        ),
     ]
     .into_iter()
     .filter_map(|(set, what)| set.then_some(what))
     .collect()
+}
+
+/// 2026-10-24: The plan's pool keys and scores against the layer's resolved ones: the layer
+/// sized and stores its indexer cache for one key format (`METRALE_GLM_DSA_POOL_KEYS_BF16`), and
+/// resolved the tensor-core scores as both lane-per-head handles or neither
+/// (`METRALE_GLM_DSA_DECODE_SCORES_MMA`); a plan reading the other is refused.
+fn same_pool_keys(
+    layer: usize,
+    plan: &SelectStep<KernelId>,
+    k: &crate::glm5next_dsa::DsaRowsKernels,
+) -> Result<()> {
+    let keys = if k.pool_keys_bf16 {
+        PoolKeys::Bf16
+    } else {
+        PoolKeys::F32
+    };
+    ensure!(
+        plan.pool_keys == keys,
+        "GLM layer {layer}: the plan's selection reads {:?} pool keys, the layer persists {keys:?} \
+         (METRALE_GLM_DSA_POOL_KEYS_BF16 and its lever glm_dsa_pool_keys_bf16 disagree)",
+        plan.pool_keys
+    );
+    let mma = k.pool_keys_bf16 && k.scores_heads_paged.0 == k.scores_mma_paged.0;
+    let plan_mma = matches!(plan.scores, ScoresStep::Mma(_));
+    ensure!(
+        plan_mma == mma,
+        "GLM layer {layer}: the plan's scores {} the tensor-core kernel, the layer's {} \
+         (METRALE_GLM_DSA_DECODE_SCORES_MMA and its lever glm_dsa_decode_scores_mma disagree)",
+        if plan_mma { "name" } else { "do not name" },
+        if mma { "resolved it" } else { "did not" }
+    );
+    Ok(())
 }
 
 /// 2026-10-23: Compile and bind the DSA mixer `dsa` of `site` from each plan of `plans` at the
@@ -394,6 +448,7 @@ pub fn install(
         }
         let compiled = super::compile_dsa(rp.circuit, plan, site, rp.policy)?;
         let rows = compiled.steps.rows;
+        same_pool_keys(layer, &compiled.steps.select, &dsa.select_kernels.rows)?;
         let steps = compiled
             .steps
             .map(|k| metrale_model_layers::circuit_exec::family::plan_kernel(gpu, &k))?;

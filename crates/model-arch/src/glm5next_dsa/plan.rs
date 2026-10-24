@@ -26,8 +26,8 @@ use super::select::PlannedSelect;
 pub mod entry {
     use super::super::attend::{DSA_DECODE_HB_MODULE, DSA_DECODE_MODULE};
     use super::super::{
-        DSA_MODULE, DSA_ROWS_MODULE, DSA_SCORES_HEADS_WINDOW_MODULE, DSA_SCORES_WARP_MODULE,
-        DSA_TOPK_MC_MODULE, LAYERNORM_MODULE,
+        DSA_MODULE, DSA_ROWS_MODULE, DSA_SCORES_HEADS_BF16_MODULE, DSA_SCORES_HEADS_WINDOW_MODULE,
+        DSA_SCORES_MMA_PAGED_MODULE, DSA_SCORES_WARP_MODULE, DSA_TOPK_MC_MODULE, LAYERNORM_MODULE,
     };
 
     pub type Entry = (&'static str, &'static str);
@@ -40,6 +40,21 @@ pub mod entry {
     pub const SCORES_HEADS_WINDOW: Entry = (
         DSA_SCORES_HEADS_WINDOW_MODULE,
         "dsa_index_scores_heads_window",
+    );
+    // 2026-10-24: The BF16 persisted keys (`METRALE_GLM_DSA_POOL_KEYS_BF16`): their store, the
+    // lane-per-head readers and the tensor-core scores (`METRALE_GLM_DSA_DECODE_SCORES_MMA`).
+    pub const POOL_KEYS_BF16: Entry = (DSA_SCORES_HEADS_BF16_MODULE, "dsa_pool_keys_store_rows_bf16");
+    pub const SCORES_HEADS_PAGED_BF16: Entry = (
+        DSA_SCORES_HEADS_BF16_MODULE,
+        "dsa_index_scores_heads_paged_bf16",
+    );
+    pub const SCORES_HEADS_WINDOW_BF16: Entry = (
+        DSA_SCORES_HEADS_BF16_MODULE,
+        "dsa_index_scores_heads_window_bf16",
+    );
+    pub const SCORES_MMA_PAGED_BF16: Entry = (
+        DSA_SCORES_MMA_PAGED_MODULE,
+        "dsa_index_scores_mma_paged_bf16",
     );
     pub const TOPK_MC_PASS: Entry = (DSA_TOPK_MC_MODULE, "dsa_topk_mc_pass");
     pub const TOPK_MC_COLLECT: Entry = (DSA_TOPK_MC_MODULE, "dsa_topk_mc_collect");
@@ -63,12 +78,12 @@ pub enum KNormStep<K> {
     Rows(K),
 }
 
-/// 2026-10-23: The pool keys a planned selection scores. 2026-10-23: only FP32 here; the GPU
-/// track's `METRALE_GLM_DSA_POOL_KEYS_BF16` and `_DECODE_SCORES_MMA` (default off, not on this
-/// branch) join as variants with their kernels when they land.
+/// 2026-10-23: The pool keys a planned selection scores: FP32, or BF16
+/// (`METRALE_GLM_DSA_POOL_KEYS_BF16`, 2026-10-24), the format the placement's store writes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PoolKeys {
     F32,
+    Bf16,
 }
 
 /// 2026-10-23: The scores kernel of a planned selection.
@@ -78,6 +93,9 @@ pub enum ScoresStep<K> {
     HeadsPaged(K),
     /// 2026-10-23: `dsa_index_scores_heads_window` (a verify's rows in one pass).
     HeadsWindow(K),
+    /// 2026-10-24: `dsa_index_scores_mma_paged_bf16`: the BF16 keys on tensor cores, one launch
+    /// contract at any row count (`METRALE_GLM_DSA_DECODE_SCORES_MMA`).
+    Mma(K),
 }
 
 /// 2026-10-23: A planned selection: the scores, the multi-CTA radix top-k
@@ -136,6 +154,7 @@ impl<K> DsaSteps<K> {
                 scores: match s.scores {
                     ScoresStep::HeadsPaged(k) => ScoresStep::HeadsPaged(f(k)?),
                     ScoresStep::HeadsWindow(k) => ScoresStep::HeadsWindow(f(k)?),
+                    ScoresStep::Mma(k) => ScoresStep::Mma(f(k)?),
                 },
                 topk_pass: f(s.topk_pass)?,
                 topk_collect: f(s.topk_collect)?,
@@ -174,7 +193,7 @@ impl DsaPlan {
         let s = self.steps.select;
         PlannedSelect {
             scores: match s.scores {
-                ScoresStep::HeadsPaged(k) | ScoresStep::HeadsWindow(k) => k,
+                ScoresStep::HeadsPaged(k) | ScoresStep::HeadsWindow(k) | ScoresStep::Mma(k) => k,
             },
             sm_count: self.sm_count,
             topk_pass: s.topk_pass,

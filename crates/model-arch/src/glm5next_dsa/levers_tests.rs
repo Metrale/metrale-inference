@@ -103,13 +103,17 @@ fn the_strict_prefill_switches_read_as_before_and_take_the_switch_spellings() {
 fn the_opt_in_switches_read_as_before_except_the_switch_spellings() {
     // 2026-10-22: `METRALE_GLM_DSA_SCORES_PIPE` and `METRALE_GLM_DSA_TOPK_RADIX` left this list
     // (default on): `the_default_on_decode_levers_turn_off_one_at_a_time` probes them.
-    let cases: [Field<bool>; 4] = [
+    let cases: [Field<bool>; 6] = [
         ("METRALE_GLM_DSA_HB_PREFILL_ONE_SPLIT", |l| {
             l.prefill.one_split
         }),
         ("METRALE_GLM_DSA_SCORES_TILED", |l| l.select.scores_tiled),
         ("METRALE_GLM_DSA_SCORES_MMA", |l| l.select.scores_mma),
         ("METRALE_GLM_DSA_SELECT_FUSED", |l| l.select.select_fused),
+        ("METRALE_GLM_DSA_POOL_KEYS_BF16", |l| l.select.pool_keys_bf16),
+        ("METRALE_GLM_DSA_DECODE_SCORES_MMA", |l| {
+            l.select.decode_scores_mma
+        }),
     ];
     for (env, field) in cases {
         let changes = check(
@@ -360,6 +364,8 @@ fn the_declared_defaults_are_the_old_unset_values() {
                 scores_heads: true,
                 scores_heads_window: true,
                 topk_mc: true,
+                pool_keys_bf16: false,
+                decode_scores_mma: false,
             },
             serve_ref: false,
             sp_agreement: 0,

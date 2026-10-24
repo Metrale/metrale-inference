@@ -2936,6 +2936,28 @@ numerics = "reference"
 priority = 10
 cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:308-315 -> crates/model-arch/src/glm5next_dsa/layer/row_ops.rs:125-142 (2026-10-23: dsa_write_geom once per row after the stores, replay-safe; the MTP drafter at the same site); crates/model-arch/src/glm5next_dsa/layer/rows.rs:24-50 (dsa_indexer_store on the replay-safe path; the host path writes the GEMV outputs into the cache row directly); crates/model-arch/src/glm5next_dsa/layer/rows.rs:50-81 (store_pool_keys); 2026-10-22: per row in a verify and a batched decode (crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:255-274, crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:329-339 -> crates/model-arch/src/glm5next_dsa/layer.rs:261): glm_dsa_verify_rows and glm_dsa_indexer_rows off (crates/settings/src/groups/kernels.rs:100,115)"
 
+# 2026-10-24: METRALE_GLM_DSA_POOL_KEYS_BF16: the pooled key is persisted rounded to BF16 (RN) in the first half of
+# the same slot: half the bytes each selection reads, a bounded numerics change.
+[[rule]]
+id = "glm_index_store_bf16"
+pattern = [{ op = "kpool_compress" }]
+# 2026-10-22: Then `dsa_pool_keys_store_rows` persists the pooled key the persisted select scores;
+# it stores on 1 of `index_kpool` steps, the one whose row completes a pool (the host path
+# launches only then; a captured graph launches every step and the kernel returns at once).
+kernels = [
+  { module = "dsa_indexer", func = "dsa_indexer_store" },
+  { module = "dsa_scores_heads_bf16", func = "dsa_pool_keys_store_rows_bf16" },
+  { module = "dsa_indexer", func = "dsa_write_geom" },
+]
+repeat = "per_row"
+emitter = "dsa"
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify", "draft"]
+numerics = "differs"
+lever = "glm_dsa_pool_keys_bf16"
+priority = 11
+cite = "crates/model-arch/src/glm5next_dsa/pool_keys_bf16.rs:26-58 (with_bf16_pool_keys: the store and both lane-per-head readers as their BF16-key instances; with_scores_mma: the tensor-core scores as both); crates/model-arch/src/glm5next_dsa/pool_keys_bf16.rs:60-90 (resolve_for: METRALE_GLM_DSA_POOL_KEYS_BF16, then _DECODE_SCORES_MMA, which needs it); kernels/gb10/common/dsa_scores_heads_bf16.cu:18-46 (dsa_pool_keys_store_rows_bf16)"
+
 # 2026-10-22: The exact (eager) arm: a pass outside a captured graph compresses the pools from
 # the raw keys, scores them warp-per-pool (`dsa_index_scores_warp`, default on when the shape
 # fits; else `dsa_index_scores`), selects the top pools and expands them to tokens.
@@ -2980,6 +3002,52 @@ modes = ["decode", "multi_seq", "verify", "draft"]
 numerics = "reference"
 priority = 20
 cite = "crates/model-arch/src/glm5next_dsa/select/launch.rs:260,302,420-460 (a ceiling launch over persisted pool keys: no compression); crates/model-arch/src/glm5next_dsa/select/scores.rs:56-77,141-161,213-245 (heads_paged below SCORES_WINDOW_MIN_ROWS); crates/model-arch/src/glm5next_dsa/select/topk.rs:172-196 (four histogram passes, then the collect); crates/model-arch/src/glm5next_dsa/select/scores.rs:247-279; 2026-10-22: per row, each a one-query-row pass (q_rows 1, so heads_paged, not heads_window: crates/model-arch/src/glm5next_dsa/select/scores.rs:68-70) in a captured verify (crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:329-338 -> select_row, crates/model-arch/src/glm5next_dsa/layer.rs:310-328; select_once needs glm_dsa_verify_rows, off, crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:179-185) and a batched decode (crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:358-367; select_paged_rows needs glm_dsa_indexer_rows, off); the verify and decode graphs are captured (glm_keep_slot_graphs, crates/settings/src/groups/scheduler.rs:41)"
+
+# 2026-10-24: METRALE_GLM_DSA_DECODE_SCORES_MMA (needs _POOL_KEYS_BF16): the BF16 keys scored on
+# tensor cores with a BF16-rounded query, the prefill selection's bits for each key.
+[[rule]]
+id = "glm_index_select_persisted_mma"
+pattern = [{ op = "index_select", input = "f32" }]
+kernels = [
+  { module = "dsa_scores_mma_paged", func = "dsa_index_scores_mma_paged_bf16" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_pass" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_pass" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_pass" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_pass" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_collect" },
+  { module = "dsa_indexer_rows", func = "dsa_expand_selection_rows" },
+]
+repeat = "per_row"
+emitter = "dsa"
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify", "draft"]
+numerics = "differs"
+lever = "glm_dsa_decode_scores_mma"
+priority = 22
+cite = "crates/model-arch/src/glm5next_dsa/pool_keys_bf16.rs:26-58 (with_bf16_pool_keys: the store and both lane-per-head readers as their BF16-key instances; with_scores_mma: the tensor-core scores as both); crates/model-arch/src/glm5next_dsa/pool_keys_bf16.rs:60-90 (resolve_for: METRALE_GLM_DSA_POOL_KEYS_BF16, then _DECODE_SCORES_MMA, which needs it); kernels/gb10/common/dsa_scores_mma_paged.cu:13 (dsa_index_scores_mma_paged_bf16, one launch contract at any row count)"
+
+# 2026-10-24: METRALE_GLM_DSA_POOL_KEYS_BF16: the persisted row's scores read the BF16 keys (the FP32 walk's bytes for
+# the rounded keys).
+[[rule]]
+id = "glm_index_select_persisted_bf16"
+pattern = [{ op = "index_select", input = "f32" }]
+kernels = [
+  { module = "dsa_scores_heads_bf16", func = "dsa_index_scores_heads_paged_bf16" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_pass" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_pass" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_pass" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_pass" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_collect" },
+  { module = "dsa_indexer_rows", func = "dsa_expand_selection_rows" },
+]
+repeat = "per_row"
+emitter = "dsa"
+rows = [1, 16]
+modes = ["decode", "multi_seq", "verify", "draft"]
+numerics = "differs"
+lever = "glm_dsa_pool_keys_bf16"
+priority = 21
+cite = "crates/model-arch/src/glm5next_dsa/pool_keys_bf16.rs:26-58 (with_bf16_pool_keys: the store and both lane-per-head readers as their BF16-key instances; with_scores_mma: the tensor-core scores as both); crates/model-arch/src/glm5next_dsa/pool_keys_bf16.rs:60-90 (resolve_for: METRALE_GLM_DSA_POOL_KEYS_BF16, then _DECODE_SCORES_MMA, which needs it); kernels/gb10/common/dsa_scores_heads_bf16.cu:47-51 (dsa_index_scores_heads_paged_bf16)"
 
 # 2026-10-08: The indexer query and head weights are FP32-out GEMVs (`*_fp32out`), so the
 # selection reads FP32 where the circuit's edges are BF16.
@@ -4903,6 +4971,52 @@ numerics = "reference"
 priority = 25
 cite = "crates/model-arch/src/glm5next_dsa/layer/decode_k.rs:176-184,369-373 (select_once only under verify_rows: one pass after the row loop); crates/model-arch/src/glm5next_dsa/layer/verify_select.rs:51-73,77-101 (glm_dsa_verify_select_once default on, crates/settings/src/groups/kernels.rs:116); crates/model-arch/src/glm5next_dsa/select/scores.rs:28-34,57-77 (the window kernel at 2..=8 rows, glm_dsa_scores_heads_window default on, crates/settings/src/groups/kernels.rs:106)"
 
+# 2026-10-24: METRALE_GLM_DSA_DECODE_SCORES_MMA: a verify's rows scored on tensor cores in one pass.
+[[rule]]
+id = "glm_index_select_once_verify_mma"
+pattern = [{ op = "index_select", input = "f32", params = { pool = "index_kpool" } }]
+kernels = [
+  { module = "dsa_scores_mma_paged", func = "dsa_index_scores_mma_paged_bf16" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_pass" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_pass" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_pass" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_pass" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_collect" },
+  { module = "dsa_indexer_rows", func = "dsa_expand_selection_rows" },
+]
+repeat = "once"
+emitter = "dsa"
+rows = [2, 8]
+modes = ["verify"]
+when = { glm_dsa_verify_rows = "on" }
+numerics = "differs"
+lever = "glm_dsa_decode_scores_mma"
+priority = 27
+cite = "crates/model-arch/src/glm5next_dsa/pool_keys_bf16.rs:26-58 (with_bf16_pool_keys: the store and both lane-per-head readers as their BF16-key instances; with_scores_mma: the tensor-core scores as both); crates/model-arch/src/glm5next_dsa/pool_keys_bf16.rs:60-90 (resolve_for: METRALE_GLM_DSA_POOL_KEYS_BF16, then _DECODE_SCORES_MMA, which needs it); kernels/gb10/common/dsa_scores_mma_paged.cu:13"
+
+# 2026-10-24: METRALE_GLM_DSA_POOL_KEYS_BF16: the window walk over a verify's rows reads the BF16 keys.
+[[rule]]
+id = "glm_index_select_once_verify_bf16"
+pattern = [{ op = "index_select", input = "f32", params = { pool = "index_kpool" } }]
+kernels = [
+  { module = "dsa_scores_heads_bf16", func = "dsa_index_scores_heads_window_bf16" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_pass" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_pass" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_pass" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_pass" },
+  { module = "dsa_topk_mc", func = "dsa_topk_mc_collect" },
+  { module = "dsa_indexer_rows", func = "dsa_expand_selection_rows" },
+]
+repeat = "once"
+emitter = "dsa"
+rows = [2, 8]
+modes = ["verify"]
+when = { glm_dsa_verify_rows = "on" }
+numerics = "differs"
+lever = "glm_dsa_pool_keys_bf16"
+priority = 26
+cite = "crates/model-arch/src/glm5next_dsa/pool_keys_bf16.rs:26-58 (with_bf16_pool_keys: the store and both lane-per-head readers as their BF16-key instances; with_scores_mma: the tensor-core scores as both); crates/model-arch/src/glm5next_dsa/pool_keys_bf16.rs:60-90 (resolve_for: METRALE_GLM_DSA_POOL_KEYS_BF16, then _DECODE_SCORES_MMA, which needs it); kernels/gb10/common/dsa_scores_heads_bf16.cu:52 (dsa_index_scores_heads_window_bf16)"
+
 # 2026-10-22: The recipe's METRALE_GLM_DSA_INDEXER_ROWS=1 (glm_dsa_indexer_rows): a captured
 # batched decode of one row per sequence on paged caches stages the indexer key and key norm of
 # every row in one pass (indexer_project_rows), then stores and selects the rows in one launch per
@@ -4966,6 +5080,24 @@ when = { glm_dsa_indexer_rows = "on" }
 numerics = "reference"
 priority = 15
 cite = "crates/model-arch/src/glm5next_dsa/layer/decode_rows.rs:273-294 (paged_rows: every row one sequence's decode row on a paged cache, replay-safe); crates/model-arch/src/glm5next_dsa/layer/select_rows.rs:102-131 (the BF16 cache: one store launch over the rows, then the pool keys of all rows)"
+
+# 2026-10-24: METRALE_GLM_DSA_POOL_KEYS_BF16: the batched decode's store of every row's pool key, as BF16.
+[[rule]]
+id = "glm_index_store_rows_bf16"
+pattern = [{ op = "kpool_compress" }]
+kernels = [
+  { module = "dsa_indexer_rows", func = "dsa_indexer_store_rows" },
+  { module = "dsa_scores_heads_bf16", func = "dsa_pool_keys_store_rows_bf16" },
+]
+repeat = "once"
+emitter = "dsa"
+rows = [2, 16]
+modes = ["multi_seq"]
+when = { glm_dsa_indexer_rows = "on" }
+numerics = "differs"
+lever = "glm_dsa_pool_keys_bf16"
+priority = 16
+cite = "crates/model-arch/src/glm5next_dsa/pool_keys_bf16.rs:26-58 (with_bf16_pool_keys: the store and both lane-per-head readers as their BF16-key instances; with_scores_mma: the tensor-core scores as both); crates/model-arch/src/glm5next_dsa/pool_keys_bf16.rs:60-90 (resolve_for: METRALE_GLM_DSA_POOL_KEYS_BF16, then _DECODE_SCORES_MMA, which needs it); kernels/gb10/common/dsa_scores_heads_bf16.cu:18-46; crates/model-arch/src/glm5next_dsa/layer/select_rows.rs:102-131 (the store_rows launch names rows.pool_keys_store)"
 
 [[rule]]
 id = "glm_index_select_rows"
