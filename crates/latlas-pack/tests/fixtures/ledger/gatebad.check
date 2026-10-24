@@ -1,0 +1,3 @@
+line 2: gate `tost(1%)`: bad_args
+line 3: gate `magic(3)`: unknown_kind
+line 4: gate ``: empty

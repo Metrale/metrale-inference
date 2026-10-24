@@ -1,0 +1,11 @@
+# P2 recall gate (design §6 P2): probe<TAB>an id that must appear in the top 3. Paraphrases, not row text.
+warm the next layer's weights during the all-reduce	ledger:l2-prefetch-6
+BF16 keys for DSA select	ledger:dsa-pool-keys-bf16
+persistent grid starves the side stream	ledger:dense-seg-inserve
+fewer outputs per thread block for the MoE gating matrix-vector product	ledger:router-npb
+an identical-arms control run to calibrate the in-serve paired comparison	ledger:pab-aa
+fold the clamp and activation into the down projection's input stage	ledger:mk-swiglu-down
+merge the convolution window advance and token kernels into one launch	ledger:mk-kda-conv-one
+replay a recorded token trajectory so speculation acceptance cannot differ between arms	ledger:forced-traj-aa
+are all overlapping pairs of fusion rewrite rules joinable (Newman's lemma)	ledger:critpairs-newman
+rotate which tensor-parallel rank takes the long slice of an uneven split	ledger:pcost-rotate-null

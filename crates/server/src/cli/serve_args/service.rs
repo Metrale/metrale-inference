@@ -389,4 +389,8 @@ pub struct ServeServiceArgs {
     /// 2026-10-08: `--chat-template` and the other chat-surface flags, listed last.
     #[command(flatten)]
     pub chat_surface: crate::cli::serve_args_chat_surface::ServeChatSurfaceArgs,
+
+    /// 2026-10-24: The GLM-5.3 decode levers (`--glm-draft-head`), listed after it.
+    #[command(flatten)]
+    pub glm_decode: crate::cli::serve_args_glm_decode::ServeGlmDecodeArgs,
 }

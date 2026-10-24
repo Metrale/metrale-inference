@@ -1,0 +1,4 @@
+line 2: depends_on names unknown id nope
+line 3: b references itself
+line 4: retracts names unknown id ghost
+depends_on cycle: b -> b

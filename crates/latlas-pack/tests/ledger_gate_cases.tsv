@@ -1,0 +1,47 @@
+# cell<TAB>expected: the canonical form, or ERR:<reason>. Shared by kg-derive (claims_shared_cases) and tools/ledger.py selftest.
+-	-
+ - 	-
+	ERR:empty
+bitid(texts)@{p1k,p128k}; tost(1%,n=3)@{1k,16k,64k,128k}	bitid|texts|@p1k,p128k;tost|1%|n=3|@1k,16k,64k,128k
+bitid(values(681984)); test(dense_seg_negatives_fire); superior(ci_excludes_0)@{1k,16k,64k,128k}	bitid|values(681984)|@;test|dense_seg_negatives_fire|@;superior|ci_excludes_0|@1k,16k,64k,128k
+needle(256k); agentic(10/10); superior(ci_excludes_0)@{64k,128k}	needle|256k|@;agentic|10/10|@;superior|ci_excludes_0|@64k,128k
+bitid(launches)	bitid|launches|@
+multiset(f13-p1k)	multiset|f13-p1k|@
+superior(p<0.05)	superior|p<0.05|@
+bfcl(>=85.53,draw=dc62cb23)	bfcl|>=85.53|draw=dc62cb23|@
+bounded(overlap>=0.99)@{p64k}	bounded|overlap>=0.99|@p64k
+tost(0.5%,n=6)	tost|0.5%|n=6|@
+bitid(texts);	ERR:empty
+bitid texts	ERR:syntax
+bitid(texts	ERR:syntax
+bitwise(texts)	ERR:unknown_kind
+bitid(bytes)	ERR:bad_args
+bitid(values(-1))	ERR:bad_args
+tost(1,n=3)	ERR:bad_args
+tost(1%,n=0)	ERR:bad_args
+tost(1%,n=+3)	ERR:bad_args
+tost(1e1%,n=3)	ERR:bad_args
+superior(p<inf)	ERR:bad_args
+superior(p<nan)	ERR:bad_args
+agentic(10/0)	ERR:bad_args
+agentic(1_0/10)	ERR:bad_args
+needle(256)	ERR:bad_args
+bfcl(>=85,draw=DC62CB23)	ERR:bad_args
+bfcl(>=85,draw=dc62cb2)	ERR:bad_args
+bfcl(>=85)	ERR:bad_args
+bounded(overlap>0.9)	ERR:bad_args
+test(a b)	ERR:bad_args
+test()	ERR:bad_args
+bitid(texts)@p1k	ERR:bad_scope
+bitid(texts)@{p1k,}	ERR:bad_scope
+bitid(texts)@{p 1k}	ERR:bad_scope
+none(enabling)	none|enabling|@
+ none(modelled-only) 	none|modelled-only|@
+none(enabling)@{1k}	ERR:bad_scope
+none(enabling); bitid(texts)	ERR:none_mixed
+bitid(texts);none(x)	ERR:none_mixed
+none()	ERR:bad_args
+none(a,b)	ERR:bad_args
+none(two words)	ERR:bad_args
+bitid(values)	bitid|values|@
+bitid(values())	ERR:bad_args
