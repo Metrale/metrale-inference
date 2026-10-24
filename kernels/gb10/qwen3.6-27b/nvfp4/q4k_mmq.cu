@@ -1,25 +1,24 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// 2026-09-25: Q4_K prefill GEMM and q8_1 activation quantizers on the vendored MMQ engine in q4k_vendor/.
+// 2026-09-25: Q4_K prefill GEMM and q8_1 activation quantizers on the MMQ engine in gb10/common/mmq/.
 // Owner: gb10 kernels (qwen3.6-27b).
 // Invariants: the GEMM writes BF16 [M, N] row-major, accumulated in F32. The quantizers write
 // block_q8_1_mmq in the DS4 layout, the layout the Q4_K tile here and the Q2_0 tile (q2_0_mmq.cu) read.
 
 #include <cuda_bf16.h>
-#include "q4k_vendor/mmq.cuh"
-#include "q4k_vendor/quantize_impl.cuh"
+#include "../../common/mmq/mmq.cuh"
 
-// 2026-09-25: One mmq_y x mmq_x output tile through the vendored mul_mat_q_process_tile, with
+// 2026-09-25: One mmq_y x mmq_x output tile through mul_mat_q_process_tile, with
 // no MoE ids, one channel and sample, and no stream-k fixup.
 template <int mmq_x, bool need_check>
 static __device__ __forceinline__ void metrale_q4k_tile(
         const char * __restrict__ x, const int * __restrict__ y, __nv_bfloat16 * __restrict__ dst,
         const int nrows_x, const int ncols_dst, const int ncols_x,
         const int stride_row_x, const int ncols_y, const int stride_col_dst) {
-    constexpr ggml_type type = GGML_TYPE_Q4_K;
+    constexpr mmq_type type = MMQ_TYPE_Q4_K;
     constexpr int nwarps    = mmq_get_nwarps_device();
-    constexpr int warp_size = ggml_cuda_get_physical_warp_size();
-    constexpr int qk        = ggml_cuda_type_traits<type>::qk;
+    constexpr int warp_size = mmq_physical_warp_size();
+    constexpr int qk        = mmq_quant_traits<type>::qk;
     constexpr int mmq_y     = get_mmq_y_device();
 
     extern __shared__ int ids_dst_shared[];
@@ -41,8 +40,8 @@ static __device__ __forceinline__ void metrale_q4k_tile(
     const int offset_x = it*mmq_y*stride_row_x;
     const int kb0_stop = ncols_x / qk;
 
-    mul_mat_q_process_tile<type, mmq_x, need_check, false, __nv_bfloat16>(
-        x, offset_x, y + offset_y, ids_dst_shared, dst + offset_dst, nullptr,
+    mul_mat_q_process_tile<type, mmq_x, need_check>(
+        x, offset_x, y + offset_y, ids_dst_shared, dst + offset_dst,
         stride_row_x, ncols_y, stride_col_dst, tile_x_max_i, tile_y_max_j, 0, kb0_stop);
 }
 

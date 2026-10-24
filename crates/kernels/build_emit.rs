@@ -158,8 +158,9 @@ pub(super) fn closure_attestation(
         // 2026-09-25: Surfaced, not swallowed. A quoted include naming no file is
         // hashed by name rather than content, so a new one widens what the gate
         // cannot see. A 2026-09-25 build reported two, `vendors/hip.h` and
-        // `vendors/musa.h`, under the `GGML_USE_HIP` / `GGML_USE_MUSA` arms of
-        // `gb10/qwen3.6-27b/nvfp4/q4k_vendor/common.cuh`.
+        // `vendors/musa.h`, under the `GGML_USE_HIP` / `GGML_USE_MUSA` arms of the
+        // vendored MMQ's `common.cuh`; those arms went when the MMQ moved to
+        // `gb10/common/mmq/` (2026-10-23).
         for entry in &closure.unresolved {
             println!("cargo:warning=closure: unresolved include ({entry})");
         }

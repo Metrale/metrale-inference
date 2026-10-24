@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-25: Launchers for the NVFP4 W4A4 MMQ GEMM that the dense FFN uses in
-//! prefill, built on the vendored llama.cpp MMQ headers
-//! (`kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu`, `q4k_vendor/`), plus its
+//! prefill, built on the ggml-derived MMQ engine
+//! (`kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu`, `kernels/gb10/common/mmq/`), plus its
 //! weight repack, activation quantizers and scale2 folds.
 //!
 //! The MMA applies only the per-16 E4M3 scales, so each GEMM output lacks the
@@ -24,7 +24,7 @@ use metrale_gpu_runtime::kernel_args::{KernelLaunch, div_ceil};
 pub const QK_NVFP4: u32 = 64;
 pub const NVFP4_BLOCK_BYTES: usize = 36;
 /// 2026-09-25: `block_fp4_mmq`, the activation format: 256 values in 144 bytes,
-/// the size of `block_q8_1_mmq` (`q4k_vendor/mmq.cuh`).
+/// the size of `block_q8_1_mmq` (`common/mmq/mmq_layout.cuh`).
 const FP4_MMQ_Y_BLOCK_VALS: u32 = 256;
 const FP4_MMQ_Y_BLOCK_BYTES: usize = 144;
 /// 2026-09-25: Dynamic shared memory of the 128-wide M tile.
@@ -32,8 +32,9 @@ pub const NVFP4_MMQ_SMEM: u32 = nvfp4_mmq_smem(128);
 
 /// 2026-09-25: Dynamic shared memory for M tile `mmq_x`, in bytes: `mmq_x` ids,
 /// a y tile of `mmq_x * 36` ints padded to 256 ints, and an x tile of `128 * 76`
-/// ints. This is `mmq_get_nbytes_shared` in `q4k_vendor/mmq.cuh` with
-/// `mmq_y = 128`, `MMQ_MMA_TILE_X_K_FP4 = 76` and 8 warps of 32.
+/// ints: the `data_mul_mat_q` carve-up of `mul_mat_q_process_tile`
+/// (`common/mmq/mmq_tile.cuh`) with `mmq_y = 128`, `MMQ_MMA_TILE_X_K_FP4 = 76`
+/// and 8 warps of 32.
 pub const fn nvfp4_mmq_smem(mmq_x: u32) -> u32 {
     let y = mmq_x * 36;
     let y_padded = y.div_ceil(256) * 256;
