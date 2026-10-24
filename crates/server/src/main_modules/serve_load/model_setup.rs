@@ -219,9 +219,9 @@ pub(super) fn select_kernel_target(
     args: &cli::ServeArgs,
     config: &ModelConfig,
     model_dir: &Path,
-) -> Result<metrale_kernels::TargetPtxSet> {
+) -> Result<metrale_kernel_set::TargetPtxSet> {
     metrale_telemetry::progress::phase(3, "gpu init");
-    // 2026-09-26: Target resolution rules are in `metrale_kernels::resolve`:
+    // 2026-09-26: Target resolution rules are in `metrale_kernel_set::resolve`:
     // exact `hidden_size` before wildcards, a collision broken by each
     // target's `match_names` against `model_refs`, an unbroken tie an error,
     // and `--kernel-target` pins the target.
@@ -234,29 +234,31 @@ pub(super) fn select_kernel_target(
     .into_iter()
     .flatten()
     .collect();
-    let ptx_set = metrale_kernels::ptx_for_config(
-        &config.model_type,
-        config.hidden_size,
-        &model_refs,
-        args.kernel_target.as_deref(),
-    )
-    .map_err(|e| anyhow::anyhow!("{e}"))?
-    .with_context(|| {
-        format!(
-            "No compiled kernel target matches model_type '{}' / hidden_size={}. \
-             Available targets: {:?}",
-            config.model_type,
+    let ptx_set = crate::embedded::kernels()
+        .ptx_for_config(
+            &config.model_type,
             config.hidden_size,
-            metrale_kernels::available_targets()
-                .iter()
-                .map(|t| &t.target.model)
-                .collect::<Vec<_>>(),
+            &model_refs,
+            args.kernel_target.as_deref(),
         )
-    })?;
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+        .with_context(|| {
+            format!(
+                "No compiled kernel target matches model_type '{}' / hidden_size={}. \
+             Available targets: {:?}",
+                config.model_type,
+                config.hidden_size,
+                crate::embedded::kernels()
+                    .available_targets()
+                    .iter()
+                    .map(|t| &t.target.model)
+                    .collect::<Vec<_>>(),
+            )
+        })?;
     // 2026-09-26: kimi_k3 MXFP4 weights need the exact mxfp4 target: for several
     // quant variants of one target, `ptx_for_config` returns the first.
     let ptx_set = if config.model_type == "kimi_k3" && canonicalize_model_quant(config) == "mxfp4" {
-        metrale_kernels::ptx_for_exact_target(ptx_set.target.model, "mxfp4")
+        crate::embedded::kernels().ptx_for_exact_target(ptx_set.target.model, "mxfp4")
             .context("K3 MXFP4 requires its compiled mxfp4 target; rebuild with METRALE_TARGET_QUANT=mxfp4 or *")?
     } else {
         ptx_set
@@ -265,7 +267,7 @@ pub(super) fn select_kernel_target(
 }
 
 pub(super) fn check_kernel_target(
-    ptx_set: &metrale_kernels::TargetPtxSet,
+    ptx_set: &metrale_kernel_set::TargetPtxSet,
     config: &mut ModelConfig,
 ) -> Result<()> {
     // 2026-09-26: Record the resolved target for the dashboard's kernel table.
@@ -408,10 +410,10 @@ pub(super) fn publish_moe_expert_act(config: &ModelConfig) {
 }
 
 pub(super) fn resolve_behavior(
-    ptx_set: &metrale_kernels::TargetPtxSet,
+    ptx_set: &metrale_kernel_set::TargetPtxSet,
     args: &cli::ServeArgs,
     default_kwargs: &DefaultChatTemplateKwargs,
-) -> metrale_kernels::ModelBehavior {
+) -> metrale_kernel_set::ModelBehavior {
     let mut b = ptx_set.behavior.clone();
     if let Some(cli_budget) = args.max_thinking_budget {
         b.max_thinking_budget = cli_budget;

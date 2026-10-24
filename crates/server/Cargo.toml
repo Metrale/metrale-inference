@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 [package]
-name = "met"
+name = "metrale-server"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,6 +9,10 @@ description = "Metrale Engine: pure Rust LLM inference server (HTTP API, schedul
 
 # 2026-10-17: the package is published as `met` (crates.io); the library keeps its
 # `metrale_server` name so every `use metrale_server::` path is unchanged.
+# 2026-10-24: Split: this package is the library (everything `met` runs), and the `met`
+# package (crates/met) is the binary, the one place the compiled kernels and the kernel
+# tree are linked. A `.cu` edit rebuilds those and relinks the binary; this crate does
+# not depend on them (DEV-LOOP-SPEED #7).
 [lib]
 name = "metrale_server"
 path = "src/lib.rs"
@@ -58,9 +62,9 @@ metrale-grammar = { workspace = true }
 # 2026-10-17: The host probes the serve path shares with the harness: `/hardware`, the artifact
 # home, the TUI chat's error-body reader and this process's `/serve-config` identity.
 metrale-host-probe = { workspace = true }
-metrale-kernels = { workspace = true }
+# 2026-10-24: The registry types; the registry itself arrives as `Embedded` from the binary.
+metrale-kernel-set = { workspace = true }
 metrale-model-arch = { workspace = true }
-metrale-kernel-tree = { workspace = true }
 # 2026-10-17: Its `links` metadata (`DEP_METRALE_KERNEL_TREE_ROOT`) locates kernels/ for build.rs.
 metrale-kernel-root = { workspace = true }
 metrale-model-engine = { workspace = true }
@@ -118,11 +122,12 @@ ureq = { workspace = true, features = ["rustls", "gzip", "json"] }
 
 [dev-dependencies]
 metrale-io-host-mem = { workspace = true }
+# 2026-10-24: `tests/closure_attestation.rs` reads the attestation the kernel build baked, and
+# the unit tests read the registry and kernel tree the binary embeds (`embedded::get`); the
+# library itself gets them from the binary.
+metrale-kernels = { workspace = true }
+metrale-kernel-tree = { workspace = true }
 tempfile = { workspace = true, features = ["getrandom"] }
-
-[[bin]]
-name = "met"
-path = "src/main.rs"
 
 # 2026-10-17: Attests gate-record closures through metrale-bench.
 [[test]]

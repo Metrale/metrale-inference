@@ -57,7 +57,7 @@ pub(crate) struct SamplingDefaults {
 pub(crate) fn load_sampling_defaults(
     model_dir: &Path,
     args: &cli::ServeArgs,
-    preset: &metrale_kernels::SamplingCategory,
+    preset: &metrale_kernel_set::SamplingCategory,
 ) -> SamplingDefaults {
     let gen_config_path = model_dir.join("generation_config.json");
     let gen_cfg = std::fs::read_to_string(&gen_config_path)
@@ -90,7 +90,7 @@ pub(crate) fn load_sampling_defaults(
 pub(crate) fn resolve_sampling_defaults(
     gen_cfg: Option<&serde_json::Value>,
     args: &cli::ServeArgs,
-    preset: &metrale_kernels::SamplingCategory,
+    preset: &metrale_kernel_set::SamplingCategory,
 ) -> SamplingDefaults {
     let temperature = gen_cfg
         .and_then(|v| v.get("temperature")?.as_f64())
@@ -178,7 +178,7 @@ pub(crate) fn log_response_store_audit(
 
 pub(crate) fn log_behavior_audit(
     args: &cli::ServeArgs,
-    ptx_set: &metrale_kernels::TargetPtxSet,
+    ptx_set: &metrale_kernel_set::TargetPtxSet,
     // 2026-10-17: `METRALE_DISABLE_WATCHDOGS`, from the load's settings.
     disable_watchdogs: bool,
 ) {
@@ -242,7 +242,7 @@ pub(crate) fn log_behavior_audit(
     if b.rollback_resteer {
         tracing::info!(
             "Model behavior: watchdog rollback+re-steer ENABLED (cap {} per sequence)",
-            metrale_kernels::ROLLBACK_RESTEER_CAP,
+            metrale_kernel_set::ROLLBACK_RESTEER_CAP,
         );
     } else {
         tracing::info!("Model behavior: watchdog rollback+re-steer DISABLED (legacy hard-stop)");
@@ -297,7 +297,7 @@ pub(crate) fn resolve_model_name(
 
 pub(crate) fn resolve_tool_call_parser(
     args: &cli::ServeArgs,
-    ptx_set: &metrale_kernels::TargetPtxSet,
+    ptx_set: &metrale_kernel_set::TargetPtxSet,
     config: &ModelConfig,
 ) -> Result<Option<std::sync::Arc<dyn crate::tool_parser::ToolCallParser>>> {
     use crate::tool_parser;
@@ -369,8 +369,8 @@ mod sampling_defaults_tests {
 
     /// 2026-09-26: A preset with distinctive values, so each assertion shows
     /// which source a field came from.
-    fn preset() -> metrale_kernels::SamplingCategory {
-        metrale_kernels::SamplingCategory {
+    fn preset() -> metrale_kernel_set::SamplingCategory {
+        metrale_kernel_set::SamplingCategory {
             temperature: 0.7,
             top_p: 0.8,
             top_k: 40,

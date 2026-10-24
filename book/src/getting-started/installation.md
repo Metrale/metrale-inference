@@ -77,7 +77,7 @@ cargo fmt --all -- --check
 cargo test --release
 
 # Integration tests (require GPU + weights)
-cargo test -p met --release -- --ignored
+cargo test -p metrale-server --release -- --ignored
 ```
 
 The build system reads `kernels/gb10/HARDWARE.toml` for architecture flags, enumerates every `(model, quant)` subdirectory that matches the `METRALE_TARGET_*` wildcards, compiles each `.cu` source file through `nvcc`, and emits a single `target_ptx.rs` that the `metrale-kernels` crate embeds in the final binary. Zero runtime compilation.

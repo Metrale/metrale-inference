@@ -9,12 +9,12 @@
 use super::WatchdogParams;
 
 fn params(thinking_steering: bool) -> WatchdogParams {
-    let b = metrale_kernels::ModelBehavior {
+    let b = metrale_kernel_set::ModelBehavior {
         thinking_steering,
         confidence_early_stop: true,
         enable_think_loop_watchdog: true,
         min_reasoning_floor_tokens: 16,
-        ..metrale_kernels::ModelBehavior::default()
+        ..metrale_kernel_set::ModelBehavior::default()
     };
     WatchdogParams::from_behavior(&b, None, None)
 }

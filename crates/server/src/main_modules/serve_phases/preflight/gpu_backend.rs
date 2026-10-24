@@ -24,7 +24,7 @@ use crate::main_modules::memory_probe::{DeviceBudget, budget_bytes};
 #[cfg(feature = "cuda")]
 pub(crate) fn init_gpu_backend(
     args: &cli::ServeArgs,
-    ptx_set: &metrale_kernels::TargetPtxSet,
+    ptx_set: &metrale_kernel_set::TargetPtxSet,
 ) -> Result<(
     Box<dyn metrale_gpu_runtime::gpu::GpuBackend>,
     usize,
@@ -71,7 +71,7 @@ pub(crate) fn init_gpu_backend(
 #[cfg(all(feature = "metal", not(feature = "cuda")))]
 pub(crate) fn init_gpu_backend(
     args: &cli::ServeArgs,
-    ptx_set: &metrale_kernels::TargetPtxSet,
+    ptx_set: &metrale_kernel_set::TargetPtxSet,
 ) -> Result<(
     Box<dyn metrale_gpu_runtime::gpu::GpuBackend>,
     usize,

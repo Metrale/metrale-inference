@@ -16,33 +16,21 @@
 //! Owner: kernels crate.
 //! Invariants:
 //! - `ModelBehavior::default()` and the build-time `[behavior]` parse share
-//!   the constants in `behavior_defaults.rs`.
+//!   the constants in metrale-kernel-set's `behavior_defaults.rs`.
 //! - 2026-10-17: Only the binary links this crate (the `met` package, which hands
 //!   `TargetPtxSet::modules` to the device backend at construction); library
 //!   crates name it as a dev-dependency only, so a kernel edit rebuilds this
 //!   crate and the binary, not the crates between them. The hardware-tree
 //!   serving defaults are in metrale-target-defaults.
+//! - 2026-10-24: "The binary" is the thin `met` package (`crates/met`), not the server
+//!   library, which reaches the registry through the [`CATALOG`] value it is handed.
 
-// 2026-09-25: Used by the `include!`d `target_ptx.rs` below, which constructs
-// `KernelTarget { .. }` literals in this module's scope. The
-// `METRALE_SKIP_BUILD=1` stub emits an empty `all_ptx_sets()` and names no
-// target, so the import is unused in that build mode; the allow keeps
-// `#![deny(warnings)]` from failing it.
-#[allow(unused_imports)]
-use metrale_core::target::KernelTarget;
+// 2026-10-24: The registry's types and resolution rules live in metrale-kernel-set, which has
+// no build script; this crate adds the compiled blobs. The glob keeps every
+// `metrale_kernels::` path, and the generated `target_ptx.rs` names the types unqualified.
+pub use metrale_kernel_set::*;
 
-pub mod resolve;
-pub use resolve::{ResolveCandidate, TargetResolveError, ptx_for_config, ptx_for_exact_target};
-
-// 2026-09-25: `[behavior]` defaults shared with the build script, which
-// `include!`s the same file (`build_parse_behavior.rs`), so its parse defaults
-// and `ModelBehavior::default()` read one constant.
-mod behavior_defaults;
-pub use behavior_defaults::{
-    DEFAULT_EFFORT_CAPPED_AT_CEILING, DEFAULT_MAX_INTER_TOOL_PROSE, DEFAULT_MAX_THINKING_BUDGET,
-};
-
-// 2026-09-25: The generated per-target kernel constants, `ptx_modules()` and
+// 2026-09-25: The generated per-target kernel statics, `ptx_modules()` and
 // `all_ptx_sets()`.
 include!(concat!(env!("OUT_DIR"), "/target_ptx.rs"));
 
@@ -66,290 +54,41 @@ pub const TARGET_CLOSURES: &str = match option_env!("METRALE_TARGET_CLOSURES") {
     None => "{}",
 };
 
-/// 2026-09-25: One MODEL.toml `[sampling.<category>]` table, parsed by
-/// `build_parse.rs` (`parse_sampling_presets`). An absent table, or an absent
-/// key, takes the value `SamplingCat::default()` gives in `build.rs`.
-#[derive(Debug, Clone, Copy)]
-pub struct SamplingCategory {
-    pub temperature: f32,
-    pub top_p: f32,
-    pub top_k: u32,
-    pub presence_penalty: f32,
-    pub frequency_penalty: f32,
-    /// 2026-09-25: Repetition penalty. `metrale_sampling::apply_penalties_and_bias`
-    /// divides a positive logit by it, and multiplies a non-positive one, once
-    /// for every occurrence of the token in `SamplingParams::repetition_penalty_window`.
-    /// 1.0 (the parse default) skips it.
-    pub repetition_penalty: f32,
-    /// 2026-09-25: DRY penalty (`metrale_sampling::apply_dry_penalty`, whose
-    /// doc says which token each match penalises): a match of `len` tokens,
-    /// with `len > dry_allowed_length`, subtracts
-    /// `dry_multiplier * dry_base^(len - dry_allowed_length)` from one logit.
-    /// `0.0`, the parse default, disables it.
-    pub dry_multiplier: f32,
-    pub dry_base: f32,
-    pub dry_allowed_length: u32,
-    /// 2026-09-25: LZ penalty (`metrale_sampling::apply_lz_penalty`): a token
-    /// that would complete a 3-, 4- or 5-gram already present in the last 256
-    /// tokens loses `lz_penalty * (n - 2)` per earlier occurrence of that
-    /// n-gram. `0.0`, the parse default, disables it.
-    pub lz_penalty: f32,
-    /// 2026-09-25: Model-declared min-p, or `None` when MODEL.toml is silent.
-    ///
-    /// `Option`, because absence and `0.0` mean different things: `None`
-    /// leaves `--default-min-p` in charge, `Some(0.0)` asks for no min-p.
-    /// At startup the default is `generation_config.json`'s `min_p`, then
-    /// this value, then `--default-min-p` (`resolve_sampling_defaults`). On a
-    /// chat request a request value wins; with `use_sampling_presets_for_core`
-    /// set, this value comes next, ahead of that startup default.
-    pub min_p: Option<f32>,
-    /// 2026-09-25: Model-declared top-n-sigma, or `None` when MODEL.toml is
-    /// silent. Read only on the chat path with `use_sampling_presets_for_core`
-    /// set, where a request value wins and `None` leaves
-    /// `--default-top-n-sigma` in charge; `Some(0.0)` disables the filter.
-    pub top_n_sigma: Option<f32>,
+/// 2026-10-24: This build's registry as one value, for the binary to hand its library
+/// (`metrale_server::serve_main`), which does not depend on this crate.
+pub static CATALOG: KernelCatalog = KernelCatalog {
+    all_ptx_sets,
+    kernel_set_hash: KERNEL_SET_HASH,
+    target_closures: TARGET_CLOSURES,
+};
+
+/// 2026-09-25: Every compiled kernel target ([`KernelCatalog::available_targets`]).
+pub fn available_targets() -> Vec<TargetPtxSet> {
+    CATALOG.available_targets()
 }
 
-/// 2026-09-25: Model-specific sampling presets from MODEL.toml
-/// `[sampling.*]`, one per category.
-#[derive(Debug, Clone, Copy)]
-pub struct SamplingPresets {
-    pub thinking_text: SamplingCategory,
-    pub thinking_coding: SamplingCategory,
-    pub non_thinking: SamplingCategory,
-    pub tools: SamplingCategory,
+/// 2026-09-25: The first compiled target whose model name contains `needle`
+/// ([`KernelCatalog::ptx_for_model`]).
+pub fn ptx_for_model(needle: &str) -> Option<TargetPtxSet> {
+    CATALOG.ptx_for_model(needle)
 }
 
-impl Default for SamplingPresets {
-    fn default() -> Self {
-        let default_cat = SamplingCategory {
-            temperature: 0.7,
-            top_p: 0.95,
-            top_k: 20,
-            presence_penalty: 0.0,
-            frequency_penalty: 0.0,
-            repetition_penalty: 1.0,
-            dry_multiplier: 0.0,
-            dry_base: 1.75,
-            dry_allowed_length: 2,
-            lz_penalty: 0.0,
-            min_p: None,
-            top_n_sigma: None,
-        };
-        let tools_cat = SamplingCategory {
-            temperature: 0.6,
-            top_p: 0.95,
-            top_k: 20,
-            presence_penalty: 0.0,
-            frequency_penalty: 0.0,
-            repetition_penalty: 1.0,
-            dry_multiplier: 0.0,
-            dry_base: 1.75,
-            dry_allowed_length: 2,
-            lz_penalty: 0.0,
-            min_p: None,
-            top_n_sigma: None,
-        };
-        Self {
-            thinking_text: default_cat,
-            thinking_coding: default_cat,
-            non_thinking: default_cat,
-            tools: tools_cat,
-        }
-    }
+/// 2026-09-25: The compiled target that serves a checkpoint
+/// ([`KernelCatalog::ptx_for_config`]).
+pub fn ptx_for_config(
+    model_type: &str,
+    hidden_size: usize,
+    model_refs: &[&str],
+    pinned_target: Option<&str>,
+) -> Result<Option<TargetPtxSet>, TargetResolveError> {
+    CATALOG.ptx_for_config(model_type, hidden_size, model_refs, pinned_target)
 }
 
-/// 2026-09-25: Model-specific behaviour flags from MODEL.toml `[behavior]`,
-/// parsed at build time by `build_parse_behavior.rs`. "Default" below is the
-/// value of an absent key, which equals `ModelBehavior::default()`.
-#[derive(Debug, Clone)]
-pub struct ModelBehavior {
-    /// 2026-09-25: When false, a tool-active request without an explicit
-    /// thinking directive runs with thinking off. Default true.
-    pub thinking_in_tools: bool,
-    /// 2026-09-25: Thinking budget (tokens) for a thinking-on request that
-    /// names none, and the anchor E of the `reasoning_effort` ladder
-    /// (`effort_budget` in met's `api/chat/thinking.rs`).
-    /// `--max-thinking-budget` outranks it. Default
-    /// [`DEFAULT_MAX_THINKING_BUDGET`].
-    pub max_thinking_budget: u32,
-    /// 2026-09-25: Clamp the `reasoning_effort` ladder at E, so high and
-    /// xhigh resolve to `max_thinking_budget` instead of 2E and 4E. Default
-    /// [`DEFAULT_EFFORT_CAPPED_AT_CEILING`].
-    pub effort_capped_at_ceiling: bool,
-    /// 2026-09-25: Thinking state for a request that carries no thinking
-    /// directive. Any explicit directive overrides it, and
-    /// `--disable-thinking` turns thinking off for every request. Default
-    /// false.
-    pub thinking_default: bool,
-    /// 2026-09-25: FP8 KV calibration token count used when
-    /// `--fp8-kv-calibration-tokens` is not given; 0 disables calibration.
-    pub fp8_kv_calibration_tokens: usize,
-    /// 2026-09-25: KV cache dtype (e.g. "bf16", "fp8") used when
-    /// `--kv-cache-dtype` is not given; empty means the engine default
-    /// (`resolve_kv_dtype_str`).
-    pub default_kv_dtype: &'static str,
-    /// 2026-09-25: Speculative `num_drafts` (K = num_drafts + 1) used when
-    /// `--num-drafts` is not given; 0 means the engine default
-    /// (`resolve_num_drafts`).
-    pub default_num_drafts: u32,
-    /// 2026-09-29: The multi-sequence MTP dispatch cap (the widest batch that speculates) when
-    /// `--mtp-max-seqs` is not given; 0 means the engine default
-    /// (`metrale_model_layers::speculative::resolve_mtp_max_seqs`).
-    pub mtp_max_seqs: u32,
-    /// 2026-09-25: Passed to the chat template as `disable_tool_steering`;
-    /// `nemotron_h.jinja` then omits its `<tool_call>` generation-prompt
-    /// prefix when tools are present. Default false.
-    pub disable_tool_steering: bool,
-    /// 2026-09-25: Skip the `<environment>` working-directory hint that the
-    /// chat path adds to the system message of a tool-active request.
-    /// Default false.
-    pub disable_cwd_hint_injection: bool,
-    /// 2026-09-25: On the chat path, take the default temperature, top-k,
-    /// top-p, min-p and top-n-sigma from the selected MODEL.toml sampling
-    /// category instead of the server-wide defaults. Request values still
-    /// win. Default false.
-    pub use_sampling_presets_for_core: bool,
-    /// 2026-09-25: Tool-call parser name. `--tool-call-parser` outranks it;
-    /// empty means the `tool_defaults.toml` entry for the checkpoint's
-    /// `model_type`.
-    pub tool_call_parser: &'static str,
-    /// 2026-09-25: Starting value of the content-loop watchdog lever
-    /// (`SchedLevers::loop_watchdog`), which `resolve_content_loop_watchdog`
-    /// combines with `METRALE_CONTENT_LOOP_WATCHDOG` and
-    /// `--content-loop-watchdog`. Default false.
-    pub enable_loop_watchdog: bool,
-    /// 2026-09-25: Per-model gate for the thinking-loop watchdog. Default
-    /// true.
-    pub enable_think_loop_watchdog: bool,
-    /// 2026-09-25: While fewer than this many thinking tokens have been
-    /// emitted, `</think>` gets a -8.0 logit bias; 0 disables it. Default 16.
-    pub min_reasoning_floor_tokens: u32,
-    /// 2026-09-25: Also cap the thinking budget at 90% of the request's
-    /// `max_tokens`; false leaves `max_thinking_budget` (or the request's
-    /// own budget) as the only cap. Default true.
-    pub cap_thinking_at_max_tokens: bool,
-    /// 2026-09-25: Server-side min-p floor, applied as `min_p.max(floor)`
-    /// after request and preset resolution, so it holds even when a client
-    /// sends `min_p = 0`. 0.0 disables it. The qwen3.6-35b-a3b MODEL.toml
-    /// files set 0.05 and record the measurement behind it.
-    pub min_p_floor: f32,
-    /// 2026-09-25: Server-side temperature ceiling, applied as
-    /// `temperature.min(max)` after resolution. 0.0 disables it.
-    pub temperature_max: f32,
-    /// 2026-09-25: Repeat count at which the thinking-loop detector forces
-    /// `</think>`, unless the request sends its own `repetition_detection`.
-    /// Default 3.
-    pub think_loop_min_repeats: u32,
-    /// 2026-09-25: Carried into `WatchdogParams::think_loop_scan_window`;
-    /// `detect_token_loop` ignores that value, so this field has no effect.
-    /// Default 160.
-    pub think_loop_scan_window: u32,
-    /// 2026-09-25: Whether `F2ConfidenceEarlyStop` may arm a forced
-    /// `</think>`. Default true.
-    pub confidence_early_stop: bool,
-    /// 2026-09-25: Consecutive confident thinking tokens after which
-    /// `F2ConfidenceEarlyStop` arms a forced `</think>`. Default 30.
-    pub confidence_run_length: u32,
-    /// 2026-09-25: Fuzzy-repetition tolerance divisor: a `pattern_len` window
-    /// tolerates `max(pattern_len / div, 1)` mismatches. Default 12 (about 8%).
-    pub fuzzy_repeat_tolerance_div: u32,
-    /// 2026-09-25: Cap on content tokens outside tool bodies since the last
-    /// tool call on a tool request; past it the watchdog rolls back or ends
-    /// the response. `--max-inter-tool-prose` and
-    /// `METRALE_MAX_INTER_TOOL_PROSE` outrank it, and 0 disables the guard
-    /// (`resolve_max_inter_tool_prose`). Default
-    /// [`DEFAULT_MAX_INTER_TOOL_PROSE`].
-    pub max_inter_tool_prose: u32,
-    /// 2026-09-25: Cap on content tokens per generation for a sequence with a
-    /// grammar attached; past it the response ends. Sequences without a
-    /// grammar are not capped. Default 100_000.
-    pub max_post_think_content_tokens: u32,
-    /// 2026-09-25: TSCG (arXiv:2605.04107): render the prompt's tool list as
-    /// compiled function signatures instead of JSON schemas. Default false.
-    pub tscg: bool,
-    /// 2026-09-25: On a tool-active request with `tool_choice` other than
-    /// `required`, parse tool calls but do not constrain them with the tool
-    /// grammar. A pinned `--tool-grammar` outranks it. Default false.
-    pub disable_tool_grammar: bool,
-    /// 2026-09-25: When a decode-time watchdog fires, roll the sequence back
-    /// to its last boundary and re-steer instead of ending the response
-    /// (arXiv:2603.27905); false makes the rollback decline. After
-    /// [`crate::ROLLBACK_RESTEER_CAP`] rollbacks of one sequence the rollback
-    /// declines and the watchdog ends the response. Default true.
-    pub rollback_resteer: bool,
-    /// 2026-10-14: The server steers the thinking block: it forces `</think>`
-    /// when a thinking budget or watchdog fires, defers that close to a
-    /// word or sentence boundary, masks `<think>` after a close, drops a
-    /// stray `</think>`, and gives a spontaneous `<think>` its own budget.
-    /// False does what vLLM does: the block is the model's, and only a
-    /// budget the client asks for forces `</think>`. Default true.
-    pub thinking_steering: bool,
-    /// 2026-09-25: Path to a trained repetition-onset (ROM, arXiv:2603.22016)
-    /// head artifact. Nothing loads it: a non-empty value only logs a startup
-    /// warning, and the scheduler's `rom_head` stays `None`. Default empty.
-    pub rom_head: &'static str,
-    /// 2026-09-25: Parsed from `[behavior].tool_retry` (default true), but
-    /// nothing reads it: the chat stream's `tool_retry_enabled` is the
-    /// constant `false`.
-    pub tool_retry: bool,
-    /// 2026-09-25: The chat template's `preserve_thinking` variable. `None`
-    /// leaves it undefined, so the template's own default applies; `Some(_)`
-    /// sets it. A server-level `preserve_thinking` default kwarg outranks it,
-    /// and a request's `chat_template_kwargs.preserve_thinking` wins over
-    /// both.
-    pub preserve_thinking: Option<bool>,
+/// 2026-09-25: The compiled target with exactly this `(model, quant)` identity
+/// ([`KernelCatalog::ptx_for_exact_target`]).
+pub fn ptx_for_exact_target(model: &str, quant: &str) -> Option<TargetPtxSet> {
+    CATALOG.ptx_for_exact_target(model, quant)
 }
-
-/// 2026-09-25: Most watchdog-triggered rollbacks one sequence may perform;
-/// at this count `rollback_to_boundary` declines and the watchdog ends the
-/// response instead of re-steering.
-pub const ROLLBACK_RESTEER_CAP: u32 = 2;
-
-impl Default for ModelBehavior {
-    fn default() -> Self {
-        Self {
-            thinking_in_tools: true,
-            max_thinking_budget: DEFAULT_MAX_THINKING_BUDGET,
-            effort_capped_at_ceiling: DEFAULT_EFFORT_CAPPED_AT_CEILING,
-            thinking_default: false,
-            fp8_kv_calibration_tokens: 0,
-            default_kv_dtype: "",
-            default_num_drafts: 0,
-            mtp_max_seqs: 0,
-            disable_tool_steering: false,
-            disable_cwd_hint_injection: false,
-            use_sampling_presets_for_core: false,
-            tool_call_parser: "",
-            enable_loop_watchdog: false,
-            enable_think_loop_watchdog: true,
-            min_reasoning_floor_tokens: 16,
-            cap_thinking_at_max_tokens: true,
-            min_p_floor: 0.0,
-            temperature_max: 0.0,
-            think_loop_min_repeats: 3,
-            think_loop_scan_window: 160,
-            confidence_early_stop: true,
-            confidence_run_length: 30,
-            fuzzy_repeat_tolerance_div: 12,
-            max_inter_tool_prose: DEFAULT_MAX_INTER_TOOL_PROSE,
-            max_post_think_content_tokens: 100_000,
-            tscg: false,
-            disable_tool_grammar: false,
-            rollback_resteer: true,
-            thinking_steering: true,
-            rom_head: "",
-            tool_retry: true,
-            preserve_thinking: None,
-        }
-    }
-}
-
-mod ptx_set;
-pub use ptx_set::{DflashConfig, ModelTypeMatch, TargetPtxSet};
-
-mod query;
-pub use query::{available_targets, ptx_for_model};
 
 #[cfg(test)]
 #[path = "lib_tests.rs"]

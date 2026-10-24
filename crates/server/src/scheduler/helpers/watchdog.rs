@@ -101,7 +101,7 @@ impl WatchdogParams {
     /// `METRALE_CONTENT_LOOP_MIN_REPEATS`, flag first). `None` keeps MODEL.toml's budget and
     /// the built-in [`CONTENT_LOOP_MIN_REPEATS`].
     pub fn from_behavior(
-        b: &metrale_kernels::ModelBehavior,
+        b: &metrale_kernel_set::ModelBehavior,
         max_inter_tool_prose: Option<u32>,
         content_loop_min_repeats: Option<u32>,
     ) -> Self {
@@ -154,7 +154,7 @@ impl WatchdogParams {
 ///
 /// The operator override (`--max-inter-tool-prose`, else `METRALE_MAX_INTER_TOOL_PROSE`, as the
 /// serve's settings resolved it) wins over MODEL.toml `[behavior].max_inter_tool_prose`, which
-/// already holds the shared default (`metrale_kernels::DEFAULT_MAX_INTER_TOOL_PROSE`) for an
+/// already holds the shared default (`metrale_kernel_set::DEFAULT_MAX_INTER_TOOL_PROSE`) for an
 /// unset key.
 ///
 /// 0 means "guard disabled" and maps to `u32::MAX`: the check sites fire
@@ -169,10 +169,10 @@ pub fn resolve_max_inter_tool_prose(toml: u32, operator: Option<u32>) -> u32 {
 /// `tool_choice="auto"` the tool grammar compiles with
 /// `stop_after_first=false`, so it does not end the turn after a tool call;
 /// this budget bounds the free text in between. It aliases
-/// `metrale_kernels::DEFAULT_MAX_INTER_TOOL_PROSE`, the value the build-time
+/// `metrale_kernel_set::DEFAULT_MAX_INTER_TOOL_PROSE`, the value the build-time
 /// `[behavior]` parse uses for an unset key, so `Default` and an unset
 /// MODEL.toml key agree.
-pub const MAX_INTER_TOOL_PROSE: u32 = metrale_kernels::DEFAULT_MAX_INTER_TOOL_PROSE;
+pub const MAX_INTER_TOOL_PROSE: u32 = metrale_kernel_set::DEFAULT_MAX_INTER_TOOL_PROSE;
 
 /// 2026-09-25: `Default`'s cap on content tokens per generation for a
 /// sequence with a grammar attached (`grammar_state.is_some()`); the check

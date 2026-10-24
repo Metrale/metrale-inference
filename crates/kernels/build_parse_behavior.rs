@@ -5,16 +5,18 @@
 //! Owner: metrale-kernels build.
 //! Invariants:
 //! - `ParsedBehavior::default()` and every `unwrap_or` below equal
-//!   `ModelBehavior::default()` in src/lib.rs, so an absent table, an absent
+//!   `ModelBehavior::default()` in metrale-kernel-set, so an absent table, an absent
 //!   key or an unparsable MODEL.toml is behaviour-neutral.
 //!
 //! Included as a child module of `build_parse`, so `super::` reaches its
 //! items and `crate::` reaches build.rs types.
 
-// 2026-09-25: Shared with `src/lib.rs` (which `mod`s the same file) so these
-// defaults and `ModelBehavior::default()` are one literal: a build script
-// cannot import the library it builds.
-include!("src/behavior_defaults.rs");
+// 2026-09-25: Shared with `ModelBehavior::default()` so the two are one literal.
+// 2026-10-24: Imported from metrale-kernel-set (a build-dependency), where both now live; the
+// build script could not import the library it builds, but it can import that one.
+use metrale_kernel_set::{
+    DEFAULT_EFFORT_CAPPED_AT_CEILING, DEFAULT_MAX_INTER_TOOL_PROSE, DEFAULT_MAX_THINKING_BUDGET,
+};
 
 /// 2026-09-25: Parsed `[behavior]` table from a model's MODEL.toml. Field
 /// defaults match `ModelBehavior::default()`.

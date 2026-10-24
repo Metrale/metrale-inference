@@ -1093,8 +1093,9 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: met without bench (default)
         run: |
-          cargo clippy --locked -p met --all-targets -- -D warnings
-          cargo test --locked -p met --no-run
+          # 2026-10-24: `met` is the binary package; the code is metrale-server's library.
+          cargo clippy --locked -p met -p metrale-server --all-targets -- -D warnings
+          cargo test --locked -p met -p metrale-server --no-run
           cargo build --locked -p met --bin met
           # `cargo tree -i` fails when the package is outside the graph; any other
           # failure (a lockfile error, say) must not read as "absent".
@@ -1106,8 +1107,8 @@ jobs:
           grep -q 'did not match any packages' <<<"$out" || { echo "$out"; exit 1; }
       - name: met with bench
         run: |
-          cargo clippy --locked -p met --all-targets --features bench -- -D warnings
-          cargo test --locked -p met --no-run --features bench
+          cargo clippy --locked -p met -p metrale-server --all-targets --features met/bench -- -D warnings
+          cargo test --locked -p met -p metrale-server --no-run --features met/bench
           cargo build --locked -p met --bin met --features bench
 
   # 2026-09-27: Every launch recipe under recipes/ against THIS tree's `met`: the

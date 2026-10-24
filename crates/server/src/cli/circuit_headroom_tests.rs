@@ -5,7 +5,7 @@
 //! SVGs), the JSON validates against schemas/headroom.v1.json (and a validator that accepts a
 //! broken document would fail here), and a flag that contradicts the capture is refused.
 //! Regenerate the reports after an intended change with
-//! `cargo test -p met circuit_headroom -- --ignored regenerate_headroom`.
+//! `cargo test -p metrale-server circuit_headroom -- --ignored regenerate_headroom`.
 //!
 //! Owner: server CLI tests.
 //! Invariants: the tests read the repository at the workspace root; nothing is written except by
@@ -103,7 +103,7 @@ fn the_headroom_reports_are_current() {
         });
         assert!(
             on_disk == text,
-            "{rel} is stale; regenerate with `cargo test -p met circuit_headroom -- --ignored regenerate_headroom`"
+            "{rel} is stale; regenerate with `cargo test -p metrale-server circuit_headroom -- --ignored regenerate_headroom`"
         );
     }
 }

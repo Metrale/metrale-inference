@@ -63,20 +63,22 @@ fn preflight_kernel_target(args: &cli::ServeArgs) -> Result<()> {
     .into_iter()
     .flatten()
     .collect();
-    let resolved = metrale_kernels::ptx_for_config(
-        &config.model_type,
-        config.hidden_size,
-        &model_refs,
-        args.kernel_target.as_deref(),
-    )
-    .map_err(|e| anyhow::anyhow!("{e} — the running model is untouched"))?;
+    let resolved = crate::embedded::kernels()
+        .ptx_for_config(
+            &config.model_type,
+            config.hidden_size,
+            &model_refs,
+            args.kernel_target.as_deref(),
+        )
+        .map_err(|e| anyhow::anyhow!("{e} — the running model is untouched"))?;
     if resolved.is_none() {
         anyhow::bail!(
             "this build has no compiled kernels for model_type '{}' / hidden_size={} \
              (available: {:?}) — the running model is untouched",
             config.model_type,
             config.hidden_size,
-            metrale_kernels::available_targets()
+            crate::embedded::kernels()
+                .available_targets()
                 .iter()
                 .map(|t| &t.target.model)
                 .collect::<Vec<_>>()

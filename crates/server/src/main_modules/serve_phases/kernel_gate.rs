@@ -26,7 +26,7 @@ const MAX_EXIT_CODE: usize = 255;
 #[cfg(feature = "cuda")]
 pub(crate) fn gate_device_arch(
     checking: bool,
-    ptx_set: &metrale_kernels::TargetPtxSet,
+    ptx_set: &metrale_kernel_set::TargetPtxSet,
     gpu_ordinal: usize,
     // 2026-10-17: The resolved stream priority the probe context is created at.
     priority: metrale_settings::groups::device::StreamPriority,
@@ -46,7 +46,7 @@ pub(crate) fn gate_device_arch(
 #[cfg(feature = "cuda")]
 pub(crate) fn gate_arch_preflight(
     checking: bool,
-    ptx_set: &metrale_kernels::TargetPtxSet,
+    ptx_set: &metrale_kernel_set::TargetPtxSet,
     result: Result<()>,
 ) -> Result<()> {
     if let Err(error) = &result
@@ -82,7 +82,7 @@ fn arch_refusal_json(
                 "compiled_arch": mismatch.compiled_arch,
                 "device_cc": mismatch.device_cc,
                 "quant": quant,
-                "kernel_set_hash": metrale_kernels::KERNEL_SET_HASH,
+                "kernel_set_hash": crate::embedded::kernels().kernel_set_hash,
                 "modules_embedded": modules_embedded,
                 "lookups": null,
                 "unresolved": null,
@@ -104,13 +104,13 @@ fn arch_refusal_json(
 /// the unresolved count (clamped to [`MAX_EXIT_CODE`]) as the status.
 pub(crate) fn audit_and_gate(
     args: &cli::ServeArgs,
-    ptx_set: &metrale_kernels::TargetPtxSet,
+    ptx_set: &metrale_kernel_set::TargetPtxSet,
 ) -> Result<()> {
     tracing::info!(
         "{}",
         metrale_telemetry::kernel_audit::render_kernel_table(
             &ptx_set.modules,
-            metrale_kernels::KERNEL_SET_HASH,
+            crate::embedded::kernels().kernel_set_hash,
             ptx_set.shadowed_dropped,
             ptx_set.expected_absent,
         )
@@ -153,7 +153,7 @@ pub(crate) fn audit_and_gate(
 fn check_and_exit(
     rows: &[metrale_telemetry::kernel_audit::AuditRow],
     split: &metrale_telemetry::kernel_audit::FailureSplit,
-    ptx_set: &metrale_kernels::TargetPtxSet,
+    ptx_set: &metrale_kernel_set::TargetPtxSet,
 ) -> ! {
     use std::io::Write as _;
 
@@ -234,7 +234,7 @@ fn check_json_from(summary: &CheckSummary) -> String {
             "compiled_arch": summary.compiled_arch,
             "device_cc": summary.device_cc,
             "quant": summary.quant,
-            "kernel_set_hash": metrale_kernels::KERNEL_SET_HASH,
+            "kernel_set_hash": crate::embedded::kernels().kernel_set_hash,
             "modules_embedded": summary.modules_embedded,
             "lookups": summary.lookups,
             "unresolved": summary.unresolved.len(),
@@ -266,7 +266,7 @@ fn current_device_cc() -> Option<(u32, u32)> {
 fn check_json(
     rows: &[metrale_telemetry::kernel_audit::AuditRow],
     split: &metrale_telemetry::kernel_audit::FailureSplit,
-    ptx_set: &metrale_kernels::TargetPtxSet,
+    ptx_set: &metrale_kernel_set::TargetPtxSet,
     exit_code: usize,
 ) -> String {
     let unresolved: Vec<serde_json::Value> = split

@@ -132,7 +132,10 @@ fn the_kill_switch_leaves_the_listener_as_a_plain_bind() {
             .expect("addr")
             .port();
         rt.block_on(crate::main_modules::serve_router::bind_and_announce(
-            &host, "127.0.0.1", port, on,
+            &host,
+            "127.0.0.1",
+            port,
+            on,
         ))
         .expect("bind")
     };
@@ -192,7 +195,7 @@ async fn slowest_post_ms(listener: tokio::net::TcpListener, body_bytes: usize) -
 /// 128k-token body (480 KB), which the kernel default 131072 delays too, so the
 /// test runs on any host whose default is below the listener buffer; it times
 /// loopback, so it stays ignored. Run it with
-/// `cargo test -p met listener_rcvbuf -- --ignored`.
+/// `cargo test -p metrale-server listener_rcvbuf -- --ignored`.
 #[cfg(target_os = "linux")]
 #[ignore = "times loopback; needs net.ipv4.tcp_rmem default below LISTENER_RCVBUF_BYTES"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

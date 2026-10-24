@@ -296,7 +296,7 @@ mod tests {
     fn effort_cap_defaults_off_so_shipping_it_changes_nothing() {
         // 2026-09-26: The built-in default is `false`, read from
         // `ModelBehavior::default()` rather than a copy of the literal.
-        assert!(!metrale_kernels::ModelBehavior::default().effort_capped_at_ceiling);
+        assert!(!metrale_kernel_set::ModelBehavior::default().effort_capped_at_ceiling);
     }
 
     #[test]

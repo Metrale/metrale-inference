@@ -15,7 +15,7 @@ use crate::api::inference_types::RepetitionDetectionParams;
 #[test]
 fn min_repeats_cli_reaches_the_resolved_params() {
     let p =
-        WatchdogParams::from_behavior(&metrale_kernels::ModelBehavior::default(), None, Some(5));
+        WatchdogParams::from_behavior(&metrale_kernel_set::ModelBehavior::default(), None, Some(5));
     assert_eq!(p.content_loop_min_repeats, Some(5));
     let eff = p.content_loop_params(None).expect("override present");
     assert_eq!(eff.min_count, 5);
@@ -41,7 +41,8 @@ fn request_params_outrank_the_operator_override() {
 
 #[test]
 fn unset_override_keeps_the_historical_constants() {
-    let p = WatchdogParams::from_behavior(&metrale_kernels::ModelBehavior::default(), None, None);
+    let p =
+        WatchdogParams::from_behavior(&metrale_kernel_set::ModelBehavior::default(), None, None);
     assert_eq!(p.content_loop_min_repeats, None);
     assert!(p.content_loop_params(None).is_none());
 }

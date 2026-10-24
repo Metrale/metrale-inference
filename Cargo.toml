@@ -8,6 +8,7 @@ members = [
     "crates/circuit",
     "crates/governance",
     "crates/kernels",
+    "crates/kernel-set",
     "crates/target-defaults",
     "crates/kernel-root",
     "crates/kernel-tree",
@@ -28,6 +29,7 @@ members = [
     "crates/speculative",
     "crates/bench",
     "crates/server",
+    "crates/met",
     "xtask",
     "crates/abstract-io",
     "crates/io-hosts/mem",
@@ -54,7 +56,7 @@ members = [
 ]
 
 # 2026-10-17: A bare `cargo build` builds `met` only; CI and scripts name `--workspace` or `-p`.
-default-members = ["crates/server"]
+default-members = ["crates/met"]
 
 # 2026-10-17: The vendored cudarc fork is a dependency, not a member: workspace-wide fmt, clippy
 # and tests do not run over vendored code.
@@ -211,7 +213,7 @@ x25519-dalek = { version = "2.0.1", default-features = false }
 # cudarc through a `cuda` default.
 # 2026-10-17: `version` is required to publish a crate whose dependencies are path dependencies;
 # it must equal `[workspace.package] version` above.
-met = { path = "crates/server", version = "1.0.0-beta-preview", default-features = false }
+met = { path = "crates/met", version = "1.0.0-beta-preview", default-features = false }
 metrale-abstract-io = { path = "crates/abstract-io", version = "1.0.0-beta-preview", default-features = false }
 metrale-blueprint = { path = "crates/blueprint", version = "1.0.0-beta-preview", default-features = false }
 metrale-blueprint-sign = { path = "crates/blueprint-sign", version = "1.0.0-beta-preview", default-features = false }
@@ -237,6 +239,7 @@ metrale-io-host-kg = { path = "crates/io-hosts/kg", version = "1.0.0-beta-previe
 metrale-kernel-root = { path = "crates/kernel-root", version = "1.0.0-beta-preview", default-features = false }
 metrale-kernel-tree = { path = "crates/kernel-tree", version = "1.0.0-beta-preview", default-features = false }
 metrale-kernels = { path = "crates/kernels", version = "1.0.0-beta-preview", default-features = false }
+metrale-kernel-set = { path = "crates/kernel-set", version = "1.0.0-beta-preview", default-features = false }
 metrale-latlas-pack = { path = "crates/latlas-pack", version = "1.0.0-beta-preview", default-features = false }
 # 2026-10-23: Latlas (Avarok-Cybersecurity/latlas): the generic graph+vector core metrale-kg runs on
 # (DESIGN-latlas.md §5.3, K1). Pinned to one rev of the private repo; bump all eight together.
@@ -256,6 +259,7 @@ metrale-sampling = { path = "crates/sampling", version = "1.0.0-beta-preview", d
 metrale-scheduler = { path = "crates/scheduler", version = "1.0.0-beta-preview", default-features = false }
 metrale-seal = { path = "crates/seal", version = "1.0.0-beta-preview", default-features = false }
 metrale-serve-identity = { path = "crates/serve-identity", version = "1.0.0-beta-preview", default-features = false }
+metrale-server = { path = "crates/server", version = "1.0.0-beta-preview", default-features = false }
 kzx = { path = "crates/kzx", version = "0.1.0", default-features = false }
 metrale-kv-codec = { path = "crates/kv-codec", version = "1.0.0-beta-preview", default-features = false }
 metrale-power = { path = "crates/power", version = "1.0.0-beta-preview", default-features = false }

@@ -162,7 +162,7 @@ pub(crate) fn load_weight_store(
 
 pub(crate) fn load_dflash_drafter(
     args: &cli::ServeArgs,
-    ptx_set: &metrale_kernels::TargetPtxSet,
+    ptx_set: &metrale_kernel_set::TargetPtxSet,
     gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
 ) -> Result<
     Option<(

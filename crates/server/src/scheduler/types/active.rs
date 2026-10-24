@@ -236,7 +236,7 @@ pub(in crate::scheduler) struct ActiveSeq {
     pub think_watchdog_fires: u32,
     /// 2026-09-25: How many times a degeneration watchdog has rolled this sequence
     /// back to a boundary and re-steered. At
-    /// [`metrale_kernels::ROLLBACK_RESTEER_CAP`] rollback is declined and the
+    /// [`metrale_kernel_set::ROLLBACK_RESTEER_CAP`] rollback is declined and the
     /// watchdog hard-stops instead. See
     /// [`crate::scheduler::rollback::rollback_to_boundary`].
     pub rollback_count: u32,

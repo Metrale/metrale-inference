@@ -23,7 +23,8 @@ fn resolved_default_budget_is_plan_friendly() {
     // 2026-09-25: The decode paths compare against the value
     // `from_behavior` resolves (`sched.watchdog.max_inter_tool_prose`), not
     // the constant, so assert the resolved default too.
-    let p = WatchdogParams::from_behavior(&metrale_kernels::ModelBehavior::default(), None, None);
+    let p =
+        WatchdogParams::from_behavior(&metrale_kernel_set::ModelBehavior::default(), None, None);
     assert!(
         p.max_inter_tool_prose >= 2048,
         "resolved inter-tool prose budget must fit a plan/analysis turn \
@@ -36,8 +37,11 @@ fn resolved_default_budget_is_plan_friendly() {
 fn the_operator_override_outranks_model_toml() {
     assert_eq!(resolve_max_inter_tool_prose(384, None), 384);
     assert_eq!(resolve_max_inter_tool_prose(384, Some(8192)), 8192);
-    let p =
-        WatchdogParams::from_behavior(&metrale_kernels::ModelBehavior::default(), Some(4096), None);
+    let p = WatchdogParams::from_behavior(
+        &metrale_kernel_set::ModelBehavior::default(),
+        Some(4096),
+        None,
+    );
     assert_eq!(
         p.max_inter_tool_prose, 4096,
         "from_behavior applies the override"

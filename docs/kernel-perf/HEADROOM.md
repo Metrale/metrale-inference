@@ -44,7 +44,7 @@ The flags:
 - With no launch floor, no site is classed launch-bound. The report says which of these
   applied.
 
-The checked-in reports are regenerated and compared by `cargo test -p met circuit_headroom`. To
+The checked-in reports are regenerated and compared by `cargo test -p metrale-server circuit_headroom`. To
 rewrite them, run `-- --ignored regenerate_headroom`.
 
 ## Where the reports live, and why not in the hw reports
@@ -172,7 +172,7 @@ a 95% interval, computed in `crates/circuit/src/hardware/headroom_ci.rs`:
 **Statistics (one source of truth).** Headroom's moving-block bootstrap, percentile intervals,
 median and HAC variance are `metrale_stats::mbb` (crate `crates/stats`, merged from `kernel-energy`
 on 2026-10-23; the interim `hardware/stats.rs` was deleted). Same SplitMix64 stream and seed, so
-the golden reports stayed byte-identical (`cargo test -p met circuit_headroom`).
+the golden reports stayed byte-identical (`cargo test -p metrale-server circuit_headroom`).
 
 ## Tools that complement it, per platform, and how they feed `--trace`
 

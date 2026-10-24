@@ -91,7 +91,7 @@ pub fn build() -> KernelTableModel {
     // 2026-09-26: No target published yet, or none compiled for it: an empty
     // table.
     let Some(ptx) = loaded_target()
-        .and_then(|(model, quant)| metrale_kernels::ptx_for_exact_target(&model, &quant))
+        .and_then(|(model, quant)| crate::embedded::kernels().ptx_for_exact_target(&model, &quant))
     else {
         return KernelTableModel::default();
     };

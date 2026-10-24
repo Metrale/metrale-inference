@@ -182,7 +182,7 @@ fn rewind_seq_len_saturates_at_zero() {
 
 #[test]
 fn rollback_cap_is_two() {
-    assert_eq!(metrale_kernels::ROLLBACK_RESTEER_CAP, 2);
+    assert_eq!(metrale_kernel_set::ROLLBACK_RESTEER_CAP, 2);
 }
 
 #[test]

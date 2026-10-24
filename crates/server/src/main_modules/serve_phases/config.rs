@@ -168,7 +168,7 @@ pub(crate) fn resolve_num_drafts(
 
 pub(crate) fn apply_model_default_num_drafts(
     args: &mut cli::ServeArgs,
-    ptx_set: &metrale_kernels::TargetPtxSet,
+    ptx_set: &metrale_kernel_set::TargetPtxSet,
 ) {
     let (effective, source) =
         resolve_num_drafts(args.num_drafts, ptx_set.behavior.default_num_drafts);
@@ -202,7 +202,7 @@ pub(crate) fn apply_model_default_num_drafts(
 /// 2026-10-17: The engine default follows the resolved `METRALE_NO_MTP_K_LADDER` (ROTI).
 pub(crate) fn publish_mtp_max_seqs(
     args: &cli::ServeArgs,
-    ptx_set: &metrale_kernels::TargetPtxSet,
+    ptx_set: &metrale_kernel_set::TargetPtxSet,
     settings: &metrale_settings::InferenceServerSettings,
 ) -> anyhow::Result<()> {
     use metrale_model_layers::speculative as spec;

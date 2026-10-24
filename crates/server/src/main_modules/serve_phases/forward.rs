@@ -162,7 +162,7 @@ pub(crate) fn resolve_forward(
 /// 2026-10-23: `verify_rows`, the verify widths the serve's speculation runs.
 pub(crate) fn forward_select(
     args: &cli::ServeArgs,
-    ptx_set: &metrale_kernels::TargetPtxSet,
+    ptx_set: &metrale_kernel_set::TargetPtxSet,
     config_json: &str,
     verify_rows: Vec<u64>,
 ) -> Result<ForwardSelect> {

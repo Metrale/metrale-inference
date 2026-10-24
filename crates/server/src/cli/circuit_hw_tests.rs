@@ -4,7 +4,7 @@
 //! plans, Hopper never runs an FP4-MMA kernel, H100 and H200 differ only in roofline and memory,
 //! every registry device agrees with its class's build, and the matrix reports are current.
 //! Regenerate the reports after an intended change with
-//! `cargo test -p met circuit_hw -- --ignored regenerate_matrix`.
+//! `cargo test -p metrale-server circuit_hw -- --ignored regenerate_matrix`.
 //!
 //! Owner: server CLI tests.
 //! Invariants: the tests read the repository at the workspace root; nothing is written except by
@@ -298,7 +298,7 @@ fn every_matrix_model_resolves_to_an_existing_kernel_target_or_none() {
 fn matrix_reports_are_current() {
     matrix(&root(), MATRIX_DIR, true).unwrap_or_else(|e| {
         panic!(
-            "{e:#}\nregenerate with `cargo test -p met circuit_hw -- --ignored regenerate_matrix`"
+            "{e:#}\nregenerate with `cargo test -p metrale-server circuit_hw -- --ignored regenerate_matrix`"
         )
     });
 }
