@@ -11,7 +11,9 @@
 //! - A name this module does not register fails the step that reads it, on any arm, so a typo
 //!   never measures A against A.
 
-use anyhow::{Result, bail};
+use std::num::NonZeroU32;
+
+use anyhow::{Result, anyhow, bail};
 use metrale_model_layers::layer::{AbLevers, ForwardContext};
 
 use crate::glm5next_dsa::Glm5NextDsaKernels;
@@ -19,7 +21,7 @@ use crate::glm5next_layer::GlmLevers;
 use crate::glm5next_mlp::Glm5NextMlpKernels;
 
 /// 2026-10-23: The registered levers.
-pub(super) const NAMES: [&str; 5] = [
+pub(super) const NAMES: [&str; 6] = [
     // 2026-10-23: The MoE router's few-row GEMV at one output per block
     // (`glm5next_router_gemv_npb1`): the instrument's known-small validation lever.
     "router_npb1",
@@ -34,6 +36,10 @@ pub(super) const NAMES: [&str; 5] = [
     "dsa_mma",
     // 2026-10-23: `METRALE_GLM_DENSE_SEGMENT` (`glm5next_dense_seg`): the P3 persistent segment.
     "dense_seg",
+    // 2026-10-23: `dense_seg` with only its CTAs on SMs below `<sms>` taking tasks
+    // (GRAPH-THEORY-MAP E2: the shared expert confined to k_side SMs, the routed sweep keeping the
+    // rest); `<sms>` from 1 to the device's SM count.
+    "dense_seg@<sms>",
 ];
 
 /// 2026-10-23: `base` under this pass's instrument levers.
@@ -78,6 +84,18 @@ pub(super) fn apply(
                     bail!("METRALE_PAIRED_AB: `dense_seg` needs the W4A16 GEMV pipe");
                 }
                 k.levers.dense.dense_seg |= on.has(i);
+            }
+            n if n.starts_with("dense_seg@") => {
+                let sms = n["dense_seg@".len()..]
+                    .parse::<NonZeroU32>()
+                    .map_err(|e| anyhow!("METRALE_PAIRED_AB: `{n}`: the SM budget: {e}"))?;
+                if !k.levers.dense.gemv_seg || !k.levers.dense.gemv_pipe {
+                    bail!("METRALE_PAIRED_AB: `{n}` needs the W4A16 GEMV pipe");
+                }
+                if on.has(i) {
+                    k.levers.dense.dense_seg = true;
+                    k.levers.dense.dense_seg_sms = Some(sms);
+                }
             }
             // 2026-10-23: A KDA lever ([`kda_levers`]) and a DSA one ([`dsa_kernels`]).
             "kda_conv_one" | "dsa_mma" => {}

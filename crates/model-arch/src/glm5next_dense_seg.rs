@@ -18,7 +18,7 @@
 
 use std::sync::OnceLock;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_layers::layers::ops::{SegmentCtl, W4a16Seg, w4a16_dense_segment};
 
@@ -97,6 +97,14 @@ pub fn dense_segment(
         .op_cache()
         .kernel(gpu, MODULE, name)
         .with_context(|| format!("METRALE_GLM_DENSE_SEGMENT: {MODULE}::{name}"))?;
+    let budget = match l.dense_seg_sms {
+        None => u32::MAX,
+        Some(k) if k.get() <= plan.sms => k.get(),
+        Some(k) => bail!(
+            "METRALE_GLM_DENSE_SEGMENT: an SM budget of {k} on a {}-SM device",
+            plan.sms
+        ),
+    };
     let (n_i, n_h) = (u32::try_from(inter)?, u32::try_from(hidden)?);
     let s = |weight, output, n| W4a16Seg { weight, output, n };
     w4a16_dense_segment(
@@ -112,6 +120,7 @@ pub fn dense_segment(
         n_h,
         plan.sms,
         ctl.take(),
+        budget,
         stream,
     )?;
     Ok(true)

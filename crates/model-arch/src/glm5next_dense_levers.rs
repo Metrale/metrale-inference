@@ -12,6 +12,8 @@
 //! - `METRALE_GLM_W4A16_SEG` and `METRALE_GLM_DEQUANT_PERSIST` keep their readers' text
 //!   predicates (`dequant_persist::parse` is the one parser of the second).
 
+use std::num::NonZeroU32;
+
 use anyhow::{Result, anyhow, bail};
 use metrale_settings::InferenceServerSettings;
 
@@ -37,6 +39,9 @@ pub struct DenseLevers {
     pub swiglu_down: bool,
     /// 2026-10-23: `METRALE_GLM_DENSE_SEGMENT` (`glm5next_dense_seg`).
     pub dense_seg: bool,
+    /// 2026-10-23: The segment's SM budget (GRAPH-THEORY-MAP E2): only its CTAs on SMs below it
+    /// take tasks; `None`: every SM. Set by the paired A/B lever `dense_seg@<sms>` only.
+    pub dense_seg_sms: Option<NonZeroU32>,
     /// 2026-10-12: `METRALE_GLM_W4A16_TC_GEMM_MIN_ROWS` (`glm5next_w4a16_tc`): `None` off.
     pub tc_min_rows: Option<usize>,
     /// 2026-10-10: `METRALE_GLM_W4A16_DEQUANT_GEMM_MIN_ROWS` (`glm5next_w4a16_wide`): `None` off.
@@ -121,6 +126,7 @@ impl DenseLevers {
             gemv_pipe: k.glm_w4a16_gemv_pipe,
             swiglu_down: k.glm_swiglu_down_fold,
             dense_seg: k.glm_dense_segment,
+            dense_seg_sms: None,
             tc_min_rows,
             dequant_min_rows,
             fp8_dequant_min_rows,
