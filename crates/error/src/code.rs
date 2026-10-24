@@ -94,6 +94,15 @@ error_registry! {
         GenerateNotSupported = 0x0202 => "{} is an embedding model; it does not generate",
         /// 2026-10-24: An embedding input the model refuses: (input index, reason).
         EmbedInputInvalid = 0x0203 => "embedding input {}: {}",
+        /// 2026-10-24: A `met embed` stdio frame that is not in the protocol: (which frame,
+        /// reason).
+        EmbedFrameInvalid = 0x0204 => "embed frame {}: {}",
+        /// 2026-10-24: A `met embed` request for another space than this process serves:
+        /// (what the request names, what this process serves).
+        EmbedSpaceMismatch = 0x0205 => "embed request names {}; this process serves {}",
+        /// 2026-10-24: `/v1/embeddings` answered a `met embed` request with a refusal:
+        /// (HTTP status, the response's message).
+        EmbedRequestRefused = 0x0206 => "the embed request was refused with HTTP {}: {}",
         /// 2026-10-17: A device driver call returned a failure status: (call, status).
         DeviceDriver = 0x0280 => "{} failed: driver status {}",
     }

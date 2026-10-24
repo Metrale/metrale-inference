@@ -49,6 +49,9 @@ pub(crate) async fn serve(
     tui_progress: Option<std::sync::mpsc::Receiver<crate::tui::capture_layer::ProgressEvent>>,
     // 2026-10-17: The harness levers, resolved once by the caller with `settings`.
     bench_levers: Arc<metrale_host_probe::levers::BenchLevers>,
+    // 2026-10-24: `met embed`: the stdio transport's settings and the claimed stdout, served
+    // instead of the TCP listener; `None` for `met serve`.
+    embed: Option<(cli::embed_args::EmbedStdio, std::fs::File)>,
 ) -> Result<()> {
     // 2026-09-26: One host for the process lifetime, created before startup so
     // the dashboard (`tui::start`) can hold it. The load publishes into it.
@@ -93,6 +96,9 @@ pub(crate) async fn serve(
             // 2026-09-26: The host owns the first load's scheduler thread too,
             // so the first swap can join it before tearing the model down.
             host.set_scheduler(prepared.scheduler);
+            if let Some((cfg, out)) = embed {
+                return crate::main_modules::embed_stdio::run(host, body_limit, cfg, out).await;
+            }
             crate::main_modules::serve_router::build_and_serve(
                 host,
                 &prepared.bind,
@@ -107,6 +113,7 @@ pub(crate) async fn serve(
         // model chosen from the Library later has a port. Until one is
         // published, routes that need a model answer 503 `model_not_loaded`.
         Startup::AwaitingModel => {
+            anyhow::ensure!(embed.is_none(), "met embed: the blueprint names no model");
             crate::main_modules::serve_router::build_and_serve(
                 host, &bind_addr, bind_port, body_limit, listener_rcvbuf,
             )

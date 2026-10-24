@@ -63,6 +63,7 @@ mod circuit_venn;
 mod circuit_whatif;
 #[cfg(feature = "bench")]
 pub(crate) mod doctor;
+pub mod embed_args;
 pub(crate) mod flag_values;
 pub(crate) mod hermetic;
 pub(crate) mod manifest;
@@ -155,6 +156,9 @@ pub enum Command {
     Circuit(CircuitArgs),
     /// Build, sign, verify and convert signed blueprints (`.kbp`): one serve, fully stated.
     Blueprint(BlueprintArgs),
+    /// Serve an embedding model's pinned recipe to one client on stdin/stdout (frames), then
+    /// exit: `met serve` with a stdio transport instead of a listener.
+    Embed(embed_args::EmbedArgs),
 }
 
 pub use circuit_action::{CircuitAction, CircuitArgs};
