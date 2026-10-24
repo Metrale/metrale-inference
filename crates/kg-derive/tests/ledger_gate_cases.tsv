@@ -35,3 +35,13 @@ test()	ERR:bad_args
 bitid(texts)@p1k	ERR:bad_scope
 bitid(texts)@{p1k,}	ERR:bad_scope
 bitid(texts)@{p 1k}	ERR:bad_scope
+none(enabling)	none|enabling|@
+ none(modelled-only) 	none|modelled-only|@
+none(enabling)@{1k}	ERR:bad_scope
+none(enabling); bitid(texts)	ERR:none_mixed
+bitid(texts);none(x)	ERR:none_mixed
+none()	ERR:bad_args
+none(a,b)	ERR:bad_args
+none(two words)	ERR:bad_args
+bitid(values)	bitid|values|@
+bitid(values())	ERR:bad_args

@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-23: The claim grammar of LEDGER.tsv column 15 `gate` (queries part §3): `;`-separated
-//! comparator statements `kind(args)[@{scope,...}]`, or `-` for no claim. The Python half lives in
+//! comparator statements `kind(args)[@{scope,...}]`, a declared absence `none(<reason>)` (alone,
+//! unscoped: the row makes no measured claim, e.g. `none(enabling)`), or `-` for no gate stated. The Python half lives in
 //! `tools/ledger.py`; both parse `crates/kg-derive/tests/ledger_gate_cases.tsv` to identical
 //! canonical forms, so the two parsers cannot drift.
 //!
 //! Owner: metrale-kg-derive.
 //! Invariants:
 //! - [`parse`] accepts exactly the grammar; a refusal carries one of the shared reason words
-//!   (`empty`, `syntax`, `unknown_kind`, `bad_args`, `bad_scope`).
+//!   (`empty`, `syntax`, `unknown_kind`, `bad_args`, `bad_scope`, `none_mixed`).
+//! - `none(<reason>)` is a declared absence: a `Claim` node with no gate edge, valid for any
+//!   verdict; a bare `-` with a verdict outside the no-claim set stays a `KgBadClaim`.
 //! - `-` is a claim-free gate, allowed only for the verdicts in
 //!   [`crate::ledger_adapter::NO_CLAIM_VERDICTS`].
 
@@ -28,7 +31,7 @@ pub struct Claim {
 }
 
 const KINDS: &[&str] = &[
-    "bitid", "multiset", "tost", "superior", "test", "agentic", "needle", "bfcl", "bounded",
+    "bitid", "multiset", "tost", "superior", "test", "agentic", "needle", "bfcl", "bounded", "none",
 ];
 
 fn is_word(s: &str) -> bool {
@@ -60,11 +63,12 @@ fn check_args(kind: &str, a: &[String]) -> bool {
         ("bitid", [x]) => {
             x == "texts"
                 || x == "launches"
+                || x == "values"
                 || x.strip_prefix("values(")
                     .and_then(|v| v.strip_suffix(')'))
                     .is_some_and(digits)
         }
-        ("multiset", [x]) | ("test", [x]) => is_word(x),
+        ("multiset", [x]) | ("test", [x]) | ("none", [x]) => is_word(x),
         ("tost", [m, n]) => {
             m.strip_suffix('%').is_some_and(dec) && n.strip_prefix("n=").is_some_and(positive)
         }
@@ -141,6 +145,9 @@ fn statement(s: &str) -> Result<Claim, &'static str> {
             items
         }
     };
+    if kind == "none" && !scope.is_empty() {
+        return Err("bad_scope");
+    }
     Ok(Claim { kind, args, scope })
 }
 
@@ -154,7 +161,11 @@ pub fn parse(cell: &str) -> Result<Vec<Claim>, &'static str> {
     if cell.is_empty() {
         return Err("empty");
     }
-    cell.split(';').map(statement).collect()
+    let claims: Vec<Claim> = cell.split(';').map(statement).collect::<Result<_, _>>()?;
+    if claims.len() > 1 && claims.iter().any(|c| c.kind == "none") {
+        return Err("none_mixed");
+    }
+    Ok(claims)
 }
 
 /// 2026-10-23: The canonical form both parsers print: `kind|arg|...|@scope,...` per statement,
@@ -179,6 +190,7 @@ pub fn gate_of(c: &Claim) -> String {
         "tost" | "superior" => "instrument/paired-ab".to_string(),
         "test" => format!("test/{a0}"),
         "bounded" => "test/bounded_selection_overlap".to_string(),
+        "none" => String::new(),
         other => format!("bench/{other}"),
     }
 }
@@ -221,6 +233,9 @@ pub fn derive_row(b: &mut Builder, row: &KgId, at: &str, cell: &str, verdict: &s
         p.insert("raw".into(), Value::String(raw.clone()));
         b.define(cid.clone(), at.to_string(), &raw, p);
         b.edge(row, Rel::Claims, &cid, 1.0, at);
+        if c.kind == "none" {
+            continue;
+        }
         if let Ok(g) = KgId::new(Label::Gate, gate_of(c)) {
             b.edge(&cid, Rel::GatedBy, &g, 1.0, at);
         }
