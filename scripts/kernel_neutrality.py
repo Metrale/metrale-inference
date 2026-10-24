@@ -226,16 +226,18 @@ def kernel_hashes(text: str) -> dict[str, dict]:
 
 
 # ── ptxas ─────────────────────────────────────────────────────────────────
-def ptxas_stats(ptx: Path, arch: str, ptxas: str) -> dict[str, dict]:
-    wait_clear()
+def _ptxas(ptx: Path, arch: str, ptxas: str, entry: str | None):
     with tempfile.NamedTemporaryFile(suffix=".cubin") as tmp:
-        p = subprocess.run([ptxas, "-v", f"-arch={arch}", str(ptx), "-o", tmp.name],
-                           capture_output=True, text=True)
-    if p.returncode != 0:
-        raise RuntimeError(f"ptxas failed on {ptx}: {p.stderr[-2000:]}")
+        argv = [ptxas, "-v", f"-arch={arch}", str(ptx), "-o", tmp.name]
+        if entry:
+            argv[2:2] = ["-e", entry]
+        return subprocess.run(argv, capture_output=True, text=True)
+
+
+def _parse_ptxas(stderr: str) -> dict[str, dict]:
     stats: dict[str, dict] = {}
     cur = None
-    for ln in p.stderr.splitlines():
+    for ln in stderr.splitlines():
         m = _PTXAS_ENTRY.search(ln)
         if m:
             cur = m.group(1)
@@ -250,6 +252,26 @@ def ptxas_stats(ptx: Path, arch: str, ptxas: str) -> dict[str, dict]:
         if m:
             stats[cur]["regs"] = int(m.group(1))
             stats[cur]["used"] = m.group(2).strip(", ")
+    return stats
+
+
+def ptxas_stats(ptx: Path, arch: str, ptxas: str, entries: list[str]) -> dict[str, dict]:
+    """ptxas -v numbers per entry. A module ptxas rejects (some baselines carry entries over the
+    static shared-memory limit) is redone one entry at a time; a rejected entry records its
+    error text instead of numbers, so the diff still compares it."""
+    wait_clear()
+    p = _ptxas(ptx, arch, ptxas, None)
+    if p.returncode == 0:
+        return _parse_ptxas(p.stderr)
+    stats: dict[str, dict] = {}
+    for e in entries:
+        wait_clear()
+        q = _ptxas(ptx, arch, ptxas, e)
+        if q.returncode == 0:
+            stats.update(_parse_ptxas(q.stderr))
+        else:
+            err = [ln.split(":", 1)[-1].strip() for ln in q.stderr.splitlines() if "error" in ln]
+            stats[e] = {"error": err}
     return stats
 
 
@@ -295,7 +317,7 @@ def snapshot_ptx(profile_dir: Path, jobs: int, ptxas: str) -> dict:
         text = path.read_text()
         arch = re.search(r"^\.target\s+(\S+)", text, re.M).group(1).rstrip(",")
         hashes = kernel_hashes(text)
-        stats = ptxas_stats(path, arch, ptxas)
+        stats = ptxas_stats(path, arch, ptxas, list(hashes))
         for k in hashes:
             hashes[k]["ptxas"] = stats.get(k)
         return sha, arch, hashes
