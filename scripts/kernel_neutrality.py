@@ -34,13 +34,15 @@ path, never an instruction:
 Trailing `// callseq N` comments (module-numbered) are dropped with all comments.
 
 Usage:
-  kernel_neutrality.py snapshot-ptx --profile-dir target/release --out gb10.json
+  kernel_neutrality.py snapshot-ptx --profile-dir target/release --out gb10.json [--keep-dir D]
+  kernel_neutrality.py explain BASE.json HEAD.json TARGET MODULE KERNEL
   kernel_neutrality.py snapshot-source --root . --out src.json
   kernel_neutrality.py diff BASE.json HEAD.json [--expect-deleted names.txt]
 
 `--expect-deleted` lists `module::kernel` (or `kernel`) lines. The diff passes
 only if the removed entries are exactly those, nothing is added, and every
 surviving entry has the same hash and the same ptxas numbers. Exit 0 = pass.
+`explain` prints the diff of one entry's hashed text (both snapshots need --keep-dir).
 
 ptxas runs only while no GPU benchmark holds BENCH_ACTIVE / BENCH_ACTIVE.d
 (the cargo-guard `held` rule); it waits otherwise.
@@ -49,6 +51,8 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures as cf
+import difflib
+import gzip
 import hashlib
 import json
 import os
@@ -189,40 +193,51 @@ def _mask_assert_lines(body: list[str]) -> tuple[list[str], list[int]]:
     return out, vals
 
 
+def _canonical(items: dict, names: set[str], e: str) -> tuple[list[str], list]:
+    """The lines an entry's hash covers: its body, then every declaration it reaches, renamed."""
+    order: list[str] = []
+    seen = {e}
+    stack = [e]
+    while stack:
+        cur = stack.pop()
+        for ln in items[cur][1]:
+            for tok in _IDENT.findall(ln):
+                if tok in names and tok not in seen:
+                    seen.add(tok)
+                    order.append(tok)
+                    stack.append(tok)
+    rename = {}
+    for tok in [e] + order:
+        if _NUMBERED.match(tok):
+            rename[tok] = f"$G{len(rename)}"
+
+    def sub(ln: str) -> str:
+        return _IDENT.sub(lambda m: rename.get(m.group(0), m.group(0)), ln)
+
+    masked, alines = _mask_assert_lines(_normalise_body(items[e][1]))
+    out = [sub(ln) for ln in masked]
+    for tok in sorted(order, key=lambda t: rename.get(t, t)):
+        out.append(f"\0{rename.get(tok, tok)}\0")
+        out.extend(_mask_bytes(sub(ln)) for ln in _mask_assert_lines(_normalise_body(items[tok][1]))[0])
+    return out, alines
+
+
 def kernel_hashes(text: str) -> dict[str, dict]:
     items, entries = split_module(text)
     names = set(items)
     result = {}
     for e in entries:
-        order: list[str] = []
-        seen = {e}
-        stack = [e]
-        while stack:
-            cur = stack.pop()
-            for ln in items[cur][1]:
-                for tok in _IDENT.findall(ln):
-                    if tok in names and tok not in seen:
-                        seen.add(tok)
-                        order.append(tok)
-                        stack.append(tok)
-        rename = {}
-        for tok in [e] + order:
-            if _NUMBERED.match(tok):
-                rename[tok] = f"$G{len(rename)}"
-
-        def sub(ln: str) -> str:
-            return _IDENT.sub(lambda m: rename.get(m.group(0), m.group(0)), ln)
-
+        lines, alines = _canonical(items, names, e)
         h = hashlib.sha256()
-        masked, alines = _mask_assert_lines(_normalise_body(items[e][1]))
-        for ln in masked:
-            h.update(sub(ln).encode() + b"\n")
-        for tok in sorted(order, key=lambda t: rename.get(t, t)):
-            h.update(b"\0" + rename.get(tok, tok).encode() + b"\0")
-            for ln in _mask_assert_lines(_normalise_body(items[tok][1]))[0]:
-                h.update(_mask_bytes(sub(ln)).encode() + b"\n")
+        for ln in lines:
+            h.update(ln.encode() + (b"" if ln.startswith("\0") else b"\n"))
         result[e] = {"hash": h.hexdigest()[:24], "assert_line": alines}
     return result
+
+
+def canonical_text(text: str, entry: str) -> list[str]:
+    items, _ = split_module(text)
+    return _canonical(items, set(items), entry)[0]
 
 
 # ── ptxas ─────────────────────────────────────────────────────────────────
@@ -298,7 +313,7 @@ def parse_target_ptx(rs: str) -> dict[str, dict[str, str]]:
     return out
 
 
-def snapshot_ptx(profile_dir: Path, jobs: int, ptxas: str) -> dict:
+def snapshot_ptx(profile_dir: Path, jobs: int, ptxas: str, keep: Path | None) -> dict:
     d = _ptx_dir(profile_dir)
     targets = parse_target_ptx((d / "target_ptx.rs").read_text())
     by_sha: dict[str, Path] = {}
@@ -311,6 +326,11 @@ def snapshot_ptx(profile_dir: Path, jobs: int, ptxas: str) -> dict:
                 by_sha.setdefault(sha, d / f)
     print(f"kernel_neutrality: {d}: {len(targets)} targets, {len(file_sha)} files, {len(by_sha)} unique",
           file=sys.stderr)
+    if keep:
+        keep.mkdir(parents=True, exist_ok=True)
+        for sha, path in by_sha.items():
+            if not (keep / f"{sha}.ptx.gz").exists():
+                (keep / f"{sha}.ptx.gz").write_bytes(gzip.compress(path.read_bytes()))
 
     def one(item):
         sha, path = item
@@ -330,10 +350,24 @@ def snapshot_ptx(profile_dir: Path, jobs: int, ptxas: str) -> dict:
             arches.add(arch)
             if n % 200 == 0:
                 print(f"  {n}/{len(by_sha)}", file=sys.stderr)
-    snap = {"kind": "ptx", "ptx_dir": str(d), "arch": sorted(arches), "targets": {}}
+    snap = {"kind": "ptx", "ptx_dir": str(d), "arch": sorted(arches), "targets": {}, "files": {},
+            "keep_dir": str(keep.resolve()) if keep else None}
     for label, mods in sorted(targets.items()):
         snap["targets"][label] = {mod: per_sha[file_sha[f]] for mod, f in sorted(mods.items())}
+        snap["files"][label] = {mod: file_sha[f] for mod, f in sorted(mods.items())}
     return snap
+
+
+def explain(base: dict, head: dict, target: str, module: str, kernel: str) -> int:
+    """Print the unified diff of one kernel's canonical (hashed) text; needs both snapshots' --keep-dir."""
+    texts = []
+    for snap in (base, head):
+        sha = snap["files"][target][module]
+        ptx = gzip.decompress((Path(snap["keep_dir"]) / f"{sha}.ptx.gz").read_bytes()).decode()
+        texts.append(canonical_text(ptx, kernel))
+    out = list(difflib.unified_diff(texts[0], texts[1], "base", "head", lineterm="", n=2))
+    print("\n".join(out) if out else "canonical texts identical")
+    return 0
 
 
 def snapshot_source(root: Path) -> dict:
@@ -428,6 +462,7 @@ def main(argv: list[str]) -> int:
     a.add_argument("--out", type=Path, required=True)
     a.add_argument("--jobs", type=int, default=max(1, (os.cpu_count() or 4) - 4))
     a.add_argument("--ptxas", default=os.environ.get("PTXAS", "ptxas"))
+    a.add_argument("--keep-dir", type=Path, help="store each unique PTX file (gzip, by sha) for `explain`")
     b = sp.add_parser("snapshot-source")
     b.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent)
     b.add_argument("--out", type=Path, required=True)
@@ -435,9 +470,17 @@ def main(argv: list[str]) -> int:
     c.add_argument("base", type=Path)
     c.add_argument("head", type=Path)
     c.add_argument("--expect-deleted", type=Path)
+    e = sp.add_parser("explain")
+    for arg in ("base", "head"):
+        e.add_argument(arg, type=Path)
+    for arg in ("target", "module", "kernel"):
+        e.add_argument(arg)
     ns = ap.parse_args(argv)
+    if ns.cmd == "explain":
+        return explain(json.loads(ns.base.read_text()), json.loads(ns.head.read_text()),
+                       ns.target, ns.module, ns.kernel)
     if ns.cmd == "snapshot-ptx":
-        ns.out.write_text(json.dumps(snapshot_ptx(ns.profile_dir, ns.jobs, ns.ptxas), sort_keys=True))
+        ns.out.write_text(json.dumps(snapshot_ptx(ns.profile_dir, ns.jobs, ns.ptxas, ns.keep_dir), sort_keys=True))
         return 0
     if ns.cmd == "snapshot-source":
         ns.out.write_text(json.dumps(snapshot_source(ns.root.resolve()), sort_keys=True))
