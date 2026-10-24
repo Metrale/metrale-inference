@@ -17,7 +17,7 @@ use metrale_model_arch::weight_loader::DflashConfig;
 use crate::cli;
 
 /// 2026-09-30: The MODEL.toml `[dflash]` drafter of the serve's kernel target.
-pub(crate) fn model_default_drafter(ptx_set: &metrale_kernels::TargetPtxSet) -> Option<String> {
+pub(crate) fn model_default_drafter(ptx_set: &metrale_kernel_set::TargetPtxSet) -> Option<String> {
     ptx_set.dflash.as_ref().map(|d| d.draft_model.to_string())
 }
 

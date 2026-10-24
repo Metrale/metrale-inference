@@ -11,9 +11,10 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use super::build_codegen::find_cuda_dir;
+use super::build_image::KernelImage;
 
 /// 2026-09-25: A build-time kernel compiler and its output format:
-/// NVIDIA (nvcc to PTX text), Apple (xcrun to metallib), SCALE (SCALE's nvcc
+/// NVIDIA (nvcc to a fatbin or PTX text, `build_image`), Apple (xcrun to metallib), SCALE (SCALE's nvcc
 /// to an AMD GPU ELF relocatable) and native HIP (hipcc to a code object).
 pub(super) trait ComputeTarget: Send + Sync {
     fn source_extension(&self) -> &str;
@@ -65,6 +66,7 @@ const KERNEL_STRICT_DIAG_SUPPRESS: &[u32] = &[
 
 pub(super) struct NvidiaTarget {
     nvcc: PathBuf,
+    image: KernelImage,
 }
 
 impl NvidiaTarget {
@@ -78,7 +80,11 @@ impl NvidiaTarget {
         arch: &str,
         extra_flags: &[String],
     ) -> Vec<String> {
-        let mut args = vec!["--ptx".into(), format!("-arch={arch}"), "-O3".into()];
+        let mut args = self
+            .image
+            .nvcc_mode_args(arch)
+            .unwrap_or_else(|e| panic!("{e}"));
+        args.push("-O3".into());
         // 2026-09-25: A Windows target gets `-std=c++17` explicitly; other
         // targets get no `-std` flag.
         if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
@@ -121,7 +127,11 @@ impl NvidiaTarget {
         if status.success() {
             Ok(())
         } else {
-            Err(format!("nvcc --ptx failed for {}", source.display()))
+            Err(format!(
+                "nvcc ({:?}) failed for {}",
+                self.image,
+                source.display()
+            ))
         }
     }
 
@@ -152,7 +162,7 @@ impl NvidiaTarget {
 
 impl ComputeTarget for NvidiaTarget {
     fn compiler_id(&self) -> Option<String> {
-        compiler_version(&self.nvcc, &["--version"])
+        compiler_version(&self.nvcc, &["--version"]).map(|v| self.image.compiler_id(v))
     }
 
     fn as_nvidia(&self) -> Option<&NvidiaTarget> {
@@ -163,7 +173,7 @@ impl ComputeTarget for NvidiaTarget {
         "cu"
     }
     fn output_extension(&self) -> &str {
-        "ptx"
+        self.image.extension()
     }
     fn uses_cuda_module_api(&self) -> bool {
         true
@@ -466,7 +476,8 @@ pub(super) fn resolve_compute_target(vendor: Option<&str>) -> Box<dyn ComputeTar
     match vendor.unwrap_or("nvidia") {
         "nvidia" | "cuda" => {
             let nvcc = find_cuda_dir().join("bin/nvcc");
-            Box::new(NvidiaTarget { nvcc })
+            let image = KernelImage::from_env();
+            Box::new(NvidiaTarget { nvcc, image })
         }
         "apple" | "metal" => {
             let xcrun = find_xcrun();

@@ -1,15 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-#![deny(warnings)]
-#![deny(clippy::all)]
-#![allow(dead_code)]
-#![allow(clippy::too_many_arguments)]
-#![allow(clippy::needless_range_loop)]
-#![allow(clippy::large_enum_variant)]
-#![allow(clippy::doc_lazy_continuation)]
-#![allow(clippy::doc_overindented_list_items)]
-
-//! 2026-09-26: Entry point of the `met` binary: parse the CLI, refuse undeclared `METRALE_*` variables, install logging, and run the subcommand.
+//! 2026-09-26: The `met` process: parse the CLI, refuse undeclared `METRALE_*` variables, install logging, and run the subcommand.
+//!
+//! 2026-10-24: Moved from the binary's `main.rs` into the library; the `met` binary
+//! (crates/met) builds the runtime and calls [`serve_main`] with what it embeds.
 //!
 //! Owner: server.
 //! Invariants:
@@ -17,74 +11,19 @@
 //!   logging subscriber or dashboard is installed.
 //! - A `serve` run that returns while the fault latch is set exits through
 //!   `metrale_core::fault::exit_code`, never with status 0.
-
-mod adaptive_sampler;
-mod anthropic;
-mod api;
-mod auth;
-mod citation;
-mod citation_structured;
-mod cli;
-mod conversation_store;
-mod disk_guard;
-mod env_config;
-mod error_hints;
-pub mod grammar;
-mod halluc_probe;
-mod hint_injector;
-mod identity;
-mod ids;
-mod ir;
-#[cfg(test)]
-mod lever_equivalence;
-mod lever_value;
-mod llmlingua;
-mod lookback_lens;
-mod loop_detector;
-mod loop_simhash;
-mod lqer;
-mod main_modules;
-pub mod metrics;
-mod model_download;
-mod model_resolver;
-mod moe_quality;
-mod openai;
-mod rate_limiter;
-pub mod reasoning_parser;
-pub mod recipe;
-mod refusal;
-mod request_dumper;
-mod response_store;
-mod retrieval_heads;
-mod scheduler;
-mod scheduling_policy;
-mod session_manager;
-mod symbol_trie;
-mod tokenizer;
-mod tool_arg_dedup;
-pub mod tool_parser;
-mod tool_rag;
-mod tscg;
-pub mod tui;
+//! - [`crate::embedded`] is installed before anything else runs.
 
 use anyhow::Result;
 use clap::Parser;
 
 use crate::cli::{Cli, Command};
 use crate::main_modules::serve;
+use crate::{cli, main_modules, tui};
 
-pub(crate) use crate::main_modules::AppState;
+/// 2026-10-24: Run `met` with the binary's embedded kernel registry and kernel tree.
+pub async fn serve_main(embedded: crate::embedded::Embedded) -> Result<()> {
+    crate::embedded::install(embedded);
 
-pub type ModelBehavior = metrale_kernels::ModelBehavior;
-
-fn main() -> Result<()> {
-    tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?
-        .block_on(serve_main())
-}
-
-async fn serve_main() -> Result<()> {
     // 2026-09-26: Parsed before the subscriber is installed, because the TUI
     // gate (`tui::plain_mode`) needs `--no-tui`.
     let cli = Cli::parse();

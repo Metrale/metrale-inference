@@ -78,8 +78,8 @@ pub(crate) fn plan(
     model_dir: &Path,
     live: &LiveDevice<'_>,
 ) -> Result<Option<TablesDecision>> {
-    let root = metrale_kernel_tree::materialize(&tree_cache()?)?;
-    let _ = PLANNED_TREE.set(metrale_kernel_tree::SHA256);
+    let root = (crate::embedded::get().materialize_kernel_tree)(&tree_cache()?)?;
+    let _ = PLANNED_TREE.set(crate::embedded::get().kernel_tree_sha256);
     let tree = FsTree::new(root.clone());
     let devices = std::fs::read_to_string(root.join("kernels/DEVICES.toml"))?;
     let reg = metrale_circuit::hardware::parse_devices(&devices)?;
@@ -137,13 +137,13 @@ pub(crate) fn publish(d: Option<&TablesDecision>) -> Result<()> {
         MoeExpertTables::Build => tracing::info!(
             "MoE expert tables: {} (kernel tree {})",
             d.describe(),
-            metrale_kernel_tree::SHA256
+            crate::embedded::get().kernel_tree_sha256
         ),
         MoeExpertTables::Skip => tracing::warn!(
             "MoE expert tables: {} (kernel tree {}); MoE prefill runs the grouped GEMM on the \
              row-major experts",
             d.describe(),
-            metrale_kernel_tree::SHA256
+            crate::embedded::get().kernel_tree_sha256
         ),
     }
     Ok(())

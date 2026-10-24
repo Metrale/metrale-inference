@@ -2,10 +2,10 @@
 
 //! 2026-09-26: `met` refuses to start with an undeclared `METRALE_*`
 //! variable set. It runs the real binary, so it checks that the process start
-//! calls `metrale_config::levers::check` (`main.rs`), not only that the check
+//! calls `metrale_config::levers::check` (`serve_main.rs` in metrale-server), not only that the check
 //! works.
 //!
-//! Owner: server tests.
+//! Owner: met tests.
 //! Invariants: none beyond the types.
 
 use std::process::Command;

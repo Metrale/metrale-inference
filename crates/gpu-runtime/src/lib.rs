@@ -37,9 +37,9 @@ pub mod gpu;
 #[path = "gpu_args.rs"]
 mod gpu_args;
 pub mod graph_hoist;
-pub mod host_wake;
 pub mod host_heap;
 pub mod host_sync_counts;
+pub mod host_wake;
 pub mod kernel_args;
 #[cfg(feature = "metal")]
 pub mod metal_backend;
@@ -127,6 +127,7 @@ mod tests {
 
 #[cfg(feature = "cuda")]
 pub mod cuda_host;
+pub mod fatbin;
 #[cfg(feature = "cuda")]
 pub mod kernel;
 pub mod mlx_int8;

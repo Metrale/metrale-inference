@@ -2,12 +2,12 @@
 
 //! 2026-09-25: The per-target declarations the generated `target_ptx.rs`
 //! constructs: a target's kernel blobs and what its MODEL.toml says about it.
-//! Selection among targets lives in [`super::query`] and [`super::resolve`].
+//! Selection among targets lives in [`super::catalog`] and [`super::resolve`].
 //!
 //! Owner: kernels crate.
 //! Invariants: none beyond the types.
 
-use metrale_core::target::KernelTarget;
+use metrale_kernel_target::KernelTarget;
 
 use super::{ModelBehavior, SamplingPresets};
 
@@ -42,8 +42,8 @@ pub struct DflashConfig {
 /// kernel blobs and MODEL.toml declarations.
 ///
 /// Each blob is one compiled module, emitted as `&'static [u8]` by `build.rs`
-/// (`include_bytes!`): PTX text for NVIDIA, binary objects for SCALE, HIP and
-/// Metal.
+/// (`include_bytes!`): for NVIDIA a fatbin (SASS plus uncompressed PTX) or, with
+/// `METRALE_KERNEL_IMAGE=ptx`, PTX text; binary objects for SCALE, HIP and Metal.
 pub struct TargetPtxSet {
     pub target: KernelTarget,
     /// 2026-09-25: The `kernels/<hw>/HARDWARE.toml` `[hardware].arch` this

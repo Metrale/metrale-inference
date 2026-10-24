@@ -17,8 +17,8 @@ use std::path::{Path, PathBuf};
 use metrale_circuit::hardware::{ClassSources, KernelTree, Module};
 use metrale_circuit::venn::Repo;
 use metrale_closure::layout::{self, Target};
-use metrale_kernels::ModelTypeMatch;
-use metrale_kernels::resolve::{ResolveCandidate, resolve_target};
+use metrale_kernel_set::ModelTypeMatch;
+use metrale_kernel_set::resolve::{ResolveCandidate, resolve_target};
 
 use super::circuit_venn::FsRepo;
 

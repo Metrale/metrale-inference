@@ -135,7 +135,7 @@ pub fn scan(cache_dir: Option<&Path>) -> Vec<LibraryEntry> {
             // 2026-09-26: The HF id is passed as the tie-break reference; an
             // `Err` counts as not optimized.
             entry.optimized = matches!(
-                metrale_kernels::ptx_for_config(
+                crate::embedded::kernels().ptx_for_config(
                     &cfg.model_type,
                     cfg.hidden_size,
                     &[entry.id.as_str()],

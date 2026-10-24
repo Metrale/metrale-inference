@@ -32,6 +32,8 @@ pub enum ArtifactKind {
     ScaleObject,
     /// 2026-10-22: An Apple GPU shader library.
     AppleGpuLibrary,
+    /// 2026-10-24: An NVIDIA fatbin: SASS for the module's arch plus its PTX, uncompressed.
+    NvidiaFatbin,
 }
 
 impl ArtifactKind {
@@ -42,6 +44,7 @@ impl ArtifactKind {
             ArtifactKind::AmdCodeObject => "amd_code_object",
             ArtifactKind::ScaleObject => "scale_object",
             ArtifactKind::AppleGpuLibrary => "apple_gpu_library",
+            ArtifactKind::NvidiaFatbin => "nvidia_fatbin",
         }
     }
 }

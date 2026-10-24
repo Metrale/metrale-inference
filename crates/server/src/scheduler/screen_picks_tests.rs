@@ -19,10 +19,10 @@ fn decide(
 ) -> bool {
     let mut s = sched(model(&[]), None);
     s.watchdog = WatchdogParams::from_behavior(
-        &metrale_kernels::ModelBehavior {
+        &metrale_kernel_set::ModelBehavior {
             thinking_steering: steering,
             confidence_early_stop: true,
-            ..metrale_kernels::ModelBehavior::default()
+            ..metrale_kernel_set::ModelBehavior::default()
         },
         None,
         None,

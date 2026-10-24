@@ -6,7 +6,7 @@
 //! `METRALE_INTEGRATION_MODEL_DIR`:
 //!
 //!   METRALE_INTEGRATION_MODEL_DIR=/path/to/snapshot \
-//!     cargo test -p met --release -- --ignored
+//!     cargo test -p metrale-server --release -- --ignored
 //!
 //! When the directory does not exist, each test prints a skip message and
 //! passes.
@@ -422,7 +422,7 @@ fn prompt_logprobs_collection_during_prefill() -> Result<()> {
 /// Run it deliberately:
 /// ```text
 /// METRALE_INTEGRATION_MODEL_DIR=<snapshot> \
-///   cargo test -p met --test integration teardown_returns -- --ignored --nocapture
+///   cargo test -p metrale-server --test integration teardown_returns -- --ignored --nocapture
 /// ```
 /// Before trusting any self-relative number, check nothing else is on the GPU:
 /// `nvidia-smi --query-compute-apps=pid,used_memory --format=csv`.

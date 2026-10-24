@@ -629,10 +629,10 @@ jobs:
           set -euo pipefail
           case "${{ matrix.test_mode }}" in
             run)
-              cargo test --release -p met --target ${{ matrix.target }} ${{ matrix.cargo_features }}
+              cargo test --release -p met -p metrale-server --target ${{ matrix.target }} ${{ matrix.cargo_features }}
               ;;
             no-run)
-              cargo test --release --no-run -p met --target ${{ matrix.target }} ${{ matrix.cargo_features }}
+              cargo test --release --no-run -p met -p metrale-server --target ${{ matrix.target }} ${{ matrix.cargo_features }}
               ;;
             skip)
               # ★ WHY A LEG IS SKIPPED, AND WHAT IT COSTS.
@@ -673,9 +673,9 @@ jobs:
         shell: pwsh
         run: |
           if ("${{ matrix.test_mode }}" -eq "run") {
-            cargo test --release -p met --target ${{ matrix.target }} ${{ matrix.cargo_features }}
+            cargo test --release -p met -p metrale-server --target ${{ matrix.target }} ${{ matrix.cargo_features }}
           } elseif ("${{ matrix.test_mode }}" -eq "no-run") {
-            cargo test --release --no-run -p met --target ${{ matrix.target }} ${{ matrix.cargo_features }}
+            cargo test --release --no-run -p met -p metrale-server --target ${{ matrix.target }} ${{ matrix.cargo_features }}
           } elseif ("${{ matrix.test_mode }}" -eq "skip") {
             Write-Output "::warning title=${{ matrix.id }}: tests not compiled::test_mode=skip. This leg builds but does not compile its tests."
           } else {

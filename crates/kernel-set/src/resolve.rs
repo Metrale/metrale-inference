@@ -28,10 +28,11 @@
 //! - `build.rs` (`validate_collision_match_names`) panics when a target in a
 //!   collision of the build's targets has no `match_names`.
 
-use crate::{ModelTypeMatch, TargetPtxSet};
+use crate::ModelTypeMatch;
 
 /// 2026-09-25: The parts of one compiled target that resolution reads,
-/// borrowed so production can wrap `TargetPtxSet`s without copying blobs.
+/// borrowed so production can wrap `TargetPtxSet`s without copying blobs
+/// (`KernelCatalog::ptx_for_config`).
 pub struct ResolveCandidate<'a> {
     /// 2026-09-25: Kernel-target directory name (`KernelTarget::model`), e.g.
     /// `"qwen3.8-27b"`. A multi-quant build repeats a name once per quant;
@@ -267,43 +268,6 @@ pub fn resolve_pinned(
             .map(|m| format!("({}, {:?})", m.model_type, m.hidden_size))
             .collect(),
     })
-}
-
-/// 2026-09-25: The compiled target that serves a checkpoint, by the module's
-/// rules: [`resolve_pinned`] when `pinned_target` (`--kernel-target`) is set,
-/// else [`resolve_target`] over `all_ptx_sets()`. `Ok(None)` when no compiled
-/// target declares the pair.
-pub fn ptx_for_config(
-    model_type: &str,
-    hidden_size: usize,
-    model_refs: &[&str],
-    pinned_target: Option<&str>,
-) -> Result<Option<TargetPtxSet>, TargetResolveError> {
-    let targets = crate::all_ptx_sets();
-    let candidates: Vec<ResolveCandidate<'_>> = targets
-        .iter()
-        .map(|t| ResolveCandidate {
-            name: t.target.model,
-            type_matches: &t.model_type_matches,
-            match_names: t.match_names,
-        })
-        .collect();
-    let idx = match pinned_target {
-        Some(pin) => Some(resolve_pinned(&candidates, pin, model_type, hidden_size)?),
-        None => resolve_target(&candidates, model_type, hidden_size, model_refs)?,
-    };
-    drop(candidates);
-    Ok(idx.and_then(|i| targets.into_iter().nth(i)))
-}
-
-/// 2026-09-25: The compiled target with exactly this `(model, quant)`
-/// identity, or `None`. For callers that already know the resolved target,
-/// such as the dashboard's kernel table, which looks up the target `serve`
-/// published.
-pub fn ptx_for_exact_target(model: &str, quant: &str) -> Option<TargetPtxSet> {
-    crate::all_ptx_sets()
-        .into_iter()
-        .find(|t| t.target.model == model && t.target.quant == quant)
 }
 
 #[cfg(test)]

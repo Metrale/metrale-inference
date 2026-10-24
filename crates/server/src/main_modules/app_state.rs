@@ -114,7 +114,7 @@ pub struct AppState {
     /// tools active.
     pub tool_max_tokens: usize,
     /// 2026-09-26: MODEL.toml sampling presets, per request category.
-    pub sampling_presets: metrale_kernels::SamplingPresets,
+    pub sampling_presets: metrale_kernel_set::SamplingPresets,
     /// 2026-09-26: The tool-call opener's token id (`<tool_call>`, or
     /// `<minimax:tool_call>` for `minimax_xml`) when it encodes to one token.
     /// Biased by repeat count when tools are active (`api/chat/sampling_setup.rs`).
@@ -129,7 +129,7 @@ pub struct AppState {
     /// 2026-09-26: MODEL.toml `[behavior]`, embedded at build time, with
     /// `--max-thinking-budget`, `--tool-grammar` and the `preserve_thinking`
     /// server kwarg applied over it (`serve_load.rs`).
-    pub behavior: metrale_kernels::ModelBehavior,
+    pub behavior: metrale_kernel_set::ModelBehavior,
     /// 2026-09-26: `--disable-thinking`: `resolve_thinking` turns thinking off
     /// whatever the request or MODEL.toml asks (`api/chat/thinking.rs`).
     pub disable_thinking: bool,
@@ -378,7 +378,7 @@ impl AppState {
     }
 }
 
-pub type ModelBehavior = metrale_kernels::ModelBehavior;
+pub type ModelBehavior = metrale_kernel_set::ModelBehavior;
 
 #[cfg(test)]
 mod tests {

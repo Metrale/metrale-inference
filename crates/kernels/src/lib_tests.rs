@@ -18,11 +18,11 @@ fn all_ptx_modules_non_empty() {
             "PTX module '{name}' is empty — nvcc compilation may have failed"
         );
         // 2026-09-25: For an NVIDIA build the blob is PTX text and must carry a
-        // `.version` directive; a blob that is not UTF-8 decodes to "" and
-        // fails this assert.
-        let ptx = std::str::from_utf8(blob).unwrap_or("");
+        // `.version` directive.
+        // 2026-10-24: Or a fatbin, whose PTX is stored uncompressed beside the SASS, so the
+        // directive is searched for in the bytes.
         assert!(
-            ptx.contains(".version"),
+            blob.windows(b".version".len()).any(|w| w == b".version"),
             "PTX module '{name}' doesn't contain .version directive"
         );
     }

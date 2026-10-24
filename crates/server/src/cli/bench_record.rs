@@ -80,7 +80,7 @@ pub(crate) async fn write_gate_record(
     let mut gate_record = gate::GateRecord::from_run(record, hardware, sha, dirty, recipe)?
         // 2026-09-26: What this binary's kernels were compiled from, baked at
         // build time rather than read from the tree now.
-        .with_closure(metrale_kernels::TARGET_CLOSURES)
+        .with_closure(crate::embedded::kernels().target_closures)
         .with_serve_resolved(serve_resolved)
         .with_serve_env(serve_env);
     if let Some(sha256) = served_recipe_sha256 {

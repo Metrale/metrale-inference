@@ -152,12 +152,12 @@ crates/server/src/cli/bench_certify/mod.rs
 crates/server/src/cli/circuit.rs
 crates/server/src/grammar/tests/cold_compile.rs
 crates/server/src/grammar/tests/native_prewarm.rs
-crates/server/src/main.rs
 crates/server/src/main_modules/serve_load/lora_verify_gpu_tests.rs
 crates/server/src/main_modules/serve_phases/expert_tables.rs
 crates/server/src/main_modules/telemetry_otlp.rs
 crates/server/src/model_download/hf.rs
 crates/server/src/model_resolver.rs
+crates/server/src/serve_main.rs
 crates/server/src/tui/init.rs
 crates/server/src/tui/init_tests.rs
 crates/server/src/tui/mod.rs

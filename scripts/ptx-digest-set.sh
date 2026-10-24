@@ -51,7 +51,7 @@ if [ -z "$ptx_dir" ] || [ ! -f "$ptx_dir/target_ptx.rs" ]; then
   exit 1
 fi
 
-names="$(grep -o 't[0-9][0-9]*__[A-Za-z0-9_]*\.ptx' "$ptx_dir/target_ptx.rs" | sort -u)"
+names="$(grep -o 't[0-9][0-9]*__[A-Za-z0-9_]*\.\(ptx\|fatbin\)' "$ptx_dir/target_ptx.rs" | sort -u)"
 if [ -z "$names" ]; then
   echo "$ptx_dir/target_ptx.rs embeds no PTX (a METRALE_SKIP_BUILD stub?)" >&2
   exit 1

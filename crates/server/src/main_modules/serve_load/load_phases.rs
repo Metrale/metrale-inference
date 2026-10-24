@@ -23,7 +23,7 @@ pub(super) fn reserve_preflight(
     gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
     free_mem: usize,
     model_dir: &Path,
-    ptx_set: &metrale_kernels::TargetPtxSet,
+    ptx_set: &metrale_kernel_set::TargetPtxSet,
 ) -> Result<serve_phases::ReservePreflight> {
     // 2026-09-26: Inputs the preflight's decode-ring auto-fit needs. The KV
     // dtype comes from `resolve_kv_dtype_str`, the resolver the cache uses
@@ -52,7 +52,7 @@ pub(super) fn load_weights(
     gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
     ep_rank: usize,
     ep_size: usize,
-    ptx_set: &metrale_kernels::TargetPtxSet,
+    ptx_set: &metrale_kernel_set::TargetPtxSet,
     free_mem: usize,
     inference_reserve: usize,
     total_reserve: usize,

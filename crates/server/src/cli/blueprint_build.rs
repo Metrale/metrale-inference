@@ -91,7 +91,7 @@ pub(crate) fn recipe_of(p: RecipeParts) -> Recipe {
 pub(crate) fn embedded(
     target: &w::KernelTarget<String>,
 ) -> Result<Vec<(&'static str, &'static [u8])>> {
-    metrale_kernels::all_ptx_sets()
+    crate::embedded::kernels().available_targets()
         .into_iter()
         .find(|s| s.target == target.as_strs())
         .map(|s| s.modules)
@@ -103,7 +103,8 @@ pub(crate) fn embedded(
         })
 }
 
-/// 2026-10-22: The `.entry` names of a PTX module, sorted.
+/// 2026-10-22: The `.entry` names of a PTX module, sorted. 2026-10-24: A fatbin's are read
+/// from the uncompressed PTX it carries, whose lines survive the lossy decode intact.
 pub(crate) fn ptx_entries(bytes: &[u8]) -> Vec<String> {
     let text = String::from_utf8_lossy(bytes);
     let mut out: Vec<String> = text
@@ -228,12 +229,12 @@ fn hardware(
 }
 
 /// 2026-10-22: The embedded kernel target the instance names (`hw/model/quant`).
-fn target_set(inst: &Instance) -> Result<metrale_kernels::TargetPtxSet> {
+fn target_set(inst: &Instance) -> Result<metrale_kernel_set::TargetPtxSet> {
     let mut seg = inst.target.split('/');
     let (Some(_class), Some(model), Some(quant)) = (seg.next(), seg.next(), seg.next()) else {
         bail!("instance target `{}` is not hw/model/quant", inst.target);
     };
-    metrale_kernels::all_ptx_sets()
+    crate::embedded::kernels().available_targets()
         .into_iter()
         .find(|s| s.target.model == model && s.target.quant == quant)
         .with_context(|| format!("this binary embeds no kernel target for {}; build it with METRALE_TARGET_MODEL={model}", inst.target))
@@ -241,7 +242,7 @@ fn target_set(inst: &Instance) -> Result<metrale_kernels::TargetPtxSet> {
 
 fn kernels(
     inst: &Instance,
-    set: &metrale_kernels::TargetPtxSet,
+    set: &metrale_kernel_set::TargetPtxSet,
     plans: &[FusionPlan],
 ) -> Result<w::KernelSet> {
     let mut modules: Vec<w::ModuleSpec> = set
@@ -249,7 +250,11 @@ fn kernels(
         .iter()
         .map(|(name, bytes)| w::ModuleSpec {
             name: name.to_string(),
-            kind: w::ArtifactKind::PtxText,
+            kind: if metrale_gpu_runtime::fatbin::is_fatbin(bytes) {
+                w::ArtifactKind::NvidiaFatbin
+            } else {
+                w::ArtifactKind::PtxText
+            },
             arch: set.ptx_arch.to_string(),
             artifact: ArtifactId::of(bytes),
             len: bytes.len() as u64,

@@ -5,9 +5,9 @@
 //
 // Owner: kernels crate.
 // Invariants:
-// - `lib.rs` compiles this file as a module and `build_parse_behavior.rs`
-//   `include!`s it, so both sides use the same constants. `//!` cannot appear
-//   at an `include!` site, which is why this header uses `//`.
+// - `lib.rs` compiles this file as a module and metrale-kernels'
+//   `build_parse_behavior.rs` imports its constants (2026-10-24: a
+//   build-dependency; it was an `include!`, which is why this header uses `//`).
 
 /// 2026-09-25: Default `[behavior].max_inter_tool_prose`: the cap on free-text
 /// tokens between tool calls on a tool request. 0 is reserved: the runtime

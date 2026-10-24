@@ -5,7 +5,7 @@
 //! Owner: scheduler.
 //! Invariants: none beyond the types.
 //!
-//! Regenerate with `cargo test -p met trace_harness --
+//! Regenerate with `cargo test -p metrale-server trace_harness --
 //! --ignored write_goldens`.
 
 use std::path::PathBuf;

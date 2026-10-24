@@ -71,7 +71,7 @@ hardware plus cached HuggingFace model weights:
 
 ```bash
 # Integration tests — needs GB10 + ~30 GB+ model cache.
-cargo test -p met --release -- --ignored
+cargo test -p metrale-server --release -- --ignored
 
 # End-to-end multi-model sweep (the canonical regression suite).
 # Requires Docker, NVIDIA Container Toolkit, optionally a 2-node

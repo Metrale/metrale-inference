@@ -15,6 +15,6 @@ lever_group! {
     target_hw: Presence = "off", None, "METRALE_TARGET_HW", "crates/kernels/build.rs", "Kernel target hardware class to compile (`kernels/<hw>`). Any value turns it on, `0` included.";
     target_model: Text = "unset", None, "METRALE_TARGET_MODEL", "crates/kernels/build.rs", "Kernel target model directory to compile (`kernels/<hw>/<model>`).";
     target_quant: Text = "unset", None, "METRALE_TARGET_QUANT", "crates/kernels/build.rs", "Kernel target quantization to compile.";
-    tui_log_file: Path = "unset", None, "METRALE_TUI_LOG_FILE", "crates/server/src/main.rs", "Where the dashboard tees its log.";
+    tui_log_file: Path = "unset", None, "METRALE_TUI_LOG_FILE", "crates/server/src/serve_main.rs", "Where the dashboard tees its log.";
     warm_template_dir: Path = "unset", None, "METRALE_WARM_TEMPLATE_DIR", "crates/bench/src/benchmarks/agentic/warm.rs", "Where the agentic benchmark keeps its warm workspace template.";
 }
