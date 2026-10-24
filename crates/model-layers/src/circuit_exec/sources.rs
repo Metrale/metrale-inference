@@ -202,6 +202,24 @@ pub fn find_instance(checkpoint: &str, target: &str, ranks: u64) -> Result<Optio
     )?))
 }
 
+/// 2026-10-24: The circuit arch `config_json` maps to, and the checkpoint ids of the instances on
+/// `target` with that arch whose stated shape the loaded config matches (every dim, `vocab` up to
+/// the stated one, as [`served_shape`] admits), sorted and deduplicated: the model identity a
+/// serve loaded from a path (no checkpoint id argument) resolves its instance by. The same
+/// config-to-shape map and shape check the plan install runs ([`checkpoint_shape`]).
+pub fn checkpoints_matching(config_json: &str, target: &str) -> Result<(String, Vec<String>)> {
+    let mapped = metrale_circuit::map_checkpoint(config_json)?;
+    let mut ids: Vec<String> = metrale_circuit::parse_instances(INSTANCES)?
+        .into_iter()
+        .filter(|i| i.target == target && i.arch == mapped.arch)
+        .filter(|i| served_shape(&i.shape, &mapped.shape).is_ok())
+        .map(|i| i.checkpoint)
+        .collect();
+    ids.sort();
+    ids.dedup();
+    Ok((mapped.arch, ids))
+}
+
 /// 2026-09-30: `a` and `b` read the same precision table, or the same checkpoint plan with the
 /// same engine formats; the tier and capabilities of a policy are the process's own.
 fn same_source(a: &PrecisionSpec, b: &PrecisionSpec) -> bool {

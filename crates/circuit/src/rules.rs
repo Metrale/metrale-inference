@@ -323,6 +323,9 @@ pub struct Rule {
     /// the communicator takes ([`crate::collective`]), copied onto each group it forms; `None` for
     /// every other rule. A `one_shot` rule is taken only within the policy's payload bound.
     pub path: Option<crate::collective::CollectivePath>,
+    /// 2026-10-24: For a rule whose one kernel is a persistent segment: the SMs whose CTAs take
+    /// tasks (those with `%smid` below it), copied onto each group it forms; `None`: every SM.
+    pub sm_budget: Option<core::num::NonZeroU32>,
 }
 
 impl Rule {

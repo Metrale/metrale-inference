@@ -24,8 +24,8 @@ struct CompileJob {
     out_file: std::path::PathBuf,
     /// 2026-09-25: The layer directory that resolved the source, passed as
     /// `-I` so a quoted include that escapes the stage still resolves.
-    /// `gb10/deepseek-v4-flash/nvfp4/kquant_moe.cu` includes
-    /// `../../../gb10/qwen3.6-27b/nvfp4/q4k_vendor/*.cuh`, a path that only
+    /// `gb10/glm-5.3-flash/nvfp4/dflash_fp8_gemm.cu` includes
+    /// `../../../gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu`, a path that only
     /// resolves from a directory three levels below `kernels/`.
     include_dir: std::path::PathBuf,
 }

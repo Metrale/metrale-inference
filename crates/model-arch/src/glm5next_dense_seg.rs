@@ -16,6 +16,7 @@
 //!   `Ok(false)`. Its bytes are theirs (gate, up, act and out: the kernel's invariant).
 //! - The control ring is resolved once per process at load ([`prepare`]), never inside a capture.
 
+use std::num::NonZeroU32;
 use std::sync::OnceLock;
 
 use anyhow::{Context, Result, bail};
@@ -34,6 +35,52 @@ const CTL_SLOTS: usize = 128;
 
 /// 2026-10-23: The process's control ring (one model per process).
 static CTL: OnceLock<SegmentCtl> = OnceLock::new();
+
+/// 2026-10-24: Where the segment runs (`METRALE_GLM_DENSE_SEGMENT`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DenseSeg {
+    /// 2026-10-24: `0`: nowhere (the kill switch).
+    Off,
+    /// 2026-10-24: `plan`: where the circuit plan names it, at the plan's SM budget.
+    Plan,
+    /// 2026-10-24: `1`: also on the legacy forward, at the levers' budget (every SM unless the
+    /// paired A/B lever `dense_seg@<sms>` names one).
+    Everywhere,
+}
+
+impl DenseSeg {
+    /// 2026-10-24: The setting's value; any other is refused, naming it.
+    pub fn parse(v: &str) -> Result<Self> {
+        match v {
+            "0" | "off" => Ok(Self::Off),
+            "plan" => Ok(Self::Plan),
+            "1" | "on" => Ok(Self::Everywhere),
+            other => bail!("METRALE_GLM_DENSE_SEGMENT={other:?}: expected 0, plan or 1"),
+        }
+    }
+}
+
+/// 2026-10-24: The site a dense MLP runs at: one the circuit plan installed, with what the plan
+/// names for its shared expert (the segment, at a budget), or the legacy forward's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DenseSite {
+    Planned {
+        segment: bool,
+        sms: Option<NonZeroU32>,
+    },
+    Legacy,
+}
+
+/// 2026-10-24: The SM budget the segment runs at on `site` under `l`, or `None` when it does
+/// not run there.
+fn site_budget(l: &DenseLevers, site: DenseSite) -> Option<Option<NonZeroU32>> {
+    match (l.dense_seg, site) {
+        (DenseSeg::Off, _) => None,
+        (_, DenseSite::Planned { segment, sms }) => segment.then_some(sms),
+        (DenseSeg::Plan, DenseSite::Legacy) => None,
+        (DenseSeg::Everywhere, DenseSite::Legacy) => Some(l.dense_seg_sms),
+    }
+}
 
 /// 2026-10-23: The entry of `m` rows.
 pub fn entry(m: usize) -> Option<&'static str> {
@@ -74,11 +121,12 @@ pub fn dense_segment(
     m: usize,
     hidden: usize,
     inter: usize,
+    site: DenseSite,
     stream: u64,
 ) -> Result<bool> {
-    if !l.dense_seg || !registry_in_use() {
+    let Some(sms) = site_budget(l, site).filter(|_| registry_in_use()) else {
         return Ok(false);
-    }
+    };
     let plan = seg::plan(l)?;
     let Some(name) = entry(m).filter(|_| group_on_pipe(plan, m) && plan.lone_pipe(m)) else {
         return Ok(false);
@@ -97,7 +145,7 @@ pub fn dense_segment(
         .op_cache()
         .kernel(gpu, MODULE, name)
         .with_context(|| format!("METRALE_GLM_DENSE_SEGMENT: {MODULE}::{name}"))?;
-    let budget = match l.dense_seg_sms {
+    let budget = match sms {
         None => u32::MAX,
         Some(k) if k.get() <= plan.sms => k.get(),
         Some(k) => bail!(
@@ -124,6 +172,24 @@ pub fn dense_segment(
         stream,
     )?;
     Ok(true)
+}
+
+/// 2026-10-24: A planned site runs the segment as its plan names it, at the plan's budget: a
+/// step whose levers would change either (the kill switch, a paired A/B `dense_seg` arm) is
+/// refused, since it would not run what it names. The paired A/B arms measure `--forward legacy`.
+pub fn check_planned(l: &DenseLevers, installed: &DenseLevers) -> Result<()> {
+    if (l.dense_seg, l.dense_seg_sms) != (installed.dense_seg, installed.dense_seg_sms) {
+        bail!(
+            "METRALE_GLM_DENSE_SEGMENT: the step's dense segment {:?} at {:?} SMs is not the one \
+             the plan was installed under ({:?} at {:?}); the paired A/B `dense_seg` arms need \
+             --forward legacy",
+            l.dense_seg,
+            l.dense_seg_sms,
+            installed.dense_seg,
+            installed.dense_seg_sms
+        );
+    }
+    Ok(())
 }
 
 /// 2026-10-23: At load, wherever the pipe is on (`glm5next_w4a16_seg::prepare`), whether or not

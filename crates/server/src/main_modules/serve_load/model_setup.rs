@@ -28,6 +28,7 @@ pub(super) fn configure_model(
 ) -> Result<(ModelConfig, String)> {
     metrale_telemetry::progress::phase(2, "config");
     let (mut config, config_json) = serve_phases::load_model_config(model_dir)?;
+    serve_phases::load_embedding_prompts(model_dir, &mut config)?;
 
     // 2026-09-26: A sibling `hf_quant_config.json` fills `quantization_config`
     // when config.json has none; its top level is read as the quantization

@@ -6,6 +6,9 @@
 //! Owner: server startup (`met serve`).
 //! Invariants:
 //! - `circuit` names exactly the instance for this checkpoint on this target, or boot fails.
+//! - 2026-10-24: the checkpoint is the positional id, else the model's identity (the loaded
+//!   config.json's circuit arch and shape against INSTANCES.toml); an unset `--forward` that
+//!   resolves to legacy logs its reason at WARN.
 //! - 2026-10-23: resolved once at boot ([`resolve_forward`]): an explicit `--forward` is kept;
 //!   unset, the mode is `circuit` where an instance serves the checkpoint on this target and
 //!   `legacy` otherwise, and boot logs which and why (a declared mode, never a silent fallback).
@@ -43,12 +46,54 @@ pub(crate) struct ResolvedForward {
     pub instance: Option<Instance>,
 }
 
-/// 2026-10-23: `--forward` resolved from the explicit flag (`None`: unset), the positional
-/// checkpoint id, the circuit target of this build (`Err`: the build has none, with why) and the
-/// serve's tensor-parallel ranks. An explicit circuit mode without an instance is refused.
+/// 2026-10-24: The checkpoint id an instance is looked up by: the positional checkpoint id, else
+/// the model's identity, the instance whose circuit arch and shape the loaded `config.json` maps
+/// to on `target` ([`sources::checkpoints_matching`]). `Err` (the outer `Ok`): no unique
+/// instance, with why.
+fn identity(
+    checkpoint: Option<&str>,
+    config_json: Option<&str>,
+    target: &str,
+) -> Result<Result<String, String>> {
+    if let Some(c) = checkpoint {
+        return Ok(Ok(c.to_string()));
+    }
+    let Some(config_json) = config_json else {
+        return Ok(Err(
+            "no checkpoint id (the positional MODEL argument) and no config.json to look up a \
+             circuit instance"
+                .into(),
+        ));
+    };
+    let (arch, ids) = match sources::checkpoints_matching(config_json, target) {
+        Ok(found) => found,
+        Err(e) => {
+            return Ok(Err(format!(
+                "the loaded config.json maps to no circuit: {e:#}"
+            )));
+        }
+    };
+    Ok(match ids.as_slice() {
+        [one] => Ok(one.clone()),
+        [] => Err(format!(
+            "no circuit instance on `{target}` matches the loaded checkpoint (circuit arch \
+             `{arch}`, its config.json shape; kernels/circuits/INSTANCES.toml)"
+        )),
+        many => Err(format!(
+            "the loaded checkpoint (circuit arch `{arch}`) matches the instances of {many:?} on \
+             `{target}`: name one as the model argument"
+        )),
+    })
+}
+
+/// 2026-10-23: `--forward` resolved from the explicit flag (`None`: unset), the model's identity
+/// (the positional checkpoint id, else 2026-10-24 the loaded `config_json`: [`identity`]), the
+/// circuit target of this build (`Err`: the build has none, with why) and the serve's
+/// tensor-parallel ranks. An explicit circuit mode without an instance is refused.
 pub(crate) fn resolve_forward(
     explicit: Option<ForwardArg>,
     checkpoint: Option<&str>,
+    config_json: Option<&str>,
     target: Result<&str, &str>,
     ranks: u64,
 ) -> Result<ResolvedForward> {
@@ -60,33 +105,32 @@ pub(crate) fn resolve_forward(
     match explicit {
         Some(ForwardArg::Legacy) => Ok(legacy("--forward legacy (explicit)".into())),
         Some(mode) => {
-            let checkpoint = checkpoint
-                .context("--forward circuit needs the checkpoint id as the model argument")?;
             let target = match target {
                 Ok(t) => t,
+                Err(why) => bail!("--forward {}: {why}", mode.name()),
+            };
+            let checkpoint = match identity(checkpoint, config_json, target)? {
+                Ok(c) => c,
                 Err(why) => bail!("--forward {}: {why}", mode.name()),
             };
             Ok(ResolvedForward {
                 mode,
                 reason: format!("--forward {} (explicit)", mode.name()),
-                instance: Some(sources::instance_for(checkpoint, target, ranks)?),
+                instance: Some(sources::instance_for(&checkpoint, target, ranks)?),
             })
         }
         None => {
-            let Some(checkpoint) = checkpoint else {
-                return Ok(legacy(
-                    "--forward unset and no checkpoint id (the positional MODEL argument) to look \
-                     up a circuit instance"
-                        .into(),
-                ));
-            };
             let target = match target {
                 Ok(t) => t,
                 Err(why) => {
                     return Ok(legacy(format!("--forward unset; no circuit target: {why}")));
                 }
             };
-            let found = match sources::find_instance(checkpoint, target, ranks) {
+            let checkpoint = match identity(checkpoint, config_json, target)? {
+                Ok(c) => c,
+                Err(why) => return Ok(legacy(format!("--forward unset; {why}"))),
+            };
+            let found = match sources::find_instance(&checkpoint, target, ranks) {
                 Err(e) if refused_at(&e) => {
                     return Ok(legacy(format!(
                         "--forward unset; the circuit cannot run `{checkpoint}` at {ranks} rank(s): \
@@ -126,10 +170,16 @@ pub(crate) fn forward_select(
     let r = resolve_forward(
         args.forward,
         args.model.as_deref(),
+        Some(config_json),
         target.as_deref().map_err(String::as_str),
         u64::try_from(args.tp_size)?,
     )?;
-    tracing::info!("forward: {} ({})", r.mode.name(), r.reason);
+    // 2026-10-24: An unset `--forward` that falls back to legacy says why at WARN.
+    if r.mode == ForwardArg::Legacy && args.forward.is_none() {
+        tracing::warn!("forward: {} ({})", r.mode.name(), r.reason);
+    } else {
+        tracing::info!("forward: {} ({})", r.mode.name(), r.reason);
+    }
     let fusions = match r.mode {
         ForwardArg::Legacy => return Ok(ForwardSelect::Legacy),
         ForwardArg::Circuit => Fusions::All,

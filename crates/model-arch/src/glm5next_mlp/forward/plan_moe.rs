@@ -96,6 +96,8 @@ pub struct MoeSteps<K> {
     pub act: ActStep<K>,
     pub down: ProjStep<K>,
     pub blend: BlendStep<K>,
+    /// 2026-10-24: What the plan names for the shared expert (`DenseSite::Planned`).
+    pub shared: crate::glm5next_dense_seg::DenseSite,
 }
 
 /// 2026-10-23: A site's steps bound to this device, with the sweep's persistent grid.
@@ -141,6 +143,7 @@ impl<K> MoeSteps<K> {
                 kernel: f(self.blend.kernel)?,
                 blocks_per_row: self.blend.blocks_per_row,
             },
+            shared: self.shared,
         })
     }
 
@@ -439,8 +442,10 @@ pub fn run_with_legacy_shared(
 ) -> Result<()> {
     let (steps, ctas) = plan;
     let pieces = [rows];
-    let expert =
-        |scratch, s| super::pieces::shared_expert(gpu, k, cfg, w, x, ws, scratch, &pieces, s);
+    let site = steps.shared;
+    let expert = |scratch, s| {
+        super::pieces::shared_expert(gpu, k, cfg, w, x, ws, scratch, &pieces, site, s)
+    };
     let fork = ws.shared_fork.as_ref().filter(|f| f.takes(rows));
     let start = || match fork {
         Some(f) => f.fork(gpu, stream, |side, scratch| expert(scratch, side)),

@@ -136,9 +136,12 @@ pub enum OpKind {
     /// 2026-10-18: The Engram residual: per stream, a sigmoid gate from the normalised dot of
     /// the stream with its key slice, times the shared value slice, added to the stream.
     EngramGate,
+    /// 2026-10-24: The mean over each sequence's rows of its input, accumulated in FP32: one
+    /// FP32 vector per sequence (an embedding model's pooling).
+    MeanPool,
 }
 
-pub(super) const PLAIN_OPS: [(OpKind, &str); 45] = [
+pub(super) const PLAIN_OPS: [(OpKind, &str); 46] = [
     (OpKind::Embed, "embed"),
     (OpKind::RmsNorm, "rms_norm"),
     (OpKind::GatedRmsNorm, "gated_rms_norm"),
@@ -184,6 +187,7 @@ pub(super) const PLAIN_OPS: [(OpKind, &str); 45] = [
     (OpKind::KvCompress, "kv_compress"),
     (OpKind::EngramLookup, "engram_lookup"),
     (OpKind::EngramGate, "engram_gate"),
+    (OpKind::MeanPool, "mean_pool"),
 ];
 
 impl OpKind {

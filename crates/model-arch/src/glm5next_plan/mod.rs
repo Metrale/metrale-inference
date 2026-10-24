@@ -172,6 +172,10 @@ pub fn compile_moe(
     {
         if g.locals().iter().all(|l| l.starts_with("shared_")) {
             legacy.push(g.site());
+            block.moe.shared = Some(crate::glm5next_dense_seg::DenseSite::Planned {
+                segment: g.group.kernels.iter().any(|k| k.module == crate::glm5next_dense_seg::MODULE),
+                sms: g.group.sm_budget,
+            });
         } else {
             reg.emit(&g, &mut block)?;
             let kernels: Vec<String> = g.group.kernels.iter().map(|k| k.to_string()).collect();

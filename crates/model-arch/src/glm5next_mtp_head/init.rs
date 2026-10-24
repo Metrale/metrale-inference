@@ -73,6 +73,34 @@ fn xchg_kernels(gpu: &dyn GpuBackend, on: bool) -> Option<(KernelHandle, KernelH
     (pack.0 != 0 && pick.0 != 0).then_some((pack, pick))
 }
 
+/// 2026-10-24: The quantized copies of the draft shard a drafter builds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct DraftHeadCopies {
+    pub nvfp4: bool,
+    pub fp8: bool,
+}
+
+/// 2026-10-24: `--glm-draft-head nvfp4` builds the NVFP4 copy for the one-row sweep and keeps
+/// the FP8 copy (`METRALE_GLM_MTP_HEAD_FP8`) only for the batched propose, whose batch-16 GEMV
+/// reads FP8; `fp8` builds what it built before.
+pub(super) fn draft_head_copies(
+    head: crate::glm5next_decode_levers::GlmDraftHead,
+    head_fp8: bool,
+    propose_batch: bool,
+) -> DraftHeadCopies {
+    use crate::glm5next_decode_levers::GlmDraftHead;
+    match head {
+        GlmDraftHead::Fp8 => DraftHeadCopies {
+            nvfp4: false,
+            fp8: head_fp8,
+        },
+        GlmDraftHead::Nvfp4 => DraftHeadCopies {
+            nvfp4: true,
+            fp8: head_fp8 && propose_batch,
+        },
+    }
+}
+
 impl Glm5NextMtpHead {
     pub fn new(
         module: Glm5NextMtpModule,
@@ -135,7 +163,43 @@ impl Glm5NextMtpHead {
         // the whole vocab. A failure here is not fatal; the head falls back to the BF16 sweep.
         let gemv_fp8w_k =
             metrale_model_layers::layers::try_kernel(gpu, "gemv_fp8w", "dense_gemv_fp8w");
-        let head_fp8 = if !mtp.head_fp8 || gemv_fp8w_k.0 == 0 {
+        // 2026-10-24: `--glm-draft-head nvfp4` (R1): an NVFP4 copy of the shard for the one-row
+        // sweep; the FP8 copy is then built only for the batched propose (`draft_head_copies`).
+        let draft_head = crate::glm5next_decode_levers::glm_decode_levers().draft_head;
+        let gemv_sw_k = metrale_model_layers::layers::try_kernel(
+            gpu,
+            crate::glm5next_mlp::W4A16_GEMV_MODULE,
+            "w4a16_gemv_sw",
+        );
+        let copies = draft_head_copies(draft_head, mtp.head_fp8, mtp.propose_batch);
+        let head_nvfp4 = if copies.nvfp4 {
+            anyhow::ensure!(
+                gemv_sw_k.0 != 0,
+                "--glm-draft-head nvfp4: w4a16_gemv_sw is not in this build"
+            );
+            let shard = DenseWeight {
+                weight: lm_head.weight.offset(head_v0 * config.hidden_size * 2),
+            };
+            let q = metrale_model_layers::weight_map::quantize_to_nvfp4(
+                &shard,
+                head_n,
+                config.hidden_size,
+                gpu,
+                gpu.kernel("quantize_nvfp4", "nvfp4_global_absmax")?,
+                gpu.kernel("quantize_nvfp4", "quantize_bf16_to_nvfp4")?,
+                gpu.default_stream(),
+            )?;
+            tracing::info!(
+                "GLM MTP: draft lm_head shard quantised to NVFP4 ({} rows x {}, --glm-draft-head \
+                 nvfp4)",
+                head_n,
+                config.hidden_size,
+            );
+            Some(q)
+        } else {
+            None
+        };
+        let head_fp8 = if !copies.fp8 || gemv_fp8w_k.0 == 0 {
             None
         } else {
             let shard = DenseWeight {
@@ -213,6 +277,8 @@ impl Glm5NextMtpHead {
             head_n,
             head_fp8,
             gemv_fp8w_k,
+            head_nvfp4,
+            gemv_sw_k,
             screen,
             xchg_k: xchg_kernels(gpu, mtp.xchg_device),
             lp_k: super::draft_lp::LpKernels::resolve(gpu),
@@ -258,6 +324,29 @@ mod tests {
         assert_eq!(eh_shard(4096, 1, 0), None);
         assert_eq!(eh_shard(4096, 3, 3), None);
         assert_eq!(eh_shard(128, 3, 0), None);
+    }
+
+    /// 2026-10-24: `fp8` builds exactly the old copy; `nvfp4` always builds the NVFP4 copy and
+    /// the FP8 one only where the batched propose reads it.
+    #[test]
+    fn draft_head_copies_follow_the_flag() {
+        use super::{DraftHeadCopies, draft_head_copies};
+        use crate::glm5next_decode_levers::GlmDraftHead::{Fp8, Nvfp4};
+        for batch in [false, true] {
+            for fp8 in [false, true] {
+                assert_eq!(
+                    draft_head_copies(Fp8, fp8, batch),
+                    DraftHeadCopies { nvfp4: false, fp8 }
+                );
+                assert_eq!(
+                    draft_head_copies(Nvfp4, fp8, batch),
+                    DraftHeadCopies {
+                        nvfp4: true,
+                        fp8: fp8 && batch
+                    }
+                );
+            }
+        }
     }
 
     /// 2026-10-08: Two ranks halve the vocab, as before.

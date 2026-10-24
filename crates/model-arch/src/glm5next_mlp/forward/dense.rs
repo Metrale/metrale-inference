@@ -43,6 +43,7 @@ pub fn forward_dense(
     out: DevicePtr,
     m: usize,
     ws: DenseScratch,
+    site: crate::glm5next_dense_seg::DenseSite,
     stream: u64,
 ) -> Result<()> {
     if inter == 0 || inter > ws.max_inter {
@@ -70,7 +71,7 @@ pub fn forward_dense(
     };
     let limit = cfg.swiglu_limit;
     let seg = crate::glm5next_dense_seg::dense_segment;
-    if seg(gpu, &k.levers.dense, &io, limit, m, cfg.hidden, inter, stream)? {
+    if seg(gpu, &k.levers.dense, &io, limit, m, cfg.hidden, inter, site, stream)? {
         return Ok(());
     }
     // 2026-10-09: gate and up read `x` unchanged: one FP8 quantization under the FP8 tier.
@@ -196,7 +197,8 @@ pub fn forward_dense_site(
                     "GLM dense MLP: the plan runs BF16 at {m} rows but no BF16 weights were bound"
                 );
             };
-            forward_dense(gpu, k, cfg, w, inter, x, out, m, ws.dense_scratch(), stream)
+            let (scratch, site) = (ws.dense_scratch(), crate::glm5next_dense_seg::DenseSite::Legacy);
+            forward_dense(gpu, k, cfg, w, inter, x, out, m, scratch, site, stream)
         }
     }
 }

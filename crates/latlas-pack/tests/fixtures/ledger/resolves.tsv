@@ -1,0 +1,5 @@
+ts	phase	id	hypothesis	predicted_us_saved	measured_delta	bitwise	verdict	profile	cost	commit	why_differed	depends_on	retracts	gate	resolves
+2026-10-23T01:00Z	P1	a	hyp	<=5 us	1k +1.0% [-0.5,+2.5]	IDENTICAL	BLOCKED (on the boot)	-	1 h	abc1234	why	-	-	-	-
+2026-10-23T02:00Z	P1	b	hyp	<=5 us	1k +1.0% [-0.5,+2.5]	IDENTICAL	BLOCKED	-	1 h	abc1234	why	-	-	-	-
+2026-10-23T03:00Z	P1	c	hyp	<=5 us	1k +1.0% [-0.5,+2.5]	IDENTICAL	PASS	-	1 h	abc1234	why	a	-	bitid(texts)@{p1k}	a
+2026-10-23T04:00Z	P1	d	hyp	<=5 us	1k +1.0% [-0.5,+2.5]	IDENTICAL	DONE	-	1 h	abc1234	why	-	-	tost(1%,n=3)	-

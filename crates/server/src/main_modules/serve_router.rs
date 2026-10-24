@@ -98,7 +98,7 @@ pub(crate) async fn build_and_serve(
         .route("/v1/lora/load", post(api::load_lora_into_slot))
         .route("/v1/models", get(api::list_models))
         .route("/v1/models/{*model_id}", get(api::get_model))
-        .route("/v1/embeddings", post(api::embeddings_stub))
+        .route("/v1/embeddings", post(api::embeddings))
         // 2026-09-26: Unimplemented OpenAI endpoints answer 501 with an
         // OpenAI-shaped error (`api/stubs.rs`).
         .route(

@@ -23,7 +23,7 @@ fn inbox() -> (
 ) {
     let (tx, rx) = tokio::sync::mpsc::channel(8);
     let (rtx, rrx) = tokio::sync::mpsc::channel(8);
-    (TokioRequestIo::new(rx, rrx, DEADLINE), tx, rtx)
+    (TokioRequestIo::new(rx, rrx, None, DEADLINE), tx, rtx)
 }
 
 fn request() -> crate::api::InferenceRequest {
@@ -91,6 +91,32 @@ fn block_wakes_on_a_rotation_alone_and_on_close() {
     assert!(io.recv(WaitPolicy::Block).closed, "and stays closed");
 }
 
+/// 2026-10-24: An embedding job alone ends a blocking wait, as a rotation does, and leaves the
+/// pending queue not idle until it is taken.
+#[test]
+fn block_wakes_on_an_embed_job_alone() {
+    let (tx, rx) = tokio::sync::mpsc::channel(8);
+    let (_rtx, rrx) = tokio::sync::mpsc::channel(8);
+    let (etx, erx) = tokio::sync::mpsc::channel(8);
+    let io = TokioRequestIo::new(rx, rrx, Some(erx), DEADLINE);
+    let io2 = io.clone();
+    let h = std::thread::spawn(move || io2.recv(WaitPolicy::Block));
+    settle();
+    let (reply, _r) = tokio::sync::oneshot::channel();
+    etx.blocking_send(crate::scheduler::EmbedJob {
+        inputs: vec![vec![1]],
+        reply,
+    })
+    .unwrap();
+    let got = h.join().unwrap();
+    assert!(got.requests.is_empty() && got.rotations.is_empty());
+    assert_eq!(got.embeds.len(), 1);
+    let mut q = PendingQueue::new();
+    q.absorb(got);
+    assert!(!q.is_idle(), "a pending embed job is work");
+    drop(tx);
+}
+
 #[test]
 fn a_closed_inbox_never_waits() {
     let io = TokioRequestIo::closed(DEADLINE);
@@ -107,6 +133,7 @@ fn the_pending_queue_keeps_arrival_order_and_latches_closed() {
     q.absorb(Arrivals {
         requests: vec![request()],
         rotations: Vec::new(),
+        embeds: Vec::new(),
         closed: false,
     });
     assert!(!q.is_idle());
@@ -114,6 +141,7 @@ fn the_pending_queue_keeps_arrival_order_and_latches_closed() {
     q.absorb(Arrivals {
         requests: Vec::new(),
         rotations: Vec::new(),
+        embeds: Vec::new(),
         closed: true,
     });
     assert!(

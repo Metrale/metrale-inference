@@ -791,7 +791,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-qwen3-6-27b-nvfp4-nvfp4-mmq-cu-metrale-nvfp4-mmq128-nc"></a>
 
-### `metrale_nvfp4_mmq128_nc` — [kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu](../../kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu#L67)
+### `metrale_nvfp4_mmq128_nc` — [kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu](../../kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu#L66)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -802,7 +802,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-qwen3-6-27b-nvfp4-nvfp4-mmq-cu-metrale-nvfp4-mmq32-nc"></a>
 
-### `metrale_nvfp4_mmq32_nc` — [kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu](../../kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu#L97)
+### `metrale_nvfp4_mmq32_nc` — [kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu](../../kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu#L96)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -813,7 +813,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-qwen3-6-27b-nvfp4-nvfp4-mmq-cu-metrale-nvfp4-quantize-bf16"></a>
 
-### `metrale_nvfp4_quantize_bf16` — [kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu](../../kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu#L132)
+### `metrale_nvfp4_quantize_bf16` — [kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu](../../kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu#L131)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -823,7 +823,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-qwen3-6-27b-nvfp4-nvfp4-mmq-cu-metrale-nvfp4-scale-bf16"></a>
 
-### `metrale_nvfp4_scale_bf16` — [kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu](../../kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu#L214)
+### `metrale_nvfp4_scale_bf16` — [kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu](../../kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu#L213)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -832,7 +832,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-qwen3-6-27b-nvfp4-nvfp4-mmq-cu-metrale-nvfp4-silu-mul-quant"></a>
 
-### `metrale_nvfp4_silu_mul_quant` — [kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu](../../kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu#L242)
+### `metrale_nvfp4_silu_mul_quant` — [kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu](../../kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu#L241)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|

@@ -1,0 +1,10 @@
+a
+b <- a
+c <- b <- a
+d <- a <- c <- b
+e <- b <- a
+f
+g <- e <- b <- a <- d <- c
+h <- g <- e <- b <- a <- d <- c
+z
+nope

@@ -474,7 +474,7 @@ fn the_declared_defaults_are_the_old_unset_values() {
             gemv_seg: false,
             gemv_pipe: true,
             swiglu_down: false,
-            dense_seg: false,
+            dense_seg: crate::glm5next_dense_seg::DenseSeg::Off,
             dense_seg_sms: None,
             tc_min_rows: None,
             dequant_min_rows: None,

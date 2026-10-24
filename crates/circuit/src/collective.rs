@@ -104,7 +104,7 @@ impl crate::rules::Rule {
     }
 }
 
-/// 2026-10-23: Set every group's path of `plan` from its rule in `rules` (the rule set the plan
+/// 2026-10-23: Set every group's path (2026-10-24: and SM budget) of `plan` from its rule in `rules` (the rule set the plan
 /// was fused from, as its digest names it): what [`crate::fuse`] sets, for a plan decoded without
 /// it. A group whose rule is not in `rules` is refused naming it (CERF `CircuitSource`).
 pub fn derive_paths(
@@ -120,6 +120,24 @@ pub fn derive_paths(
             )
         })?;
         g.path = rule.path;
+        g.sm_budget = rule.sm_budget;
     }
     Ok(())
+}
+
+/// 2026-10-24: A rule's `sm_budget` is taken only by a group of one kernel and no exchange: the
+/// persistent segment whose task loop reads it.
+pub fn check_sm_budget(
+    budget: Option<core::num::NonZeroU32>,
+    kernels: usize,
+    comm: &[crate::rules::CommLaunch],
+) -> Result<(), alloc::string::String> {
+    match budget {
+        Some(k) if kernels != 1 || !comm.is_empty() => Err(alloc::format!(
+            "`sm_budget = {k}` on a rule of {kernels} kernels and {} exchanges (one persistent \
+             segment takes it)",
+            comm.len()
+        )),
+        _ => Ok(()),
+    }
 }

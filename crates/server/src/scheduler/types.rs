@@ -25,6 +25,9 @@ pub(super) struct PendingQueue {
     /// at a quiescent point (see [`super::LoraRotation`]). Kept out of
     /// `requests` so the sequence machinery never sees a control message.
     pub rotations: Vec<super::LoraRotation>,
+    /// 2026-10-24: Pending `/v1/embeddings` jobs, run whole each tick (`embed_jobs`); kept out
+    /// of `requests` because they hold no sequence.
+    pub embeds: Vec<super::EmbedJob>,
 }
 
 impl PendingQueue {
@@ -33,6 +36,7 @@ impl PendingQueue {
             requests: Vec::new(),
             closed: false,
             rotations: Vec::new(),
+            embeds: Vec::new(),
         }
     }
 
@@ -40,12 +44,16 @@ impl PendingQueue {
     pub fn absorb(&mut self, arrived: super::io::Arrivals) {
         self.requests.extend(arrived.requests);
         self.rotations.extend(arrived.rotations);
+        self.embeds.extend(arrived.embeds);
         self.closed |= arrived.closed;
     }
 
     /// 2026-09-25: Nothing to admit, nothing to apply, and more may still come.
     pub fn is_idle(&self) -> bool {
-        self.requests.is_empty() && self.rotations.is_empty() && !self.closed
+        self.requests.is_empty()
+            && self.rotations.is_empty()
+            && self.embeds.is_empty()
+            && !self.closed
     }
 }
 

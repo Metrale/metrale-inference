@@ -20,13 +20,15 @@ use parking_lot::{Condvar, Mutex};
 use crate::api::{InferenceRequest, InferenceResponse, StreamEvent};
 use crate::scheduler::mod_helpers::{bounded_stream_send, spawn_terminal_send};
 use crate::scheduler::types::ResponseSink;
-use crate::scheduler::{LoraAck, LoraRotation};
+use crate::scheduler::{EmbedJob, LoraAck, LoraRotation};
 
 /// 2026-09-25: What arrived since the previous `recv`.
 #[derive(Default)]
 pub struct Arrivals {
     pub requests: Vec<InferenceRequest>,
     pub rotations: Vec<LoraRotation>,
+    /// 2026-10-24: `/v1/embeddings` jobs (`scheduler::embed_jobs`).
+    pub embeds: Vec<EmbedJob>,
     /// 2026-09-25: The request channel has closed: no more requests will
     /// arrive.
     pub closed: bool,
@@ -34,7 +36,7 @@ pub struct Arrivals {
 
 impl Arrivals {
     fn is_empty(&self) -> bool {
-        self.requests.is_empty() && self.rotations.is_empty()
+        self.requests.is_empty() && self.rotations.is_empty() && self.embeds.is_empty()
     }
 }
 
@@ -86,11 +88,13 @@ pub struct TokioRequestIo {
 }
 
 impl TokioRequestIo {
-    /// 2026-09-25: Forward `request_rx` and `rotation_rx` into the inbox; frames wait at
-    /// most `send_deadline` on a full stream channel.
+    /// 2026-09-25: Forward `request_rx` and `rotation_rx` (2026-10-24: and `embed_rx`, when the
+    /// model computes embeddings) into the inbox; frames wait at most `send_deadline` on a
+    /// full stream channel.
     pub fn new(
         request_rx: tokio::sync::mpsc::Receiver<InferenceRequest>,
         rotation_rx: tokio::sync::mpsc::Receiver<LoraRotation>,
+        embed_rx: Option<tokio::sync::mpsc::Receiver<EmbedJob>>,
         send_deadline: std::time::Duration,
     ) -> Arc<Self> {
         let io = Arc::new(Self {
@@ -116,6 +120,15 @@ impl TokioRequestIo {
                 pr.cv.notify_one();
             }
         });
+        if let Some(mut rx) = embed_rx {
+            let pe = Arc::clone(&io);
+            std::thread::spawn(move || {
+                while let Some(job) = rx.blocking_recv() {
+                    pe.queue.lock().embeds.push(job);
+                    pe.cv.notify_one();
+                }
+            });
+        }
         io
     }
 
@@ -151,6 +164,7 @@ impl RequestIo for TokioRequestIo {
         Arrivals {
             requests: std::mem::take(&mut g.requests),
             rotations: std::mem::take(&mut g.rotations),
+            embeds: std::mem::take(&mut g.embeds),
             closed: g.closed,
         }
     }

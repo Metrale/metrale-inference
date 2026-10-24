@@ -83,7 +83,9 @@ pub(super) fn apply(
                 if !k.levers.dense.gemv_seg || !k.levers.dense.gemv_pipe {
                     bail!("METRALE_PAIRED_AB: `dense_seg` needs the W4A16 GEMV pipe");
                 }
-                k.levers.dense.dense_seg |= on.has(i);
+                if on.has(i) {
+                    k.levers.dense.dense_seg = crate::glm5next_dense_seg::DenseSeg::Everywhere;
+                }
             }
             n if n.starts_with("dense_seg@") => {
                 let sms = n["dense_seg@".len()..]
@@ -93,7 +95,7 @@ pub(super) fn apply(
                     bail!("METRALE_PAIRED_AB: `{n}` needs the W4A16 GEMV pipe");
                 }
                 if on.has(i) {
-                    k.levers.dense.dense_seg = true;
+                    k.levers.dense.dense_seg = crate::glm5next_dense_seg::DenseSeg::Everywhere;
                     k.levers.dense.dense_seg_sms = Some(sms);
                 }
             }

@@ -112,6 +112,9 @@ pub struct Group {
     /// plan (a published blueprint body) has `None` until [`crate::collective::derive_paths`].
     #[serde(skip)]
     pub path: Option<crate::collective::CollectivePath>,
+    /// 2026-10-24: A persistent segment's SM budget, from its rule; derived like `path`.
+    #[serde(skip)]
+    pub sm_budget: Option<core::num::NonZeroU32>,
 }
 
 impl Group {
@@ -417,6 +420,7 @@ fn fuse_inner(
                     .filter(|_| !rule.runs.is_empty())
                     .unwrap_or_default(),
                 path: rule.path,
+                sm_budget: rule.sm_budget,
             }
         })
         .collect();

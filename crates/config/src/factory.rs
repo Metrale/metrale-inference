@@ -96,6 +96,8 @@ impl ModelConfig {
             moe_intermediate_sizes: Vec::new(),
             num_experts_per_toks: Vec::new(),
             vision: None,
+            embedding: None,
+            rope_llama3: None,
             quantization_config: None,
             attn_gated: true,
             gdn_norm_sigmoid: false,

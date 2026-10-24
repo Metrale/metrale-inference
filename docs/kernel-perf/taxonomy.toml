@@ -140,6 +140,14 @@ models = ["nllb-200-3.3b"]
 components = ["nllb"]
 shared_engine = false
 
+[[family]]
+id = "embed"
+label = "Embed"
+name = "Llama-Nemotron-Embed VL (text tower, mean-pooled embeddings)"
+models = ["llama-nemotron-embed-vl-1b-v2"]
+components = ["embed-pool"]
+shared_engine = false
+
 # ------------------------------------------------------------------------------------------------
 # Components. generic = true: every shared-engine family has it (attention, projections, norms,
 # ...). generic = false: only the families that list it. `sites` are path prefixes of Rust call
@@ -304,6 +312,12 @@ generic = false
 sites = ["crates/model-engine/src/model/nllb"]
 
 [[component]]
+id = "embed-pool"
+name = "Embedding pooling (masked mean over the text tower's last hidden state)"
+generic = false
+sites = ["crates/model-engine/src/model/embed"]
+
+[[component]]
 id = "lora"
 name = "LoRA adapters (BGMV shrink/expand)"
 generic = true
@@ -375,6 +389,10 @@ paths = ["crates/model-engine/src/model/nllb"]
 families = ["nllb"]
 
 [[family_site]]
+paths = ["crates/model-engine/src/model/embed"]
+families = ["embed"]
+
+[[family_site]]
 paths = ["crates/gpu-runtime/src/mlx_int8.rs"]
 families = ["qwen-gdn-dense"]
 
@@ -388,6 +406,11 @@ families = ["qwen-gdn-dense"]
 component = "nllb"
 kind = "NLLB encoder/decoder op"
 names = ["nllb_*"]
+
+[[rule]]
+component = "embed-pool"
+kind = "masked mean pool"
+names = ["mean_pool_*"]
 
 [[rule]]
 component = "diag"

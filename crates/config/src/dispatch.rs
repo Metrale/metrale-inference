@@ -308,6 +308,8 @@ fn parse_config_dispatch(json: &str) -> Result<ModelConfig> {
             validate_config(&config)?;
             Ok(config)
         }
+        // 2026-10-24: An embedding model: the text tower under `llm_config` (`embedding.rs`).
+        "llama_nemotron_vl" => crate::embedding::parse_llama_nemotron_vl(&raw),
         "minimax_m2" => parse_minimax_m2(&raw),
         "step3p7" => parse_step3p7(&raw),
         "deepseek_v4" => parse_deepseek_v4(json),

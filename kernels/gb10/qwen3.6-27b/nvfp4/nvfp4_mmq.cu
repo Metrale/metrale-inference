@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// 2026-09-25: NVFP4 W4A4 GEMM for the dense FFN on the vendored MMQ in q4k_vendor/ (block-scale MMA over E2M1
+// 2026-09-25: NVFP4 W4A4 GEMM for the dense FFN on the MMQ in gb10/common/mmq/ (block-scale MMA over E2M1
 // values with UE4M3 scales), launched from crates/model-layers/src/layers/ops/nvfp4_mmq.rs; plus the weight repack,
 // the activation quantizers and the scale2 folds. Conventional 2D tiling: no MoE ids, one channel. dst is BF16
 // [M, N]. Grid (ceil(N / 128), ceil(M / mmq_x), 1), Block (32, 8, 1).
@@ -16,25 +16,24 @@
 
 
 #include <cuda_bf16.h>
-#include "q4k_vendor/mmq.cuh"
-#include "q4k_vendor/quantize_impl.cuh"
+#include "../../common/mmq/mmq.cuh"
 
-// 2026-09-25: No export may resolve to the vendor's NO_DEVICE_CODE trap, so all of them sit behind the vendor's
+// 2026-09-25: No export may resolve to the MMQ's NO_DEVICE_CODE trap, so all of them sit behind the MMQ's
 // capability macro (compute capability 12.x). Without them DenseFfn's MMQ arm does not engage and it keeps its
 // W4A16 path and transposed weights (crates/model-layers/src/layers/dense_ffn.rs).
 #if defined(BLACKWELL_MMA_AVAILABLE) // Metrale Engine optional module
 
-// 2026-09-25: One (N tile, M tile) of the GEMM: identity ids, one channel and sample; the vendored
+// 2026-09-25: One (N tile, M tile) of the GEMM: identity ids, one channel and sample;
 // mul_mat_q_process_tile does the work.
 template <int mmq_x, bool need_check>
 static __device__ __forceinline__ void metrale_nvfp4_tile(
         const char * __restrict__ x, const int * __restrict__ y, __nv_bfloat16 * __restrict__ dst,
         const int nrows_x, const int ncols_dst, const int ncols_x,
         const int stride_row_x, const int ncols_y, const int stride_col_dst) {
-    constexpr ggml_type type = GGML_TYPE_NVFP4;
+    constexpr mmq_type type = MMQ_TYPE_NVFP4;
     constexpr int nwarps    = mmq_get_nwarps_device();
-    constexpr int warp_size = ggml_cuda_get_physical_warp_size();
-    constexpr int qk        = ggml_cuda_type_traits<type>::qk;
+    constexpr int warp_size = mmq_physical_warp_size();
+    constexpr int qk        = mmq_quant_traits<type>::qk;
     constexpr int mmq_y     = get_mmq_y_device();
 
     extern __shared__ int ids_dst_shared[];
@@ -49,7 +48,7 @@ static __device__ __forceinline__ void metrale_nvfp4_tile(
     const int it = blockIdx.x;
     const int jt = blockIdx.y;
 
-    // 2026-09-25: block_fp4_mmq has the size of block_q8_1_mmq (static_assert in q4k_vendor/mmq.cuh), so this is
+    // 2026-09-25: block_fp4_mmq has the size of block_q8_1_mmq (static_assert in common/mmq/mmq_layout.cuh), so this is
     // q4k_mmq.cu's y offset.
     const int offset_y   = jt*mmq_x*(int)(sizeof(block_fp4_mmq)/sizeof(int));
     const int offset_dst = jt*mmq_x*stride_col_dst + it*mmq_y;
@@ -58,8 +57,8 @@ static __device__ __forceinline__ void metrale_nvfp4_tile(
     const int offset_x = it*mmq_y*stride_row_x;
     const int kb0_stop = ncols_x / qk;
 
-    mul_mat_q_process_tile<type, mmq_x, need_check, false, __nv_bfloat16>(
-        x, offset_x, y + offset_y, ids_dst_shared, dst + offset_dst, nullptr,
+    mul_mat_q_process_tile<type, mmq_x, need_check>(
+        x, offset_x, y + offset_y, ids_dst_shared, dst + offset_dst,
         stride_row_x, ncols_y, stride_col_dst, tile_x_max_i, tile_y_max_j, 0, kb0_stop);
 }
 
@@ -75,7 +74,7 @@ extern "C" __global__ void __launch_bounds__(256, 1) metrale_nvfp4_mmq128_wc(
     metrale_nvfp4_tile<128, true>(x, y, dst, nrows_x, ncols_dst, ncols_x, stride_row_x, ncols_y, stride_col_dst);
 }
 
-// 2026-09-25: Small M tiles. The vendored MMA path's granularity is 8 columns (mmq_get_granularity_device), so any
+// 2026-09-25: Small M tiles. The MMA path's granularity is 8 columns (mmq_get_granularity_device), so any
 // multiple of 8 is a legal mmq_x; this file instantiates 16, 32, 64 and 128. A 128 tile issues MMAs for all 128
 // columns whatever M is. grid.y = ceil(M / mmq_x), and each M tile reads the whole weight again, which is why
 // ops::nvfp4_mmq_gemm_tiled requires M <= mmq_x.
@@ -156,7 +155,7 @@ extern "C" __global__ void metrale_nvfp4_repack(
 
     // 2026-09-25: Row r of the output is [qs: blocks_per_row * 32 bytes][d: blocks_per_row * 4 bytes], 36 bytes per
     // block as in block_nvfp4, but with each row's nibble bytes contiguous so the tile loader
-    // (load_tiles_nvfp4_nvfp4 in q4k_vendor/mmq.cuh) reads them with 16-byte loads. A row is 16-byte aligned only
+    // (load_tiles_nvfp4_nvfp4 in common/mmq/mmq_load_tiles.cuh) reads them with 16-byte loads. A row is 16-byte aligned only
     // when blocks_per_row % 4 == 0, i.e. K % 256 == 0; nothing here checks it. The qwen3.6-27b FFN dims (K 5120
     // and 17408) satisfy it.
 
@@ -272,7 +271,7 @@ extern "C" __global__ void metrale_nvfp4_silu_mul_quant(
     }
 
     static constexpr int test_offsets[5] = {0, -1, 1, -2, 2};
-    const int first_fp8_code = (int) ggml_cuda_fp32_to_ue4m3(amax_raw / 6.0f);
+    const int first_fp8_code = (int) mmq_fp32_to_ue4m3(amax_raw / 6.0f);
     float best_err = FLT_MAX;
     uint8_t fp8_code = 0;
     float subblock_scale = 0.0f;
@@ -281,13 +280,13 @@ extern "C" __global__ void metrale_nvfp4_silu_mul_quant(
         const int test_code = first_fp8_code + test_offsets[i];
         if (test_code < 0 || test_code > 0x7e) continue;
         const uint8_t code = (uint8_t) test_code;
-        const float test_scale = ggml_cuda_ue4m3_to_fp32(code);
+        const float test_scale = mmq_ue4m3_to_fp32(code);
         const float test_inv_scale = test_scale > 0.0f ? 0.5f / test_scale : 0.0f;
         float cur_err = 0.0f;
 #pragma unroll
         for (int k = 0; k < QK_NVFP4_SUB; ++k) {
             const float v = vals_raw[k];
-            const uint8_t q = ggml_cuda_float_to_fp4_e2m1(v, test_inv_scale);
+            const uint8_t q = mmq_float_to_fp4_e2m1(v, test_inv_scale);
             const float err_diff = fabsf(v) - fabsf(kvalues_mxfp4[q & 0x7]) * test_scale;
             cur_err = fmaf(err_diff, err_diff, cur_err);
         }
@@ -302,10 +301,10 @@ extern "C" __global__ void metrale_nvfp4_silu_mul_quant(
     uint32_t q0 = 0, q1 = 0;
 #pragma unroll
     for (int k = 0; k < QK_NVFP4_SUB / 4; ++k) {
-        q0 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals_raw[k + 0], inv_scale) << (8 * k);
-        q0 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals_raw[k + 8], inv_scale) << (8 * k + 4);
-        q1 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals_raw[k + 4], inv_scale) << (8 * k);
-        q1 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals_raw[k + 12], inv_scale) << (8 * k + 4);
+        q0 |= (uint32_t) mmq_float_to_fp4_e2m1(vals_raw[k + 0], inv_scale) << (8 * k);
+        q0 |= (uint32_t) mmq_float_to_fp4_e2m1(vals_raw[k + 8], inv_scale) << (8 * k + 4);
+        q1 |= (uint32_t) mmq_float_to_fp4_e2m1(vals_raw[k + 4], inv_scale) << (8 * k);
+        q1 |= (uint32_t) mmq_float_to_fp4_e2m1(vals_raw[k + 12], inv_scale) << (8 * k + 4);
     }
     uint32_t* yqs = reinterpret_cast<uint32_t*>(yb->qs);
     yqs[2 * sub + 0] = q0;

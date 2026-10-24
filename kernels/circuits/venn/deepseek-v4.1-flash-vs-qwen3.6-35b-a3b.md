@@ -169,7 +169,7 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 | 72 | decode | `moe.ffn_norm` ×40 (`rms_norm`, in bf16) | glm_mhc: instantiation in `glm5next_mhc.cu` +5; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (3.3 µs) | none | reuse, then microbench at this point; also rms_norm: Policy variant (weight_form); also rms_norm_act_quant: Policy variant (weight_form) |
 | 73 | decode | `csa_reuse.pre` ×15 (`hc_pre`, in bf16) | glm_mhc: instantiation in `glm5next_mhc.cu` +5; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (3.1 µs) | none | reuse, then microbench at this point |
 | 74 | decode | `hca_reuse.pre` ×15 (`hc_pre`, in bf16) | glm_mhc: instantiation in `glm5next_mhc.cu` +5; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (3.1 µs) | none | reuse, then microbench at this point |
-| 75 | decode | `moe.shared_clamp` ×40 (`swiglu_clamp`, in bf16) | glm_swiglu_clamp: instantiation in `glm5next_ffn.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (3.0 µs) | none | reuse, then microbench at this point |
+| 75 | decode | `moe.shared_clamp` ×40 (`swiglu_clamp`, in bf16) | glm_dense_seg: instantiation in `glm5next_dense_seg.cu`; no compared model runs this op on it here | Shared, unmeasured | none | - | 0.0% (3.0 µs) | none | reuse, then microbench at this point |
 | 76 | decode | `moe.xn_quant` ×40 (`act_quant:fp8/g32`, in bf16) | w8a8_act_quant: `w8a8_act_quant::w8a8_act_quant_g128` (qwen3.6-35b-a3b-nvfp4-declared `l0.gdn.xn_quant`) | Policy variant | format fp8/g32 vs fp8/g128 | policy | 0.0% (2.6 µs) | none | policy template on format (or split + bit_identical fusion rule); also rms_norm_act_quant: Policy variant (format) |
 | 77 | decode | `moe.shared_act` ×40 (`silu_mul`, in bf16) | moe_grouped_tc: `moe_nvfp4_grouped_tc::moe_expert_gate_up_act_nvfp4_grouped_tc` (qwen3.6-35b-a3b-nvfp4-declared `l0.moe_ffn.experts_act`) | Shared | none | - | 0.0% (2.2 µs) | microbench: standalone grouped decode layer (sort, gate+up, down), 256 experts top-8 uniform routing, 4 layers of distinct weights, 2026-09-28: 140 us at M=1, 822 us at M=8, 2280 us at M=32, 3150 us at M=64 (~222 GB/s, 89% of the floor); 30 W vs 43-51 W for the CUDA-core kernel | reuse (optimized at this point) |
 | 78 | decode | `hca_reindex.rope` ×4 (`rope`, in bf16) | rope: `rope_mrope_interleaved::rope_forward_mrope_interleaved` (qwen3.6-35b-a3b-nvfp4-declared `l3.attn.rope`) | Shared, unmeasured | none | - | 0.0% (2.1 µs) | none | reuse, then microbench at this point |
@@ -831,5 +831,6 @@ Step share is a roofline estimate from edge shapes and formats, per node: max(by
 | 8 | moe_weighted_sum_scale | shared_gate=none | `moe.blend` | 0.0% (decode n=1) |
 | 9 | dsa_indexer | - | `csa_src.select`, `hca_reindex.select`, `hca_src.select` | 0.0% (multi_seq n=16) |
 | 10 | argmax_host | - | `head.argmax` | 0.0% (multi_seq n=128) |
-| 11 | embed_copy | - | `embed.embed` | 0.0% (multi_seq n=128) |
-| 12 | glm_mla_latent_write | kv_dtype=fp8 layout=latent | `csa_src.ckv_write`, `hca_src.ckv_write` | 0.0% (decode n=1) |
+| 11 | glm_dense_seg | - | `moe.shared_clamp` | 0.0% (decode n=1) |
+| 12 | embed_copy | - | `embed.embed` | 0.0% (multi_seq n=128) |
+| 13 | glm_mla_latent_write | kv_dtype=fp8 layout=latent | `csa_src.ckv_write`, `hca_src.ckv_write` | 0.0% (decode n=1) |

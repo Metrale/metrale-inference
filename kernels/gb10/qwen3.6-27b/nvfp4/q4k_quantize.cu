@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-// 2026-09-25: GPU Q4_K weight quantizer: BF16 [nrows, n_per_row] -> block_q4_K rows (q4k_vendor/ggml-common.h),
+// 2026-09-25: GPU Q4_K weight quantizer: BF16 [nrows, n_per_row] -> block_q4_K rows (common/mmq/mmq_blocks.cuh),
 // the layout q4k_mmq.cu reads. The scale search is ported from llama.cpp's Q4_K quantizer without an importance
 // matrix: weights av_x + |x|, make_qkx3 per 32 values, then make_qp over the 8 scales and the 8 mins.
 // Owner: gb10 kernels (qwen3.6-27b).

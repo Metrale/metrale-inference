@@ -11,10 +11,10 @@ header:
   paths-ignore:
     - 'target/**'
     - 'vendor/**'
-    # Vendored llama.cpp/ggml CUDA MMQ sources (MIT-licensed upstream);
-    # third-party material keeps its original license — never stamp the
-    # project header here.
-    - 'kernels/gb10/qwen3.6-27b/nvfp4/q4k_vendor/**'
+    # The MMQ engine derived from llama.cpp/ggml CUDA sources (MIT-licensed
+    # upstream); third-party material keeps its original license — never stamp
+    # the project header here.
+    - 'kernels/gb10/common/mmq/**'
     # Third-party files outside the globs above today, listed so that a wider
     # `paths` never stamps them. See THIRD_PARTY_NOTICES.md for each licence.
     - 'bench/fp8_dgx2_drift/vllm_src/**'

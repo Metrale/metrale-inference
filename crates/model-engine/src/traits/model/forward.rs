@@ -27,6 +27,20 @@ pub trait ModelForward: ModelStreams {
         bail!("this model does not support beam search")
     }
 
+    /// 2026-10-24: The width of the vectors [`Self::embed_batch`] returns, for a model that
+    /// pools inputs into embeddings (`ModelCapabilities::generates` false). Default `None`: a
+    /// generative model.
+    fn embedding_dim(&self) -> Option<usize> {
+        None
+    }
+
+    /// 2026-10-24: Pool each token sequence into one FP32 vector; returns
+    /// `[inputs.len() * embedding_dim]` in input order. The scheduler packs one tick's
+    /// embedding requests into one call. Default: an error.
+    fn embed_batch(&self, _inputs: &[Vec<u32>]) -> Result<Vec<f32>> {
+        bail!("this model does not compute embeddings")
+    }
+
     /// 2026-09-25: Prefill the whole prompt and return the logits of its last position.
     fn prefill(&self, tokens: &[u32], seq: &mut SequenceState, stream: u64) -> Result<DevicePtr>;
 

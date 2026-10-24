@@ -73,6 +73,7 @@ pub(super) fn shared_expert(
     ws: &Glm5NextMlpWorkspace,
     scratch: DenseScratch,
     pieces: &[usize],
+    site: crate::glm5next_dense_seg::DenseSite,
     stream: u64,
 ) -> Result<()> {
     let mut r0 = 0usize;
@@ -87,6 +88,7 @@ pub(super) fn shared_expert(
             ws.shared_out.offset(r0 * cfg.hidden * 2),
             n,
             scratch,
+            site,
             stream,
         )?;
         r0 += n;

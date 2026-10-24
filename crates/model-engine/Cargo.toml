@@ -17,6 +17,7 @@ metrale-cache = { workspace = true }
 metrale-kv-codec = { workspace = true }
 metrale-comm = { workspace = true }
 metrale-config = { workspace = true }
+metrale-error = { workspace = true }
 metrale-settings = { workspace = true }
 metrale-core = { workspace = true }
 metrale-gpu-runtime = { workspace = true }

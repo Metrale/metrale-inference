@@ -39,7 +39,7 @@ pub const DRAFT_GATED: [(Mode, u64); 1] = [(Mode::Draft, 1)];
 pub fn plan_settings(
     k: &Glm5NextMlpKernels,
     cfg: &Glm5NextMlpConfig,
-) -> [(&'static str, String); 15] {
+) -> [(&'static str, String); 16] {
     let on = |b: bool| if b { "on" } else { "off" }.to_string();
     let l = &k.levers;
     let layout = match cfg.expert_shard {
@@ -63,6 +63,10 @@ pub fn plan_settings(
         ("glm_dsa_verify_rows", on(l.dsa_verify_rows)),
         ("glm_dsa_indexer_rows", on(l.dsa_indexer_rows)),
         ("glm_w4a16_gemv_seg", on(l.dense.gemv_seg)),
+        (
+            "glm_dense_segment",
+            on(l.dense.dense_seg != crate::glm5next_dense_seg::DenseSeg::Off),
+        ),
         (
             "glm_w4a16_gemv_rows",
             match l.dense.gemv_rows {
@@ -111,7 +115,8 @@ pub fn live_policy(
 
 /// 2026-10-23: The MoE levers the rules do not model, at a value other than the one the rules
 /// name (the `_sl` gate/up sweep, the zeroing SwiGLU); the vec8 combine takes 1024 rows or more
-/// only, so it does not reach a gated site: installation refuses them.
+/// only, so it does not reach a gated site: installation refuses them. 2026-10-24: The dense
+/// segment is modelled (`glm_dense_segment` in [`plan_settings`], its rule's `sm_budget`).
 pub fn unmodelled(k: &Glm5NextMlpKernels) -> Vec<&'static str> {
     let m = &k.levers.mlp;
     [
@@ -123,10 +128,6 @@ pub fn unmodelled(k: &Glm5NextMlpKernels) -> Vec<&'static str> {
             !m.zero_in_swiglu,
             "METRALE_GLM_MOE_ZERO_IN_SWIGLU=0 (the rules zero expert_out in the SwiGLU)",
         ),
-        (
-            k.levers.dense.dense_seg,
-            "METRALE_GLM_DENSE_SEGMENT (the rules name the shared expert's separate launches)",
-        ),
     ]
     .into_iter()
     .filter_map(|(set, what)| set.then_some(what))
@@ -137,6 +138,8 @@ pub fn unmodelled(k: &Glm5NextMlpKernels) -> Vec<&'static str> {
 #[derive(Default)]
 pub struct InstalledMoe {
     by_rows: RwLock<Vec<(MoePlan, Vec<String>)>>,
+    /// 2026-10-24: The dense levers the plans were installed under (the dense segment's).
+    dense: RwLock<Option<crate::glm5next_dense_levers::DenseLevers>>,
 }
 
 impl std::fmt::Debug for InstalledMoe {
@@ -163,6 +166,7 @@ impl InstalledMoe {
     ) -> Result<Vec<String>> {
         let Some(rp) = plans else {
             self.by_rows.write().clear();
+            *self.dense.write() = None;
             return Ok(Vec::new());
         };
         let refused = unmodelled(k);
@@ -198,6 +202,7 @@ impl InstalledMoe {
         }
         let sites = next.iter().flat_map(|(_, s)| s.clone()).collect();
         *self.by_rows.write() = next;
+        *self.dense.write() = Some(k.levers.dense);
         Ok(sites)
     }
 
@@ -229,6 +234,9 @@ impl InstalledMoe {
         let Some((plan, _)) = by_rows.iter().find(|(p, _)| p.0.rows == rows) else {
             return Ok(false);
         };
+        if let Some(d) = self.dense.read().as_ref() {
+            crate::glm5next_dense_seg::check_planned(&k.levers.dense, d)?;
+        }
         plan_moe::run_with_legacy_shared(plan, gpu, k, cfg, w, ws, x, out, rows, stream)?;
         Ok(true)
     }
