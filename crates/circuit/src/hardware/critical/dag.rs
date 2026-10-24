@@ -10,23 +10,23 @@
 //! Owner: metrale-circuit (hardware).
 //! Invariants:
 //! - Every edge runs forward in measured time (source time <= target time); an edge that would
-//!   not is dropped and counted ([`Graph::dropped`]), never kept.
+//!   not is dropped and counted ([`CriticalGraph::dropped`]), never kept.
 //! - A programmatic (PDL) successor, one that started before its stream predecessor finished,
 //!   gets two edges: its start follows the predecessor's start, its finish the predecessor's
 //!   finish. Its own work is only the part after the predecessor finished.
-//! - The graph is acyclic and carries a topological order ([`Graph::topo`]).
+//! - The graph is acyclic and carries a topological order ([`CriticalGraph::topo`]).
 
 use crate::prelude::*;
 
 use alloc::collections::BTreeMap;
 
 use super::capture::{Capture, OpKind};
-use super::graph::{Edge, EdgeKind, Graph, Node, NodeKind, f_of, s_of};
+use super::graph::{CriticalGraph, Edge, EdgeKind, Node, NodeKind, f_of, s_of};
 
 #[derive(Clone, Copy)]
 enum Entry {
     Op(usize),
-    Graph(u64),
+    CriticalGraph(u64),
 }
 
 struct Builder<'a> {
@@ -55,8 +55,8 @@ impl Builder<'_> {
     fn resolve(&self, e: Entry, last: bool) -> usize {
         match e {
             Entry::Op(i) => i,
-            Entry::Graph(c) if last => self.glast[&c],
-            Entry::Graph(c) => self.gfirst[&c],
+            Entry::CriticalGraph(c) if last => self.glast[&c],
+            Entry::CriticalGraph(c) => self.gfirst[&c],
         }
     }
 
@@ -100,7 +100,7 @@ fn latest_other(
 /// stream that was still running and finished before it: then it is that node's programmatic
 /// dependent (`PdlStart` + `PdlWait`). Only a mid-stream node is tested for that (a stream's
 /// first node launched beside a running one is a fork, not a dependent).
-pub fn build(c: &Capture, tau_ns: i64, prog_ns: i64) -> metrale_error::Result<Graph> {
+pub fn build(c: &Capture, tau_ns: i64, prog_ns: i64) -> metrale_error::Result<CriticalGraph> {
     let (n, m) = (c.ops.len(), c.api.len());
     let mut t = vec![0.0; 2 * (n + m)];
     for (i, o) in c.ops.iter().enumerate() {
@@ -143,7 +143,7 @@ pub fn build(c: &Capture, tau_ns: i64, prog_ns: i64) -> metrale_error::Result<Gr
         b.seq
             .entry(s)
             .or_default()
-            .push((corr, c.ops[first].start(), Entry::Graph(corr)));
+            .push((corr, c.ops[first].start(), Entry::CriticalGraph(corr)));
     }
     for (i, o) in c.ops.iter().enumerate() {
         if !o.graph() {
@@ -309,5 +309,5 @@ pub fn build(c: &Capture, tau_ns: i64, prog_ns: i64) -> metrale_error::Result<Gr
         })
         .collect();
     nodes.extend(c.api.iter().map(|_| Node::api()));
-    Graph::assemble(&c.source, b.t, b.edges, nodes, anchors, b.dropped)
+    CriticalGraph::assemble(&c.source, b.t, b.edges, nodes, anchors, b.dropped)
 }

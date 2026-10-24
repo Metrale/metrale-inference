@@ -213,16 +213,12 @@ pub(crate) fn init_nccl_comm(
     hidden_size: usize,
     vocab_size: usize,
 ) -> Result<Option<std::sync::Arc<dyn metrale_comm::CommBackend>>> {
-    use metrale_comm::CommBackend;
     if world_size <= 1 {
         return Ok(None);
     }
-    let recv_capacity = metrale_comm::nccl_backend::required_model_recv_bytes(
-        max_batch_tokens,
-        hidden_size,
-        vocab_size,
-    )
-    .context("Failed to size the NCCL receive buffer")?;
+    let recv_capacity =
+        metrale_comm::required_model_recv_bytes(max_batch_tokens, hidden_size, vocab_size)
+            .context("Failed to size the NCCL receive buffer")?;
     tracing::info!(
         "Initializing NCCL: rank {}/{}, master {}:{}, recv_buffer {} MiB \
          (max_batch_tokens={} × max(hidden_size,vocab_size)={} × {} B)",
@@ -233,17 +229,16 @@ pub(crate) fn init_nccl_comm(
         recv_capacity / (1024 * 1024),
         max_batch_tokens,
         hidden_size.max(vocab_size),
-        metrale_comm::nccl_backend::ALL_REDUCE_DTYPE_BYTES,
+        metrale_comm::ALL_REDUCE_DTYPE_BYTES,
     );
-    let cuda_stream = gpu.default_stream();
-    let backend = metrale_comm::NcclBackend::new(
+    let backend = metrale_comm::bootstrap(
         args.rank,
         world_size,
         &args.master_addr,
         args.master_port,
-        cuda_stream,
+        gpu.default_stream(),
         recv_capacity,
-        metrale_comm::nccl_backend::CommLevers {
+        metrale_comm::CommLevers {
             oneshot_max_bytes: args
                 .all_reduce_oneshot_max_kb
                 .checked_mul(1024)
@@ -254,9 +249,7 @@ pub(crate) fn init_nccl_comm(
     )
     .context("Failed to initialize NCCL")?;
     tracing::info!("NCCL initialized: rank {}", backend.rank());
-    Ok(Some(
-        std::sync::Arc::new(backend) as std::sync::Arc<dyn metrale_comm::CommBackend>
-    ))
+    Ok(Some(backend))
 }
 
 /// 2026-10-21: The control communicator's port (`METRALE_GLM_EP_CTRL_COMM`): `None` when the
@@ -304,7 +297,7 @@ pub(crate) fn init_ctrl_comm(
         args.rank,
         args.master_addr,
     );
-    let backend = metrale_comm::NcclBackend::new(
+    metrale_comm::bootstrap(
         args.rank,
         world_size,
         &args.master_addr,
@@ -313,14 +306,13 @@ pub(crate) fn init_ctrl_comm(
         // 2026-10-21: World 2 requires a non-zero two-rank all-reduce buffer; this communicator
         // never all-reduces, so one page.
         4096,
-        metrale_comm::nccl_backend::CommLevers {
+        metrale_comm::CommLevers {
             oneshot_max_bytes: 0,
             diagnostics: settings.telemetry.comm_diagnostics.as_deref(),
             poll: &settings.runtime.comm_poll,
         },
     )
-    .context("Failed to initialize the NCCL control communicator")?;
-    Ok(std::sync::Arc::new(backend))
+    .context("Failed to initialize the NCCL control communicator")
 }
 
 /// 2026-10-21: A build without `nccl` has no control communicator.

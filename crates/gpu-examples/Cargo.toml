@@ -266,5 +266,10 @@ safetensors = { workspace = true, optional = true, features = ["std"] }
 [lints]
 workspace = true
 
+# 2026-10-23: `tool`, not `bin`: these examples are the vendor oracle for the device crates'
+# claims (bit-identity gates and microbenches that drive CUDA, cudarc and NCCL directly to check
+# what metrale-gpu-runtime and the kernels promise), so they name the vendor on purpose. The role
+# exempts the crate from vendor-ban and the depgraph VBOP rule only; env-ban and kv-codec-ban
+# still apply. No member may depend on it.
 [package.metadata.metrale]
-role = "bin"
+role = "tool"

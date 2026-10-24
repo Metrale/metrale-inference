@@ -257,7 +257,7 @@ mod tests {
     /// layer as a routing decision, not a mid-request `bail!`.
     #[test]
     fn can_batch_verify_dispatch_consults_the_verify_predicate() {
-        let s = src("src/model/trait_impl/verify_e.rs");
+        let s = src("src/model/trait_impl/verify_e/can_batch.rs");
         let b = block(&s, "fn can_batch_verify_dispatch", "\n    pub(super) fn ");
         assert!(
             b.contains("decode_verify_multi_unsupported()"),
@@ -276,14 +276,15 @@ mod tests {
     /// the circuit's single-row program.
     #[test]
     fn a_circuit_forward_takes_no_batched_verify_or_propose() {
-        let s = src("src/model/trait_impl/verify_e.rs");
+        let s = src("src/model/trait_impl/verify_e/can_batch.rs");
         let gate = block(&s, "fn can_batch_verify_dispatch", "\n    pub(super) fn ");
         assert!(
             gate.contains(".is_none_or(|e| {\n                    e.verify_batch"),
             "can_batch_verify_dispatch must admit a circuit forward only with batched verifies"
         );
+        let e = src("src/model/trait_impl/verify_e.rs");
         let call = block(
-            &s,
+            &e,
             "fn decode_verify_batched_dispatch",
             "let ctx = ForwardContext",
         );

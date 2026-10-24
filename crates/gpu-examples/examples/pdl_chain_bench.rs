@@ -82,15 +82,15 @@ fn main() -> Result<()> {
     );
     // 2026-10-21: `PDL_BENCH_BASE_PTX=<dir>`: a third arm on the kernels before this change
     // (their PTX, one `<module>.ptx` per module), launched serialised, in the same process.
-    let base = match std::env::var("PDL_BENCH_BASE_PTX") {
-        Ok(dir) => Some(MetraleCudaBackend::new(
+    let base = match metrale_gpu_examples::env_var("PDL_BENCH_BASE_PTX")? {
+        Some(dir) => Some(MetraleCudaBackend::new(
             0,
             &metrale_gpu_examples::base_ptx::with_base(&glm.modules, &dir)?,
         )?),
-        Err(_) => None,
+        None => None,
     };
     // 2026-10-21: A third arm: PDL on with the new side of the levers `Variant` names.
-    let v = Variant::from_env();
+    let v = Variant::from_env()?;
     let mut backs: Vec<(&str, &MetraleCudaBackend, Variant)> = vec![
         ("PDL off", &off, Variant::OLD),
         ("PDL on", &on, Variant::OLD),

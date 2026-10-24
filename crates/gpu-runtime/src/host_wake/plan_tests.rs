@@ -82,10 +82,10 @@ fn classify_finds_driver_and_proxy_threads_only() {
         "metrale-wake",
     ];
     for c in driver {
-        assert_eq!(classify(c), Some(Role::CudaDriver), "{c}");
+        assert_eq!(classify(c), Some(Role::DriverHelper), "{c}");
     }
     for c in proxy {
-        assert_eq!(classify(c), Some(Role::NcclProxy), "{c}");
+        assert_eq!(classify(c), Some(Role::CollectiveProxy), "{c}");
     }
     for c in other {
         assert_eq!(classify(c), None, "{c}");

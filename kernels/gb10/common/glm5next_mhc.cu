@@ -700,9 +700,6 @@ extern "C" __global__ void glm5next_hc_head(
 
 
 
-
-
-
 // 2026-09-25: glm5next_hc_expand: streams[t, i, d] = hidden[t, d] for every i < hc_mult,
 // widening the BF16 embedding to the FP32 highway. Same broadcast as
 // hyper_connection::hc_expand, which lives in kernels/gb10/deepseek-v4-flash/nvfp4/, a model

@@ -5,15 +5,12 @@
 # Carried from the retired check-file-size-cap.sh list: coverage.rs is a BOUNDARY_FILE, so any
 # edit to it, a pure split included, invalidates every standing gate record.
 crates/bench/src/gate/coverage.rs 1165
-crates/gpu-examples/examples/glm5next_hc_fused_gate.rs 617
 crates/gpu-runtime/cuda/cutlass_nvfp4_gemm.cu 543
 crates/gpu-runtime/cuda/cutlass_nvfp4_grouped_gemm.cu 750
 crates/gpu-runtime/src/buffers/sizes.rs 511
 crates/gpu-runtime/src/buffers/tests.rs 501
-crates/model-arch/src/glm5next_mhc_fused.rs 632
 crates/model-engine/src/model/trait_impl/device_step.rs 525
 crates/model-engine/src/model/trait_impl/prefill_a.rs 501
-crates/model-engine/src/model/trait_impl/verify_e.rs 536
 crates/model-layers/src/layers/mod.rs 502
 crates/model-layers/src/layers/qwen3_ssm/trait_layer.rs 501
 crates/server/src/cli/serve_args.rs 501
@@ -25,14 +22,14 @@ kernels/gb10/common/attn_prefill.cu 990
 kernels/gb10/common/attn_prefill_h128.cu 928
 kernels/gb10/common/causal_conv1d.cu 645
 kernels/gb10/common/dense_gemm_bf16.cu 629
-kernels/gb10/common/dsa_indexer_rows.cu 550
+kernels/gb10/common/dsa_indexer_rows.cu 506
 kernels/gb10/common/gated_delta_rule_carry.cu 653
 kernels/gb10/common/gated_delta_rule.cu 1466
 kernels/gb10/common/gated_delta_rule_fla.cu 2105
 kernels/gb10/common/gated_delta_rule_persistent.cu 1114
 kernels/gb10/common/gated_delta_rule_wyn.cu 578
 kernels/gb10/common/glm5next_mhc.cu 722
-kernels/gb10/common/kda_recurrent.cu 573
+kernels/gb10/common/kda_recurrent.cu 562
 kernels/gb10/common/mamba2_ssd_chunk.cu 518
 kernels/gb10/common/moe_expert_gemv_fused.cu 653
 kernels/gb10/common/moe_fp8_grouped_gemm.cu 524

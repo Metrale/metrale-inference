@@ -50,6 +50,17 @@ pub fn ops_levers() -> anyhow::Result<metrale_model_layers::layers::ops::OpsLeve
     metrale_model_layers::layers::ops::OpsLevers::from_settings(&process_settings()?)
 }
 
+/// 2026-10-23: `name` from the process environment through the `Env` port, `None` when unset:
+/// an example's own knobs (an arm to skip, a shape list, a checkpoint path) that are not
+/// serve levers and so have no settings row.
+///
+/// # Errors
+/// The value is set but not unicode.
+pub fn env_var(name: &str) -> anyhow::Result<Option<String>> {
+    use metrale_abstract_io::Env as _;
+    Ok(metrale_io_host_std::ProcessEnv.var(name)?)
+}
+
 pub mod base_ptx;
 pub mod graph_arms;
 pub mod kda_fixture;

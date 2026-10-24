@@ -21,7 +21,7 @@ use metrale_circuit::hardware::critical::analyze::{Inputs, WhatIf, analyze};
 use metrale_circuit::hardware::critical::backtest::{Breakpoint, breakpoint, parse_spec, verdicts};
 use metrale_circuit::hardware::critical::capture::{Capture, parse_capture};
 use metrale_circuit::hardware::critical::render::render_whatif;
-use metrale_circuit::hardware::critical::sim::{Resources, SmLimits};
+use metrale_circuit::hardware::critical::sim::{SimResources, SmLimits};
 use metrale_circuit::hardware::{self};
 
 use super::circuit_headroom::{CircuitHeadroomArgs, HeadroomFormat, with_inputs};
@@ -123,7 +123,7 @@ pub(crate) fn compute(
             .iter()
             .find(|d| d.id == a.base.hardware)
             .with_context(|| format!("no device `{}`", a.base.hardware))?;
-        let resources = Resources {
+        let resources = SimResources {
             sms: f64::from(dev.sms),
             sm: SmLimits {
                 regs: dev.regfile_per_sm_kb * 1024 / 4,
