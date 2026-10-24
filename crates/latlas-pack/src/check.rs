@@ -14,7 +14,7 @@ use crate::owed::lkb_facets;
 use crate::pack::Metrale;
 use crate::prelude::*;
 use crate::vocab::labels;
-use latlas_check::{Checks, Obligation};
+use latlas_check::{Checks, Key, Obligation};
 use latlas_core::Bundle;
 use latlas_core::bundle::Node;
 use latlas_core::id::NodeId;
@@ -71,5 +71,11 @@ impl Checks for Metrale {
             }
         }
         out
+    }
+
+    /// 2026-10-24: Not keyed yet: ledger claims carry a gate, not a value, and CHARTER decisions
+    /// carry no subject/slot field; X reports them as unkeyed rather than guessing a key.
+    fn key(_: &Bundle, _: &Node) -> Option<Key> {
+        None
     }
 }

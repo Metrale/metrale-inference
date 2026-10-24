@@ -68,6 +68,9 @@ enum Cmd {
         /// Also write the PR comment (markdown) here.
         #[arg(long)]
         comment: Option<PathBuf>,
+        /// CI gate results, `{"<gate key>": "pass"|"fail"}` (G is `absent` without them).
+        #[arg(long)]
+        gate_results: Option<PathBuf>,
     },
     /// Move the read-only LKB checkout to `[sources.lkb]` remote/branch (fetch + detached
     /// checkout); the only command that changes a source. Prints the old and new commit.
@@ -136,11 +139,13 @@ async fn run(cli: Cli) -> Result<()> {
             check,
             base_config,
             comment,
+            gate_results,
         } => latlas_cli::score::score_cmd::<Metrale, MetraleHost>(
             &cli.config,
             base_config.as_deref(),
             &check,
             comment.as_deref(),
+            gate_results.as_deref(),
         ),
         Cmd::Refresh => refresh(&cli.config),
     }
