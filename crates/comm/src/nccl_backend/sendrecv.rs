@@ -21,7 +21,8 @@
 //!   accumulator's +0 start, -0 from `__hadd`): FP32 keeps 24 bits >= 2 * 8 + 1, so rounding
 //!   twice is innocuous for a sum (`world2_sum_tests`). The two paths' bytes are therefore NOT
 //!   identical: they differ in the sign of the exact-zero sum of two -0 partials.
-//! - The path an all-reduce takes is `ar_path::ar_path`.
+//! - The path an unplanned all-reduce takes is `ar_path::ar_path`; a planned one names its own
+//!   (`CommBackend::all_reduce_via`), refused where `ar_path::runnable` refuses it.
 
 use anyhow::Result;
 use std::ffi::c_void;
@@ -32,7 +33,8 @@ use metrale_gpu_sys::nccl::{self, NcclComm, NcclDataType, NcclResult};
 
 use crate::PeerPartials;
 
-use crate::ar_path::{ArPath, ar_path};
+use crate::ar_path::{PathState, oneshot_applies};
+use metrale_circuit::CollectivePath;
 use super::{
     ALL_REDUCE_DTYPE_BYTES, NcclBackend, cuLaunchKernel, cuMemAlloc_v2, cuMemFree_v2,
     ensure_payload_fits,
@@ -55,11 +57,6 @@ pub(super) fn peer_slot(rank: usize, peer: usize) -> Option<usize> {
         std::cmp::Ordering::Equal => None,
         std::cmp::Ordering::Greater => Some(peer - 1),
     }
-}
-
-/// 2026-10-08: Whether a payload of `bytes` takes the one-shot path. A free function for the tests.
-pub(super) fn oneshot_applies(world_size: usize, max_bytes: usize, bytes: usize) -> bool {
-    world_size >= 2 && max_bytes > 0 && bytes > 0 && bytes <= max_bytes
 }
 
 /// 2026-10-16: Refuse a one-shot bound the communicator cannot use: a nonzero bound on a single
@@ -154,14 +151,20 @@ impl NcclBackend {
         }
     }
 
-    /// 2026-10-16: The path an all-reduce of `bytes` takes on this communicator.
-    pub(super) fn ar_path(&self, bytes: usize) -> ArPath {
-        ar_path(
-            self.world_size,
-            self.add_kernel.load(Ordering::Relaxed) != 0,
-            self.oneshot_applies(bytes),
-            self.oneshot.sum_kernel.load(Ordering::Relaxed) != 0,
-        )
+    /// 2026-10-23: The state the path of an all-reduce depends on (`ar_path`).
+    pub(super) fn path_state(&self) -> PathState {
+        PathState {
+            world_size: self.world_size,
+            add_kernel_set: self.add_kernel.load(Ordering::Relaxed) != 0,
+            sum_kernel_set: self.oneshot.sum_kernel.load(Ordering::Relaxed) != 0,
+            oneshot_max_bytes: self.oneshot.max_bytes,
+            recv_capacity: self.recv_capacity,
+        }
+    }
+
+    /// 2026-10-16: The path an unplanned all-reduce of `bytes` takes on this communicator.
+    pub(super) fn ar_path(&self, bytes: usize) -> CollectivePath {
+        crate::ar_path::ar_path_of(&self.path_state(), bytes)
     }
 
     pub(super) fn set_oneshot_sum_kernel(&self, handle: u64) {
@@ -368,6 +371,7 @@ impl NcclBackend {
 #[cfg(test)]
 mod tests {
     use super::{oneshot_applies, peer_slot, validate_oneshot};
+    // 2026-10-23: `oneshot_applies` is `crate::ar_path`'s (pure), shared with the fuser.
 
     #[test]
     fn every_peer_gets_a_distinct_slot_and_the_rank_none() {

@@ -178,13 +178,15 @@ fn flag_v_bytes(dtype: IndexerCacheDtype, rewind: usize, block_size: usize) -> O
 /// to 5 rows) 1.39x, and blocks of 64 1.80x.
 #[test]
 fn fp8_indexer_rows_buy_tokens_at_a_fixed_budget() {
-    use metrale_cache::kv_cache::{KvCacheConfig, KvCacheDtype, PagedKvCache};
+    use metrale_cache::kv_cache::{KvCacheConfig, PagedKvCache};
     let kv = |block_size: usize, v_block_bytes: Option<usize>| KvCacheConfig {
         block_size,
         num_kv_heads: 1,
         head_dim: 512,
         num_layers: 11,
-        dtype: KvCacheDtype::Fp8,
+        dtype: metrale_kv_codec::KvPair::named("fp8")
+            .expect("fp8 is a registered KV format")
+            .into(),
         layer_dtypes: vec![],
         layer_dims: vec![],
         cache_blocks_per_seq: None,
@@ -259,7 +261,7 @@ fn pool_keys_pick_the_pooled_format_for_paged_bf16_only() {
 /// 1024 / 1152 of the BF16 rows' tokens (the cost of the persisted keys).
 #[test]
 fn pooled_rows_cost_an_eighth_of_a_token_more() {
-    use metrale_cache::kv_cache::{KvCacheConfig, KvCacheDtype, PagedKvCache};
+    use metrale_cache::kv_cache::{KvCacheConfig, PagedKvCache};
     let fmt = IndexerRowFormat::Bf16Pooled;
     assert_eq!(fmt.v_block_bytes(64, 128, 4).unwrap(), Some(64 * 640));
     assert!(fmt.v_block_bytes(66, 128, 4).is_err(), "a block not a whole number of pools");
@@ -268,7 +270,9 @@ fn pooled_rows_cost_an_eighth_of_a_token_more() {
         num_kv_heads: 1,
         head_dim: 512,
         num_layers: 11,
-        dtype: KvCacheDtype::Fp8,
+        dtype: metrale_kv_codec::KvPair::named("fp8")
+            .expect("fp8 is a registered KV format")
+            .into(),
         layer_dtypes: vec![],
         layer_dims: vec![],
         cache_blocks_per_seq: None,

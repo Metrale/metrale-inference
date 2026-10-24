@@ -80,24 +80,22 @@ fn start_plan(
     gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
     world_size: usize,
 ) -> Result<KeeperGuard> {
-    use metrale_gpu_runtime::host_wake::{KeeperConfig, Role, WakeKeeper, os};
+    use metrale_gpu_runtime::host_wake::{KeeperConfig, Role, WakeKeeper, host_task_tid, os};
     let cpu = match plan.core {
         CoreChoice::Cpu(c) => c,
         CoreChoice::GpuIrq => os::gpu_irq_cpu().context("METRALE_HOST_WAKE_CORE=gpu-irq")?,
     };
-    let host_fn = metrale_gpu_runtime::cuda_backend::host_task_probe::host_task_tid(
-        gpu.default_stream(),
-    )?;
+    let host_fn = host_task_tid(gpu.default_stream())?;
     let keeper = WakeKeeper::start(KeeperConfig {
         mode: plan.mode,
         cpu,
-        roles: vec![Role::CudaDriver, Role::NcclProxy],
+        roles: vec![Role::DriverHelper, Role::CollectiveProxy],
         tids: vec![host_fn],
         rescan: std::time::Duration::from_secs(2),
     })?;
     let pinned = keeper.pinned();
     anyhow::ensure!(
-        world_size == 1 || pinned.iter().any(|p| p.role == Some(Role::NcclProxy)),
+        world_size == 1 || pinned.iter().any(|p| p.role == Some(Role::CollectiveProxy)),
         "METRALE_HOST_WAKE_KEEPER: no NCCL proxy thread found by name on a {world_size}-rank \
          serve; NCCL names its threads only with NCCL_SET_THREAD_NAME=1"
     );

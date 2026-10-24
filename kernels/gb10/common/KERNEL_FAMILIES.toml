@@ -123,6 +123,26 @@ values = {}
 how = "instantiation"
 files = ["kernels/gb10/common/embed_from_argmax.cu"]
 
+# 2026-10-23: The library all-reduce a planned collective takes past the one-shot bound.
+[[family]]
+id = "all_reduce_nccl"
+description = "Collective summed by the library's all-reduce in place (no kernel of ours)"
+explain.about = '''No kernel of ours launches in this family. Each rank hands its BF16 partial $x^{(r)} \in \mathbb{R}^{m \times d}$ to `ncclAllReduce` with the sum operator, in place, and every rank gets the full sum back. The plan takes this path where the payload of $m \cdot d \cdot 2$ bytes is past the one-shot bound (`all_reduce_oneshot_max_kb`, or the one-shot disabled at 0) at three or more ranks; an all-gather the engine runs as the sum of zero-padded slices takes the same call.'''
+explain.numerics = '''The library chooses the reduction order (its ring or tree algorithm for the message size and topology) and rounds to BF16 along it, so the sum's bits may depend on the payload size and the rank count, unlike the one-shot's FP32 sum in rank order.'''
+explain.math = [
+  '''y = \sum_{r=0}^{N-1} x^{(r)} \in \mathbb{R}^{m \times d}, \qquad \text{on every rank}''',
+]
+compute = "memory"
+emitters = ["tp_all_reduce"]
+rows = [1, 65536]
+pipeline.all_reduce = { in = ["bf16"], reduce = "bf16", out = ["bf16"] }
+pipeline.all_gather = { in = ["bf16"], move = "bf16", out = ["bf16"] }
+op = [{ op = "all_reduce" }, { op = "all_gather" }]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = ["crates/comm/src/nccl_backend/comm_impl.rs"]
+
 [[family]]
 id = "argmax_host"
 description = "Greedy token on the host from copied logits (no kernel)"
@@ -2628,7 +2648,7 @@ pipeline.hc_post = { in = ["bf16", "f32", "f32", "f32"], compute = "f32", out = 
 pipeline.hc_contract = { in = ["f32"], compute = "f32", out = ["bf16"] }
 # 2026-10-22: `move` is the format the copy reads: the required move step is the first input's
 # format (crates/circuit/src/pipeline/require.rs:218), the BF16 embedding `h`; the kernel widens
-# it to the FP32 highway on the store (glm5next_mhc.cu:706-709).
+# it to the FP32 highway on the store (glm5next_mhc.cu:703-706).
 pipeline.hc_expand = { in = ["bf16"], move = "bf16", out = ["f32"] }
 # 2026-10-22: The fused pre-norm entries (glm5next_hc_pre_norm*, the recipe's glm_mhc_fused) also
 # run the site's RMSNorm on the collapsed BF16 row (rms_norm_vanilla's expressions,
@@ -2756,12 +2776,12 @@ compute = "cuda_core"
 # launch, the state in registers, and stores the state after each of the first T - 1 (a K-row
 # verify's snapshots; METRALE_GLM_KDA_VERIFY_TOKENS, opt-in). Per token it is seq_reg's
 # arithmetic, and the outputs, snapshots and final state are the per-row walk's bits
-# (kda_recurrent.cu:500-511).
+# (kda_recurrent.cu:486-497).
 kernels = [
   "kda_recurrent::kda_recurrent_decode_bf16", "kda_recurrent::kda_recurrent_decode_bf16_smem",
   "kda_recurrent::kda_recurrent_decode_bf16_seq_reg_snap",
   # 2026-10-22: The register-resident single-token step (METRALE_GLM_KDA_ROW_REG, the recipe's): T = 1
-  # of seq_reg's body, the shared-memory kernel's expressions in order (kda_recurrent.cu:447).
+  # of seq_reg's body, the shared-memory kernel's expressions in order (kda_recurrent.cu:433).
   "kda_recurrent::kda_recurrent_decode_bf16_seq_reg",
 ]
 rows = [1, 4]
@@ -2790,7 +2810,7 @@ measurement = "glm-5.3-flash::kda_recurrent_decode_bf16_seq_reg_snap @ decode C=
 # launch (grid.z = rows), each sequence's state its own slot (METRALE_GLM_KDA_SEQ_ROWS=decode): the
 # shared-memory kernel's 1R+1W geometry (`_smem_rows`), or the register-resident one under
 # METRALE_GLM_KDA_ROWS_REG (`_rows_reg`); per row the one-token kernel's expressions in order
-# (kda_recurrent.cu:279, :333).
+# (kda_recurrent.cu:265, :319).
 [[family]]
 id = "kda_recurrent_rows"
 description = "KDA gated delta rule with per-channel decay, one token of each of up to 16 sequences per launch"

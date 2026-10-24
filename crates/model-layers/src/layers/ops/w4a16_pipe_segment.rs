@@ -19,8 +19,8 @@ use super::{
     w4a16_gemv_pipe_ok, w4a16_gemv_seg_smem, w4a16_gemv_seg_tiles,
 };
 
-/// 2026-10-23: Bytes of one control slot (`SegCtl`: ticket, exited, done[4]).
-pub const SEGMENT_CTL_BYTES: usize = 24;
+/// 2026-10-23: Bytes of one control slot (`SegCtl`: ticket, exited, gated, done[4]).
+pub const SEGMENT_CTL_BYTES: usize = 28;
 
 /// 2026-10-23: A ring of zeroed control slots. A launch takes the next slot; two launches in
 /// flight at once take different slots as long as fewer than `slots` launches are issued between
@@ -52,7 +52,9 @@ impl SegmentCtl {
 }
 
 /// 2026-10-23: One dense segment: `x [m, hidden]` -> gate, up `[m, inter]` -> `act` -> `out [m,
-/// hidden]`, by `kernel` (an entry of `m` rows), on `sms` SMs, with control slot `ctl`.
+/// hidden]`, by `kernel` (an entry of `m` rows), on `sms` SMs, with control slot `ctl`. Only the
+/// CTAs on SMs whose id is below `sm_budget` take tasks (`segment.cuh`; `u32::MAX`: every CTA);
+/// the tasks, so the bytes, are those of `sms` whatever the budget.
 #[allow(clippy::too_many_arguments)]
 pub fn w4a16_dense_segment(
     gpu: &dyn GpuBackend,
@@ -67,6 +69,7 @@ pub fn w4a16_dense_segment(
     hidden: u32,
     sms: u32,
     ctl: DevicePtr,
+    sm_budget: u32,
     stream: u64,
 ) -> Result<()> {
     let inter = gate.n;
@@ -108,5 +111,6 @@ pub fn w4a16_dense_segment(
         .arg_u32(b0)
         .arg_u32(b2)
         .arg_ptr(ctl)
+        .arg_u32(sm_budget)
         .launch(stream)
 }

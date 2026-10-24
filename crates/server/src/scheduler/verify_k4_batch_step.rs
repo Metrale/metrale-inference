@@ -62,7 +62,10 @@ pub(super) fn step_verify_k4_batched(
     if let Err(e) = model.sync_secondary() {
         tracing::error!("batched-verify sync_secondary: {e:#}");
         for a in batch.iter_mut() {
-            a.finished = true;
+            crate::scheduler::lifecycle::fail_sequence(
+                a,
+                format!("batched-verify sync_secondary: {e:#}"),
+            );
         }
         return;
     }
@@ -311,7 +314,10 @@ pub(super) fn step_verify_k4_batched(
         if let Err(e) = model.gdn_fold_accepted(&slots, &rows, k_max) {
             tracing::error!("gdn_fold_accepted (mtp batched): {e:#}");
             for a in batch.iter_mut() {
-                a.finished = true;
+                crate::scheduler::lifecycle::fail_sequence(
+                    a,
+                    format!("gdn_fold_accepted (mtp batched): {e:#}"),
+                );
             }
             return;
         }

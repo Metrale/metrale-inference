@@ -55,20 +55,22 @@ struct DenseSegRun {
 };
 
 // 2026-10-23: The segment of `M` rows: g0 gate|up tasks, the SwiGLU tasks, g2 down tasks.
+// 2026-10-23: `sm_budget`: segment.cuh's (only CTAs on SMs below it take tasks).
 template <int M>
 __device__ __forceinline__ void w4a16_dense_segment(SegCtl* ctl, const DenseSegArgs& a,
-                                                    unsigned int g0, unsigned int g2) {
+                                                    unsigned int g0, unsigned int g2,
+                                                    unsigned int sm_budget) {
     const unsigned int act_tasks = (M * a.inter / 8 + DENSE_SEG_ACT_WORDS - 1) / DENSE_SEG_ACT_WORDS;
     const unsigned int n[SEGMENT_MAX_PHASES] = {g0, act_tasks, g2, 0};
-    segment_run(ctl, n, DenseSegRun<M>{a, g0, g2});
+    segment_run(ctl, n, sm_budget, DenseSegRun<M>{a, g0, g2});
 }
 
 // 2026-10-23: An entry's parameters: x, gate (0) and up (1) segments, down (2), act, limit,
-// hidden, inter, the two GEMV phases' block counts (b0, b2) and the control words.
+// hidden, inter, the two GEMV phases' block counts (b0, b2), the control words and the SM budget.
 #define DENSE_SEG_PARAMS                                                                     \
     const __nv_bfloat16* __restrict__ x, PIPE_PARAMS(0), PIPE_PARAMS(1), PIPE_PARAMS(2),    \
         __nv_bfloat16* act, float limit, unsigned int hidden, unsigned int inter,           \
-        unsigned int b0, unsigned int b2, SegCtl* ctl
+        unsigned int b0, unsigned int b2, SegCtl* ctl, unsigned int sm_budget
 
 #define DENSE_SEG_ARGS(a)                                                                    \
     const DenseSegArgs a = {x,                                                               \

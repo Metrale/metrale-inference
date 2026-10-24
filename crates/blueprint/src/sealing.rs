@@ -35,7 +35,7 @@ use crate::resolve_sealed::ciphertext_url;
 
 /// 2026-10-22: Where a sealed file's ciphertexts go.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Placement<'a> {
+pub enum CiphertextPlacement<'a> {
     /// 2026-10-22: Inline: a single-file sealed full `.kbp`.
     Inline,
     /// 2026-10-22: The public content-addressed store under `base`: a sealed lite `.kbp`, the
@@ -58,7 +58,7 @@ pub struct SealRequest<'a> {
     /// 2026-10-22: The inner codec each module is compressed with before sealing.
     pub codec: Codec,
     /// 2026-10-22: Inline or remote ciphertexts.
-    pub placement: Placement<'a>,
+    pub placement: CiphertextPlacement<'a>,
 }
 
 /// 2026-10-22: A sealed file and, for a remote placement, the ciphertexts by their hash.
@@ -201,10 +201,10 @@ fn place(
     bp: &crate::types::Blueprint,
     manifest: &SealedManifest,
     cts: Vec<Vec<u8>>,
-    placement: Placement<'_>,
+    placement: CiphertextPlacement<'_>,
 ) -> Result<Placed, Error> {
     match placement {
-        Placement::Inline => {
+        CiphertextPlacement::Inline => {
             let slices: Vec<&[u8]> = cts.iter().map(Vec::as_slice).collect();
             let (sources, mut payload) = inline_all(&slices)?;
             for (p, m) in payload.iter_mut().zip(&bp.kernels.modules) {
@@ -212,7 +212,7 @@ fn place(
             }
             Ok((sources, payload, Vec::new()))
         }
-        Placement::Remote { base } => {
+        CiphertextPlacement::Remote { base } => {
             let sources = manifest
                 .artifacts
                 .iter()

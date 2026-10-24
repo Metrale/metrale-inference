@@ -2119,6 +2119,8 @@ name = "metrale-comm"
 version = "1.0.0-beta-preview"
 dependencies = [
  "anyhow",
+ "metrale-circuit",
+ "metrale-error",
  "metrale-gpu-sys",
  "parking_lot",
  "tracing",

@@ -24,6 +24,33 @@ mod collective_wait;
 pub mod nccl_backend;
 #[cfg(feature = "nccl")]
 pub use nccl_backend::NcclBackend;
+#[cfg(feature = "nccl")]
+pub use nccl_backend::{ALL_REDUCE_DTYPE_BYTES, CommLevers, required_model_recv_bytes};
+
+/// 2026-10-23: Bootstrap the multi-rank communicator of this build (NCCL) and return it as a
+/// [`CommBackend`], so a caller outside this crate names no vendor (VBOP). The arguments and
+/// errors are `NcclBackend::new`'s.
+#[cfg(feature = "nccl")]
+pub fn bootstrap(
+    rank: usize,
+    world_size: usize,
+    master_addr: &str,
+    master_port: u16,
+    stream: u64,
+    recv_capacity: usize,
+    levers: CommLevers<'_>,
+) -> Result<std::sync::Arc<dyn CommBackend>> {
+    let backend = NcclBackend::new(
+        rank,
+        world_size,
+        master_addr,
+        master_port,
+        stream,
+        recv_capacity,
+        levers,
+    )?;
+    Ok(std::sync::Arc::new(backend))
+}
 
 /// 2026-10-10: Where a one-shot exchange left the other ranks' BF16 partials
 /// ([`CommBackend::exchange_partials`]): rank `r != rank` at
@@ -116,6 +143,35 @@ pub trait CommBackend: Send + Sync {
     fn all_reduce_async(&self, ptr: u64, bytes: usize, compute_stream: u64) -> Result<()> {
         let _ = compute_stream;
         self.all_reduce(ptr, bytes)
+    }
+
+    /// 2026-10-23: All-reduce on exactly `path`, the one a plan names
+    /// (`metrale_circuit::Group::path`): blocking like `all_reduce` without `compute_stream`,
+    /// ordered like `all_reduce_async` with it. A path this backend cannot run for `bytes` is
+    /// refused with CERF `CollectivePathRefused` (`ar_path::runnable`), never run as another. The
+    /// default refuses every path: a backend without paths executes no plan.
+    fn all_reduce_via(
+        &self,
+        path: metrale_circuit::CollectivePath,
+        ptr: u64,
+        bytes: usize,
+        compute_stream: Option<u64>,
+    ) -> Result<()> {
+        let _ = (ptr, compute_stream);
+        Err(metrale_error::error!(
+            metrale_error::ErrorCode::CollectivePathRefused,
+            path.name(),
+            bytes,
+            "this communicator executes no planned path"
+        )
+        .into())
+    }
+
+    /// 2026-10-23: The state this backend's collective paths depend on (`ar_path`), which a boot
+    /// checks each planned collective against once; `None` for a backend without paths. The
+    /// default returns `None`.
+    fn path_state(&self) -> Option<ar_path::PathState> {
+        None
     }
 
     /// 2026-10-10: The exchange of an all-reduce without its sum, so the caller's next kernel can

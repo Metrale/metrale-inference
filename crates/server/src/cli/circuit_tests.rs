@@ -31,6 +31,7 @@ fn plan_args(args: &[&str]) -> CircuitPlanArgs {
         CircuitAction::Memory(_) => panic!("parsed memory"),
         CircuitAction::Precision(_) => panic!("parsed precision"),
         CircuitAction::Headroom(_) => panic!("parsed headroom"),
+        CircuitAction::Whatif(_) => panic!("parsed whatif"),
         CircuitAction::Rules(_) => panic!("parsed rules"),
     }
 }

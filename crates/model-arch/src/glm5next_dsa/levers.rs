@@ -101,6 +101,12 @@ pub struct DsaSelectLevers {
     /// 2026-10-21: `METRALE_GLM_DSA_TOPK_MC` (default on): where the ceiling radix top-k runs,
     /// it runs over several CTAs per row (`dsa_topk_mc_*`; the same pools in the same order).
     pub topk_mc: bool,
+    /// 2026-10-24: `METRALE_GLM_DSA_POOL_KEYS_BF16`: the persisted pool keys are BF16 (not the
+    /// FP32 walks' bits); the plan's lever `glm_dsa_pool_keys_bf16`.
+    pub pool_keys_bf16: bool,
+    /// 2026-10-24: `METRALE_GLM_DSA_DECODE_SCORES_MMA`: the scores over those keys on tensor
+    /// cores; the plan's lever `glm_dsa_decode_scores_mma`.
+    pub decode_scores_mma: bool,
 }
 
 /// 2026-10-17: The copied DSA levers.
@@ -195,6 +201,8 @@ impl DsaLevers {
                 scores_heads: k.glm_dsa_scores_heads,
                 scores_heads_window: k.glm_dsa_scores_heads_window,
                 topk_mc: k.glm_dsa_topk_mc,
+                pool_keys_bf16: k.glm_dsa_pool_keys_bf16,
+                decode_scores_mma: k.glm_dsa_decode_scores_mma,
             },
             serve_ref: s.telemetry.glm_dsa_decode_hb_serve_ref,
             sp_agreement: lever::agreement_of(table.as_ref())

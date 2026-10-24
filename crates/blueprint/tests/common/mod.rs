@@ -170,6 +170,7 @@ pub fn blueprint() -> Blueprint {
                     numerics: Numerics::Reference,
                     nodes: vec![0],
                     runs: vec![],
+                    path: None,
                 },
                 Group {
                     rule: "proj".into(),
@@ -183,6 +184,7 @@ pub fn blueprint() -> Blueprint {
                     },
                     nodes: vec![1],
                     runs: vec![],
+                    path: None,
                 },
             ],
             edge_states: vec![
@@ -374,7 +376,7 @@ pub fn seal_for(
     input: &[u8],
     keys: &[&metrale_seal::HybridSecret],
     customer: &str,
-    placement: metrale_blueprint::sealing::Placement<'_>,
+    placement: metrale_blueprint::sealing::CiphertextPlacement<'_>,
     start: u8,
 ) -> metrale_blueprint::sealing::SealedOutput {
     let pks: Vec<_> = keys.iter().map(|k| k.public()).collect();
@@ -405,7 +407,7 @@ pub fn sealed_full(w: &World) -> Vec<u8> {
         &w.signed(),
         &[&recipient(7)],
         "acme",
-        metrale_blueprint::sealing::Placement::Inline,
+        metrale_blueprint::sealing::CiphertextPlacement::Inline,
         0,
     )
     .file

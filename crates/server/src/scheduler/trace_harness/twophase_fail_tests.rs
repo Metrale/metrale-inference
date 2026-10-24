@@ -141,7 +141,12 @@ fn a_failed_twophase_prefill_errors_the_client_instead_of_falling_back() {
 /// itself with a marker env var, and the child does the actual work.
 #[test]
 fn an_unhealthy_communicator_after_a_twophase_failure_requests_shutdown() {
-    if std::env::var_os("METRALE_TWOPHASE_SHUTDOWN_CHILD").is_some() {
+    use metrale_abstract_io::Env as _;
+    let child = metrale_io_host_std::ProcessEnv
+        .var("METRALE_TWOPHASE_SHUTDOWN_CHILD")
+        .expect("unicode marker")
+        .is_some();
+    if child {
         // 2026-10-19: The healthy control: the same failure must NOT request
         // shutdown.
         let healthy = traced(&scenario(false, false, true));

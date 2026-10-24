@@ -73,6 +73,7 @@ pub(crate) fn sabotaged(good: &DsaPlan, other: KernelHandle) -> Vec<(&'static st
     sel.scores = match sel.scores {
         ScoresStep::HeadsPaged(_) => ScoresStep::HeadsPaged(other),
         ScoresStep::HeadsWindow(_) => ScoresStep::HeadsWindow(other),
+        ScoresStep::Mma(_) => ScoresStep::Mma(other),
     };
     bad.push(("scores", with(DsaSteps { select: sel, ..s })));
     for (what, f) in [("top-k pass", 0), ("collect", 1), ("expansion", 2)] {

@@ -1,0 +1,97 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# 2026-10-23: `met circuit whatif --spec`: the five megakernel-campaign ledger rows
+# (claude-state glm/megakernel/LEDGER.tsv) as rewrites of the f13 capture, each with the serve
+# measurement it is backtested against. Step changes in microseconds, + = the step got slower
+# (a tok/s loss). Steps: p1k 32737.8 us, p128k 34621.8 us (f13, 245/231 steps). Every rewrite
+# constant is a microbench or design number stated in the ledger row it cites; nothing here is
+# fitted on the measured outcome.
+#
+# Caveats every row shares: the measurements are serve A/Bs of later binaries (mkft / mkp3 /
+# promo1 profiles), the predictions rewrite the f13 (fast13) capture; one capture, rank 0 only.
+
+schema = "whatif-spec/v1"
+
+[[set]]
+id = "dense-seg-inserve"
+depends_on = ["dense-seg-inserve", "dense-seg-proto"]
+# P3: shared expert gate|up, clamp SwiGLU and down as one persistent grid of max(b0, b2) = 192
+# CTAs (64 regs x 256 threads: 4 per SM, all 48 SMs) holding them through its phase waits.
+# extra_us: the microbench's in-isolation loss at inter 768, M=2 (27.6 -> 32.7 us).
+rewrite = [
+  { kind = "persistent", chain = [{ site = "moe.shared_gate_up" }, { site = "moe.shared_clamp" }, { site = "moe.shared_down" }], sms = 48.0, extra_us = 5.1, basis = "LEDGER dense-seg-proto: inter768 M2 27.6 -> 32.7 us; grid max(b0,b2)=192 CTAs at 4/SM" },
+]
+measured = [
+  { tag = "p1k", us = 538.0, lo = 499.0, hi = 577.0, basis = "LEDGER dense-seg-inserve ft_ds A-X -1.720% at 1k (-538 us/step), CI half-width ~0.12% (~39 us)" },
+  { tag = "p128k", us = 500.0, lo = 458.0, hi = 542.0, basis = "LEDGER dense-seg-inserve ft_ds A-X -1.499% at 128k (-500 us/step), CI half-width ~0.12% (~42 us)" },
+]
+
+[[set]]
+id = "kda-conv-one"
+depends_on = ["mk-kda-conv-one", "forced-traj-bitid", "pab-aa3"]
+# The three KDA verify conv kernels as one; the fused/unfused ratio of the graph-replay
+# microtest (K=2: 4.5 -> 4.0 us per layer) applied to the members' in-context work.
+rewrite = [
+  { kind = "fuse", chain = [{ kernel = "causal_conv1d_window_advance_to" }, { kernel = "causal_conv1d_update_l2norm_tokens" }, { kernel = "causal_conv1d_window_advance" }], work_ratio = 0.8889, basis = "LEDGER mk-kda-conv-one microtest 4.5 -> 4.0 us per layer" },
+]
+measured = [
+  { tag = "p1k", us = 123.0, lo = 81.0, hi = 165.0, basis = "LEDGER forced-traj-bitid unforced ft_ku -0.376% at 1k, CI half-width 0.12-0.14% (~42 us)" },
+  { tag = "p128k", us = 104.0, lo = 59.0, hi = 149.0, basis = "LEDGER forced-traj-bitid unforced ft_ku -0.301% at 128k, CI half-width ~0.13% (~45 us)" },
+]
+
+[[set]]
+id = "l2-prefetch-6"
+depends_on = ["l2-prefetch-6"]
+# A 6 MB L2 warm (l2_warm_ldcg, 2 blocks/SM x 48 = 96 CTAs of 256 threads) forked with the
+# all-reduce that precedes each KDA in-projection; the projection then reads those 6 MB from L2.
+# Work and savings from the lever's own microbench (glm5next_layer/l2_warm.rs: 8 MB in ~22 us
+# from DRAM, ~7 us from L2): 6 MB = 16.5 us to warm, 16.5 - 5.25 = 11.25 us saved.
+rewrite = [
+  { kind = "side_kernel", fork_at = { kernel = "ncclDevKernel_SendRecv" }, target = { site = "kda.q" }, bytes = 6291456.0, work_us = 16.5, ctas = 96, threads = 256, regs = 32, smem = 0, saves_us = 11.25, basis = "crates/model-arch/src/glm5next_layer/l2_warm.rs doc: 8 MB ~22 us DRAM / ~7 us L2" },
+]
+measured = [
+  { tag = "p1k", us = 174.0, lo = -540.0, hi = 890.0, basis = "LEDGER l2-prefetch-6 tok/s B-A -0.53% [-2.72,+1.65] at 1k (n=3 serves/arm ABBA), as a step change" },
+  { tag = "p128k", us = 21.0, lo = -817.0, hi = 862.0, basis = "LEDGER l2-prefetch-6 tok/s B-A -0.06% [-2.49,+2.36] at 128k, as a step change" },
+]
+
+[[set]]
+id = "pdl-off"
+depends_on = ["pdl-off"]
+# Primary: each programmatic successor launches one graph-stream latency after its predecessor
+# finished and does its in-context work (no prologue term).
+rewrite = [
+  { kind = "pdl_off", prologue = "zero", basis = "METRALE_GLM_PDL=0: every programmatic successor launches after its predecessor finished" },
+]
+measured = [
+  { tag = "p1k", us = 295.0, lo = -49.0, hi = 520.0, basis = "LEDGER pdl-off f14a vs f14pdl0 step median +295 us [-49,+520] at p1k (one capture per arm)" },
+  { tag = "p128k", us = 417.0, lo = 226.0, hi = 626.0, basis = "LEDGER pdl-off step median +417 us [+226,+626] at p128k (one capture per arm)" },
+]
+
+
+[[set]]
+id = "pdl-off-prologue"
+depends_on = ["pdl-off"]
+# Variant (added after the first run showed the class-level prologue estimate at 15x the
+# measurement): plus the prologue a successor no longer overlaps, estimated per launch group and
+# configuration from its instances without a programmatic predecessor.
+rewrite = [
+  { kind = "pdl_off", prologue = "estimate", basis = "as pdl-off, plus a per-launch-group prologue estimated from the capture" },
+]
+measured = [
+  { tag = "p1k", us = 295.0, lo = -49.0, hi = 520.0, basis = "LEDGER pdl-off f14a vs f14pdl0 step median +295 us [-49,+520] at p1k (one capture per arm)" },
+  { tag = "p128k", us = 417.0, lo = 226.0, hi = 626.0, basis = "LEDGER pdl-off step median +417 us [+226,+626] at p128k (one capture per arm)" },
+]
+
+[[set]]
+id = "mk-swiglu-down"
+depends_on = ["mk-swiglu-down", "pab-stack3", "pab-aa3"]
+# The shared expert's clamp SwiGLU folded into its down projection; fused/unfused ratio of the
+# microtest at M=2 (10.3 -> 10.2 us per shared expert). Headroom's Amdahl row predicted 120-240
+# us/step saved (the 20-40x over-prediction the ledger records).
+rewrite = [
+  { kind = "fuse", chain = [{ site = "moe.shared_clamp" }, { site = "moe.shared_down" }], work_ratio = 0.9903, basis = "LEDGER mk-swiglu-down microtest M=2 10.3 -> 10.2 us" },
+]
+measured = [
+  { tag = "p1k", us = 46.0, lo = 27.0, hi = 95.0, basis = "LEDGER pab-stack3 all-on minus all-but-swiglu_down at 1k (+46 us); interval = that difference's range over the 4 ISLs (no per-ISL CI recorded); pab-aa3: arm-vs-arm differences carry no graph-switch confound" },
+  { tag = "p128k", us = 95.0, lo = 27.0, hi = 95.0, basis = "LEDGER pab-stack3 at 128k (+95 us); interval as for p1k" },
+]

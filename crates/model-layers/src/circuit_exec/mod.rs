@@ -19,6 +19,7 @@
 //!   the model's stream, so they share it, and it is sized for the largest.
 
 pub mod bindings;
+pub mod collectives;
 pub mod compile;
 mod draft_rows;
 mod emitters;

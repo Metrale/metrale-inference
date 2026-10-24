@@ -15,11 +15,11 @@
 extern "C" __global__ void __launch_bounds__(PIPE_THREADS, 4) glm5next_dense_seg_pipe_m1(
     DENSE_SEG_PARAMS) {
     DENSE_SEG_ARGS(a);
-    w4a16_dense_segment<1>(ctl, a, b0, b2);
+    w4a16_dense_segment<1>(ctl, a, b0, b2, sm_budget);
 }
 
 extern "C" __global__ void __launch_bounds__(PIPE_THREADS, 4) glm5next_dense_seg_pipe_m2(
     DENSE_SEG_PARAMS) {
     DENSE_SEG_ARGS(a);
-    w4a16_dense_segment<2>(ctl, a, b0, b2);
+    w4a16_dense_segment<2>(ctl, a, b0, b2, sm_budget);
 }

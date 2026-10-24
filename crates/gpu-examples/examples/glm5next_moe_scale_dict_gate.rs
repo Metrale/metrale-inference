@@ -264,8 +264,8 @@ fn run(g: &dyn GpuBackend, pair: &Pair, l: &Layer, io: &Io, cs: bool, s: u64) ->
 }
 
 fn main() -> Result<()> {
-    let dir =
-        std::env::var("GLM_CKPT").unwrap_or_else(|_| "/srv/models/glm-5.3-flash-nvfp4".into());
+    let dir = metrale_gpu_examples::env_var("GLM_CKPT")?
+        .unwrap_or_else(|| "/srv/models/glm-5.3-flash-nvfp4".into());
     let timing = !std::env::args().any(|a| a == "--no-timing");
     let sets = metrale_kernels::all_ptx_sets();
     let glm = sets

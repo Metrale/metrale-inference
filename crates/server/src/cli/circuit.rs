@@ -136,6 +136,12 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
             };
             return super::circuit_headroom::run(*h);
         }
+        CircuitAction::Whatif(_) => {
+            let CircuitAction::Whatif(w) = args.action else {
+                unreachable!("matched above")
+            };
+            return super::circuit_whatif::run(*w);
+        }
         CircuitAction::Rules(_) => {
             let CircuitAction::Rules(r) = args.action else {
                 unreachable!("matched above")
@@ -164,6 +170,7 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
         | CircuitAction::Memory(_)
         | CircuitAction::Precision(_)
         | CircuitAction::Headroom(_)
+        | CircuitAction::Whatif(_)
         | CircuitAction::Rules(_) => {
             unreachable!("returned above")
         }

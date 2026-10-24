@@ -22,8 +22,9 @@ use metrale_circuit::venn::Run;
 
 const DIR: &str = "kernels/circuits/plans/headroom";
 const SCHEMA: &str = "schemas/headroom.v1.json";
-/// 2026-10-22: The captures with a checked-in report: (trace, report stem).
-const CAPTURES: [(&str, &str); 2] = [
+/// 2026-10-22: The captures with a checked-in report: (trace, report stem). 2026-10-23: t4c is
+/// the first `--forward circuit` serve, so its reports carry a non-zero plan-executed share.
+const CAPTURES: [(&str, &str); 4] = [
     (
         "docs/kernel-perf/traces/glm-5.3-flash-nvfp4-tp3--gb10--f13-p1k.toml",
         "glm-5.3-flash-nvfp4-tp3--gb10--f13-p1k",
@@ -31,6 +32,14 @@ const CAPTURES: [(&str, &str); 2] = [
     (
         "docs/kernel-perf/traces/glm-5.3-flash-nvfp4-tp3--gb10--f13-p128k.toml",
         "glm-5.3-flash-nvfp4-tp3--gb10--f13-p128k",
+    ),
+    (
+        "docs/kernel-perf/traces/glm-5.3-flash-nvfp4-tp3--gb10--t4c-p1k.toml",
+        "glm-5.3-flash-nvfp4-tp3--gb10--t4c-p1k",
+    ),
+    (
+        "docs/kernel-perf/traces/glm-5.3-flash-nvfp4-tp3--gb10--t4c-p128k.toml",
+        "glm-5.3-flash-nvfp4-tp3--gb10--t4c-p128k",
     ),
 ];
 const FORMATS: [(HeadroomFormat, &str); 4] = [

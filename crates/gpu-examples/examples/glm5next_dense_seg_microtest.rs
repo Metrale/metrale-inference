@@ -11,8 +11,11 @@
 //!   at M 1 and 2, at the shared expert's rank widths (inter 768 and 512) and the dense FFN's
 //!   (4096), on random inputs and inputs past the clamp limit, over 6 launches in a row (the
 //!   control slot is left zero) and through a CUDA graph replayed 3 times.
+//! - The same bytes under every SM budget (only CTAs on SMs below it take tasks): all SMs, 46, 24,
+//!   1, and 0 (no worker SM: the last CTA to leave runs every task), eager and through the graph.
 //! - Negative controls: a different limit changes the output (phase 1 reaches phase 2); a changed
-//!   x element of row 1 changes row 1 only.
+//!   x element of row 1 changes row 1 only; a budget of 1 SM runs the inter-4096 segment at least
+//!   4x slower than all SMs (the budget confines the work).
 //!
 //! Times: both arms captured into a CUDA graph over a rotated 128 MB weight pool, alternating over
 //! 5 rounds, median of round medians [min..max], and the per-step saving at 42 shared experts.
@@ -38,6 +41,9 @@ const LIMIT: f32 = 10.0;
 const HIDDEN: u32 = 4096;
 const INTERS: [u32; 3] = [768, 512, 4096];
 const PER_STEP: f64 = 42.0;
+/// 2026-10-23: Every CTA takes tasks; the SM budgets the byte gate runs (E2: k_side 24 and 46).
+const ALL: u32 = u32::MAX;
+const BUDGETS: [u32; 5] = [ALL, 46, 24, 1, 0];
 
 struct Bufs {
     x: DevicePtr,
@@ -88,6 +94,7 @@ impl Arms {
         m: u32,
         inter: u32,
         limit: f32,
+        budget: u32,
         s: u64,
     ) -> Result<()> {
         let gu = segs(&[w.gate, w.up], &[b.gate, b.up], &[inter, inter]);
@@ -105,6 +112,7 @@ impl Arms {
             HIDDEN,
             g.sm_count()?,
             self.ctl.take(),
+            budget,
             s,
         )
     }
@@ -135,14 +143,24 @@ fn compare(what: &str, got: &[Vec<u8>], want: &[Vec<u8>]) -> Result<usize> {
     let mut n = 0;
     for (i, (x, y)) in got.iter().zip(want).enumerate() {
         if let Some(at) = x.chunks(2).zip(y.chunks(2)).position(|(p, q)| p != q) {
-            bail!("{what}: {} element {at} differs from the three launches", NAMES[i]);
+            bail!(
+                "{what}: {} element {at} differs from the three launches",
+                NAMES[i]
+            );
         }
         n += y.len() / 2;
     }
     Ok(n)
 }
 
-fn byte_gate(g: &dyn GpuBackend, s: u64, a: &Arms, b: &Bufs, pool: &Pool, rng: &mut Rng) -> Result<usize> {
+fn byte_gate(
+    g: &dyn GpuBackend,
+    s: u64,
+    a: &Arms,
+    b: &Bufs,
+    pool: &Pool,
+    rng: &mut Rng,
+) -> Result<usize> {
     let mut checked = 0;
     for (wi, inter) in INTERS.into_iter().enumerate() {
         let w = W {
@@ -167,29 +185,38 @@ fn byte_gate(g: &dyn GpuBackend, s: u64, a: &Arms, b: &Bufs, pool: &Pool, rng: &
                 poison(g, b, 0xA5)?;
                 a.three(g, b, &w, m, inter, s)?;
                 let want = snapshot(g, s, b, m, inter)?;
-                poison(g, b, 0x5A)?;
-                for _ in 0..6 {
-                    a.segment(g, b, &w, m, inter, LIMIT, s)?;
-                }
-                let what = format!("inter={inter} M={m} {case} eager x6");
-                checked += compare(&what, &snapshot(g, s, b, m, inter)?, &want)?;
-                poison(g, b, 0x3C)?;
-                g.begin_capture(s)?;
-                a.segment(g, b, &w, m, inter, LIMIT, s)?;
-                let graph = g.end_capture(s)?;
-                for r in 0..3 {
-                    g.launch_graph(graph, s)?;
-                    let what = format!("inter={inter} M={m} {case} graph replay {r}");
+                for budget in BUDGETS {
+                    poison(g, b, 0x5A)?;
+                    for _ in 0..6 {
+                        a.segment(g, b, &w, m, inter, LIMIT, budget, s)?;
+                    }
+                    let what = format!("inter={inter} M={m} {case} budget={budget} eager x6");
                     checked += compare(&what, &snapshot(g, s, b, m, inter)?, &want)?;
+                    poison(g, b, 0x3C)?;
+                    g.begin_capture(s)?;
+                    a.segment(g, b, &w, m, inter, LIMIT, budget, s)?;
+                    let graph = g.end_capture(s)?;
+                    for r in 0..3 {
+                        g.launch_graph(graph, s)?;
+                        let what = format!("inter={inter} M={m} {case} budget={budget} graph {r}");
+                        checked += compare(&what, &snapshot(g, s, b, m, inter)?, &want)?;
+                    }
+                    g.destroy_graph(graph)?;
                 }
-                g.destroy_graph(graph)?;
             }
         }
     }
     Ok(checked)
 }
 
-fn negative_controls(g: &dyn GpuBackend, s: u64, a: &Arms, b: &Bufs, pool: &Pool, rng: &mut Rng) -> Result<()> {
+fn negative_controls(
+    g: &dyn GpuBackend,
+    s: u64,
+    a: &Arms,
+    b: &Bufs,
+    pool: &Pool,
+    rng: &mut Rng,
+) -> Result<()> {
     let inter = 768u32;
     let w = W {
         gate: pool.weight(20, inter, HIDDEN),
@@ -199,11 +226,14 @@ fn negative_controls(g: &dyn GpuBackend, s: u64, a: &Arms, b: &Bufs, pool: &Pool
     let mut x = bf16_rows(rng, 2, HIDDEN as usize);
     g.copy_h2d(&x, b.x)?;
     let run = |limit: f32| -> Result<Vec<u8>> {
-        a.segment(g, b, &w, 2, inter, limit, s)?;
+        a.segment(g, b, &w, 2, inter, limit, ALL, s)?;
         read(g, s, b.out, 2 * HIDDEN as usize * 2)
     };
     let base = run(LIMIT)?;
-    ensure!(run(0.25)? != base, "negative control: the limit must reach phase 1");
+    ensure!(
+        run(0.25)? != base,
+        "negative control: the limit must reach phase 1"
+    );
     let half = HIDDEN as usize * 2;
     let at = (HIDDEN as usize + 5) * 2;
     x[at..at + 2].copy_from_slice(&0x4000u16.to_le_bytes());
@@ -261,7 +291,7 @@ fn main() -> Result<()> {
                         };
                         i += 1;
                         if seg {
-                            arms.segment(&g, &b, &w, m, inter, LIMIT, st)
+                            arms.segment(&g, &b, &w, m, inter, LIMIT, ALL, st)
                         } else {
                             arms.three(&g, &b, &w, m, inter, st)
                         }
@@ -277,5 +307,38 @@ fn main() -> Result<()> {
             );
         }
     }
+    budget_bites(&g, s, &arms, &b, &pool)
+}
+
+/// 2026-10-23: The negative control on the budget: confined to 1 SM, the inter-4096 segment
+/// (2 rows) must take at least 4x the all-SM time, else the budget does not confine the work.
+fn budget_bites(g: &dyn GpuBackend, s: u64, a: &Arms, b: &Bufs, pool: &Pool) -> Result<()> {
+    let inter = 4096u32;
+    let w = W {
+        gate: pool.weight(0, inter, HIDDEN),
+        up: pool.weight(1, inter, HIDDEN),
+        down: pool.weight(2, HIDDEN, inter),
+    };
+    let mut us = Vec::new();
+    for budget in [ALL, 46, 24, 1] {
+        let t = timing::time_graph(g, s, 8, &mut |st| {
+            a.segment(g, b, &w, 2, inter, LIMIT, budget, st)
+        })?;
+        println!(
+            "budget {budget}: {:.1} us per segment (inter={inter}, M=2, solo)",
+            t.0
+        );
+        us.push(t.0);
+    }
+    ensure!(
+        us[3] >= 4.0 * us[0],
+        "negative control: 1 SM ran in {:.1} us vs {:.1} us on all SMs",
+        us[3],
+        us[0]
+    );
+    println!(
+        "negative control fires: 1 SM takes {:.1}x the all-SM time",
+        us[3] / us[0]
+    );
     Ok(())
 }

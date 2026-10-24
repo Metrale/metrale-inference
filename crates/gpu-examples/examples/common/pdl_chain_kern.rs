@@ -25,14 +25,14 @@ impl Variant {
         conv_to: false,
         zero_swiglu: false,
     };
-    pub fn from_env() -> Self {
-        let old = std::env::var("PDL_CHAIN_OLD").unwrap_or_default();
+    pub fn from_env() -> anyhow::Result<Self> {
+        let old = metrale_gpu_examples::env_var("PDL_CHAIN_OLD")?.unwrap_or_default();
         let on = |name: &str| !old.split(',').any(|o| o == name || o == "all");
-        Self {
+        Ok(Self {
             serial_sweep: on("serial_sweep"),
             conv_to: on("conv_to"),
             zero_swiglu: on("zero_swiglu"),
-        }
+        })
     }
 }
 

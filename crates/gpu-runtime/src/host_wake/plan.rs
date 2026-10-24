@@ -137,10 +137,10 @@ pub fn single_cpu(affinity_list: &str) -> Result<u32> {
 pub enum Role {
     /// 2026-10-21: A CUDA driver helper (`cuda-EvtHandlr`, `cuda<hex>`): the host-function
     /// worker that runs NCCL's proxy-upload callbacks and the event handler that wakes it.
-    CudaDriver,
+    DriverHelper,
     /// 2026-10-21: An NCCL proxy thread (`NCCL Progress`, `NCCL Service`). NCCL names its threads
     /// only with `NCCL_SET_THREAD_NAME=1`.
-    NcclProxy,
+    CollectiveProxy,
 }
 
 /// 2026-10-21: The role of a thread from its `comm` (at most 15 bytes).
@@ -148,12 +148,12 @@ pub enum Role {
 pub fn classify(comm: &str) -> Option<Role> {
     let c = comm.trim_end();
     if c.starts_with("NCCL Progress") || c.starts_with("NCCL Service") {
-        Some(Role::NcclProxy)
+        Some(Role::CollectiveProxy)
     } else if c == "cuda-EvtHandlr"
         || c.strip_prefix("cuda")
             .is_some_and(|h| !h.is_empty() && h.bytes().all(|b| b.is_ascii_hexdigit()))
     {
-        Some(Role::CudaDriver)
+        Some(Role::DriverHelper)
     } else {
         None
     }

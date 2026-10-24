@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-23: Plan fidelity of GLM-5.3-Flash TP=3 on GB10: every rank's plan at decode n=1,
-//! verify n=2 and draft n=1 scored against the f14a captures (kernels/circuits/plans/fidelity/),
+//! verify n=2 and draft n=1 scored against the f14a and t4c (`--forward circuit`) captures
+//! (kernels/circuits/plans/fidelity/),
 //! the report current, the score discriminating, and every rank fully plan-describable. Regenerate after an intended change with
 //! `cargo test -p met circuit_fidelity -- --ignored regenerate_fidelity`.
 //!
@@ -21,9 +22,11 @@ use super::{FsTree, registry, source, write_or_check};
 
 const DIR: &str = "kernels/circuits/plans/fidelity";
 const REPORT: &str = "kernels/circuits/plans/fidelity/glm-5.3-flash-nvfp4-tp3--gb10.md";
-const TRACES: [&str; 2] = [
+const TRACES: [&str; 4] = [
     "glm-5.3-flash-nvfp4-tp3--gb10--f14a-p1k.trace.toml",
     "glm-5.3-flash-nvfp4-tp3--gb10--f14a-p128k.trace.toml",
+    "glm-5.3-flash-nvfp4-tp3--gb10--t4c-p1k.trace.toml",
+    "glm-5.3-flash-nvfp4-tp3--gb10--t4c-p128k.trace.toml",
 ];
 const COMMAND: &str = "cargo test -p met circuit_fidelity -- --ignored regenerate_fidelity";
 /// 2026-10-23: The runs a speculative TP=3 step makes (verify n=2 with its one draft) and the

@@ -120,7 +120,7 @@ fn every_rank_fuses_the_boot_shapes_at_every_world() {
 /// 2026-10-23: GLM over `world` ranks with every part at `world` or its cap, and the vocab
 /// replicated past its cap (a layout the cost model may pick; the serve's derivation refuses it):
 /// each rank's circuit and the rules.
-fn capped_layout(world: u64) -> super::fixture::Ranks {
+pub(super) fn capped_layout(world: u64) -> super::fixture::Ranks {
     use metrale_model_layers::circuit_exec::sources;
     let mut inst = sources::instance(super::fixture::RECIPE).unwrap();
     let src = sources::sources(&inst).unwrap();
@@ -145,59 +145,6 @@ fn capped_layout(world: u64) -> super::fixture::Ranks {
     });
     let loaded = metrale_circuit::load(&inst, src).unwrap();
     (loaded.ranks, loaded.rules, inst.policy)
-}
-
-/// 2026-10-23: The conformance gate between the rules and the engine's all-reduce path: at 2, 3, 4
-/// and 8 ranks, every plain collective group (`tp_all_reduce`) of every rank's decode and verify
-/// plans (and the draft's where the vocab is split, 2..=4) names the kernel of the path
-/// `metrale_comm::ar_path` takes for its group size (the add kernel and the rank-sum kernel
-/// loaded, the C=1 payload within the one-shot bound): `bf16_add_inplace` for `TwoRank`,
-/// `bf16_add_rank_sum` for `OneShot`. The mHC sites' all-reduces are plain here
-/// (`glm_ar_fused_post` off, a lever the serve may turn off), so every layer contributes. Catches
-/// the next drift of either side.
-#[test]
-fn every_plain_collective_takes_the_engines_all_reduce_path() {
-    use metrale_comm::ar_path::{ArPath, ar_path};
-    for world in [2u64, 3, 4, 8] {
-        let (c, rules, mut policy) = capped_layout(world);
-        policy
-            .settings
-            .insert("glm_ar_fused_post".into(), "off".into());
-        let mut shapes = vec![(Mode::Decode, 1), (Mode::Verify, 2)];
-        if world <= 4 {
-            shapes.push((Mode::Draft, 1));
-        }
-        let avail = AvailableKernels::all_named_by(&rules);
-        let mut checked = 0;
-        for (rank, circuit) in c.iter().enumerate() {
-            for &(mode, rows) in &shapes {
-                let p = metrale_circuit::fuse(circuit, &rules, &avail, &policy, mode, rows)
-                    .unwrap_or_else(|e| panic!("world {world} rank {rank} {mode:?} {rows}: {e}"));
-                for g in p.groups.iter().filter(|g| g.emitter == "tp_all_reduce") {
-                    let n = &circuit.nodes[g.nodes[0]];
-                    let size = n.params["group"].split(',').count();
-                    let want = match ar_path(size, true, true, true) {
-                        ArPath::TwoRank => "bf16_add_inplace",
-                        ArPath::OneShot => "bf16_add_rank_sum",
-                        ArPath::Nccl => panic!("a C=1 payload within the bound takes NCCL"),
-                    };
-                    let names: Vec<&str> = g.kernels.iter().map(|k| k.func.as_str()).collect();
-                    assert_eq!(
-                        names,
-                        [want],
-                        "world {world} rank {rank} {mode:?} {}: rule `{}` over a group of {size}",
-                        n.id,
-                        g.rule
-                    );
-                    checked += 1;
-                }
-            }
-        }
-        assert!(
-            checked > 0,
-            "world {world}: no plain collective was checked"
-        );
-    }
 }
 
 /// 2026-10-23: At two ranks the draft's plain all-reduces (the MTP attention and MoE partials)
