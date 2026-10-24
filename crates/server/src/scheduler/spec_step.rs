@@ -50,14 +50,17 @@ pub fn step_self_spec(
 
     if let Err(e) = model.ep_broadcast_cmd_for_seq(a.seq.slot_idx as u32, a.last_token) {
         tracing::error!("EP broadcast self-spec token: {e:#}");
-        a.finished = true;
+        crate::scheduler::lifecycle::fail_sequence(
+            a,
+            format!("EP broadcast self-spec token: {e:#}"),
+        );
         return;
     }
     let logits = match model.decode(a.last_token, &mut a.seq, 0) {
         Ok(l) => l,
         Err(e) => {
             tracing::error!("self-spec decode error: {e:#}");
-            a.finished = true;
+            crate::scheduler::lifecycle::fail_sequence(a, format!("self-spec decode error: {e:#}"));
             return;
         }
     };
@@ -65,7 +68,7 @@ pub fn step_self_spec(
         Ok(t) => t,
         Err(e) => {
             tracing::error!("self-spec argmax error: {e:#}");
-            a.finished = true;
+            crate::scheduler::lifecycle::fail_sequence(a, format!("self-spec argmax error: {e:#}"));
             return;
         }
     };
@@ -108,7 +111,7 @@ pub fn step_self_spec(
 
     if let Err(e) = model.checkpoint_ssm_states(&mut a.seq) {
         tracing::error!("self-spec checkpoint: {e:#}");
-        a.finished = true;
+        crate::scheduler::lifecycle::fail_sequence(a, format!("self-spec checkpoint: {e:#}"));
         return;
     }
     let seq_len_before_verify = a.seq.seq_len;
@@ -120,7 +123,7 @@ pub fn step_self_spec(
         Ok(v) => v,
         Err(e) => {
             tracing::error!("self-spec verify error: {e:#}");
-            a.finished = true;
+            crate::scheduler::lifecycle::fail_sequence(a, format!("self-spec verify error: {e:#}"));
             return;
         }
     };
@@ -214,14 +217,20 @@ pub fn step_ngram(
     } else {
         if let Err(e) = model.ep_broadcast_cmd_for_seq(a.seq.slot_idx as u32, a.last_token) {
             tracing::error!("EP broadcast ngram bootstrap: {e:#}");
-            a.finished = true;
+            crate::scheduler::lifecycle::fail_sequence(
+                a,
+                format!("EP broadcast ngram bootstrap: {e:#}"),
+            );
             return;
         }
         let logits = match model.decode(a.last_token, &mut a.seq, 0) {
             Ok(l) => l,
             Err(e) => {
                 tracing::error!("ngram bootstrap decode error: {e:#}");
-                a.finished = true;
+                crate::scheduler::lifecycle::fail_sequence(
+                    a,
+                    format!("ngram bootstrap decode error: {e:#}"),
+                );
                 return;
             }
         };
@@ -229,7 +238,10 @@ pub fn step_ngram(
             Ok(t) => t,
             Err(e) => {
                 tracing::error!("ngram bootstrap argmax error: {e:#}");
-                a.finished = true;
+                crate::scheduler::lifecycle::fail_sequence(
+                    a,
+                    format!("ngram bootstrap argmax error: {e:#}"),
+                );
                 return;
             }
         };
@@ -268,7 +280,7 @@ pub fn step_ngram_verify(
     let t_sync = sched.io.clock.now();
     if let Err(e) = model.sync_secondary() {
         tracing::error!("ngram sync_secondary: {e:#}");
-        a.finished = true;
+        crate::scheduler::lifecycle::fail_sequence(a, format!("ngram sync_secondary: {e:#}"));
         return;
     }
     let sync_us = sched
@@ -283,13 +295,19 @@ pub fn step_ngram_verify(
     let tokens_k2 = [a.last_token, drafts[0]];
     if let Err(e) = model.ep_broadcast_cmd_for_seq(a.seq.slot_idx as u32, 0xFFFFFFF2) {
         tracing::error!("EP broadcast ngram verify cmd: {e:#}");
-        a.finished = true;
+        crate::scheduler::lifecycle::fail_sequence(
+            a,
+            format!("EP broadcast ngram verify cmd: {e:#}"),
+        );
         return;
     }
     for &t in &tokens_k2 {
         if let Err(e) = model.ep_broadcast_cmd(t) {
             tracing::error!("EP broadcast ngram verify token: {e:#}");
-            a.finished = true;
+            crate::scheduler::lifecycle::fail_sequence(
+                a,
+                format!("EP broadcast ngram verify token: {e:#}"),
+            );
             return;
         }
     }
@@ -299,7 +317,10 @@ pub fn step_ngram_verify(
         Ok(r) => r,
         Err(e) => {
             tracing::error!("ngram decode_verify_graphed: {e:#}");
-            a.finished = true;
+            crate::scheduler::lifecycle::fail_sequence(
+                a,
+                format!("ngram decode_verify_graphed: {e:#}"),
+            );
             return;
         }
     };
@@ -327,7 +348,10 @@ pub fn step_ngram_verify(
 
     if let Err(e) = model.ep_broadcast_cmd(accepted as u32) {
         tracing::error!("EP broadcast ngram verify result: {e:#}");
-        a.finished = true;
+        crate::scheduler::lifecycle::fail_sequence(
+            a,
+            format!("EP broadcast ngram verify result: {e:#}"),
+        );
         return;
     }
 
@@ -369,7 +393,7 @@ pub fn step_ngram_verify(
 
         if let Err(e) = model.start_rollback_and_checkpoint_async(&mut a.seq, 1) {
             tracing::error!("ngram rollback: {e:#}");
-            a.finished = true;
+            crate::scheduler::lifecycle::fail_sequence(a, format!("ngram rollback: {e:#}"));
             return;
         }
 

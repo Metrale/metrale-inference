@@ -31,7 +31,7 @@ pub fn step_verify_dflash(
 ) {
     if let Err(e) = model.sync_secondary() {
         tracing::error!("sync_secondary: {e:#}");
-        a.finished = true;
+        crate::scheduler::lifecycle::fail_sequence(a, format!("sync_secondary: {e:#}"));
         return;
     }
 
@@ -59,7 +59,7 @@ pub fn step_verify_dflash(
             if ep && let Err(e2) = model.ep_broadcast_cmd(1) {
                 tracing::error!("EP broadcast verify_kgamma verdict after a failed verify: {e2:#}");
             }
-            a.finished = true;
+            crate::scheduler::lifecycle::fail_sequence(a, format!("decode_verify_dflash: {e:#}"));
             return;
         }
     };
@@ -193,7 +193,10 @@ pub fn step_verify_dflash(
     let total_accepted = num_accepted + 1;
     if let Err(e) = model.commit_accepted_prefix(&mut a.seq, total_accepted, k_verify) {
         tracing::error!("commit_accepted_prefix (dflash): {e:#}");
-        a.finished = true;
+        crate::scheduler::lifecycle::fail_sequence(
+            a,
+            format!("commit_accepted_prefix (dflash): {e:#}"),
+        );
         return;
     }
 

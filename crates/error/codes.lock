@@ -30,6 +30,7 @@
 0x0171 SinkFull
 0x0180 HostConfig
 0x0181 HostUnavailable
+0x0200 SequenceFailed
 0x0280 DeviceDriver
 0x0300 ServeEnvNotALever
 0x0301 ServeEnvHarness
@@ -81,6 +82,8 @@
 0x0703 ActQuantInvalid
 0x0710 CircuitSource
 0x0711 KernelTreeResolve
+0x0712 CriticalCaptureInvalid
+0x0713 WhatIfInvalid
 0x0720 CircuitPlanUncovered
 0x0721 CircuitRanksRefused
 0x0722 CollectivePathMismatch

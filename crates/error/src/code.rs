@@ -83,6 +83,10 @@ error_registry! {
     /// 2026-10-17: `0x0200–0x02FF`: sched-core (the `Device` trait, scheduler, lora) and the
     /// device backends. Sub-blocks: sched-core `0x0200–0x027F`, device backends `0x0280–0x02FF`.
     SchedDevice = 0x0200..=0x02FF {
+        /// 2026-10-23: A scheduler step failed for a sequence (a forward, a collective, a verify
+        /// commit) and retired it: (the step's error). Sent to the client as an error frame,
+        /// never as a finish.
+        SequenceFailed = 0x0200 => "the sequence failed: {}",
         /// 2026-10-17: A device driver call returned a failure status: (call, status).
         DeviceDriver = 0x0280 => "{} failed: driver status {}",
     }
@@ -253,6 +257,12 @@ error_registry! {
         /// target) its host could not complete: (the host's reason, verbatim, since reports
         /// quote it).
         KernelTreeResolve = 0x0711 => "{}",
+        /// 2026-10-23: An event capture (`critical-trace/v1`) the critical-path model refuses:
+        /// (the capture's source, why).
+        CriticalCaptureInvalid = 0x0712 => "event capture {}: {}",
+        /// 2026-10-23: A what-if rewrite or backtest row that cannot be applied to the event
+        /// graph: (the rewrite or row, why).
+        WhatIfInvalid = 0x0713 => "what-if {}: {}",
         /// 2026-10-23: A shape the serve runs that no plan-executed site of this rank covers
         /// under `--forward circuit` on a tensor-parallel rank: (mode, rows, why).
         CircuitPlanUncovered = 0x0720 => "{} at {} rows has no plan coverage: {}",
