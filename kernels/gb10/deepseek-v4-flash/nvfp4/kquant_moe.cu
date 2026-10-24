@@ -9,8 +9,8 @@
 //
 // Decode (m <= KQ_MAX_M = 8 activation rows): kquant_q8_1_rows_bf16 quantises the activation to plain
 // block_q8_1 (32 values, d and sum), and the kquant_mmvq_* GEMVs score each 256-value super-block with the
-// vendored vec_dot_q{2,3,6}_K_q8_1 (dp4a on the packed codes). Prefill: metrale_q{2,3}_k_mmq128_{nc,wc}
-// run the vendored MMQ tile with the type set to Q2_K or Q3_K, as qwen3.6-27b's q2_0_mmq.cu does for Q2_0,
+// vec_dot_q{2,3,6}_K_q8_1 (dp4a on the packed codes). Prefill: metrale_q{2,3}_k_mmq128_{nc,wc}
+// run the MMQ tile with the type set to Q2_K or Q3_K, as qwen3.6-27b's q2_0_mmq.cu does for Q2_0,
 // on activations quantised by metrale_q8_1_quantize_d2s6_bf16 (Q2_K) or metrale_q8_1_quantize_d4_bf16 (Q3_K).
 // The CPU oracle is crates/model-layers/src/layers/ops/kquant_mmq_tests.rs; this tree's KERNEL.toml adds --fmad=false.
 
@@ -23,24 +23,20 @@
 
 
 #include <cuda_bf16.h>
-// 2026-09-25: build.rs compiles staged copies of the sources and passes the directory that resolved this
-// file as -I (CompileJob::include_dir), so this path to the vendored headers in the qwen3.6-27b tree resolves.
+// 2026-10-23: The MMQ engine is a gb10/common subdirectory, staged with common/ (the same relative path
+// resolves in the source tree and in build.rs's stage).
+#include "../../common/mmq/mmq.cuh"
 
 
 
-#include "../../../gb10/qwen3.6-27b/nvfp4/q4k_vendor/mmq.cuh"
-#include "../../../gb10/qwen3.6-27b/nvfp4/q4k_vendor/quantize_impl.cuh"
-
-
-
-template <ggml_type type, int mmq_x, bool need_check>
+template <mmq_type type, int mmq_x, bool need_check>
 static __device__ __forceinline__ void metrale_kq_tile(
         const char * __restrict__ x, const int * __restrict__ y, __nv_bfloat16 * __restrict__ dst,
         const int nrows_x, const int ncols_dst, const int ncols_x,
         const int stride_row_x, const int ncols_y, const int stride_col_dst) {
     constexpr int nwarps    = mmq_get_nwarps_device();
-    constexpr int warp_size = ggml_cuda_get_physical_warp_size();
-    constexpr int qk        = ggml_cuda_type_traits<type>::qk;
+    constexpr int warp_size = mmq_physical_warp_size();
+    constexpr int qk        = mmq_quant_traits<type>::qk;
     constexpr int mmq_y     = get_mmq_y_device();
 
     extern __shared__ int ids_dst_shared[];
@@ -62,8 +58,8 @@ static __device__ __forceinline__ void metrale_kq_tile(
     const int offset_x = it*mmq_y*stride_row_x;
     const int kb0_stop = ncols_x / qk;
 
-    mul_mat_q_process_tile<type, mmq_x, need_check, false, __nv_bfloat16>(
-        x, offset_x, y + offset_y, ids_dst_shared, dst + offset_dst, nullptr,
+    mul_mat_q_process_tile<type, mmq_x, need_check>(
+        x, offset_x, y + offset_y, ids_dst_shared, dst + offset_dst,
         stride_row_x, ncols_y, stride_col_dst, tile_x_max_i, tile_y_max_j, 0, kb0_stop);
 }
 
@@ -73,10 +69,10 @@ extern "C" __global__ void __launch_bounds__(256, 1) NAME(                      
         int nrows_x, int ncols_dst, int ncols_x, int stride_row_x, int ncols_y, int stride_col_dst) {\
     metrale_kq_tile<TYPE, 128, CHECK>(x, y, dst, nrows_x, ncols_dst, ncols_x, stride_row_x, ncols_y, stride_col_dst); \
 }
-KQ_MMQ_ENTRY(metrale_q2_k_mmq128_nc, GGML_TYPE_Q2_K, false)
-KQ_MMQ_ENTRY(metrale_q2_k_mmq128_wc, GGML_TYPE_Q2_K, true)
-KQ_MMQ_ENTRY(metrale_q3_k_mmq128_nc, GGML_TYPE_Q3_K, false)
-KQ_MMQ_ENTRY(metrale_q3_k_mmq128_wc, GGML_TYPE_Q3_K, true)
+KQ_MMQ_ENTRY(metrale_q2_k_mmq128_nc, MMQ_TYPE_Q2_K, false)
+KQ_MMQ_ENTRY(metrale_q2_k_mmq128_wc, MMQ_TYPE_Q2_K, true)
+KQ_MMQ_ENTRY(metrale_q3_k_mmq128_nc, MMQ_TYPE_Q3_K, false)
+KQ_MMQ_ENTRY(metrale_q3_k_mmq128_wc, MMQ_TYPE_Q3_K, true)
 
 // 2026-09-25: MMQ activation quantisers, BF16 in: the D2S6 q8_1 layout for Q2_K and the D4 layout for Q3_K.
 extern "C" __global__ void metrale_q8_1_quantize_d2s6_bf16(
@@ -152,26 +148,26 @@ extern "C" __global__ void kquant_swiglu_q8_1_rows_bf16(
 #define KQ_NWARPS 4
 #define KQ_MAX_M  8
 
-template <ggml_type type>
+template <mmq_type type>
 static __device__ __forceinline__ float kq_vec_dot(const void* vbq, const block_q8_1* bq8_1, const int kbx, const int iqs);
-template <> __device__ __forceinline__ float kq_vec_dot<GGML_TYPE_Q2_K>(const void* vbq, const block_q8_1* bq8_1, const int kbx, const int iqs) {
+template <> __device__ __forceinline__ float kq_vec_dot<MMQ_TYPE_Q2_K>(const void* vbq, const block_q8_1* bq8_1, const int kbx, const int iqs) {
     return vec_dot_q2_K_q8_1(vbq, bq8_1, kbx, iqs);
 }
-template <> __device__ __forceinline__ float kq_vec_dot<GGML_TYPE_Q3_K>(const void* vbq, const block_q8_1* bq8_1, const int kbx, const int iqs) {
+template <> __device__ __forceinline__ float kq_vec_dot<MMQ_TYPE_Q3_K>(const void* vbq, const block_q8_1* bq8_1, const int kbx, const int iqs) {
     return vec_dot_q3_K_q8_1(vbq, bq8_1, kbx, iqs);
 }
-template <> __device__ __forceinline__ float kq_vec_dot<GGML_TYPE_Q6_K>(const void* vbq, const block_q8_1* bq8_1, const int kbx, const int iqs) {
+template <> __device__ __forceinline__ float kq_vec_dot<MMQ_TYPE_Q6_K>(const void* vbq, const block_q8_1* bq8_1, const int kbx, const int iqs) {
     return vec_dot_q6_K_q8_1(vbq, bq8_1, kbx, iqs);
 }
 
 // 2026-09-25: One block (32 x KQ_NWARPS threads) per output row blockIdx.x; m activation rows (<= KQ_MAX_M)
 // share every weight read. dst[j * nrows_x + row], BF16.
-template <ggml_type type>
+template <mmq_type type>
 static __device__ __forceinline__ void kq_mmvq(
         const void* __restrict__ x_row, const block_q8_1* __restrict__ y,
         __nv_bfloat16* __restrict__ dst, const int ncols_x, const int nrows_x, const int m) {
-    constexpr int qk  = ggml_cuda_type_traits<type>::qk;
-    constexpr int qi  = ggml_cuda_type_traits<type>::qi;
+    constexpr int qk  = mmq_quant_traits<type>::qk;
+    constexpr int qi  = mmq_quant_traits<type>::qi;
     constexpr int vdr = 1;
     constexpr int blocks_per_iter = vdr * KQ_NWARPS * 32 / qi;
     const int tid = 32 * threadIdx.y + threadIdx.x;
@@ -211,13 +207,13 @@ extern "C" __global__ void __launch_bounds__(128) kquant_mmvq_q2_k(
         const void* __restrict__ vx, const void* __restrict__ vy, __nv_bfloat16* __restrict__ dst,
         unsigned int ncols_x, unsigned int nrows_x, unsigned int m) {
     const char* x_row = (const char*)vx + (size_t)blockIdx.x * (ncols_x / QK_K) * sizeof(block_q2_K);
-    kq_mmvq<GGML_TYPE_Q2_K>(x_row, (const block_q8_1*)vy, dst, (int)ncols_x, (int)nrows_x, (int)m);
+    kq_mmvq<MMQ_TYPE_Q2_K>(x_row, (const block_q8_1*)vy, dst, (int)ncols_x, (int)nrows_x, (int)m);
 }
 extern "C" __global__ void __launch_bounds__(128) kquant_mmvq_q3_k(
         const void* __restrict__ vx, const void* __restrict__ vy, __nv_bfloat16* __restrict__ dst,
         unsigned int ncols_x, unsigned int nrows_x, unsigned int m) {
     const char* x_row = (const char*)vx + (size_t)blockIdx.x * (ncols_x / QK_K) * sizeof(block_q3_K);
-    kq_mmvq<GGML_TYPE_Q3_K>(x_row, (const block_q8_1*)vy, dst, (int)ncols_x, (int)nrows_x, (int)m);
+    kq_mmvq<MMQ_TYPE_Q3_K>(x_row, (const block_q8_1*)vy, dst, (int)ncols_x, (int)nrows_x, (int)m);
 }
 
 // 2026-09-25: kq_mmvq batched over experts: blockIdx.y picks expert e, whose blocks come from vxs[e]; its
@@ -234,7 +230,7 @@ extern "C" __global__ void __launch_bounds__(128) kquant_mmvq_q2_k_experts(
     const unsigned int e = blockIdx.y;
     const char* x_row = (const char*)vxs[e] + (size_t)blockIdx.x * (ncols_x / QK_K) * sizeof(block_q2_K);
     const block_q8_1* y = (const block_q8_1*)((const char*)vy + (size_t)e * y_stride_bytes);
-    kq_mmvq<GGML_TYPE_Q2_K>(x_row, y, dst + (size_t)e * m * nrows_x, (int)ncols_x, (int)nrows_x, (int)m);
+    kq_mmvq<MMQ_TYPE_Q2_K>(x_row, y, dst + (size_t)e * m * nrows_x, (int)ncols_x, (int)nrows_x, (int)m);
 }
 extern "C" __global__ void __launch_bounds__(128) kquant_mmvq_q3_k_experts(
         const void* const* __restrict__ vxs, const void* __restrict__ vy, __nv_bfloat16* __restrict__ dst,
@@ -242,7 +238,7 @@ extern "C" __global__ void __launch_bounds__(128) kquant_mmvq_q3_k_experts(
     const unsigned int e = blockIdx.y;
     const char* x_row = (const char*)vxs[e] + (size_t)blockIdx.x * (ncols_x / QK_K) * sizeof(block_q3_K);
     const block_q8_1* y = (const block_q8_1*)((const char*)vy + (size_t)e * y_stride_bytes);
-    kq_mmvq<GGML_TYPE_Q3_K>(x_row, y, dst + (size_t)e * m * nrows_x, (int)ncols_x, (int)nrows_x, (int)m);
+    kq_mmvq<MMQ_TYPE_Q3_K>(x_row, y, dst + (size_t)e * m * nrows_x, (int)ncols_x, (int)nrows_x, (int)m);
 }
 
 // 2026-09-25: Warp-per-row form: warp threadIdx.y of block blockIdx.x owns row blockIdx.x * NW + threadIdx.y;
@@ -259,13 +255,13 @@ extern "C" __global__ void __launch_bounds__(128) kquant_mmvq_q3_k_experts(
 
 
 
-template <ggml_type type, int NW = KQ_NWARPS>
+template <mmq_type type, int NW = KQ_NWARPS>
 static __device__ __forceinline__ void kq_mmvq_warp_s(
         const char* __restrict__ x_rows, const size_t row_bytes, const block_q8_1* __restrict__ y,
         const int y_row_blocks, __nv_bfloat16* __restrict__ dst, const int dst_row_stride,
         const int ncols_x, const int nrows_x, const int m) {
-    constexpr int qk  = ggml_cuda_type_traits<type>::qk;
-    constexpr int qi  = ggml_cuda_type_traits<type>::qi;
+    constexpr int qk  = mmq_quant_traits<type>::qk;
+    constexpr int qi  = mmq_quant_traits<type>::qi;
     constexpr int vdr = 1;
     constexpr int blocks_per_iter = vdr * 32 / qi;
     const int lane = threadIdx.x;
@@ -289,7 +285,7 @@ static __device__ __forceinline__ void kq_mmvq_warp_s(
         if (lane == 0 && j < m) dst[(size_t)j * dst_row_stride + row] = __float2bfloat16(v);
     }
 }
-template <ggml_type type>
+template <mmq_type type>
 static __device__ __forceinline__ void kq_mmvq_warp(
         const char* __restrict__ x_rows, const size_t row_bytes, const block_q8_1* __restrict__ y,
         __nv_bfloat16* __restrict__ dst, const int ncols_x, const int nrows_x, const int m) {
@@ -300,13 +296,13 @@ static __device__ __forceinline__ void kq_mmvq_warp(
 extern "C" __global__ void __launch_bounds__(128) kquant_mmvq_q2_k_w(
         const void* __restrict__ vx, const void* __restrict__ vy, __nv_bfloat16* __restrict__ dst,
         unsigned int ncols_x, unsigned int nrows_x, unsigned int m) {
-    kq_mmvq_warp<GGML_TYPE_Q2_K>((const char*)vx, (size_t)(ncols_x / QK_K) * sizeof(block_q2_K),
+    kq_mmvq_warp<MMQ_TYPE_Q2_K>((const char*)vx, (size_t)(ncols_x / QK_K) * sizeof(block_q2_K),
                                  (const block_q8_1*)vy, dst, (int)ncols_x, (int)nrows_x, (int)m);
 }
 extern "C" __global__ void __launch_bounds__(128) kquant_mmvq_q3_k_w(
         const void* __restrict__ vx, const void* __restrict__ vy, __nv_bfloat16* __restrict__ dst,
         unsigned int ncols_x, unsigned int nrows_x, unsigned int m) {
-    kq_mmvq_warp<GGML_TYPE_Q3_K>((const char*)vx, (size_t)(ncols_x / QK_K) * sizeof(block_q3_K),
+    kq_mmvq_warp<MMQ_TYPE_Q3_K>((const char*)vx, (size_t)(ncols_x / QK_K) * sizeof(block_q3_K),
                                  (const block_q8_1*)vy, dst, (int)ncols_x, (int)nrows_x, (int)m);
 }
 // 2026-09-25: n_groups projections in one launch: group g = blockIdx.y multiplies weight rows [g * nrows_x,
@@ -325,7 +321,7 @@ extern "C" __global__ void __launch_bounds__(128) kquant_mmvq_q2_k_groups_w(
     const size_t row_bytes = (size_t)(ncols_x / QK_K) * sizeof(block_q2_K);
     const char* x_rows = (const char*)vx + (size_t)g * nrows_x * row_bytes;
     const block_q8_1* y = (const block_q8_1*)vy + (size_t)g * (ncols_x / QK8_1);
-    kq_mmvq_warp_s<GGML_TYPE_Q2_K>(x_rows, row_bytes, y, (int)(n_groups * ncols_x / QK8_1),
+    kq_mmvq_warp_s<MMQ_TYPE_Q2_K>(x_rows, row_bytes, y, (int)(n_groups * ncols_x / QK8_1),
                                    dst + (size_t)g * nrows_x, (int)(n_groups * nrows_x),
                                    (int)ncols_x, (int)nrows_x, (int)m);
 }
@@ -346,17 +342,17 @@ extern "C" __global__ void __launch_bounds__(128) kquant_mmvq_q2_k_pair_w(
     const void* vx = second ? vx1 : vx0;
     __nv_bfloat16* dst = second ? dst1 : dst0;
     const unsigned int nrows_x = second ? nrows1 : nrows0;
-    kq_mmvq_warp<GGML_TYPE_Q2_K>((const char*)vx, (size_t)(ncols_x / QK_K) * sizeof(block_q2_K),
+    kq_mmvq_warp<MMQ_TYPE_Q2_K>((const char*)vx, (size_t)(ncols_x / QK_K) * sizeof(block_q2_K),
                                  (const block_q8_1*)vy, dst, (int)ncols_x, (int)nrows_x, (int)m);
 }
 
-// 2026-09-25: The Q6_K output head on raw 210-byte super-blocks through the vendored vec_dot_q6_K_q8_1
+// 2026-09-25: The Q6_K output head on raw 210-byte super-blocks through vec_dot_q6_K_q8_1
 // (qi = 32: one super-block per warp step). Grid (ceil(nrows_x / KQ_NWARPS)), block (32, KQ_NWARPS).
 
 extern "C" __global__ void __launch_bounds__(128) kquant_mmvq_q6_k_w(
         const void* __restrict__ vx, const void* __restrict__ vy, __nv_bfloat16* __restrict__ dst,
         unsigned int ncols_x, unsigned int nrows_x, unsigned int m) {
-    kq_mmvq_warp<GGML_TYPE_Q6_K>((const char*)vx, (size_t)(ncols_x / QK_K) * sizeof(block_q6_K),
+    kq_mmvq_warp<MMQ_TYPE_Q6_K>((const char*)vx, (size_t)(ncols_x / QK_K) * sizeof(block_q6_K),
                                  (const block_q8_1*)vy, dst, (int)ncols_x, (int)nrows_x, (int)m);
 }
 
@@ -366,7 +362,7 @@ extern "C" __global__ void __launch_bounds__(128) kquant_mmvq_q2_k_experts_w(
         unsigned int ncols_x, unsigned int nrows_x, unsigned int m, unsigned int y_stride_bytes) {
     const unsigned int e = blockIdx.y;
     const block_q8_1* y = (const block_q8_1*)((const char*)vy + (size_t)e * y_stride_bytes);
-    kq_mmvq_warp<GGML_TYPE_Q2_K>((const char*)vxs[e], (size_t)(ncols_x / QK_K) * sizeof(block_q2_K),
+    kq_mmvq_warp<MMQ_TYPE_Q2_K>((const char*)vxs[e], (size_t)(ncols_x / QK_K) * sizeof(block_q2_K),
                                  y, dst + (size_t)e * m * nrows_x, (int)ncols_x, (int)nrows_x, (int)m);
 }
 extern "C" __global__ void __launch_bounds__(128) kquant_mmvq_q3_k_experts_w(
@@ -374,7 +370,7 @@ extern "C" __global__ void __launch_bounds__(128) kquant_mmvq_q3_k_experts_w(
         unsigned int ncols_x, unsigned int nrows_x, unsigned int m, unsigned int y_stride_bytes) {
     const unsigned int e = blockIdx.y;
     const block_q8_1* y = (const block_q8_1*)((const char*)vy + (size_t)e * y_stride_bytes);
-    kq_mmvq_warp<GGML_TYPE_Q3_K>((const char*)vxs[e], (size_t)(ncols_x / QK_K) * sizeof(block_q3_K),
+    kq_mmvq_warp<MMQ_TYPE_Q3_K>((const char*)vxs[e], (size_t)(ncols_x / QK_K) * sizeof(block_q3_K),
                                  y, dst + (size_t)e * m * nrows_x, (int)ncols_x, (int)nrows_x, (int)m);
 }
 
@@ -394,7 +390,7 @@ extern "C" __global__ void __launch_bounds__(128) kquant_mmvq_q3_k_experts_w(
                                  (int)(ncols_x / QK8_1), dst + (size_t)e * m * nrows_x, (int)nrows_x,    \
                                  (int)ncols_x, (int)nrows_x, (int)m);                                     \
     }
-KQ_EXPERTS_W_ENTRY(GGML_TYPE_Q2_K, block_q2_K, q2_k_experts_w2, 2)
-KQ_EXPERTS_W_ENTRY(GGML_TYPE_Q2_K, block_q2_K, q2_k_experts_w8, 8)
-KQ_EXPERTS_W_ENTRY(GGML_TYPE_Q3_K, block_q3_K, q3_k_experts_w2, 2)
-KQ_EXPERTS_W_ENTRY(GGML_TYPE_Q3_K, block_q3_K, q3_k_experts_w8, 8)
+KQ_EXPERTS_W_ENTRY(MMQ_TYPE_Q2_K, block_q2_K, q2_k_experts_w2, 2)
+KQ_EXPERTS_W_ENTRY(MMQ_TYPE_Q2_K, block_q2_K, q2_k_experts_w8, 8)
+KQ_EXPERTS_W_ENTRY(MMQ_TYPE_Q3_K, block_q3_K, q3_k_experts_w2, 2)
+KQ_EXPERTS_W_ENTRY(MMQ_TYPE_Q3_K, block_q3_K, q3_k_experts_w8, 8)

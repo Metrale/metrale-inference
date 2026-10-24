@@ -40,7 +40,7 @@
 // {G1, G5, G3, G7}, the same permutation on both operands: w4a4_quant_rows stores the
 // activations in that fragment order, so a lane's 16-byte load is its (b0, b1) for both MMAs.
 // The scale selectors are {0, 0}, as in mma_block_scaled_fp4
-// (kernels/gb10/qwen3.6-27b/nvfp4/q4k_vendor/mma.cuh): a lane supplies A's scales for row
+// (kernels/gb10/common/mmq/mma_tile.cuh): a lane supplies A's scales for row
 // g + (t & 1) * 8 and B's for column g.
 //
 // Activations (w4a4_quant_rows, one CTA per row): per-row global scale

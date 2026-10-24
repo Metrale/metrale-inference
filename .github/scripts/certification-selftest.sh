@@ -2713,8 +2713,8 @@ mkdir -p "$TMP/ct"
 want_rc_msg 1 "which the Action always overrides" \
   "control: a key the Action overrides is refused in .comment-ttl.toml" \
   python3 "$CT" check --config "$TMP/ct/overridden.toml"
-grep -v 'q4k_vendor' .comment-ttl.toml > "$TMP/ct/leaky.toml"
-want_rc_msg 1 "e.g. kernels/gb10/qwen3.6-27b/nvfp4/q4k_vendor/" \
+grep -v 'common/mmq/' .comment-ttl.toml > "$TMP/ct/leaky.toml"
+want_rc_msg 1 "e.g. kernels/gb10/common/mmq/" \
   "control: a third-party path the licence config ignores must be exempt" \
   python3 "$CT" check --config "$TMP/ct/leaky.toml"
 printf 'crates/no-such-directory/\n' > "$TMP/ct/missing.txt"

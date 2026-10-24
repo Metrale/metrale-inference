@@ -2895,7 +2895,7 @@ source = "kernels/gb10/qwen3.6-27b/nvfp4/moe_w4a16_grouped_gemm.cu:16"
 
 [[t]]
 match = "kernels/gb10/qwen3.6-27b/nvfp4/nvfp4_mmq.cu"
-text = "The vendored MMQ (q4k_vendor/, mmq_x 128) runs the dense-FFN W4A4 prefill at ~86 TFLOPS: 14.2 s (31.1%) of the dense 27B 32k cold prefill (dgx2, 2026-09-27). A pipelined twin, bit-identical to mmq128 on 5 shapes, measured 2.5-2.8x standalone (local branch, not in the tree)."
+text = "The ggml-derived MMQ (gb10/common/mmq/, mmq_x 128) runs the dense-FFN W4A4 prefill at ~86 TFLOPS: 14.2 s (31.1%) of the dense 27B 32k cold prefill (dgx2, 2026-09-27). A pipelined twin, bit-identical to mmq128 on 5 shapes, measured 2.5-2.8x standalone (local branch, not in the tree)."
 prs = []
 source = "high-ISL campaign notes 2026-09-27 (RESULTS, COORD)"
 
