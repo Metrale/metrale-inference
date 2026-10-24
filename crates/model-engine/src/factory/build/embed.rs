@@ -6,6 +6,7 @@
 //!
 //! Owner: metrale-model-engine.
 //! Invariants: none beyond the types.
+#![cfg(feature = "cuda")]
 
 use anyhow::Result;
 use metrale_config::ModelConfig;

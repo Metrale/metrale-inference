@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: `build_model`: loads the weights with the loader for the
-//! config's `model_type`, sizes and allocates the buffer arena and the KV
-//! cache, and assembles a `TransformerModel` with its optional MTP, DFlash and
-//! LoRA parts. NLLB / M2M-100 configs get an `NllbGpuModel` instead.
+//! 2026-09-25: `build_model`: loads the weights with the config's `model_type` loader, sizes and
+//! allocates the buffer arena and KV cache, and assembles a `TransformerModel` with its optional
+//! MTP, DFlash and LoRA parts. NLLB gets an `NllbGpuModel`, an embedder an `EmbedGpuModel`.
 //!
 //! Owner: metrale-model-engine.
 //! Invariants:
@@ -25,7 +24,6 @@ use metrale_model_layers::layers::MtpQuantization;
 
 mod alloc_digest;
 mod arena;
-#[cfg(feature = "cuda")]
 mod embed;
 mod kv_blocks;
 mod kv_budget;
@@ -93,13 +91,11 @@ pub fn build_model(
             nllb_lora_dir.as_deref(),
             &settings,
         );
+    } else if embed::is_embedding(&config) {
+        return embed::build(&config, store, gpu, max_batch_tokens, &slots.request);
     }
     #[cfg(not(feature = "cuda"))]
     let _ = (nllb_lang, nllb_lora_dir);
-    #[cfg(feature = "cuda")]
-    if embed::is_embedding(&config) {
-        return embed::build(&config, store, gpu, max_batch_tokens, &slots.request);
-    }
 
     // 2026-09-25: Step 1: select the weight loader. 2026-10-17: The model levers are derived
     // once here, for the loader and the model.
