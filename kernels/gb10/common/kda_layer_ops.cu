@@ -66,20 +66,6 @@ extern "C" __global__ void kda_o_norm_gated_bf16(
 #undef KDA_ONORM_OUT_BF16
 }
 
-
-extern "C" __global__ void kda_o_norm_gated_f32(
-    const float* __restrict__ input,
-    const float* __restrict__ gate,
-    const float* __restrict__ weight,
-    float* __restrict__ output,
-    unsigned int head_dim,
-    float eps
-) {
-#define KDA_ONORM_OUT_F32(val) output[(size_t)row * head_dim + i] = (val)
-    KDA_ONORM_BODY(gate[(size_t)row * head_dim + i], weight[i], KDA_ONORM_OUT_F32)
-#undef KDA_ONORM_OUT_F32
-}
-
 // 2026-09-25: Splits the [T, 3 * qkv] BF16 q|k|v rows into three FP32 [T_pad, qkv] buffers;
 // BF16 to FP32 is exact. Tokens t >= T are not written, so the pad tail keeps what the
 // caller put there: zero in production, or a poison value from the pad-guard test through

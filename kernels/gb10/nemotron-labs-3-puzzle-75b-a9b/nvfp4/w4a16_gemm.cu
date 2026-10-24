@@ -541,9 +541,7 @@ __device__ __forceinline__ void fp8_gemm_t_impl(
     }
 }
 
-// 2026-09-25: Two grid mappings over fp8_gemm_t_impl. fp8_gemm_t takes blockIdx.x as the N tile
-// (ops::fp8_gemm_n128); fp8_gemm_t_mfast takes it as the M tile (ops::fp8_gemm_n128_mfast), so the CTAs
-// that read the same B panel are launched next to each other.
+// 2026-09-25: fp8_gemm_t over fp8_gemm_t_impl takes blockIdx.x as the N tile (ops::fp8_gemm_n128).
 
 
 
@@ -561,23 +559,6 @@ extern "C" __global__ void fp8_gemm_t(
     fp8_gemm_t_impl(A, B_fp8, C, M, N, K,
                     blockIdx.y * M_TILE, blockIdx.x * N_TILE_LG);
 }
-
-extern "C" __global__ void fp8_gemm_t_mfast(
-    const __nv_bfloat16* __restrict__ A,
-    const unsigned char* __restrict__ B_fp8,
-    __nv_bfloat16* __restrict__ C,
-    unsigned int M, unsigned int N, unsigned int K
-) {
-    fp8_gemm_t_impl(A, B_fp8, C, M, N, K,
-                    blockIdx.x * M_TILE, blockIdx.y * N_TILE_LG);
-}
-
-
-
-
-
-
-
 
 // 2026-09-25: B_packed [N, K/2] and B_scale [N, K/16] (NVFP4) -> B_fp8 [N, K] E4M3, saturating; one packed
 // byte (two values) per thread over N * K/2 threads (ops::predequant_nvfp4_to_fp8: blocks of 256).
@@ -1701,7 +1682,6 @@ extern "C" __device__ unsigned int w4a16_gemm_t_m128_n_tile = N_TILE_LG;
 // builds check the activation range before the launch.
 extern "C" __device__ unsigned int w4a16_gemm_t_a_e4m3 = 1;
 extern "C" __device__ unsigned int fp8_gemm_t_a_e4m3 = 1;
-extern "C" __device__ unsigned int fp8_gemm_t_mfast_a_e4m3 = 1;
 extern "C" __device__ unsigned int w4a16_gemm_t_k64_a_e4m3 = 1;
 extern "C" __device__ unsigned int w4a16_gemm_t_m128_a_e4m3 = 1;
 extern "C" __device__ unsigned int fp8_gemm_t_m128_mfast_a_e4m3 = 1;

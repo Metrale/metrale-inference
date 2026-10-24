@@ -20,43 +20,6 @@ extern "C" __global__ void bf16_residual_add(
     }
 }
 
-
-
-extern "C" __global__ void bf16_to_f32(
-    const __nv_bfloat16* __restrict__ src,
-    float* __restrict__ dst,
-    unsigned int n
-) {
-    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) {
-        dst[i] = __bfloat162float(src[i]);
-    }
-}
-
-
-
-
-
-
-extern "C" __global__ void silu_mul_separate(
-    const __nv_bfloat16* __restrict__ gate,
-    const __nv_bfloat16* __restrict__ up,
-    __nv_bfloat16* __restrict__ output,
-    unsigned int n
-) {
-    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) {
-        float g = __bfloat162float(gate[i]);
-        float u = __bfloat162float(up[i]);
-
-        float silu_g = g / (1.0f + expf(-g));
-        output[i] = __float2bfloat16(silu_g * u);
-    }
-}
-
-
-
-
 extern "C" __global__ void bf16_scaled_add(
     __nv_bfloat16* __restrict__ output,
     const __nv_bfloat16* __restrict__ src,
@@ -70,28 +33,6 @@ extern "C" __global__ void bf16_scaled_add(
         output[i] = __float2bfloat16(o + scale * s);
     }
 }
-
-
-
-// 2026-09-25: output += sigmoid_gate * src. No sigmoid is applied here: sigmoid_gate is the
-// gate value the caller has already computed.
-extern "C" __global__ void bf16_sigmoid_blend(
-    __nv_bfloat16* __restrict__ output,
-    const __nv_bfloat16* __restrict__ src,
-    float sigmoid_gate,
-    unsigned int n
-) {
-    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) {
-        float o = __bfloat162float(output[i]);
-        float s = __bfloat162float(src[i]);
-        output[i] = __float2bfloat16(o + sigmoid_gate * s);
-    }
-}
-
-
-
-
 
 extern "C" __global__ void sigmoid_gate_mul(
     const __nv_bfloat16* __restrict__ input,
@@ -206,26 +147,5 @@ extern "C" __global__ void softplus_gate_mul_head_broadcast(
         float g = __bfloat162float(gate[t * nq + head_idx]);
         float softplus_g = fmaxf(g, 0.0f) + log1pf(expf(-fabsf(g)));
         output[i] = __float2bfloat16(x * softplus_g);
-    }
-}
-
-extern "C" __global__ void bf16_sigmoid_blend_device(
-    __nv_bfloat16* __restrict__ output,
-    const __nv_bfloat16* __restrict__ src,
-    const __nv_bfloat16* __restrict__ gate_ptr,
-    unsigned int n
-) {
-    __shared__ float sigmoid_val;
-    if (threadIdx.x == 0) {
-        float g = __bfloat162float(*gate_ptr);
-        sigmoid_val = 1.0f / (1.0f + expf(-g));
-    }
-    __syncthreads();
-
-    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) {
-        float o = __bfloat162float(output[i]);
-        float s = __bfloat162float(src[i]);
-        output[i] = __float2bfloat16(o + sigmoid_val * s);
     }
 }

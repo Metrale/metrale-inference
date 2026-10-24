@@ -131,34 +131,6 @@ pub fn w4a16_t_via_fp8_ldmab(
     fp8_act_ldmab_gemm(gpu, input, b8, output, m, n, k, stream)
 }
 
-#[allow(clippy::too_many_arguments)]
-/// 2026-09-25: FP8-weight GEMM through the `fp8_gemm_t_mfast` kernel, with M
-/// on the fast grid axis (`blockIdx.x` = M block), so consecutive CTAs share a
-/// B panel.
-pub fn fp8_gemm_n128_mfast(
-    gpu: &dyn GpuBackend,
-    kernel: KernelHandle,
-    input: DevicePtr,
-    b_fp8: DevicePtr,
-    output: DevicePtr,
-    m: u32,
-    n: u32,
-    k: u32,
-    stream: u64,
-) -> Result<()> {
-    check_e4m3_activation_range(gpu, kernel, input, m, k, stream)?;
-    KernelLaunch::new(gpu, kernel)
-        .grid([div_ceil(m, 64), div_ceil(n, 128), 1])
-        .block([128, 1, 1])
-        .arg_ptr(input)
-        .arg_ptr(b_fp8)
-        .arg_ptr(output)
-        .arg_u32(m)
-        .arg_u32(n)
-        .arg_u32(k)
-        .launch(stream)
-}
-
 /// 2026-09-25: FP8-weight GEMM through `fp8_gemm_t_m128_mfast`: a 128-row M
 /// tile (two 64-row chunks per CTA) with M on the fast grid axis.
 pub fn fp8_gemm_m128_mfast(

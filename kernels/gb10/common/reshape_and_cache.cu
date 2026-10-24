@@ -237,7 +237,10 @@ extern "C" __global__ void reshape_and_cache_flash_fp8(
 
 #define NVFP4_GROUP_SIZE 16
 
-// 2026-09-25: The same comparisons as branchless_float_to_e2m1 in e2m1_branchless.cu.
+// 2026-09-25: FP32 -> E2M1 by comparing the magnitude bits with the IEEE-754 patterns of the
+// midpoints 0.25, 0.75, 1.25, 1.75, 2.5, 3.5 and 5.0. `>` versus `>=` sends each tie to the
+// neighbour with an even mantissa (round-to-nearest-even); magnitudes above 5.0, and NaN, give
+// 6.0. The sign becomes bit 3 of the code.
 __device__ __forceinline__ unsigned char nvfp4_float_to_e2m1(float x) {
     unsigned char sign = (unsigned char)((__float_as_uint(x) >> 28) & 8u);
     unsigned int abits = __float_as_uint(x) & 0x7FFFFFFFu;
@@ -364,12 +367,11 @@ extern "C" __global__ void reshape_and_cache_flash_nvfp4(
 
 
 
-// 2026-09-25: Max |x| reductions for FP8 KV-scale calibration. bf16_absmax is launched by
+// 2026-09-25: Max |x| reduction for FP8 KV-scale calibration. bf16_absmax is launched by
 // crates/model-layers/src/layers/fp8_calibration.rs through ops::bf16_absmax (grid-stride, at
-// most 256 blocks); no launcher in crates/ resolves bf16_absmax_per_head. Both fold a block
-// result into out_max with atomicMaxFloat, so the caller initialises out_max (0 for a fresh
-// maximum), and both assume 256 threads per block: warp_max has 8 slots, and the per-head
-// kernel strides by 256.
+// most 256 blocks). It folds a block result into out_max with atomicMaxFloat, so the caller
+// initialises out_max (0 for a fresh maximum), and assumes 256 threads per block: warp_max has
+// 8 slots.
 
 // 2026-09-25: Float max by a CAS loop. A value <= 0 never updates *addr.
 __device__ __forceinline__ void atomicMaxFloat(float* addr, float val) {
@@ -383,61 +385,6 @@ __device__ __forceinline__ void atomicMaxFloat(float* addr, float val) {
         if (old_val >= val) return;
         old = atomicCAS(addr_as_ui, assumed, __float_as_uint(val));
     } while (assumed != old);
-}
-
-
-
-
-
-
-// 2026-09-25: Per-head max |x| of [num_tokens, num_kv_heads, head_dim] into out_max[kv_head],
-// one block per KV head.
-extern "C" __global__ void bf16_absmax_per_head(
-    const __nv_bfloat16* __restrict__ data,
-    float* __restrict__ out_max,
-    const unsigned int num_tokens,
-    const unsigned int num_kv_heads,
-    const unsigned int head_dim
-) {
-    const unsigned int kv_head = blockIdx.x;
-    if (kv_head >= num_kv_heads) return;
-
-    const unsigned int tid = threadIdx.x;
-    const unsigned int n_per_token = head_dim;
-    const unsigned int head_stride = num_kv_heads * head_dim;
-
-    float local_max = 0.0f;
-
-    for (unsigned int t = 0; t < num_tokens; t++) {
-        const __nv_bfloat16* row = data + (unsigned long long)t * head_stride + kv_head * head_dim;
-        for (unsigned int d = tid; d < n_per_token; d += 256) {
-            float v = fabsf(__bfloat162float(row[d]));
-            local_max = fmaxf(local_max, v);
-        }
-    }
-
-
-    for (int offset = 16; offset > 0; offset >>= 1) {
-        local_max = fmaxf(local_max, __shfl_down_sync(0xffffffff, local_max, offset));
-    }
-
-    __shared__ float warp_max[8];
-    unsigned int warp_id = tid / 32;
-    unsigned int lane_id = tid % 32;
-    if (lane_id == 0) {
-        warp_max[warp_id] = local_max;
-    }
-    __syncthreads();
-
-    if (warp_id == 0 && lane_id < 8) {
-        float val = warp_max[lane_id];
-        for (int offset = 4; offset > 0; offset >>= 1) {
-            val = fmaxf(val, __shfl_down_sync(0xff, val, offset));
-        }
-        if (lane_id == 0) {
-            atomicMaxFloat(&out_max[kv_head], val);
-        }
-    }
 }
 
 extern "C" __global__ void bf16_absmax(

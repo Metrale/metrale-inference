@@ -40,28 +40,6 @@ void vision_gemm_bias(
     C[row * N + col] = f32_to_bf16(acc);
 }
 
-// 2026-09-25: C[M,N] = A[M,K] @ B[K,N] + bias[N] (B not transposed). Grid (ceil(N/32), ceil(M/32)),
-// block (32, 32). No Rust code looks this kernel up.
-extern "C" __global__
-void vision_gemm_bias_nn(
-    const __nv_bfloat16* __restrict__ A,   // 2026-09-25: [M, K]
-    const __nv_bfloat16* __restrict__ B,   // 2026-09-25: [K, N]
-    const __nv_bfloat16* __restrict__ bias,// 2026-09-25: [N]
-    __nv_bfloat16* __restrict__ C,         // 2026-09-25: [M, N]
-    unsigned int M, unsigned int N, unsigned int K
-) {
-    unsigned int row = blockIdx.y * 32 + threadIdx.y;
-    unsigned int col = blockIdx.x * 32 + threadIdx.x;
-    if (row >= M || col >= N) return;
-
-    float acc = 0.0f;
-    for (unsigned int k = 0; k < K; ++k) {
-        acc += bf16_to_f32(A[row * K + k]) * bf16_to_f32(B[k * N + col]);
-    }
-    acc += bf16_to_f32(bias[col]);
-    C[row * N + col] = f32_to_bf16(acc);
-}
-
 // 2026-09-25: Row-broadcast bias add in place: C[m,n] += bias[n]. dense_gemm_bf16_pipelined
 // has no bias epilogue, so vit_block.rs runs it and then this kernel.
 

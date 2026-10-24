@@ -22,20 +22,3 @@ extern "C" __global__ void logit_softcap_bf16(
     float y = cap * tanhf(x * inv_cap);
     logits[idx] = __float2bfloat16(y);
 }
-
-// 2026-09-25: FP32 in/out twin of logit_softcap_bf16. The engine never loads it: logit_softcap_fp32_kernel is
-// always KernelHandle(0) (crates/model-engine/src/model/impl_a1.rs).
-
-
-
-extern "C" __global__ void logit_softcap_fp32(
-    float* __restrict__ logits,
-    unsigned int N,
-    float inv_cap,
-    float cap
-) {
-    unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= N) return;
-    float x = logits[idx];
-    logits[idx] = cap * tanhf(x * inv_cap);
-}

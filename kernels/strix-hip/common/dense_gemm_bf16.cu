@@ -2,7 +2,7 @@
 // forked-from: kernels/gb10/common/dense_gemm_bf16.cu (2026-09-24; 452 of 629 lines differ, see kernels/FORKS.md)
 
 // 2026-09-25: Dense GEMMs C = A * B^T for gfx1151, with B read transposed
-// (B^T[k,n] = B[n*K + k]), plus fused_silu_mul.
+// (B^T[k,n] = B[n*K + k]).
 //   A: [M, K] row-major, B: [N, K] row-major, C: [M, N] row-major.
 // dense_gemm_bf16, dense_gemm_bf16_f32out and dense_gemm_f32in_f32out use
 // 16 x 16 shared-memory tiles, one thread per output and FP32 accumulation;
@@ -313,49 +313,4 @@ void dense_gemm_bf16_pipelined(
             unsigned int c = cta_n + nb * 16 + (lane_id & 15);
             if (r < M && c < N) C[(unsigned long long)r * N + c] = __float2bfloat16(acc[nb][e]);
         }
-}
-
-// 2026-09-25: out[t, i] = silu(gate_up[t, i]) * gate_up[t, inter_size + i],
-// two elements per thread through 32-bit loads and stores; assumes
-// inter_size is even.
-
-extern "C" __global__ void fused_silu_mul(
-    const __nv_bfloat16* __restrict__ gate_up,
-    __nv_bfloat16* __restrict__ output,
-    unsigned int num_tokens,
-    unsigned int inter_size
-) {
-
-    unsigned int idx2 = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned int half_total = (num_tokens * inter_size) / 2;
-    if (idx2 >= half_total) return;
-
-
-    unsigned int half_inter = inter_size / 2;
-    unsigned int token = idx2 / half_inter;
-    unsigned int col_pair = idx2 % half_inter;
-
-
-    const unsigned int* gate32 = (const unsigned int*)(gate_up + token * (inter_size * 2));
-    const unsigned int* up32 = (const unsigned int*)(gate_up + token * (inter_size * 2) + inter_size);
-    unsigned int* out32 = (unsigned int*)(output + token * inter_size);
-
-    unsigned int g_packed = gate32[col_pair];
-    unsigned int u_packed = up32[col_pair];
-
-    float g0 = __bfloat162float(__ushort_as_bfloat16((unsigned short)(g_packed & 0xFFFF)));
-    float g1 = __bfloat162float(__ushort_as_bfloat16((unsigned short)(g_packed >> 16)));
-    float u0 = __bfloat162float(__ushort_as_bfloat16((unsigned short)(u_packed & 0xFFFF)));
-    float u1 = __bfloat162float(__ushort_as_bfloat16((unsigned short)(u_packed >> 16)));
-
-
-    float sg0 = 1.0f / (1.0f + __expf(-g0));
-    float sg1 = 1.0f / (1.0f + __expf(-g1));
-    float r0 = g0 * sg0 * u0;
-    float r1 = g1 * sg1 * u1;
-
-
-    unsigned int lo = (unsigned int)__bfloat16_as_ushort(__float2bfloat16(r0));
-    unsigned int hi = (unsigned int)__bfloat16_as_ushort(__float2bfloat16(r1));
-    out32[col_pair] = lo | (hi << 16);
 }

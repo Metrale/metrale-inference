@@ -330,13 +330,13 @@ files = ["kernels/gb10/common/moe_silu_mul.cu"]
 [[family]]
 id = "relu_squared"
 description = "relu(x)^2, flat elementwise (Nemotron-H experts' activation)"
-explain.about = '''The squared-ReLU activation used by Nemotron-H experts, applied elementwise with one thread per element over a flat array; relu_squared writes a separate output and relu_squared_inplace overwrites its input.'''
+explain.about = '''The squared-ReLU activation used by Nemotron-H experts, applied elementwise with one thread per element over a flat array; relu_squared_inplace overwrites its input.'''
 explain.numerics = '''BF16 input widened exactly to FP32, clamped at zero, squared in FP32 and rounded once to BF16 (RNE).'''
 explain.math = [
   '''y_i = \mathrm{rn}_{\mathrm{bf16}}\bigl(\max(x_i, 0)^2\bigr)''',
 ]
 compute = "memory"
-kernels = ["relu2::relu_squared", "relu2::relu_squared_inplace"]
+kernels = ["relu2::relu_squared_inplace"]
 rows = [1, 65536]
 pipeline.relu2 = { in = ["bf16"], compute = "f32", out = ["bf16"] }
 op = [{ op = "relu2" }]
@@ -3153,8 +3153,8 @@ files = ["kernels/gb10/glm-5.3-flash/nvfp4/glm5next_mla_latent_write.cu"]
 [[family]]
 id = "glm_swiglu_clamp"
 description = "Clamped SwiGLU (swiglu_limit): clamp, SiLU and multiply in one pass"
-explain.about = '''GLM-5's clamped SwiGLU activation for the dense, shared-expert and routed FFNs, one thread per element over separate gate and up rows. The clamp is asymmetric: the gate is bounded above only, by the swiglu_limit $L$ (10.0 for this checkpoint, a runtime argument that must be positive), while up is clamped to $[-L, L]$ on both sides; then SiLU of the clamped gate times the clamped up. Three entries: BF16 output, FP32 output, and a BF16-output variant that also zero-fills the routed down projection's accumulation buffer in the same launch.'''
-explain.numerics = '''BF16 gate and up widened to FP32; fminf/fmaxf clamps, SiLU computed as $\hat g/(1+e^{-\hat g})$ with expf and a true division, product in FP32 without FMA contraction; one RNE rounding to BF16 at the store (none for the FP32-output entry). The same element expression is shared with the fused routed gate/up epilogue, so both round identically.'''
+explain.about = '''GLM-5's clamped SwiGLU activation for the dense, shared-expert and routed FFNs, one thread per element over separate gate and up rows. The clamp is asymmetric: the gate is bounded above only, by the swiglu_limit $L$ (10.0 for this checkpoint, a runtime argument that must be positive), while up is clamped to $[-L, L]$ on both sides; then SiLU of the clamped gate times the clamped up. Two entries: BF16 output, and a BF16-output variant that also zero-fills the routed down projection's accumulation buffer in the same launch.'''
+explain.numerics = '''BF16 gate and up widened to FP32; fminf/fmaxf clamps, SiLU computed as $\hat g/(1+e^{-\hat g})$ with expf and a true division, product in FP32 without FMA contraction; one RNE rounding to BF16 at the store. The same element expression is shared with the fused routed gate/up epilogue, so both round identically.'''
 explain.math = [
   '''\begin{aligned} \hat g_i &= \min(g_i, L), \qquad \hat u_i = \min\big(\max(u_i, -L), L\big) \\ y_i &= \mathrm{rn}_{\mathrm{bf16}}\Big(\frac{\hat g_i}{1 + e^{-\hat g_i}}\cdot \hat u_i\Big) = \mathrm{rn}_{\mathrm{bf16}}\big(\operatorname{silu}(\hat g_i)\, \hat u_i\big) \end{aligned}''',
   '''\text{where } g, u \text{ are the gate and up projections and } L \text{ the swiglu\_limit}''',
@@ -3162,13 +3162,11 @@ explain.math = [
 compute = "memory"
 # 2026-10-21: `_zero` also zeroes the routed down projection's output (a memset folded in).
 kernels = [
-  "glm5next_ffn::glm5next_swiglu_clamp", "glm5next_ffn::glm5next_swiglu_clamp_f32out",
-  "glm5next_ffn::glm5next_swiglu_clamp_zero",
+  "glm5next_ffn::glm5next_swiglu_clamp", "glm5next_ffn::glm5next_swiglu_clamp_zero",
 ]
 rows = [1, 65536]
 pipeline.swiglu_clamp = { in = ["bf16"], compute = "f32", out = ["f32"] }
 pipeline.silu_mul = { in = ["f32"], compute = "f32", out = ["bf16"] }
-kernel_pipeline."glm5next_ffn::glm5next_swiglu_clamp_f32out".silu_mul = { in = ["f32"], compute = "f32", out = ["f32"] }
 op = [{ op = "swiglu_clamp" }, { op = "silu_mul", after = ["swiglu_clamp"] }]
 [[family.point]]
 values = {}

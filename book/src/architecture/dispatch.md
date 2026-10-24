@@ -39,7 +39,7 @@ After startup, the fast path is deterministic: a layer's `forward(ctx)` always c
    - `nvidia` → `NvidiaTarget { nvcc }`
    - `apple` → `AppleTarget { xcrun }`
    - `amd` → `ScaleTarget` (SCALE), `hip` → `HipTarget { hipcc }`
-5. Compile every staged source, applying `KERNEL.toml` flags and module-name overrides (some kernels are compiled from `e2m1_branchless.cu` but exposed at runtime as the `e2m1` module).
+5. Compile every staged source, applying `KERNEL.toml` flags and module-name overrides (some kernels are compiled from `rms_norm.cu` but exposed at runtime as the `norm` module).
 6. Emit an auto-generated Rust file, `$OUT_DIR/target_ptx.rs`, that `include!()`'s back into `crates/kernels/src/lib.rs`. The generated file contains one `pub static PTX_<TARGET>: &[PtxModule]` per target plus an `all_ptx_sets()` function that returns the whole set.
 
 The output is one single PTX set per target, embedded in the final `met` binary as a byte slice. This is why "one Docker image, one binary, zero runtime compilation" is true.

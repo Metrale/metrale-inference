@@ -242,24 +242,3 @@ pub fn scaled_add(
         .launch(stream)
 }
 
-/// 2026-09-25: In-place BF16 `output[i] += sigmoid_gate * src[i]`, where `sigmoid_gate`
-/// is a host value the caller has already passed through the sigmoid. The arguments are
-/// those of kernel `bf16_sigmoid_blend`; nothing in the tree calls this function.
-pub fn sigmoid_blend(
-    gpu: &dyn GpuBackend,
-    kernel: KernelHandle,
-    output: DevicePtr,
-    src: DevicePtr,
-    sigmoid_gate: f32,
-    num_elements: u32,
-    stream: u64,
-) -> Result<()> {
-    KernelLaunch::new(gpu, kernel)
-        .grid([div_ceil(num_elements, 256), 1, 1])
-        .block([256, 1, 1])
-        .arg_ptr(output)
-        .arg_ptr(src)
-        .arg_f32(sigmoid_gate)
-        .arg_u32(num_elements)
-        .launch(stream)
-}

@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 // 2026-09-25: Decode MoE kernels over the top-k routed experts: moe_expert_gemv, an NVFP4
-// (W4A16) GEMV per expert slot, and the weighted sums moe_weighted_sum and
-// moe_weighted_sum_blend.
+// (W4A16) GEMV per expert slot, and the weighted sum moe_weighted_sum_blend.
 //
 // Owner: gb10 kernels.
 // Invariants:
@@ -156,30 +155,7 @@ extern "C" __global__ void moe_expert_gemv(
     }
 }
 
-// 2026-09-25: output[j] = sum_e expert_weights[e] * expert_out[e][j], one thread per j.
-
-
-
-
-extern "C" __global__ void moe_weighted_sum(
-    __nv_bfloat16* __restrict__ output,
-    const __nv_bfloat16* __restrict__ expert_out,
-    const float* __restrict__ expert_weights,
-    unsigned int hidden,
-    unsigned int top_k
-) {
-    unsigned int j = blockIdx.x * blockDim.x + threadIdx.x;
-    if (j >= hidden) return;
-
-    float acc = 0.0f;
-    for (unsigned int e = 0; e < top_k; e++) {
-        float val = __bfloat162float(expert_out[(unsigned long long)e * hidden + j]);
-        acc += expert_weights[e] * val;
-    }
-    output[j] = __float2bfloat16(acc);
-}
-
-// 2026-09-25: moe_weighted_sum plus a gated shared expert:
+// 2026-09-25: The top-k weighted sum plus a gated shared expert:
 //   output[j] = sum_e weights[e] * expert_out[e][j] + sigmoid(dot(input, gate_weight)) * shared_out[j]
 // with the sigmoid taken as 1 when gate_weight is NULL. Every block computes the dot itself.
 // The block must be 256 threads (eight warp sums into s_warp_sums[8]) and K a multiple of 8.

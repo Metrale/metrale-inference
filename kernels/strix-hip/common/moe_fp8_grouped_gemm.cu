@@ -388,20 +388,3 @@ extern "C" __global__ void __launch_bounds__(PM4_THREADS, 2) moe_fp8_grouped_gem
         }
     }
 }
-
-// 2026-09-25: A no-op with the same arguments minus the work-list; no crate
-// looks it up.
-extern "C" __global__ void moe_fp8_grouped_gemm_v2(
-    const __nv_bfloat16* __restrict__ A,
-    const unsigned long long* __restrict__ B_weight_ptrs,
-    const unsigned long long* __restrict__ B_scale_ptrs,
-    __nv_bfloat16* __restrict__ C,
-    const int* __restrict__ expert_offsets,
-    const int* __restrict__ sorted_token_ids,
-    unsigned int num_experts,
-    unsigned int N,
-    unsigned int K
-) {
-    (void)A; (void)B_weight_ptrs; (void)B_scale_ptrs; (void)C;
-    (void)expert_offsets; (void)sorted_token_ids; (void)num_experts; (void)N; (void)K;
-}

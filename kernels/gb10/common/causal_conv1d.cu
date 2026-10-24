@@ -20,62 +20,6 @@
 
 #include <cuda_bf16.h>
 
-// 2026-09-25: causal_conv1d_fwd: input and output are [batch, dim, seq_len]; inputs before position 0 count as zero.
-// One block per (channel, batch), grid (dim, batch); its threads stride over the positions. At most 8 taps are used.
-
-
-
-
-
-extern "C" __global__ void causal_conv1d_fwd(
-    const __nv_bfloat16* __restrict__ input,
-    const __nv_bfloat16* __restrict__ weight,
-    const float* __restrict__ bias,
-    __nv_bfloat16* __restrict__ output,
-    unsigned int batch,
-    unsigned int dim,
-    unsigned int seq_len,
-    unsigned int d_conv
-) {
-    const unsigned int ch = blockIdx.x;
-    const unsigned int b = blockIdx.y;
-    if (ch >= dim || b >= batch) return;
-
-
-    const __nv_bfloat16* in_ptr = input + (b * dim + ch) * seq_len;
-    __nv_bfloat16* out_ptr = output + (b * dim + ch) * seq_len;
-    const __nv_bfloat16* w = weight + ch * d_conv;
-    const float b_val = (bias != nullptr) ? bias[ch] : 0.0f;
-
-
-    float w_reg[8];
-    for (unsigned int i = 0; i < d_conv && i < 8; i++) {
-        w_reg[i] = (float)w[i];
-    }
-
-
-    for (unsigned int t = threadIdx.x; t < seq_len; t += blockDim.x) {
-        float acc = b_val;
-
-
-
-
-
-        for (unsigned int k = 0; k < d_conv && k < 8; k++) {
-            int idx = (int)t - (int)(d_conv - 1) + (int)k;
-            if (idx >= 0) {
-                acc += (float)in_ptr[idx] * w_reg[k];
-            }
-        }
-
-
-        float sigmoid_acc = 1.0f / (1.0f + __expf(-acc));
-        float silu = acc * sigmoid_acc;
-
-        out_ptr[t] = __float2bfloat16(silu);
-    }
-}
-
 // 2026-09-25: causal_conv1d_update: one decode token per sequence. conv_state is [batch, dim, d_conv]; new_input and
 // output are [batch, dim]. Each channel's window shifts left by one and takes the new value last. One thread per
 // channel; the host launches grid (ceil(dim/256), batch) with 256 threads.
@@ -130,44 +74,6 @@ extern "C" __global__ void causal_conv1d_update(
     float silu = acc * sigmoid_acc;
 
     output[b * dim + ch] = __float2bfloat16(silu);
-}
-
-// 2026-09-25: causal_conv1d_update with an FP32 output.
-
-
-
-
-extern "C" __global__ void causal_conv1d_update_f32(
-    float* __restrict__ conv_state,
-    const __nv_bfloat16* __restrict__ new_input,
-    const __nv_bfloat16* __restrict__ weight,
-    const float* __restrict__ bias,
-    float* __restrict__ output,
-    unsigned int batch,
-    unsigned int dim,
-    unsigned int d_conv
-) {
-    const unsigned int ch = blockIdx.x * blockDim.x + threadIdx.x;
-    const unsigned int b = blockIdx.y;
-    if (ch >= dim || b >= batch) return;
-
-    float* state = conv_state + (b * dim + ch) * d_conv;
-
-    for (unsigned int i = 0; i < d_conv - 1; i++) {
-        state[i] = state[i + 1];
-    }
-    state[d_conv - 1] = (float)new_input[b * dim + ch];
-
-    const __nv_bfloat16* w = weight + ch * d_conv;
-    float acc = (bias != nullptr) ? bias[ch] : 0.0f;
-    for (unsigned int k = 0; k < d_conv; k++) {
-        acc += state[k] * (float)w[k];
-    }
-
-    float sigmoid_acc = 1.0f / (1.0f + __expf(-acc));
-    float silu = acc * sigmoid_acc;
-
-    output[b * dim + ch] = silu;
 }
 
 // 2026-09-25: causal_conv1d_update_prefill: `seq_len` tokens of one sequence, one thread per channel walking the tokens

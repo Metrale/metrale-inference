@@ -60,38 +60,6 @@ extern "C" __global__ void glm5next_swiglu_clamp_zero(
     out[i] = __float2bfloat16(glm5next_swiglu_clamp_f32((float)gate[i], (float)up[i], limit));
 }
 
-// 2026-09-25: glm5next_swiglu_clamp with an FP32 output. No host code launches it.
-extern "C" __global__ void glm5next_swiglu_clamp_f32out(
-    const __nv_bfloat16* __restrict__ gate,
-    const __nv_bfloat16* __restrict__ up,
-    float* __restrict__ out,
-    const unsigned int n,
-    const float limit
-) {
-    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= n) return;
-    out[i] = glm5next_swiglu_clamp_f32((float)gate[i], (float)up[i], limit);
-}
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 // 2026-09-25: glm5next_router_topk, one block per token t:
 //   s[e]       = sigmoid(logits[t, e])
 //   choice[e]  = s[e] + bias[e]                  (selection only)

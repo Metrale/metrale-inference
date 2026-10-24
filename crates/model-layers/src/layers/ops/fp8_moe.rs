@@ -2,7 +2,7 @@
 
 //! 2026-09-25: Launchers for the FP8 MoE batch-2/3 decode kernels, the NVFP4
 //! transposed-weight single-token MoE kernels, the uint8 transposes, and
-//! `causal_conv1d_fwd` and `bf16_concat`.
+//! `bf16_concat`.
 //!
 //! Owner: model-layers ops.
 //! Invariants: none beyond the types.
@@ -17,38 +17,6 @@ use crate::layers::moe;
 use crate::weight_map::{DenseWeight, Fp8DenseWeight, Fp8Weight, QuantizedWeight};
 
 use super::*;
-
-/// 2026-09-25: Causal depthwise conv1d followed by SiLU over a full sequence
-/// (kernel `causal_conv1d_fwd`), launched without a bias. Input
-/// `[batch, dim, seq_len]` BF16 (channel-first), weight `[dim, d_conv]` BF16,
-/// output `[batch, dim, seq_len]` BF16.
-#[allow(clippy::too_many_arguments)]
-pub fn conv1d_fwd(
-    gpu: &dyn GpuBackend,
-    kernel: KernelHandle,
-    input: DevicePtr,
-    weight: &DenseWeight,
-    output: DevicePtr,
-    batch: u32,
-    dim: u32,
-    seq_len: u32,
-    d_conv: u32,
-    stream: u64,
-) -> Result<()> {
-    let block_x = std::cmp::min(seq_len, 1024);
-    KernelLaunch::new(gpu, kernel)
-        .grid([dim, batch, 1])
-        .block([block_x, 1, 1])
-        .arg_ptr(input)
-        .arg_ptr(weight.weight)
-        .arg_ptr(DevicePtr::NULL)
-        .arg_ptr(output)
-        .arg_u32(batch)
-        .arg_u32(dim)
-        .arg_u32(seq_len)
-        .arg_u32(d_conv)
-        .launch(stream)
-}
 
 /// 2026-09-25: BF16 concatenation (kernel `bf16_concat`):
 /// `out[0..N] = a[0..N]`, `out[N..2N] = b[0..N]`.
