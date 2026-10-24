@@ -5258,6 +5258,9 @@ comm = [{ api = "exchange", kernel = "ncclDevKernel_SendRecv", at = 0 }]
 kernels = [{ module = "glm5next_hc_post_sum", func = "glm5next_hc_post_rank_sum" }]
 repeat = "once"
 emitter = "glm_hc"
+# 2026-10-23: The one-shot exchange alone (exchange_partials): taken only within the payload bound,
+# and checked at boot against the communicator (crates/model-layers/src/circuit_exec/collectives.rs).
+path = "one_shot"
 rows = [1, 128]
 modes = ["decode", "multi_seq", "verify"]
 when = { glm_ar_fused_post = "on" }
@@ -5272,7 +5275,8 @@ comm = [{ api = "exchange", kernel = "ncclDevKernel_SendRecv", at = 0 }]
 kernels = [{ module = "bf16_add", func = "bf16_add_rank_sum" }]
 repeat = "once"
 emitter = "tp_all_reduce"
-rows = [1, 128]
+path = "one_shot"
+rows = [1, 1048576]
 modes = ["decode", "multi_seq", "verify", "draft"]
 numerics = "reference"
 priority = 10
@@ -5288,11 +5292,20 @@ comm = [{ api = "exchange", kernel = "ncclDevKernel_SendRecv", at = 0 }]
 kernels = [{ module = "bf16_add", func = "bf16_add_rank_sum" }]
 repeat = "once"
 emitter = "tp_all_reduce"
-rows = [1, 3]
+path = "one_shot"
+rows = [1, 1048576]
 modes = ["decode", "multi_seq", "verify", "draft"]
 numerics = "reference"
 priority = 10
 cite = "crates/model-arch/src/glm5next_mtp_head.rs:229-243 (METRALE_GLM_MTP_EH_TP: each rank's eh_proj rows into a zeroed row, then the sum); crates/model-engine/src/model/impl_a3_lm_head.rs:172,225,432 (the vocab shard's logits all-reduced into the full row, then the argmax); crates/comm/src/nccl_backend/sendrecv.rs:61 (oneshot_applies: bytes <= all_reduce_oneshot_max_kb), :178-221 (all_reduce_oneshot)"
+
+# 2026-10-23: Each rule lowering a plain collective states the communicator path it takes
+# (`path`, crates/circuit/src/collective.rs), which the fuser copies onto the plan group and the boot
+# checks against the communicator (crates/model-layers/src/circuit_exec/collectives.rs). A
+# `one_shot` rule is taken only where the payload (rows x width x 2 bytes) fits the policy's
+# `all_reduce_oneshot_max_kb`, the communicator's own test (crates/comm/src/ar_path.rs
+# `oneshot_applies`); the rows bound is the modes' whole range, the payload decides. A payload past
+# the bound takes the `nccl` rules below.
 
 # 2026-10-23: At two ranks the engine's all-reduce takes the 2-rank exchange whenever its add
 # kernel is set (crates/comm/src/ar_path.rs: `ArPath::TwoRank` before the one-shot): one NCCL
@@ -5308,7 +5321,8 @@ comm = [{ api = "exchange", kernel = "ncclDevKernel_SendRecv", at = 0 }]
 kernels = [{ module = "bf16_add", func = "bf16_add_inplace" }]
 repeat = "once"
 emitter = "tp_all_reduce"
-rows = [1, 128]
+path = "two_rank"
+rows = [1, 1048576]
 modes = ["decode", "multi_seq", "verify", "draft"]
 numerics = "reference"
 priority = 9
@@ -5323,11 +5337,47 @@ comm = [{ api = "exchange", kernel = "ncclDevKernel_SendRecv", at = 0 }]
 kernels = [{ module = "bf16_add", func = "bf16_add_inplace" }]
 repeat = "once"
 emitter = "tp_all_reduce"
-rows = [1, 3]
+path = "two_rank"
+rows = [1, 1048576]
 modes = ["decode", "multi_seq", "verify", "draft"]
 numerics = "reference"
 priority = 9
 cite = "crates/model-arch/src/glm5next_mtp_head.rs:229-243 (METRALE_GLM_MTP_EH_TP: each rank's eh_proj rows into a zeroed row, then the all-reduce); crates/model-engine/src/model/impl_a3_lm_head.rs:172,225,432 (the vocab shard's logits all-reduced into the full row); crates/comm/src/ar_path.rs:32-45 (TwoRank at two ranks), crates/comm/src/nccl_backend/sendrecv.rs:285-365 (all_reduce_2rank)"
+
+# 2026-10-23: An all-reduce whose payload the one-shot does not take (past
+# `all_reduce_oneshot_max_kb`, or the one-shot disabled at 0) at three or more ranks: the library's
+# all-reduce in place, no kernel of ours (crates/comm/src/ar_path.rs `ar_path`: neither the 2-rank
+# nor the one-shot path -> `Nccl`). Priority 1, below every other collective rule: it takes what
+# they leave.
+[[rule]]
+id = "tp_all_reduce_nccl"
+pattern = [{ op = "all_reduce", ranks = { min = 3 } }]
+comm = [{ api = "all_reduce_ring", kernel = "ncclDevKernel_AllReduce_Sum_bf16_RING_LL", at = 0 }]
+kernels = []
+repeat = "once"
+emitter = "tp_all_reduce"
+path = "nccl"
+rows = [1, 1048576]
+modes = ["decode", "multi_seq", "verify", "draft"]
+numerics = "reference"
+priority = 1
+cite = "crates/comm/src/ar_path.rs (ar_path: no 2-rank add kernel at this world, the payload past the one-shot bound -> Nccl); crates/comm/src/nccl_backend/comm_impl.rs (all_reduce_via: ncclAllReduce in place on the payload)"
+
+# 2026-10-23: The all-gather run as an all-reduce of zero-padded slices, past the one-shot bound:
+# the same library all-reduce.
+[[rule]]
+id = "tp_all_gather_as_sum_nccl"
+pattern = [{ op = "all_gather", ranks = { min = 3 } }]
+comm = [{ api = "all_reduce_ring", kernel = "ncclDevKernel_AllReduce_Sum_bf16_RING_LL", at = 0 }]
+kernels = []
+repeat = "once"
+emitter = "tp_all_reduce"
+path = "nccl"
+rows = [1, 1048576]
+modes = ["decode", "multi_seq", "verify", "draft"]
+numerics = "reference"
+priority = 1
+cite = "crates/model-engine/src/model/impl_a3_lm_head.rs:172,225,432 (the vocab shard's logits all-reduced into the full row); crates/comm/src/ar_path.rs (ar_path: past the one-shot bound -> Nccl)"
 
 # 2026-10-23 (P0-prereq): The vocab-sharded LM head's gather. Decode sums the zero-padded
 # logits rows (309,760 bytes a row: one-shot up to three rows, `tp_all_gather_as_sum`) before the

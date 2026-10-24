@@ -51,6 +51,7 @@ struct RuleFile {
     cite: String,
     #[serde(default)]
     run: Vec<RunFile>,
+    path: Option<String>,
 }
 
 /// 2026-09-30: `[[rule.run]]`: a per-run selector (`crate::runs::RunSelect`).
@@ -247,6 +248,7 @@ fn rule(mut r: RuleFile) -> Result<Rule, RuleError> {
     for p in &r.pattern {
         pattern.push(pattern_op(&r.id, p)?);
     }
+    let path = collective_path(&r, &pattern, &comm).map_err(|d| shape(&d))?;
     Ok(Rule {
         pattern,
         kernels,
@@ -263,8 +265,56 @@ fn rule(mut r: RuleFile) -> Result<Rule, RuleError> {
         priority: r.priority,
         cite: r.cite,
         runs,
+        path,
         id: r.id,
     })
+}
+
+/// 2026-10-23: The rule's `path`: only on a rule whose pattern is one all-reduce or all-gather
+/// element (a plain collective: the path the communicator runs it on), or headed by one with
+/// `one_shot` (a fused exchange: the one-shot exchange alone, a later kernel of the group
+/// summing), and with the launches the path issues: the exchange for `two_rank` and `one_shot`
+/// (and a kernel to sum), the library's ring all-reduce and no kernel for `nccl`.
+fn collective_path(
+    r: &RuleFile,
+    pattern: &[PatternOp],
+    comm: &[super::CommLaunch],
+) -> Result<Option<crate::collective::CollectivePath>, String> {
+    use crate::collective::CollectivePath;
+    let Some(name) = r.path.as_deref() else {
+        return Ok(None);
+    };
+    let path = CollectivePath::parse(name)
+        .ok_or_else(|| format!("unknown path `{name}` (two_rank | one_shot | nccl)"))?;
+    let collective = |p: &PatternOp| matches!(p.op, OpKind::AllReduce | OpKind::AllGather);
+    match pattern {
+        [p] if collective(p) => {}
+        [p, _, ..] if collective(p) && path == CollectivePath::OneShot => {}
+        [p, _, ..] if collective(p) => {
+            return Err(format!("a fused exchange's `path` is `one_shot`, not `{name}`"));
+        }
+        _ => {
+            return Err(
+                "`path` on a rule whose pattern is not headed by an all_reduce or all_gather"
+                    .into(),
+            );
+        }
+    }
+    let apis: Vec<super::CommApi> = comm.iter().map(|c| c.api).collect();
+    let (want, kernels) = match path {
+        CollectivePath::TwoRank | CollectivePath::OneShot => (super::CommApi::Exchange, true),
+        CollectivePath::Nccl => (super::CommApi::AllReduceRing, false),
+    };
+    if apis != [want] || r.kernels.is_empty() == kernels {
+        return Err(format!(
+            "path `{name}` issues one `{}` launch and {} kernel; the rule has {apis:?} and {} \
+             kernels",
+            want.name(),
+            if kernels { "a summing" } else { "no" },
+            r.kernels.len()
+        ));
+    }
+    Ok(Some(path))
 }
 
 /// 2026-09-30: The rule's `[[rule.run]]` selectors; every launch must name one of its kernels.

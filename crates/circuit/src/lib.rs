@@ -30,6 +30,7 @@ use crate::prelude::*;
 
 pub mod checkpoint;
 pub mod circuit_toml;
+pub mod collective;
 pub mod config_map;
 pub mod critical;
 pub mod critical_report;
@@ -73,6 +74,7 @@ pub use checkpoint::{
     instantiate_from_checkpoint, map_checkpoint, recurrent_states, resolve_checkpoint,
 };
 pub use circuit_toml::{CircuitError, includes_of};
+pub use collective::CollectivePath;
 pub use format::{Format, Scale};
 pub use fuser::{
     AvailableKernels, EdgeState, FuseError, FusionPlan, Group, Policy, fuse, fuse_table,

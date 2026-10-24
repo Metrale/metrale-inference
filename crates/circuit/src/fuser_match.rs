@@ -45,6 +45,10 @@ pub fn match_instances(
         circuit,
         in_scope: &in_scope,
         block_of: &block_of,
+        oneshot: crate::collective::oneshot_max_bytes(policy)
+            .ok()
+            .flatten()
+            .map(|max| (rows, max)),
     };
     let free = vec![None; circuit.nodes.len()];
     let mut out = Vec::new();
@@ -144,6 +148,10 @@ pub(super) struct Matcher<'a> {
     pub circuit: &'a Circuit,
     pub in_scope: &'a [bool],
     pub block_of: &'a [usize],
+    /// 2026-10-23: `(plan rows, one-shot bound in bytes)`: a `one_shot` rule forms a group only
+    /// where its payload fits ([`crate::collective`]). `None` checks no payload: the probe that
+    /// asks whether a rule matches at all, before the fuser refuses an unstated bound.
+    pub oneshot: Option<(u64, u64)>,
 }
 
 impl Matcher<'_> {
@@ -183,7 +191,21 @@ impl Matcher<'_> {
                 .find(|&n| self.free(n, owner, &chain) && self.fits(p, &c.nodes[n]))?;
             chain.push(next);
         }
-        (self.outputs_legal(rule, &chain) && !self.needs_cycle(&chain)).then_some(chain)
+        (self.outputs_legal(rule, &chain) && !self.needs_cycle(&chain) && self.payload_fits(rule, s))
+            .then_some(chain)
+    }
+
+    /// 2026-10-23: A `one_shot` rule's payload at node `s` within the bound; any other rule, or
+    /// an unchecked matcher, passes.
+    fn payload_fits(&self, rule: &Rule, s: NodeIdx) -> bool {
+        use crate::collective::{CollectivePath, oneshot_fits, payload_bytes};
+        match (rule.path, self.oneshot) {
+            (Some(CollectivePath::OneShot), Some((rows, max))) => {
+                payload_bytes(self.circuit, &self.circuit.nodes[s], rows)
+                    .is_some_and(|b| oneshot_fits(b, max))
+            }
+            _ => true,
+        }
     }
 
     fn outputs_legal(&self, rule: &Rule, chain: &[NodeIdx]) -> bool {

@@ -170,6 +170,7 @@ pub fn blueprint() -> Blueprint {
                     numerics: Numerics::Reference,
                     nodes: vec![0],
                     runs: vec![],
+                    path: None,
                 },
                 Group {
                     rule: "proj".into(),
@@ -183,6 +184,7 @@ pub fn blueprint() -> Blueprint {
                     },
                     nodes: vec![1],
                     runs: vec![],
+                    path: None,
                 },
             ],
             edge_states: vec![

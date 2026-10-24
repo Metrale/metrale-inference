@@ -4,7 +4,12 @@
 //! communicator's state, so the choice is tested without a communicator.
 //!
 //! 2026-10-23: Public and outside the NCCL gate (pure), so the circuit's collective rules are
-//! checked against it (`tp_all_reduce_*`, model-arch `world_tests`).
+//! checked against it (`tp_all_reduce_*`, model-arch `world_tests`). The path type is the plan's
+//! (`metrale_circuit::CollectivePath`): a planned collective names its path and the backend
+//! executes exactly that one (`CommBackend::all_reduce_via`), refusing what it cannot run
+//! ([`runnable`]). [`ar_path`] remains the decision of the callers that run no plan, and the
+//! boot's check of each planned group (model-layers `circuit_exec::collectives`); it goes when
+//! the last such caller is plan-executed.
 //!
 //! Owner: metrale-comm.
 //! Invariants:
@@ -15,16 +20,30 @@
 //!   offered there.
 //! - At three or more ranks the one-shot is taken whenever it applies; a missing rank-sum kernel
 //!   there fails the first collective (never a silent NCCL fallback), as before.
+//! - [`runnable`] refuses a path the state cannot run (CERF `CollectivePathRefused`); it never
+//!   names another path.
 
-/// 2026-10-16: The path an all-reduce takes.
+use metrale_circuit::CollectivePath;
+use metrale_error::{Error, ErrorCode, error};
+
+/// 2026-10-23: The communicator state a path depends on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ArPath {
-    /// 2026-10-17: The 2-rank exchange plus `bf16_add_inplace` (`__hadd`).
-    TwoRank,
-    /// 2026-10-17: The one-shot exchange plus `bf16_add_rank_sum`.
-    OneShot,
-    /// 2026-10-17: `ncclAllReduce` in place.
-    Nccl,
+pub struct PathState {
+    pub world_size: usize,
+    /// 2026-10-23: `bf16_add_inplace` set (`set_add_kernel`).
+    pub add_kernel_set: bool,
+    /// 2026-10-23: `bf16_add_rank_sum` set (`set_rank_sum_kernel`).
+    pub sum_kernel_set: bool,
+    /// 2026-10-23: The one-shot bound in bytes (`--all-reduce-oneshot-max-kb` x 1024; 0: off).
+    pub oneshot_max_bytes: usize,
+    /// 2026-10-23: The 2-rank receive buffer's capacity in bytes.
+    pub recv_capacity: usize,
+}
+
+/// 2026-10-08: Whether a payload of `bytes` takes the one-shot path. The payload test is the
+/// fuser's (`metrale_circuit::collective::oneshot_fits`), so a plan and the communicator agree.
+pub fn oneshot_applies(world_size: usize, max_bytes: usize, bytes: usize) -> bool {
+    world_size >= 2 && metrale_circuit::collective::oneshot_fits(bytes as u64, max_bytes as u64)
 }
 
 /// 2026-10-16: Choose the path (see the module invariants). `oneshot_applies` is whether the
@@ -34,76 +53,65 @@ pub fn ar_path(
     add_kernel_set: bool,
     oneshot_applies: bool,
     sum_kernel_set: bool,
-) -> ArPath {
+) -> CollectivePath {
     if world_size == 2 && add_kernel_set {
-        ArPath::TwoRank
+        CollectivePath::TwoRank
     } else if oneshot_applies && (world_size >= 3 || sum_kernel_set) {
-        ArPath::OneShot
+        CollectivePath::OneShot
     } else {
-        ArPath::Nccl
+        CollectivePath::Nccl
     }
+}
+
+/// 2026-10-23: [`ar_path`] of a payload of `bytes` in state `s`.
+pub fn ar_path_of(s: &PathState, bytes: usize) -> CollectivePath {
+    ar_path(
+        s.world_size,
+        s.add_kernel_set,
+        oneshot_applies(s.world_size, s.oneshot_max_bytes, bytes),
+        s.sum_kernel_set,
+    )
+}
+
+/// 2026-10-23: Whether state `s` can run `path` for `bytes`: the 2-rank exchange at two ranks
+/// with its add kernel and the payload within its receive buffer; the one-shot with its sum
+/// kernel and the payload within its bound; NCCL always. A refusal is CERF
+/// `CollectivePathRefused`, naming what is missing.
+pub fn runnable(path: CollectivePath, s: &PathState, bytes: usize) -> Result<(), Error> {
+    let why = match path {
+        CollectivePath::TwoRank if s.world_size != 2 => {
+            format!("the 2-rank exchange needs two ranks, this communicator has {}", s.world_size)
+        }
+        CollectivePath::TwoRank if !s.add_kernel_set => "bf16_add_inplace is not set".into(),
+        CollectivePath::TwoRank if bytes > s.recv_capacity => {
+            format!("the 2-rank receive buffer holds {} bytes", s.recv_capacity)
+        }
+        CollectivePath::OneShot if !s.sum_kernel_set => "bf16_add_rank_sum is not set".into(),
+        CollectivePath::OneShot if !oneshot_applies(s.world_size, s.oneshot_max_bytes, bytes) => {
+            format!(
+                "the one-shot takes 1..={} bytes at {} ranks",
+                s.oneshot_max_bytes, s.world_size
+            )
+        }
+        _ => return Ok(()),
+    };
+    Err(error!(ErrorCode::CollectivePathRefused, path.name(), bytes, why))
+}
+
+/// 2026-10-23: Whether state `s` has the one-shot exchange alone for `bytes` (what
+/// `CommBackend::exchange_partials` sends, a fused group's consumer summing the partials): the
+/// payload within the one-shot bound. A refusal is CERF `CollectivePathRefused`.
+pub fn exchange_runnable(s: &PathState, bytes: usize) -> Result<(), Error> {
+    if oneshot_applies(s.world_size, s.oneshot_max_bytes, bytes) {
+        return Ok(());
+    }
+    let why = format!(
+        "the one-shot exchange takes 1..={} bytes at {} ranks (--all-reduce-oneshot-max-kb)",
+        s.oneshot_max_bytes, s.world_size
+    );
+    Err(error!(ErrorCode::CollectivePathRefused, CollectivePath::OneShot.name(), bytes, why))
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{ArPath, ar_path};
-
-    /// 2026-10-16: Every combination of the four inputs at two and three ranks, against the table
-    /// written out by hand. The rows that changed with the world-2 one-shot are the `(2, false,
-    /// true, _)` ones: the kernel decides between the one-shot and NCCL.
-    #[test]
-    fn every_state_takes_the_tabled_path() {
-        use ArPath::{Nccl, OneShot, TwoRank};
-        // 2026-10-17: (world, add kernel, one-shot applies, rank-sum kernel) -> path
-        let table = [
-            ((2, true, true, true), TwoRank),
-            ((2, true, true, false), TwoRank),
-            ((2, true, false, true), TwoRank),
-            ((2, true, false, false), TwoRank),
-            ((2, false, true, true), OneShot),
-            ((2, false, true, false), Nccl),
-            ((2, false, false, true), Nccl),
-            ((2, false, false, false), Nccl),
-            ((3, true, true, true), OneShot),
-            ((3, true, true, false), OneShot),
-            ((3, true, false, true), Nccl),
-            ((3, true, false, false), Nccl),
-            ((3, false, true, true), OneShot),
-            ((3, false, true, false), OneShot),
-            ((3, false, false, true), Nccl),
-            ((3, false, false, false), Nccl),
-        ];
-        for ((w, add, applies, sum), want) in table {
-            assert_eq!(
-                ar_path(w, add, applies, sum),
-                want,
-                "{:?}",
-                (w, add, applies, sum)
-            );
-        }
-    }
-
-    /// 2026-10-16: Positive control: the two-rank rule differs from the three-rank one only in the
-    /// kernel-less one-shot row, so a rule that ignored the world size would be caught.
-    #[test]
-    fn only_the_kernel_less_oneshot_row_depends_on_the_world() {
-        let mut differ = Vec::new();
-        for add in [false, true] {
-            for applies in [false, true] {
-                for sum in [false, true] {
-                    let (two, eight) =
-                        (ar_path(2, add, applies, sum), ar_path(8, add, applies, sum));
-                    if two != eight {
-                        differ.push((add, applies, sum, two, eight));
-                    }
-                }
-            }
-        }
-        assert!(differ.contains(&(false, true, false, ArPath::Nccl, ArPath::OneShot)));
-        assert!(
-            differ
-                .iter()
-                .all(|&(add, applies, sum, ..)| add || (applies && !sum))
-        );
-    }
-}
+#[path = "ar_path_tests.rs"]
+mod tests;

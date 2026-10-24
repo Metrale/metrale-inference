@@ -270,6 +270,14 @@ error_registry! {
         /// every declared part over all N ranks, and this part cannot run at N: (N, the part, the
         /// dim, why: its degree bounds, unit or remainder policy).
         CircuitRanksRefused = 0x0721 => "{} ranks: part `{}` (dim `{}`) cannot split: {}",
+        /// 2026-10-23: A planned collective whose path is not the one the communicator takes for
+        /// its payload, found at boot: (the group, its bytes, the plan's path, the
+        /// communicator's).
+        CollectivePathMismatch = 0x0722 => "{} ({} bytes): the plan names the {} path, the \
+            communicator takes {}",
+        /// 2026-10-23: A collective path the communicator cannot run for a payload; it is
+        /// refused, never run on another path: (the path, bytes, why).
+        CollectivePathRefused = 0x0723 => "the {} path cannot run {} bytes here: {}",
     }
     /// 2026-10-22: `0x0900–0x09FF`: power and energy (DESIGN-kernel-energy.md): the power port
     /// and its meters `0x0900–0x090F`, energy attribution `0x0910–0x091F`, power traces

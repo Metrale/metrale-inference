@@ -32,6 +32,7 @@ fn group(rule: &str, kernels: &[&str], repeat: Repeat, comm: &[(&str, u64)], emi
         numerics: Numerics::Reference,
         nodes: Vec::new(),
         runs: Vec::new(),
+        path: None,
     }
 }
 

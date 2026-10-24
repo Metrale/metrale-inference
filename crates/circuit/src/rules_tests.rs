@@ -204,3 +204,45 @@ fn ranks_loads_on_a_collective_only() {
     let e = parse_rules(&empty).expect_err("a predicate with no test");
     assert!(e.to_string().contains("ranks: states no test"), "{e}");
 }
+
+/// 2026-10-23: `path` loads on a one-element collective rule with the launches it issues (the
+/// exchange and a summing kernel; the ring all-reduce and no kernel for `nccl`), and is a load
+/// error anywhere else: on a norm, an unknown name, a `nccl` rule with a kernel, a `one_shot`
+/// one without the exchange.
+#[test]
+fn path_loads_on_a_collective_with_its_launches_only() {
+    use crate::collective::CollectivePath;
+    let one_shot = OK.replace(
+        r#"  { op = "residual_add", local = "add", keep = true },
+  { op = "rms_norm", local = "post_norm" },"#,
+        r#"  { op = "all_reduce" },"#,
+    )
+    .replace(
+        "emitter = \"residual_add_rms_norm\"",
+        "emitter = \"tp_all_reduce\"\npath = \"one_shot\"\ncomm = [{ api = \"exchange\", kernel = \"k\", at = 0 }]",
+    );
+    assert_eq!(parse_rules(&one_shot).unwrap()[0].path, Some(CollectivePath::OneShot));
+    let nccl = one_shot
+        .replace("path = \"one_shot\"", "path = \"nccl\"")
+        .replace("api = \"exchange\"", "api = \"all_reduce_ring\"")
+        .replace(r#"kernels = [{ module = "norm", func = "residual_add_rms_norm" }]"#, "kernels = []");
+    assert_eq!(parse_rules(&nccl).unwrap()[0].path, Some(CollectivePath::Nccl));
+    for (bad, want) in [
+        (
+            OK.replace("emitter = \"residual_add_rms_norm\"", "emitter = \"e\"\npath = \"nccl\""),
+            "not headed by an all_reduce or all_gather",
+        ),
+        (one_shot.replace("\"one_shot\"", "\"ring\""), "unknown path `ring`"),
+        (
+            nccl.replace("kernels = []", r#"kernels = [{ module = "m", func = "f" }]"#),
+            "path `nccl` issues one `all_reduce_ring` launch and no kernel",
+        ),
+        (
+            one_shot.replace("api = \"exchange\"", "api = \"all_reduce_ring\""),
+            "path `one_shot` issues one `exchange` launch",
+        ),
+    ] {
+        let e = parse_rules(&bad).expect_err(want);
+        assert!(e.to_string().contains(want), "{e}");
+    }
+}

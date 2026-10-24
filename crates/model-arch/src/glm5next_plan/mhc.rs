@@ -135,7 +135,8 @@ impl MhcSlots {
     pub fn finish(self, g: &PlanGroup<'_>) -> Result<MhcSteps<KernelId>> {
         let need = |what: &str, i: usize| {
             format!(
-                "the layer's plan has no {} {what} group",
+                "the layer's plan has no {} {what} group (the post-mix is planned only as the \
+                 fused exchange, `glm_ar_fused_post`, within the one-shot bound)",
                 ["mixer", "FFN"][i]
             )
         };
@@ -187,6 +188,13 @@ pub fn unmodelled(levers: &crate::glm5next_layer::GlmLevers) -> Vec<&'static str
         (
             m.post_sum_ctas.is_some(),
             "METRALE_GLM_MHC_POST_SUM_CTAS (the plan runs the uncapped post-mix grid)",
+        ),
+        // 2026-10-23: The unfused post-mix (plain all-reduce, then `glm5next_hc_post`) is not
+        // plan-executed yet (owed); refused naming the lever rather than a missing group.
+        (
+            !levers.ar_fused_post,
+            "glm_ar_fused_post off (METRALE_GLM_AR_FUSED_POST=0: the rules' mHC post-mix runs the \
+             fused exchange; the unfused post-mix is not plan-executed)",
         ),
     ]
     .into_iter()

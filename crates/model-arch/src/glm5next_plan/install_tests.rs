@@ -147,8 +147,10 @@ fn an_unmodelled_lever_refuses_installation() {
 /// 2026-10-23: The boot's shapes for GLM TP=3 with one draft (`--num-drafts 1`): from the shapes
 /// the GLM sites install (`plan_shapes`: `GATED` on a text layer, `DRAFT_GATED` on the draft
 /// block) and the serve's verify widths, decode 1, verify 2 and draft 1, and every rank fuses
-/// each. Three drafts (verify 2..=4) are refused naming verify 3 and the depth; the widths the
-/// boot used to fuse whenever a drafter existed (2, 3, 4) do not all fuse on these rules.
+/// each. Three drafts (verify 2..=4) are refused naming verify 3 and the depth: no site installs
+/// those widths. 2026-10-23: The rules themselves now fuse every width up to 4: at 4 rows the
+/// vocab gather (4 x 309,760 B) is past the 1024 KiB one-shot bound and takes the library
+/// all-reduce (`tp_all_gather_as_sum_nccl`), as the engine's `ar_path` does.
 #[test]
 fn one_draft_fuses_only_the_covered_shapes_on_every_rank() {
     use metrale_model_layers::circuit_exec::rank_shapes::{
@@ -171,11 +173,10 @@ fn one_draft_fuses_only_the_covered_shapes_on_every_rank() {
     let e = rank_plan_shapes(&installed, &speculative_verify_rows(3)).unwrap_err();
     assert_eq!(e.code(), metrale_error::ErrorCode::CircuitPlanUncovered);
     assert!(e.to_string().contains("verify at 3 rows"), "{e}");
-    let fixed_widths = [2, 3, 4].iter().all(|&rows| {
-        metrale_circuit::fuse(&c[0], &rules, &avail, &policy, Mode::Verify, rows).is_ok()
-    });
-    assert!(
-        !fixed_widths,
-        "the GLM rules cover every verify width up to 4"
-    );
+    for rows in [2, 3, 4] {
+        let p = metrale_circuit::fuse(&c[0], &rules, &avail, &policy, Mode::Verify, rows)
+            .unwrap_or_else(|e| panic!("verify {rows}: {e}"));
+        let nccl = p.groups.iter().any(|g| g.rule == "tp_all_gather_as_sum_nccl");
+        assert_eq!(nccl, rows == 4, "verify {rows}: the gather past the bound");
+    }
 }

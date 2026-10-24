@@ -145,6 +145,35 @@ pub trait CommBackend: Send + Sync {
         self.all_reduce(ptr, bytes)
     }
 
+    /// 2026-10-23: All-reduce on exactly `path`, the one a plan names
+    /// (`metrale_circuit::Group::path`): blocking like `all_reduce` without `compute_stream`,
+    /// ordered like `all_reduce_async` with it. A path this backend cannot run for `bytes` is
+    /// refused with CERF `CollectivePathRefused` (`ar_path::runnable`), never run as another. The
+    /// default refuses every path: a backend without paths executes no plan.
+    fn all_reduce_via(
+        &self,
+        path: metrale_circuit::CollectivePath,
+        ptr: u64,
+        bytes: usize,
+        compute_stream: Option<u64>,
+    ) -> Result<()> {
+        let _ = (ptr, compute_stream);
+        Err(metrale_error::error!(
+            metrale_error::ErrorCode::CollectivePathRefused,
+            path.name(),
+            bytes,
+            "this communicator executes no planned path"
+        )
+        .into())
+    }
+
+    /// 2026-10-23: The state this backend's collective paths depend on (`ar_path`), which a boot
+    /// checks each planned collective against once; `None` for a backend without paths. The
+    /// default returns `None`.
+    fn path_state(&self) -> Option<ar_path::PathState> {
+        None
+    }
+
     /// 2026-10-10: The exchange of an all-reduce without its sum, so the caller's next kernel can
     /// sum: send the BF16 partial of `bytes` at `ptr` to every peer and receive theirs, ordered
     /// like `all_reduce_async` against `compute_stream` (`Some`) or like `all_reduce` on the

@@ -107,6 +107,11 @@ pub struct Group {
     /// 2026-09-30: A `per_run` group's launches for each run of the plan's row table, in batch
     /// order; empty for any other repeat.
     pub runs: Vec<crate::runs::RunLaunches>,
+    /// 2026-10-23: The all-reduce path of a collective group, from its rule
+    /// ([`crate::collective`]); `None` for every other group. Derived, never stored: a decoded
+    /// plan (a published blueprint body) has `None` until [`crate::collective::derive_paths`].
+    #[serde(skip)]
+    pub path: Option<crate::collective::CollectivePath>,
 }
 
 impl Group {
@@ -188,6 +193,14 @@ pub enum FuseError {
         rule: String,
         /// 2026-09-28: Setting.
         key: String,
+    },
+    /// 2026-10-23: A setting the policy states with a value its reader cannot take.
+    #[error("setting `{key}` = `{value}` is not a whole number")]
+    PolicyValue {
+        /// 2026-10-23: Setting.
+        key: String,
+        /// 2026-10-23: Its value.
+        value: String,
     },
     /// 2026-10-23: A rule's dim predicate names a dim the circuit does not define.
     #[error("rule `{rule}` tests dim `{dim}`, which the circuit does not define")]
@@ -302,25 +315,30 @@ fn fuse_inner(
     if !in_scope.iter().any(|&s| s) {
         return Err(FuseError::EmptySection(mode.name()));
     }
-    let m = fuser_match::Matcher {
+    let key = crate::collective::ONESHOT_MAX_KB.into();
+    let oneshot = crate::collective::oneshot_max_bytes(policy)
+        .map_err(|value| FuseError::PolicyValue { key, value })?;
+    let probe = fuser_match::Matcher {
         circuit,
         in_scope: &in_scope,
         block_of: &block_of,
+        oneshot: None,
     };
     // 2026-10-22: A setting is required where a rule reading it matches a node of this section;
     // a rule whose pattern matches none (another model's lever) decides nothing here.
+    // 2026-10-23: A `one_shot` rule reads the payload bound ([`crate::collective`]).
     let free = vec![None; circuit.nodes.len()];
     for r in rules {
-        if let Some(key) = r.when.keys().find(|k| !policy.settings.contains_key(*k))
-            && (0..circuit.nodes.len()).any(|s| in_scope[s] && m.chain_at(r, s, &free).is_some())
+        if let Some(key) = r.settings_read().find(|k| !policy.settings.contains_key(*k))
+            && (0..circuit.nodes.len()).any(|s| in_scope[s] && probe.chain_at(r, s, &free).is_some())
         {
             return Err(FuseError::PolicyMissing {
                 rule: r.id.clone(),
-                key: key.clone(),
+                key: key.to_string(),
             });
         }
         if let Err(dim) = crate::rules::dims::all_hold(&r.dims, &circuit.dims)
-            && (0..circuit.nodes.len()).any(|s| in_scope[s] && m.chain_at(r, s, &free).is_some())
+            && (0..circuit.nodes.len()).any(|s| in_scope[s] && probe.chain_at(r, s, &free).is_some())
         {
             return Err(FuseError::DimMissing {
                 rule: r.id.clone(),
@@ -329,6 +347,10 @@ fn fuse_inner(
         }
     }
     let order = fuser_match::applicable_order(circuit, rules, available, policy, (mode, rows, table));
+    let m = fuser_match::Matcher {
+        oneshot: oneshot.map(|max| (rows, max)),
+        ..probe
+    };
 
     let mut owner: Vec<Option<usize>> = vec![None; circuit.nodes.len()];
     let mut found: Vec<(&Rule, Vec<NodeIdx>)> = Vec::new();
@@ -394,6 +416,7 @@ fn fuse_inner(
                     .and_then(|t| crate::runs::resolve_runs(t, &rule.runs))
                     .filter(|_| !rule.runs.is_empty())
                     .unwrap_or_default(),
+                path: rule.path,
             }
         })
         .collect();
