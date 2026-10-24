@@ -114,7 +114,10 @@ pub(super) fn step_mtp_bootstrap_batched(
             Err(e) => {
                 tracing::error!("batched bootstrap decode_batch (n={n}): {e:#}");
                 for a in refs.iter_mut() {
-                    a.finished = true;
+                    crate::scheduler::lifecycle::fail_sequence(
+                        a,
+                        format!("batched bootstrap decode_batch (n={n}): {e:#}"),
+                    );
                 }
                 return;
             }
@@ -198,7 +201,10 @@ pub(super) fn step_mtp_bootstrap_batched(
             Ok(t) => t,
             Err(e) => {
                 tracing::error!("batched bootstrap sample error: {e:#}");
-                a.finished = true;
+                crate::scheduler::lifecycle::fail_sequence(
+                    a,
+                    format!("batched bootstrap sample error: {e:#}"),
+                );
                 continue;
             }
         };

@@ -39,7 +39,10 @@ pub fn step_verify_dflash_batched(
     if let Err(e) = model.sync_secondary() {
         tracing::error!("sync_secondary (dflash batched): {e:#}");
         for a in batch.iter_mut() {
-            a.finished = true;
+            crate::scheduler::lifecycle::fail_sequence(
+                a,
+                format!("sync_secondary (dflash batched): {e:#}"),
+            );
         }
         return;
     }
@@ -231,7 +234,10 @@ pub fn step_verify_dflash_batched(
             // a commit error does for one sequence.
             tracing::error!("gdn_fold_accepted (dflash batched): {e:#}");
             for a in batch.iter_mut() {
-                a.finished = true;
+                crate::scheduler::lifecycle::fail_sequence(
+                    a,
+                    format!("gdn_fold_accepted (dflash batched): {e:#}"),
+                );
             }
             return;
         }
@@ -239,7 +245,10 @@ pub fn step_verify_dflash_batched(
             let num_accepted = accepted_per_seq[i];
             if let Err(e) = model.commit_accepted_prefix(&mut a.seq, num_accepted + 1, k) {
                 tracing::error!("commit_accepted_prefix (dflash batched): {e:#}");
-                a.finished = true;
+                crate::scheduler::lifecycle::fail_sequence(
+                    a,
+                    format!("commit_accepted_prefix (dflash batched): {e:#}"),
+                );
             }
         }
     }
