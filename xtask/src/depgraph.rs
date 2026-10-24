@@ -98,6 +98,12 @@ pub const PURE_ALLOWLIST: &[&str] = &[
     // 2026-10-22: KEM traits under ml-kem (metrale-seal); no_std, its getrandom feature off.
     "kem",
     // 2026-10-22: num-traits float fallback under module-lattice; pure math, no_std.
+    // 2026-10-23: The Latlas core the metrale pack is built on (Avarok-Cybersecurity/latlas, K1):
+    // no_std + alloc, forbid(unsafe_code), no I/O, built for both wasm32 targets by its own CI.
+    "latlas-adapters",
+    "latlas-core",
+    "latlas-error",
+    "latlas-ports",
     "libm",
     "memchr",
     // 2026-10-22: Pure-Rust no_std deflate for `.kbp` bodies and inline kernels (also
@@ -457,8 +463,8 @@ mod tests {
         assert!(isolation("metrale-bench", "metrale-kg-mcp").is_some());
         assert!(isolation("metrale-kg-mcp", "met").is_some());
         assert!(isolation("metrale-kg-mcp", "metrale-bench").is_some());
-        assert!(isolation("metrale-kg-mcp", "metrale-kg-derive").is_none());
-        assert!(isolation("met", "metrale-kg-derive").is_none());
+        assert!(isolation("metrale-kg-mcp", "metrale-latlas-pack").is_none());
+        assert!(isolation("met", "metrale-latlas-pack").is_none());
     }
 
     #[test]

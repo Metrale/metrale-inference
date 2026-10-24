@@ -5,20 +5,21 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Metrale Engine: process hosts of the kernel knowledge graph: source reads and stamps, git log, the ledger.py validator, atomic record writes, and the OpenRouter embedder."
+description = "Metrale Engine: process hosts of the metrale Latlas pack: the ledger.py validator, the LKB checkout (file list, inventory, git dates, refresh)."
 
 [package.metadata.metrale]
 role = "host-std"
 
-# 2026-10-23: The only crate of the knowledge graph that touches the file system, processes or
+# 2026-10-23: The metrale pack's process hosts (ledger.py, git, kernel_perf.py); the generic ones
+# (files, the embedder) are latlas-host-native's. Formerly the only crate of the knowledge graph
+# that touched the file system, processes or
 # the network (SBIO; delegated decision 2026-10-23, the io-hosts/power precedent).
 [dependencies]
-metrale-error = { workspace = true }
-metrale-kg-derive = { workspace = true }
+latlas-core = { workspace = true }
+latlas-error = { workspace = true }
+latlas-host-native = { workspace = true }
+metrale-latlas-pack = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
-# 2026-10-23: the OpenRouter embedder host (P2): blocking HTTPS on tokio's blocking pool.
-tokio = { workspace = true, features = ["rt"] }
-ureq = { workspace = true, features = ["rustls"] }
 
 [lints]
 workspace = true

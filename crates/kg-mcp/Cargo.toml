@@ -5,7 +5,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Metrale Engine: `metrale-kg`, the kernel knowledge graph's CLI and 5-tool MCP server over a LatticeDB index derived from the SSOT files."
+description = "Metrale Engine: `metrale-kg`, the kernel knowledge graph: the metrale Latlas pack behind the Latlas CLI and 5-tool MCP server."
 
 [package.metadata.metrale]
 role = "bin"
@@ -20,16 +20,18 @@ path = "src/main.rs"
 [dependencies]
 anyhow = { workspace = true, features = ["std"] }
 clap = { workspace = true, features = ["std", "derive", "help", "usage", "error-context"] }
-lattice-core = { workspace = true }
-lattice-storage = { workspace = true, features = ["native"] }
-metrale-abstract-io = { workspace = true }
+# 2026-10-23: Latlas (K1): the CLI and MCP server library, the core, its error and the native
+# hosts; this binary picks the metrale pack and its host once (NDIC).
+latlas-cli = { workspace = true }
+latlas-core = { workspace = true }
+latlas-error = { workspace = true }
+latlas-host-native = { workspace = true }
+# 2026-10-23: The Metrale registry, for the CLER mapping of Latlas codes at this edge.
 metrale-error = { workspace = true }
 metrale-io-host-kg = { workspace = true }
-metrale-io-host-std = { workspace = true }
-metrale-kg-derive = { workspace = true }
-rmcp = { workspace = true, features = ["server", "transport-io"] }
+metrale-latlas-pack = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
-tokio = { workspace = true, features = ["rt", "macros", "io-std", "sync", "time"] }
+tokio = { workspace = true, features = ["rt", "macros"] }
 
 [lints]
 workspace = true

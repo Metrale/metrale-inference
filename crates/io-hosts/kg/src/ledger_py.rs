@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-23: A campaign's own `tools/ledger.py`, run on a private copy: the validator of record
-//! for `kg_record kind=ledger` (design §2.2) and the reference side of the P0 parity gate.
+//! for `la_record kind=ledger` (design §2.2) and the reference side of the P0 parity gate.
 //! ledger.py resolves `LEDGER.tsv` beside its own parent directory, so a copy of the script in
 //! `<scratch>/<run>/tools/` checks the candidate text in `<scratch>/<run>/LEDGER.tsv` and never
 //! the live file.
@@ -11,7 +11,7 @@
 //! - The live ledger is never opened for writing here.
 //! - Each run gets its own directory, removed afterwards.
 
-use metrale_error::{ErrorCode, Result, error};
+use latlas_error::{ErrorCode, Result, error};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -34,9 +34,9 @@ pub struct LedgerPy {
     pub scratch: PathBuf,
 }
 
-fn io(what: &Path, e: &std::io::Error) -> metrale_error::Error {
+fn io(what: &Path, e: &std::io::Error) -> latlas_error::Error {
     error!(
-        ErrorCode::KgRecordWrite,
+        ErrorCode::LatlasRecordWrite,
         what.display().to_string(),
         e.to_string()
     )
@@ -64,7 +64,7 @@ impl LedgerPy {
                 .output()
                 .map_err(|e| {
                     error!(
-                        ErrorCode::KgValidatorRejected,
+                        ErrorCode::LatlasValidatorRejected,
                         self.script.display().to_string(),
                         e.to_string()
                     )

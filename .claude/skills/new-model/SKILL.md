@@ -90,7 +90,7 @@ A worked example of the whole method's first half is checked in:
 
 ## Step 2: choose the comparison set
 
-- If `kg_*` is available, `kg_search`/`kg_query` the families shared with each candidate that
+- If `la_*` is available, `la_search`/`la_query` the families shared with each candidate that
   have `pct_of_floor >= 90` evidence and WIN rows, and quote the `bundle_digest`; else read the
   venn reports.
 - Pick the supported model(s) with the largest op overlap. More than one is normal: a MoE for

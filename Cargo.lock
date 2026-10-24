@@ -1681,6 +1681,75 @@ name = "kzx"
 version = "0.1.0"
 
 [[package]]
+name = "latlas-adapters"
+version = "0.1.0"
+dependencies = [
+ "latlas-core",
+ "latlas-error",
+ "serde_json",
+]
+
+[[package]]
+name = "latlas-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "latlas-core",
+ "latlas-error",
+ "latlas-host-native",
+ "latlas-index",
+ "latlas-ports",
+ "rmcp",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "latlas-core"
+version = "0.1.0"
+dependencies = [
+ "latlas-error",
+ "latlas-ports",
+ "libm",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "toml",
+]
+
+[[package]]
+name = "latlas-error"
+version = "0.1.0"
+
+[[package]]
+name = "latlas-host-native"
+version = "0.1.0"
+dependencies = [
+ "latlas-core",
+ "latlas-error",
+ "latlas-ports",
+ "serde_json",
+ "tokio",
+ "ureq",
+]
+
+[[package]]
+name = "latlas-index"
+version = "0.1.0"
+dependencies = [
+ "latlas-core",
+ "latlas-error",
+ "latticedb-core",
+ "latticedb-storage",
+ "serde_json",
+]
+
+[[package]]
+name = "latlas-ports"
+version = "0.1.0"
+
+[[package]]
 name = "latticedb-core"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2212,11 +2281,11 @@ dependencies = [
 name = "metrale-io-host-kg"
 version = "1.0.0-beta-preview"
 dependencies = [
- "metrale-error",
- "metrale-kg-derive",
+ "latlas-core",
+ "latlas-error",
+ "latlas-host-native",
+ "metrale-latlas-pack",
  "serde_json",
- "tokio",
- "ureq",
 ]
 
 [[package]]
@@ -2280,33 +2349,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "metrale-kg-derive"
-version = "1.0.0-beta-preview"
-dependencies = [
- "libm",
- "metrale-abstract-io",
- "metrale-circuit",
- "metrale-error",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "toml",
-]
-
-[[package]]
 name = "metrale-kg-mcp"
 version = "1.0.0-beta-preview"
 dependencies = [
  "anyhow",
  "clap",
- "latticedb-core",
- "latticedb-storage",
- "metrale-abstract-io",
+ "latlas-cli",
+ "latlas-core",
+ "latlas-error",
+ "latlas-host-native",
  "metrale-error",
  "metrale-io-host-kg",
- "metrale-io-host-std",
- "metrale-kg-derive",
- "rmcp",
+ "metrale-latlas-pack",
  "serde_json",
  "tokio",
 ]
@@ -2321,6 +2375,20 @@ dependencies = [
 [[package]]
 name = "metrale-kv-tq128"
 version = "1.0.0-beta-preview"
+
+[[package]]
+name = "metrale-latlas-pack"
+version = "1.0.0-beta-preview"
+dependencies = [
+ "latlas-adapters",
+ "latlas-core",
+ "latlas-error",
+ "latlas-ports",
+ "metrale-circuit",
+ "serde",
+ "serde_json",
+ "toml",
+]
 
 [[package]]
 name = "metrale-model-arch"

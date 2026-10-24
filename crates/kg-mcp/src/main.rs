@@ -1,33 +1,32 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-10-23: `metrale-kg`: the kernel knowledge graph's CLI and stdio MCP server
-//! (DESIGN-kernel-knowledge-graph.md). `derive|check|status|impact|serve` plus the ledger.py-format
-//! views (`tainted`, `deps`), the real-host parity gate (`parity`), `query` and `tools-list`.
+//! 2026-10-23: `metrale-kg`: the metrale pack on Latlas (DESIGN-latlas.md §5.3, K1): latlas-cli's
+//! `derive|check|status|impact|query|search|probes|tools-list|serve` over `Metrale` and
+//! `MetraleHost`, plus the pack's own `tainted`, `deps`, `parity` and `refresh`.
 //!
 //! Owner: metrale-kg-mcp.
 //! Invariants:
-//! - The only place the knowledge graph's hosts are chosen (FsSources, LedgerPy, SystemClock).
-//! - `serve` writes nothing to stdout but the MCP protocol.
+//! - The only place the metrale pack's hosts are chosen (latlas-host-native, MetraleHost).
+//! - `serve` writes nothing to stdout but the MCP protocol; every other path keeps stdout one
+//!   JSON document.
+//! - CLER: a Latlas code leaves this binary as its Metrale `KnowledgeGraph 0x0800` code
+//!   ([`metrale_code`]).
 
-mod app;
-mod cypher;
 mod gates;
-mod handlers;
-mod mcp;
-mod record;
-mod search;
-mod store;
-mod textstore;
+mod host;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use host::MetraleHost;
+use latlas_cli::{CoreCmd, Identity, run_core};
+use metrale_latlas_pack::Metrale;
 use std::path::PathBuf;
 
 /// 2026-10-23: The command line.
 #[derive(Parser)]
 #[command(
     name = "metrale-kg",
-    about = "Kernel knowledge graph: derive, check, query and serve (MCP stdio)"
+    about = "Kernel knowledge graph (the metrale pack on Latlas): derive, check, query and serve (MCP stdio)"
 )]
 struct Cli {
     /// The kg-config/v1 file (no default).
@@ -42,36 +41,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Print the kg-bundle/v1 JSONL (or write it to --out).
-    Derive {
-        #[arg(long)]
-        out: Option<PathBuf>,
-    },
-    /// Derive twice, compare digests, list fatal findings; --store-roundtrip also rebuilds two
-    /// fresh stores and compares their exports.
-    Check {
-        #[arg(long)]
-        store_roundtrip: bool,
-    },
-    /// kg_status sections as JSON.
-    Status {
-        #[arg(long)]
-        campaign: String,
-        #[arg(long = "section")]
-        sections: Vec<String>,
-        #[arg(long)]
-        instance: Option<String>,
-    },
-    /// kg_impact as JSON.
-    Impact {
-        id: String,
-        #[arg(long)]
-        direction: String,
-        #[arg(long = "relation")]
-        relations: Vec<String>,
-        #[arg(long)]
-        max_depth: Option<u32>,
-    },
+    #[command(flatten)]
+    Core(CoreCmd),
     /// `ledger.py tainted`, computed over the bundle.
     Tainted {
         #[arg(long)]
@@ -86,40 +57,21 @@ enum Cmd {
         #[arg(long)]
         ledger_file: Option<PathBuf>,
     },
-    /// Read-only Cypher.
-    Query {
-        cypher: String,
-        #[arg(long)]
-        limit: Option<u32>,
-    },
-    /// kg_search as JSON; --graph-only declares the embedder off for this run.
-    Search {
-        text: String,
-        #[arg(long = "kind")]
-        kinds: Vec<String>,
-        #[arg(long)]
-        k: Option<u32>,
-        #[arg(long)]
-        hops: Option<u32>,
-        #[arg(long)]
-        graph_only: bool,
-    },
-    /// The P2 recall gate: each `probe<TAB>id` line must hit the id in the top 3.
-    Probes {
-        file: PathBuf,
-        #[arg(long)]
-        graph_only: bool,
-        /// The least hits out of the probe count for the gate to pass.
-        #[arg(long)]
-        need: u32,
-    },
-    /// The tools/list body the server sends (for the token gate).
-    ToolsList,
-    /// Serve the 5 tools over MCP stdio.
-    Serve,
     /// Move the read-only LKB checkout to `[sources.lkb]` remote/branch (fetch + detached
     /// checkout); the only command that changes a source. Prints the old and new commit.
     Refresh,
+}
+
+/// 2026-10-23: A Latlas code as the Metrale code it was cut from (`0x01nn` ↔ `0x08nn`); a
+/// general code keeps its name.
+fn metrale_code(c: latlas_error::ErrorCode) -> &'static str {
+    let n = c.as_u16();
+    if (0x0100..=0x01FF).contains(&n)
+        && let Some(m) = metrale_error::ErrorCode::from_u16(0x0800 | (n & 0x00FF))
+    {
+        return m.name();
+    }
+    c.name()
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -127,7 +79,7 @@ async fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     match run(cli).await {
         Ok(()) => std::process::ExitCode::SUCCESS,
-        Err(e) if e.downcast_ref::<gates::GateFailed>().is_some() => {
+        Err(e) if e.downcast_ref::<latlas_cli::gates::GateFailed>().is_some() => {
             eprintln!("metrale-kg: {e}");
             std::process::ExitCode::FAILURE
         }
@@ -135,8 +87,8 @@ async fn main() -> std::process::ExitCode {
             // 2026-10-23: stdout stays JSON on every path (a caller parses it); the human line
             // goes to stderr.
             let code = e
-                .downcast_ref::<metrale_error::Error>()
-                .map_or("Failed", |k| k.code().name());
+                .downcast_ref::<latlas_error::Error>()
+                .map_or("Failed", |k| metrale_code(k.code()));
             println!(
                 "{}",
                 serde_json::json!({"error": code, "message": format!("{e:#}")})
@@ -150,75 +102,33 @@ async fn main() -> std::process::ExitCode {
 async fn run(cli: Cli) -> Result<()> {
     let data = cli.data_dir.as_deref();
     match cli.cmd {
-        Cmd::Derive { out } => gates::derive_cmd(&cli.config, out.as_deref()),
-        Cmd::Check { store_roundtrip } => gates::check_cmd(&cli.config, store_roundtrip).await,
+        Cmd::Core(c) => {
+            let id = Identity {
+                name: "metrale-kg",
+                version: env!("CARGO_PKG_VERSION"),
+            };
+            run_core::<Metrale, MetraleHost>(&cli.config, data, c, id).await
+        }
         Cmd::Parity {
             campaign,
             ledger_file,
         } => gates::parity_cmd(&cli.config, &campaign, ledger_file.as_deref()),
         Cmd::Tainted { campaign } => gates::tainted_cmd(&cli.config, &campaign),
         Cmd::Deps { id } => gates::deps_cmd(&cli.config, &id),
-        Cmd::ToolsList => {
-            println!("{}", metrale_kg_derive::tools::tools_list_json());
-            Ok(())
-        }
-        Cmd::Serve => serve(&cli.config, data).await,
         Cmd::Refresh => refresh(&cli.config),
-        Cmd::Search {
-            text,
-            kinds,
-            k,
-            hops,
-            graph_only,
-        } => {
-            let args = serde_json::json!({"text": text, "kinds": kinds, "k": k, "hops": hops});
-            let mut app = app::App::open(&cli.config, data).await?;
-            if graph_only {
-                app.declare_graph_only("--graph-only");
-            }
-            let v = handlers::call(&mut app, "kg_search", &args).await?;
-            println!("{}", serde_json::to_string_pretty(&v)?);
-            Ok(())
-        }
-        Cmd::Probes {
-            file,
-            graph_only,
-            need,
-        } => gates::probes_cmd(&cli.config, data, &file, graph_only, need).await,
-        Cmd::Status {
-            campaign,
-            sections,
-            instance,
-        } => {
-            let args = serde_json::json!({"campaign": campaign, "sections": sections, "instance": instance});
-            tool(&cli.config, data, "kg_status", args).await
-        }
-        Cmd::Impact {
-            id,
-            direction,
-            relations,
-            max_depth,
-        } => {
-            let args = serde_json::json!({"id": id, "direction": direction, "relations": relations, "max_depth": max_depth});
-            tool(&cli.config, data, "kg_impact", args).await
-        }
-        Cmd::Query { cypher, limit } => {
-            let args = serde_json::json!({"cypher": cypher, "limit": limit});
-            tool(&cli.config, data, "kg_query", args).await
-        }
     }
 }
 
 fn refresh(cfg_path: &std::path::Path) -> Result<()> {
-    let cfg = metrale_io_host_kg::fs::read_config(cfg_path)?;
+    let cfg = latlas_host_native::fs::read_config::<Metrale>(cfg_path)?;
     let t = cfg.sources.lkb.as_ref().ok_or_else(|| {
-        metrale_error::error!(
-            metrale_error::ErrorCode::KgConfig,
+        latlas_error::error!(
+            latlas_error::ErrorCode::LatlasConfig,
             "sources.lkb",
             "is not configured: nothing to refresh"
         )
     })?;
-    let lkb = metrale_kg_derive::lkb_derive::LkbSources::parse(t)?;
+    let lkb = metrale_latlas_pack::lkb_derive::LkbSources::parse(t)?;
     let (old, new) =
         metrale_io_host_kg::lkb::refresh(std::path::Path::new(&cfg.sources.root), &lkb)?;
     let track = format!("{}/{}", lkb.remote, lkb.branch);
@@ -229,29 +139,38 @@ fn refresh(cfg_path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-async fn tool(
-    cfg: &std::path::Path,
-    data: Option<&std::path::Path>,
-    name: &str,
-    args: serde_json::Value,
-) -> Result<()> {
-    let mut app = app::App::open(cfg, data).await?;
-    match handlers::call(&mut app, name, &args).await {
-        Ok(v) => {
-            println!("{}", serde_json::to_string_pretty(&v)?);
-            Ok(())
-        }
-        Err(e) => Err(e.into()),
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::metrale_code;
+    use latlas_error::ErrorCode;
 
-async fn serve(cfg: &std::path::Path, data: Option<&std::path::Path>) -> Result<()> {
-    use rmcp::ServiceExt;
-    let app = app::App::open(cfg, data).await?;
-    let server = mcp::KgServer {
-        app: std::sync::Arc::new(tokio::sync::Mutex::new(app)),
-    };
-    let running = server.serve(rmcp::transport::stdio()).await?;
-    running.waiting().await?;
-    Ok(())
+    #[test]
+    fn a_latlas_code_leaves_as_the_metrale_code_it_was_cut_from() {
+        for c in ErrorCode::ALL {
+            let n = c.as_u16();
+            if (0x0100..=0x01FF).contains(&n) {
+                let want = c.name().replacen("Latlas", "Kg", 1);
+                assert_eq!(metrale_code(*c), want, "{c:?}");
+            }
+        }
+        assert_eq!(metrale_code(ErrorCode::Io), "Io");
+    }
+
+    #[test]
+    fn every_schema_parses_as_an_rmcp_tool() {
+        let names: Vec<String> = latlas_cli::mcp::tool_list::<metrale_latlas_pack::Metrale>()
+            .iter()
+            .map(|t| t.name.to_string())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "la_query",
+                "la_search",
+                "la_impact",
+                "la_record",
+                "la_status"
+            ]
+        );
+    }
 }

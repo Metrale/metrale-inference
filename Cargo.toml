@@ -48,7 +48,7 @@ members = [
     "crates/stats",
     "crates/power",
     "crates/io-hosts/power",
-    "crates/kg-derive",
+    "crates/latlas-pack",
     "crates/io-hosts/kg",
     "crates/kg-mcp",
 ]
@@ -237,7 +237,16 @@ metrale-io-host-kg = { path = "crates/io-hosts/kg", version = "1.0.0-beta-previe
 metrale-kernel-root = { path = "crates/kernel-root", version = "1.0.0-beta-preview", default-features = false }
 metrale-kernel-tree = { path = "crates/kernel-tree", version = "1.0.0-beta-preview", default-features = false }
 metrale-kernels = { path = "crates/kernels", version = "1.0.0-beta-preview", default-features = false }
-metrale-kg-derive = { path = "crates/kg-derive", version = "1.0.0-beta-preview", default-features = false }
+metrale-latlas-pack = { path = "crates/latlas-pack", version = "1.0.0-beta-preview", default-features = false }
+# 2026-10-23: Latlas (Avarok-Cybersecurity/latlas): the generic graph+vector core metrale-kg runs on
+# (DESIGN-latlas.md §5.3, K1). Path deps while the cut is in flight; pinned to a rev once pushed.
+latlas-adapters = { path = "../../latlas/crates/latlas-adapters", default-features = false }
+latlas-cli = { path = "../../latlas/crates/latlas-cli", default-features = false }
+latlas-core = { path = "../../latlas/crates/latlas-core", default-features = false }
+latlas-error = { path = "../../latlas/crates/latlas-error", default-features = false }
+latlas-host-native = { path = "../../latlas/crates/latlas-host-native", default-features = false }
+latlas-index = { path = "../../latlas/crates/latlas-index", default-features = false }
+latlas-ports = { path = "../../latlas/crates/latlas-ports", default-features = false }
 metrale-model-arch = { path = "crates/model-arch", version = "1.0.0-beta-preview", default-features = false }
 metrale-model-engine = { path = "crates/model-engine", version = "1.0.0-beta-preview", default-features = false }
 metrale-model-layers = { path = "crates/model-layers", version = "1.0.0-beta-preview", default-features = false }

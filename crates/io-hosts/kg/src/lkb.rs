@@ -14,8 +14,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;
 
-use metrale_error::{ErrorCode, Result, error};
-use metrale_kg_derive::lkb_derive::{LkbFacts, LkbSources};
+use latlas_error::{ErrorCode, Result, error};
+use latlas_host_native::fs::FsSources;
+use metrale_latlas_pack::lkb_derive::{LkbFacts, LkbSources};
 
 /// 2026-10-23: Run `cmd`: its stdout, or (as a value, not an error) how it refused: the exit
 /// status, the count of stderr lines and the first one. Only a command that cannot start is an
@@ -23,7 +24,7 @@ use metrale_kg_derive::lkb_derive::{LkbFacts, LkbSources};
 fn run_outcome(what: &str, cmd: &mut Command) -> Result<core::result::Result<String, String>> {
     let out = cmd.output().map_err(|e| {
         error!(
-            ErrorCode::KgSource,
+            ErrorCode::LatlasSource,
             what.to_string(),
             format!("did not start: {}", e.kind())
         )
@@ -38,14 +39,18 @@ fn run_outcome(what: &str, cmd: &mut Command) -> Result<core::result::Result<Str
             lines.len()
         )));
     }
-    String::from_utf8(out.stdout)
-        .map(Ok)
-        .map_err(|_| error!(ErrorCode::KgSource, what.to_string(), "printed non-UTF-8"))
+    String::from_utf8(out.stdout).map(Ok).map_err(|_| {
+        error!(
+            ErrorCode::LatlasSource,
+            what.to_string(),
+            "printed non-UTF-8"
+        )
+    })
 }
 
 /// 2026-10-23: [`run_outcome`] where a refusal is a host failure (git).
 fn run(what: &str, cmd: &mut Command) -> Result<String> {
-    run_outcome(what, cmd)?.map_err(|why| error!(ErrorCode::KgSource, what.to_string(), why))
+    run_outcome(what, cmd)?.map_err(|why| error!(ErrorCode::LatlasSource, what.to_string(), why))
 }
 
 /// 2026-10-23: `(file → (sha, date))` for every file under `dir` from one `git log --name-only`:
@@ -92,7 +97,7 @@ pub fn refresh(root: &Path, cfg: &LkbSources) -> Result<(String, String)> {
     )?;
     if !dirty.trim().is_empty() {
         return Err(error!(
-            ErrorCode::KgSource,
+            ErrorCode::LatlasSource,
             cfg.repo.clone(),
             format!(
                 "has {} tracked changes; refresh only moves a clean read-only checkout",
@@ -123,6 +128,17 @@ pub fn refresh(root: &Path, cfg: &LkbSources) -> Result<(String, String)> {
 
 /// 2026-10-23: The freshness stamp of the LKB facts: the checkout's HEAD and a hash of its
 /// dirty-file list under the hardware's kernels, so an edit or a commit there re-derives.
+/// 2026-10-23: The LKB files of `[sources.lkb]` (root-relative): the manifests and the top-level
+/// `.toml` circuits, `.txt` plans and `.json` headroom reports of its directories.
+pub fn lkb_files(fs: &FsSources, l: &LkbSources) -> Result<Vec<String>> {
+    let mut out: Vec<String> = l.files().to_vec();
+    for (dir, ext) in l.dirs().into_iter().zip([".toml", ".txt", ".json"]) {
+        out.extend(fs.files_in(&dir, ext)?);
+    }
+    out.sort();
+    Ok(out)
+}
+
 pub fn repo_stamp(root: &Path, cfg: &LkbSources) -> Result<(String, u64, u128)> {
     let repo = root.join(&cfg.repo);
     let head = run(
@@ -143,7 +159,7 @@ pub fn repo_stamp(root: &Path, cfg: &LkbSources) -> Result<(String, u64, u128)> 
             "scripts",
         ]),
     )?;
-    let d = metrale_kg_derive::hash::sha256(format!("{head}\n{dirty}").as_bytes());
+    let d = latlas_core::hash::sha256(format!("{head}\n{dirty}").as_bytes());
     let mut b = [0u8; 16];
     b.copy_from_slice(&d.0[..16]);
     Ok((format!("{}@git", cfg.repo), 0, u128::from_le_bytes(b)))
@@ -176,7 +192,7 @@ pub fn facts_cached(
         cfg.inventory,
         cfg.hardware
     );
-    let key = metrale_kg_derive::hash::sha256(key_src.as_bytes()).hex();
+    let key = latlas_core::hash::sha256(key_src.as_bytes()).hex();
     let path = cache_dir.join(format!("lkb-facts-{key}.json"));
     if let Some(f) = std::fs::read_to_string(&path)
         .ok()
@@ -186,7 +202,8 @@ pub fn facts_cached(
     }
     let f = facts(root, cfg, python)?;
     let shown = cache_dir.display().to_string();
-    let werr = |e: std::io::Error| error!(ErrorCode::KgStore, shown.clone(), e.kind().to_string());
+    let werr =
+        |e: std::io::Error| error!(ErrorCode::LatlasStore, shown.clone(), e.kind().to_string());
     std::fs::create_dir_all(cache_dir).map_err(werr)?;
     let tmp = cache_dir.join(format!(".lkb-facts-{key}.{}", std::process::id()));
     std::fs::write(&tmp, to_json(&f)).map_err(werr)?;
