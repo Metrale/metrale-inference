@@ -38,17 +38,14 @@ pub(crate) fn max_body_bytes(
     )
 }
 
-pub(crate) async fn build_and_serve(
+/// 2026-10-24: Every route and middleware layer of the HTTP front end, over `host`. The TCP
+/// listener ([`build_and_serve`]) and the `met embed` stdio transport
+/// (`main_modules::embed_stdio`) serve this same router.
+pub(crate) fn router(
     host: Arc<crate::main_modules::model_host::ModelHost>,
-    bind: &str,
-    port: u16,
     // 2026-10-17: [`max_body_bytes`], resolved at boot.
     body_limit: usize,
-    // 2026-10-22: `METRALE_LISTENER_RCVBUF`, resolved at boot (`listener_rcvbuf.rs`).
-    listener_rcvbuf: bool,
-) -> Result<()> {
-    metrale_telemetry::progress::phase(10, "router");
-    host.set_bound(bind.to_string(), port);
+) -> Router {
     let cors = tower_http::cors::CorsLayer::new()
         .allow_origin(tower_http::cors::Any)
         .allow_methods([
@@ -63,11 +60,21 @@ pub(crate) async fn build_and_serve(
     // sent to the client.
     let catch_panic = tower_http::catch_panic::CatchPanicLayer::new();
 
-    let app = Router::new()
-        .route("/v1/chat/completions", post(api::chat_completions))
+    // 2026-10-24: The generation routes refuse an embedding model with a coded 501.
+    let gen_only = || {
+        axum::middleware::from_fn_with_state(host.clone(), api::refuse_generation_on_embedder)
+    };
+    Router::new()
+        .route(
+            "/v1/chat/completions",
+            post(api::chat_completions).layer(gen_only()),
+        )
         .route("/v1/chat/completions/{id}", get(api::get_stored_completion))
-        .route("/v1/completions", post(api::completions))
-        .route("/v1/responses", post(api::responses_endpoint))
+        .route("/v1/completions", post(api::completions).layer(gen_only()))
+        .route(
+            "/v1/responses",
+            post(api::responses_endpoint).layer(gen_only()),
+        )
         .route(
             "/v1/responses/{id}",
             get(api::get_stored_response).delete(api::delete_stored_response),
@@ -92,7 +99,7 @@ pub(crate) async fn build_and_serve(
             "/v1/conversations/{id}/items/{item_id}",
             get(api::get_conversation_item).delete(api::delete_conversation_item),
         )
-        .route("/v1/messages", post(anthropic::messages))
+        .route("/v1/messages", post(anthropic::messages).layer(gen_only()))
         .route("/v1/messages/count_tokens", post(anthropic::count_tokens))
         .route("/v1/lora/active", post(api::set_active_lora))
         .route("/v1/lora/load", post(api::load_lora_into_slot))
@@ -155,7 +162,21 @@ pub(crate) async fn build_and_serve(
         ))
         .layer(cors)
         .layer(catch_panic)
-        .with_state(host.clone());
+        .with_state(host)
+}
+
+pub(crate) async fn build_and_serve(
+    host: Arc<crate::main_modules::model_host::ModelHost>,
+    bind: &str,
+    port: u16,
+    // 2026-10-17: [`max_body_bytes`], resolved at boot.
+    body_limit: usize,
+    // 2026-10-22: `METRALE_LISTENER_RCVBUF`, resolved at boot (`listener_rcvbuf.rs`).
+    listener_rcvbuf: bool,
+) -> Result<()> {
+    metrale_telemetry::progress::phase(10, "router");
+    host.set_bound(bind.to_string(), port);
+    let app = router(host.clone(), body_limit);
 
     let addr = format!("{bind}:{port}");
     if bind == "0.0.0.0" {

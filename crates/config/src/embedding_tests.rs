@@ -173,10 +173,42 @@ fn role_reads_prompt_and_limit() {
     });
     assert_eq!(e.role(EmbedRole::Query).unwrap(), ("query: ", 512));
     assert_eq!(e.role(EmbedRole::Document).unwrap(), ("passage: ", 4096));
+}
+
+/// 2026-10-24: An `input_type` names a role only when that role's prompt is `"<input_type>: "`,
+/// so the echoed prefix is the applied one: `document` is refused for a checkpoint whose
+/// document prompt is `passage: `, and follows the prompts when they change.
+#[test]
+fn input_types_come_from_the_prompts() {
+    let mut e = parse(&fixture()).unwrap().embedding.unwrap();
+    assert!(e.role_for_input_type("query").is_err());
+    e.prompts = Some(EmbeddingPrompts {
+        query: "query: ".into(),
+        document: "passage: ".into(),
+    });
     assert_eq!(
-        EmbedRole::from_input_type("passage"),
+        e.role_for_input_type("query").unwrap(),
+        Some(EmbedRole::Query)
+    );
+    assert_eq!(
+        e.role_for_input_type("passage").unwrap(),
         Some(EmbedRole::Document)
     );
-    assert_eq!(EmbedRole::from_input_type("query"), Some(EmbedRole::Query));
-    assert_eq!(EmbedRole::from_input_type("search"), None);
+    for refused in ["document", "search", "passage:", "", "query: "] {
+        assert_eq!(e.role_for_input_type(refused).unwrap(), None, "{refused:?}");
+    }
+    assert_eq!(e.input_types().unwrap(), vec!["query", "passage"]);
+    e.prompts = Some(EmbeddingPrompts {
+        query: "Represent the query: ".into(),
+        document: "document: ".into(),
+    });
+    assert_eq!(
+        e.role_for_input_type("document").unwrap(),
+        Some(EmbedRole::Document)
+    );
+    assert_eq!(e.role_for_input_type("query").unwrap(), None);
+    assert_eq!(
+        e.input_types().unwrap(),
+        vec!["Represent the query", "document"]
+    );
 }

@@ -51,7 +51,7 @@ pub use conversations::{
     create_conversation, delete_conversation, delete_conversation_item, get_conversation,
     get_conversation_item, list_conversation_items, update_conversation,
 };
-pub use embeddings::embeddings;
+pub use embeddings::{embeddings, refuse_generation_on_embedder};
 pub use inference_types::{
     GrammarSpec, InferenceRequest, InferenceResponse, StreamEvent, TokenLogprobs,
 };
