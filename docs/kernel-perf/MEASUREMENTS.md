@@ -26,7 +26,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-causal-conv1d-cu-causal-conv1d-update-l2norm"></a>
 
-### `causal_conv1d_update_l2norm` — [kernels/gb10/common/causal_conv1d.cu](../../kernels/gb10/common/causal_conv1d.cu#L329)
+### `causal_conv1d_update_l2norm` — [kernels/gb10/common/causal_conv1d.cu](../../kernels/gb10/common/causal_conv1d.cu#L235)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -35,7 +35,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-causal-conv1d-cu-causal-conv1d-update-prefill-tp"></a>
 
-### `causal_conv1d_update_prefill_tp` — [kernels/gb10/common/causal_conv1d.cu](../../kernels/gb10/common/causal_conv1d.cu#L561)
+### `causal_conv1d_update_prefill_tp` — [kernels/gb10/common/causal_conv1d.cu](../../kernels/gb10/common/causal_conv1d.cu#L467)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -181,7 +181,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-gated-delta-rule-fla-cu-gated-delta-rule-chunk-delta-h-vfused"></a>
 
-### `gated_delta_rule_chunk_delta_h_vfused` — [kernels/gb10/common/gated_delta_rule_fla.cu](../../kernels/gb10/common/gated_delta_rule_fla.cu#L1085)
+### `gated_delta_rule_chunk_delta_h_vfused` — [kernels/gb10/common/gated_delta_rule_fla.cu](../../kernels/gb10/common/gated_delta_rule_fla.cu#L851)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -192,7 +192,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-gated-delta-rule-fla-cu-gated-delta-rule-chunk-fwd-o"></a>
 
-### `gated_delta_rule_chunk_fwd_o` — [kernels/gb10/common/gated_delta_rule_fla.cu](../../kernels/gb10/common/gated_delta_rule_fla.cu#L2003)
+### `gated_delta_rule_chunk_fwd_o` — [kernels/gb10/common/gated_delta_rule_fla.cu](../../kernels/gb10/common/gated_delta_rule_fla.cu#L1438)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -254,7 +254,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-glm5next-ffn-cu-glm5next-moe-combine"></a>
 
-### `glm5next_moe_combine` — [kernels/gb10/common/glm5next_ffn.cu](../../kernels/gb10/common/glm5next_ffn.cu#L224)
+### `glm5next_moe_combine` — [kernels/gb10/common/glm5next_ffn.cu](../../kernels/gb10/common/glm5next_ffn.cu#L192)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -263,7 +263,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-glm5next-ffn-cu-glm5next-router-topk-rank"></a>
 
-### `glm5next_router_topk_rank` — [kernels/gb10/common/glm5next_ffn.cu](../../kernels/gb10/common/glm5next_ffn.cu#L302)
+### `glm5next_router_topk_rank` — [kernels/gb10/common/glm5next_ffn.cu](../../kernels/gb10/common/glm5next_ffn.cu#L270)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -335,7 +335,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-kda-layer-ops-cu-kda-pack-qkv-bf16"></a>
 
-### `kda_pack_qkv_bf16` — [kernels/gb10/common/kda_layer_ops.cu](../../kernels/gb10/common/kda_layer_ops.cu#L136)
+### `kda_pack_qkv_bf16` — [kernels/gb10/common/kda_layer_ops.cu](../../kernels/gb10/common/kda_layer_ops.cu#L122)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -370,7 +370,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-moe-permute-cu-moe-batched-blend"></a>
 
-### `moe_batched_blend` — [kernels/gb10/common/moe_permute.cu](../../kernels/gb10/common/moe_permute.cu#L126)
+### `moe_batched_blend` — [kernels/gb10/common/moe_permute.cu](../../kernels/gb10/common/moe_permute.cu#L75)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -379,7 +379,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-moe-permute-cu-moe-build-tile-worklist"></a>
 
-### `moe_build_tile_worklist` — [kernels/gb10/common/moe_permute.cu](../../kernels/gb10/common/moe_permute.cu#L276)
+### `moe_build_tile_worklist` — [kernels/gb10/common/moe_permute.cu](../../kernels/gb10/common/moe_permute.cu#L225)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -388,7 +388,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-moe-permute-cu-moe-unpermute-reduce-indexed"></a>
 
-### `moe_unpermute_reduce_indexed` — [kernels/gb10/common/moe_permute.cu](../../kernels/gb10/common/moe_permute.cu#L95)
+### `moe_unpermute_reduce_indexed` — [kernels/gb10/common/moe_permute.cu](../../kernels/gb10/common/moe_permute.cu#L44)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -455,7 +455,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-paged-decode-attn-cu-paged-decode-attn"></a>
 
-### `paged_decode_attn` — [kernels/gb10/common/paged_decode_attn.cu](../../kernels/gb10/common/paged_decode_attn.cu#L54)
+### `paged_decode_attn` — [kernels/gb10/common/paged_decode_attn.cu](../../kernels/gb10/common/paged_decode_attn.cu#L53)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -495,7 +495,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-residual-add-cu-bf16-concat"></a>
 
-### `bf16_concat` — [kernels/gb10/common/residual_add.cu](../../kernels/gb10/common/residual_add.cu#L142)
+### `bf16_concat` — [kernels/gb10/common/residual_add.cu](../../kernels/gb10/common/residual_add.cu#L83)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -514,7 +514,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-rms-norm-cu-gated-rms-norm-prefill"></a>
 
-### `gated_rms_norm_prefill` — [kernels/gb10/common/rms_norm.cu](../../kernels/gb10/common/rms_norm.cu#L1277)
+### `gated_rms_norm_prefill` — [kernels/gb10/common/rms_norm.cu](../../kernels/gb10/common/rms_norm.cu#L817)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -526,7 +526,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-rms-norm-cu-l2-norm-bf16"></a>
 
-### `l2_norm_bf16` — [kernels/gb10/common/rms_norm.cu](../../kernels/gb10/common/rms_norm.cu#L1376)
+### `l2_norm_bf16` — [kernels/gb10/common/rms_norm.cu](../../kernels/gb10/common/rms_norm.cu#L916)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -536,7 +536,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-rms-norm-cu-residual-add-rms-norm"></a>
 
-### `residual_add_rms_norm` — [kernels/gb10/common/rms_norm.cu](../../kernels/gb10/common/rms_norm.cu#L382)
+### `residual_add_rms_norm` — [kernels/gb10/common/rms_norm.cu](../../kernels/gb10/common/rms_norm.cu#L323)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -549,7 +549,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-rms-norm-cu-rms-norm-residual"></a>
 
-### `rms_norm_residual` — [kernels/gb10/common/rms_norm.cu](../../kernels/gb10/common/rms_norm.cu#L259)
+### `rms_norm_residual` — [kernels/gb10/common/rms_norm.cu](../../kernels/gb10/common/rms_norm.cu#L200)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -842,7 +842,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-qwen3-6-27b-nvfp4-w4a16-gemm-cu-fp8-gemm-t-m128"></a>
 
-### `fp8_gemm_t_m128` — [kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu](../../kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu#L2745)
+### `fp8_gemm_t_m128` — [kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu](../../kernels/gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu#L2570)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|

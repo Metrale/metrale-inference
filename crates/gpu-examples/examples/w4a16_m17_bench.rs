@@ -133,11 +133,6 @@ fn main() -> Result<()> {
             Geom::N128M128W256,
         ),
         (
-            "w4a16_gemm_t_m64_bf16 (N128,M64)",
-            "w4a16_gemm_t_m64_bf16",
-            Geom::N128M64,
-        ),
-        (
             "w4a16_gemm_t_m128_bf16_v2",
             "w4a16_gemm_t_m128_bf16_v2",
             Geom::N128M128,

@@ -184,7 +184,6 @@ fn main() -> Result<()> {
         .kernel("w4a16_v2", "w4a16_gemm_t_m128_v2")
         .unwrap_or(KernelHandle(0));
     let fp8fp8 = gpu.kernel("w4a16", "fp8_fp8_gemm_t_m128")?;
-    let gt_k32 = gpu.kernel("w4a16", "w4a16_gemm_t_m64_bf16")?;
     let gt_k64 = gpu.kernel("w4a16", "w4a16_gemm_t_k64")?;
     let dbf16 = gpu.kernel("gemm", "dense_gemm_bf16_pipelined")?;
     let dtc = gpu.kernel("gemm_tc", "dense_gemm_tc")?;
@@ -282,11 +281,7 @@ fn main() -> Result<()> {
         let c4 = gpu.alloc(m * n * 2)?;
         let t4 = time_kernel_fp8(gpu, stream, fp8fp8, af8_ptr, bf8_ptr, c4, m, n, k, iters)?;
 
-        let c5 = gpu.alloc(m * n * 2)?;
         let c6 = gpu.alloc(m * n * 2)?;
-        let t5 = time_kernel_m64(
-            gpu, stream, gt_k32, a_ptr, p_ptr, s_ptr, 0.5, c5, m, n, k, iters,
-        )?;
         let t6 = time_kernel_m64(
             gpu, stream, gt_k64, a_ptr, p_ptr, s_ptr, 0.5, c6, m, n, k, iters,
         )?;
@@ -356,8 +351,8 @@ fn main() -> Result<()> {
             tf8,
             t2 / t8,
         );
-        let _ = (t1, t3, t4, t5, t6);
-        for ptr in [c5, c6, bbf_ptr, c7, c8] {
+        let _ = (t1, t3, t4, t6);
+        for ptr in [c6, bbf_ptr, c7, c8] {
             let _ = gpu.free(ptr);
         }
 

@@ -210,44 +210,6 @@ fn main() -> Result<()> {
             "variant", "ms", "GB/s", "% of 273", "vs base"
         );
 
-        // 2026-09-25: Control: `moe_w4a16_grouped_stream_probe` reads the same weight bytes with
-        // no dequant and no mma. It runs before the variants, and is skipped when it does not
-        // resolve.
-        if let Ok(kp) = gpu.kernel("moe_w4a16", "moe_w4a16_grouped_stream_probe") {
-            let pb = (n_out * kk / 2) as u32;
-            let sb = (n_out * kk / GROUP_SIZE) as u32;
-            let d_sink = gpu.alloc(NUM_EXPERTS * 4)?;
-            let gx = (pb / 16).div_ceil(256 * 8).max(1);
-            let go = |_: usize| -> Result<()> {
-                KernelLaunch::new(gpu, kp)
-                    .grid([gx, 1, NUM_EXPERTS as u32])
-                    .block([256, 1, 1])
-                    .arg_ptr(d_packed_ptrs)
-                    .arg_ptr(d_scale_ptrs)
-                    .arg_ptr(d_sink)
-                    .arg_u32(NUM_EXPERTS as u32)
-                    .arg_u32(pb)
-                    .arg_u32(sb)
-                    .launch(0)
-            };
-            for i in 0..WARMUP {
-                go(i)?;
-            }
-            gpu.synchronize(0)?;
-            let t0 = std::time::Instant::now();
-            for i in 0..ITERS {
-                go(i)?;
-            }
-            gpu.synchronize(0)?;
-            let ms = t0.elapsed().as_secs_f64() * 1.0e3 / ITERS as f64;
-            let gbs = bytes / (ms * 1.0e6);
-            println!(
-                "  {:<18} {ms:>8.3} {gbs:>10.1} {:>8.1}%          MEASURED CEILING (no dequant, no mma)",
-                "STREAM control",
-                100.0 * gbs / 273.0
-            );
-        }
-
         let mut base_out: Option<Vec<u8>> = None;
         let mut base_ms = 0f64;
         for v in VARIANTS {

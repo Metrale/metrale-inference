@@ -70,7 +70,6 @@ crates/gpu-examples/examples/metal_qwen35_inference/main.rs
 crates/gpu-examples/examples/native_fp8_decode_proj_w8a8_microtest.rs
 crates/gpu-examples/examples/native_fp8_ffn_w8a8_microtest.rs
 crates/gpu-examples/examples/native_fp8_prefill_proj_w8a8_microtest.rs
-crates/gpu-examples/examples/w4a16_bf16_microtest.rs
 crates/gpu-examples/examples/w4a16_lmhead_716_repro.rs
 crates/gpu-examples/examples/w4a16_m17_bench.rs
 crates/gpu-examples/examples/w8a8_decode_microtest.rs

@@ -392,7 +392,7 @@ names = ["nllb_*"]
 [[rule]]
 component = "diag"
 kind = "microtest / smoke"
-names = ["fp4_microtest_*", "noop_smoke", "moe_w4a16_grouped_stream_probe", "lora_bgmv_*_stub"]
+names = ["noop_smoke", "lora_bgmv_*_stub"]
 
 [[rule]]
 component = "vision"
@@ -535,11 +535,6 @@ component = "ngram-mem"
 kind = "memory embedding"
 names = ["engram_*", "ple_*"]
 
-[[rule]]
-component = "quant"
-kind = "dequant / repack / transpose"
-names = ["w8a16_dequant", "w4a16_dequant"]
-
 # --- projection GEMM/GEMV by format -------------------------------------------------------------------
 [[rule]]
 component = "gemm-w4a4"
@@ -601,4 +596,4 @@ names = ["argmax_*", "softmax_topp", "feed_resolve"]
 [[rule]]
 component = "elementwise"
 kind = "activation / gate / residual"
-names = ["*silu*", "gelu*", "relu_squared*", "*sigmoid*", "softplus_*", "bias_add_*", "bf16_add*", "vector_add", "bf16_residual_add", "f32_residual_add", "bf16_scaled_add", "bf16_concat", "sigmoid_gate", "silu_gate", "metrale_nvfp4_silu_*"]
+names = ["*silu*", "gelu*", "relu_squared*", "*sigmoid*", "softplus_*", "bias_add_*", "bf16_add*", "bf16_residual_add", "bf16_scaled_add", "bf16_concat", "sigmoid_gate", "silu_gate", "metrale_nvfp4_silu_*"]

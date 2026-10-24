@@ -41,12 +41,10 @@ const C: usize = 64;
 const DV_BLK: usize = 64;
 const NUM_DV_BLK: usize = VD / DV_BLK;
 
-/// 2026-09-25: The challenger entry: `METRALE_GDN_CHALLENGER=dvsplit` selects
-/// `_dvsplit`, any value starting with `v` selects `gated_delta_rule_chunk_delta_h_<value>`,
-/// and anything else `_tc_vblock`.
+/// 2026-09-25: The challenger entry: any `METRALE_GDN_CHALLENGER` value starting with `v`
+/// selects `gated_delta_rule_chunk_delta_h_<value>`, and anything else `_tc_vblock`.
 fn challenger_name() -> String {
     match std::env::var("METRALE_GDN_CHALLENGER").ok().as_deref() {
-        Some("dvsplit") => "gated_delta_rule_chunk_delta_h_dvsplit".to_string(),
         Some(v) if v.starts_with('v') => format!("gated_delta_rule_chunk_delta_h_{v}"),
         _ => "gated_delta_rule_chunk_delta_h_tc_vblock".to_string(),
     }
@@ -55,7 +53,6 @@ fn challenger_name() -> String {
 /// 2026-09-25: Dynamic shared memory for the selected challenger.
 fn challenger_smem() -> u32 {
     match std::env::var("METRALE_GDN_CHALLENGER").ok().as_deref() {
-        Some("dvsplit") => (C * KD * 2 + C * KD * 2 + C * DV_BLK * 2 + (C + 1) * 4) as u32,
         Some(v) if v.starts_with('v') => (C * (KD * 4 + VD * 2) + (C + 1) * 4) as u32,
         _ => TC_VBLOCK_SMEM,
     }
