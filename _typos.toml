@@ -196,10 +196,6 @@ extend-exclude = [
     # Local dev/benchmark scripts (not shipped); abbreviated local var names
     # like `ND` (numdrift path) read as typos but aren't user-facing.
     "bench/",
-    # Vendored llama.cpp/ggml CUDA MMQ sources (MIT). Upstream identifiers
-    # (`n_leafs`, `GGML_OP_CPY`, `ggml_arange`, ...) read as typos but are
-    # canonical; we don't ship typo fixes upstream from here, like `vendor/`.
-    "kernels/gb10/qwen3.6-27b/nvfp4/q4k_vendor/",
     # mdBook 0.4.40's book.js (MPL-2.0), kept verbatim but for one marked change so it can
     # be re-taken when the pin moves: upstream's `controllMenu` and friends stay as they are.
     "book/theme/book.js",

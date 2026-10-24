@@ -44,7 +44,7 @@ path.
 - **Copyright**: `Copyright (c) 2023-2026 The ggml authors` (from upstream's
   root `LICENSE`; the vendored files carry no per-file copyright line).
 - **Upstream**: https://github.com/ggml-org/llama.cpp (`ggml/src/ggml-cuda/`)
-- **In-repo path**: `kernels/gb10/qwen3.6-27b/nvfp4/q4k_vendor/`
+- **In-repo path**: `kernels/gb10/common/mmq/`
 - **Also derived from llama.cpp**: the DRY repetition penalty in
   `crates/sampling/src/lib.rs` is a Rust port of llama.cpp PR #9702.
 

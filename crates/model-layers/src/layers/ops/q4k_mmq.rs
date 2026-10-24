@@ -21,8 +21,8 @@ pub const QK_K: u32 = 256;
 /// 2026-09-25: `sizeof(block_q4_K)`.
 pub const Q4K_BLOCK_BYTES: usize = 144;
 /// 2026-09-25: Dynamic shared memory of the Q4_K MMQ kernel at `mmq_x = mmq_y =
-/// 128`: `mmq_get_nbytes_shared` in `q4k_vendor/mmq.cuh` with an x tile of 76
-/// ints per row. Above 48 KiB, so the registry raises the kernel's dynamic
+/// 128`: the `data_mul_mat_q` carve-up of `mul_mat_q_process_tile`
+/// (`kernels/gb10/common/mmq/mmq_tile.cuh`) with an x tile of 76 ints per row. Above 48 KiB, so the registry raises the kernel's dynamic
 /// shared memory limit (`registry.rs`).
 pub const Q4K_MMQ_SMEM: u32 = 57856;
 const CUDA_QUANTIZE_BLOCK_SIZE_MMQ: u32 = 128;

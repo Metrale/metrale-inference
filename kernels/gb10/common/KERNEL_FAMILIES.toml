@@ -1531,11 +1531,11 @@ kernels = [
 ]
 rows = [1, 65536]
 # 2026-10-02: W4A4 on the block-scaled FP4 MMA. The activation quantizers write E2M1 with one
-# E4M3 scale per 16 and NO F32 global (q4k_vendor/quantize_impl.cuh:126-173), ties to the smaller
+# E4M3 scale per 16 and NO F32 global (common/mmq/mmq_quantize.cuh:52-101), ties to the smaller
 # magnitude: the circuit names that `nvfp4/g16`, whose global it cannot drop. gate|up is written
-# without the weight's global scale (the SiLU kernel applies it, nvfp4_mmq.cu:266-268): scale
-# `none`. down rounds the FP32 sum to BF16 before the global scale (mmq.cuh:3375,
-# nvfp4_mmq.cu:218, 469-470): scale `bf16`. The SiLU kernel quantizes straight from FP32.
+# without the weight's global scale (the SiLU kernel applies it, nvfp4_mmq.cu:265-267): scale
+# `none`. down rounds the FP32 sum to BF16 before the global scale (common/mmq/mmq_tile.cuh:41,
+# nvfp4_mmq.cu:217, 468-469): scale `bf16`. The SiLU kernel quantizes straight from FP32.
 pipeline.linear = { in = ["bf16"], act = "nvfp4/g16", weight = "nvfp4/g16->e2m1", mma = "e2m1*e2m1", accumulate = "f32", scale = "bf16", out = ["bf16"] }
 pipeline."linear:gate_up" = { in = ["bf16"], act = "nvfp4/g16", weight = "nvfp4/g16->e2m1", mma = "e2m1*e2m1", accumulate = "f32", scale = "none", out = ["bf16"] }
 pipeline."linear:gate_up after act_quant" = { in = ["nvfp4/g16"], act = "nvfp4/g16", weight = "nvfp4/g16->e2m1", mma = "e2m1*e2m1", accumulate = "f32", scale = "none", out = ["bf16"] }

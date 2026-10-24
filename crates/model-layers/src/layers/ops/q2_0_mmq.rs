@@ -222,17 +222,17 @@ mod tests {
         }
 
         let launcher = include_str!("../../../../../kernels/gb10/qwen3.6-27b/nvfp4/q2_0_mmq.cu");
-        let vendor =
-            include_str!("../../../../../kernels/gb10/qwen3.6-27b/nvfp4/q4k_vendor/mmq.cuh");
-        assert!(launcher.contains("constexpr ggml_type type = GGML_TYPE_Q2_0;"));
+        let traits = include_str!("../../../../../kernels/gb10/common/mmq/mmq_tile.cuh");
+        let loads = include_str!("../../../../../kernels/gb10/common/mmq/mmq_load_tiles.cuh");
+        assert!(launcher.contains("constexpr mmq_type type = MMQ_TYPE_Q2_0;"));
         assert!(launcher.contains("metrale_q2_0_tile<128, false>"));
         assert!(launcher.contains("metrale_q2_0_tile<128, true>"));
-        assert!(vendor.contains("load_tiles   = load_tiles_q2_0<mmq_y, need_check>;"));
-        assert!(vendor.contains(
+        assert!(traits.contains("load_tiles   = load_tiles_q2_0<mmq_y, need_check>;"));
+        assert!(traits.contains(
             "vec_dot_mma  = vec_dot_q8_0_q8_1_mma<mmq_x, mmq_y, MMQ_Q8_1_DS_LAYOUT_DS4>;"
         ));
         assert_eq!(
-            vendor.matches("& 0x3) - 1;").count(),
+            loads.matches("& 0x3) - 1;").count(),
             4,
             "the Q2 unpack must subtract one from all four packed codes"
         );
