@@ -400,9 +400,13 @@ def diff(base: dict, head: dict, expect: set[str] | None) -> int:
         def wanted(m: str, k: str) -> bool:
             return f"{m}::{k}" in expect or k in expect
         unexpected = sorted(x for x in got if not wanted(*x))
-        named = {e for e in expect}
-        hit = {f"{m}::{k}" for m, k in got} | {k for _, k in got}
-        missing = sorted(e for e in named if e not in hit)
+        def keys(pairs: set[tuple[str, str]]) -> set[str]:
+            return {f"{m}::{k}" for m, k in pairs} | {k for _, k in pairs}
+        built = keys({(m, k) for ms in base["targets"].values() for m, ks in ms.items() for k in ks})
+        hit = keys(got)
+        missing = sorted(e for e in expect if e in built and e not in hit)
+        not_built = sorted(e for e in expect if e not in built)
+        print(f"expected removals: {len(expect)}; not built for these targets (informational): {len(not_built)}")
         for x in unexpected:
             print("  UNEXPECTED REMOVAL", "::".join(x))
         for x in missing:
