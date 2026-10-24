@@ -2249,6 +2249,7 @@ dependencies = [
  "metrale-comm",
  "metrale-config",
  "metrale-core",
+ "metrale-error",
  "metrale-gpu-runtime",
  "metrale-kernels",
  "metrale-kv-codec",

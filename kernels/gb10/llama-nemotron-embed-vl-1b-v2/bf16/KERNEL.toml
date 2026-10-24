@@ -1,0 +1,6 @@
+# 2026-10-24: This target compiles gb10/common plus two sources of its own:
+# - attn_prefill_h64.cu: the common prefill flash attention instantiated at head_dim 64 (the
+#   text tower's head size);
+# - mean_pool.cu: the `mean_pool` family (FP32 mean over each packed sequence's rows).
+# Both live here, not in common, so no other target's module set changes. Flags come from
+# common's [build].

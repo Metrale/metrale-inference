@@ -25,6 +25,8 @@ use metrale_model_layers::layers::MtpQuantization;
 
 mod alloc_digest;
 mod arena;
+#[cfg(feature = "cuda")]
+mod embed;
 mod kv_blocks;
 mod kv_budget;
 mod kv_sizing;
@@ -94,6 +96,10 @@ pub fn build_model(
     }
     #[cfg(not(feature = "cuda"))]
     let _ = (nllb_lang, nllb_lora_dir);
+    #[cfg(feature = "cuda")]
+    if embed::is_embedding(&config) {
+        return embed::build(&config, store, gpu, max_batch_tokens, &slots.request);
+    }
 
     // 2026-09-25: Step 1: select the weight loader. 2026-10-17: The model levers are derived
     // once here, for the loader and the model.
