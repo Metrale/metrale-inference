@@ -6,7 +6,6 @@ extra_nvcc_flags = ["--fmad=false"]
 # 2026-09-25: File stem -> module name overrides, merged per key over common/KERNEL.toml's; a stem not
 # listed in either is its own module name.
 [modules]
-e2m1_branchless = "e2m1"
 moe_permute = "moe"
 dense_gemm_bf16 = "gemm"
 dense_gemm_splitk = "gemm_splitk"
@@ -30,7 +29,6 @@ moe_sorted_prefill = "moe_sorted"
 attn_prefill_paged = "prefill_paged"
 attn_prefill_paged_fp8 = "prefill_paged_fp8"
 attn_prefill_paged_nvfp4 = "prefill_paged_nvfp4"
-attn_prefill_fp8kv = "prefill_fp8kv"
 nemotron_moe_prefill = "nemotron_moe_prefill"
 mla_absorbed = "mla_absorbed"
 mla_prefill_attn = "mla_prefill_attn"

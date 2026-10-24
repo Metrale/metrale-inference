@@ -57,7 +57,6 @@ extra_nvcc_flags = ["--fmad=false"]
 
 
 [modules]
-e2m1_branchless = "e2m1"
 moe_permute = "moe"
 dense_gemm_bf16 = "gemm"
 dense_gemm_splitk = "gemm_splitk"
@@ -81,7 +80,6 @@ moe_sorted_prefill = "moe_sorted"
 attn_prefill_paged = "prefill_paged"
 attn_prefill_paged_fp8 = "prefill_paged_fp8"
 attn_prefill_paged_nvfp4 = "prefill_paged_nvfp4"
-attn_prefill_fp8kv = "prefill_fp8kv"
 nemotron_moe_prefill = "nemotron_moe_prefill"
 mla_absorbed = "mla_absorbed"
 mla_prefill_attn = "mla_prefill_attn"
@@ -122,7 +120,6 @@ moe_silu_mul = ["silu_mul_quant_fp8"]
 use = [
   "deepseek-v4-flash/nvfp4/grouped_gemm_mla.cu",
   "deepseek-v4-flash/nvfp4/mla_absorbed.cu",
-  "deepseek-v4-flash/nvfp4/mla_cache_assemble_fp8.cu",
   "deepseek-v4-flash/nvfp4/mla_fused_prefill.cu",
   "deepseek-v4-flash/nvfp4/mla_paged_decode.cu",
   "deepseek-v4-flash/nvfp4/mla_paged_decode_fp8.cu",

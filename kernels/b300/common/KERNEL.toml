@@ -7,8 +7,6 @@ extra_nvcc_flags = ["--fmad=false", "-DTQ_PLUS_SIGNS"]
 # warning: build.rs still records every dropped kernel in
 # `TargetPtxSet::shadowed_dropped`, which the startup kernel gate reads.
 #
-#   w4a16::w4a16_dequant: no crate looks it up.
-#   moe_w4a16::moe_w4a16_grouped_gemm: no crate looks it up.
 #   norm::{rms_norm_residual_vanilla, residual_add_rms_norm_vanilla}: looked
 #       up only when `ships_vanilla_norm_weights(config)` (model-layers
 #       qwen3_attention/init.rs, model-engine model/impl_a1.rs).
@@ -54,8 +52,6 @@ extra_nvcc_flags = ["--fmad=false", "-DTQ_PLUS_SIGNS"]
 
 
 [shadow_exempt]
-w4a16 = ["w4a16_dequant"]
-moe_w4a16 = ["moe_w4a16_grouped_gemm"]
 norm = [
   "rms_norm_residual_vanilla",
   "residual_add_rms_norm_vanilla",
@@ -65,7 +61,6 @@ norm = [
 # 2026-09-25: File stem → module name overrides. A source not listed here uses
 # its file stem as the module name (build.rs).
 [modules]
-e2m1_branchless = "e2m1"
 moe_permute = "moe"
 dense_gemm_bf16 = "gemm"
 dense_gemm_splitk = "gemm_splitk"
@@ -105,7 +100,6 @@ paged_decode_attn_turbo3k_turbo8v = "paged_decode_turbo3k_turbo8v"
 paged_decode_attn_turbo2 = "paged_decode_turbo2"
 attn_prefill_paged_bf16k_turbo2v = "prefill_paged_bf16k_turbo2v"
 paged_decode_attn_bf16k_turbo2v_128 = "paged_decode_bf16k_turbo2v_128"
-attn_prefill_fp8kv = "prefill_fp8kv"
 nemotron_moe_prefill = "nemotron_moe_prefill"
 attn_prefill_paged_fp8k_turbo3v = "prefill_paged_fp8k_turbo3v"
 paged_decode_attn_fp8k_turbo3v_128 = "paged_decode_fp8k_turbo3v_128"
@@ -149,8 +143,8 @@ relu_squared = "relu2"
 # `inherits`, so a gb10/common file reaches it only by being listed here. This
 # list leaves out dense_gemv_bf16_tc, paged_decode_attn_{bf16,fp8}_gqa,
 # reshape_and_cache_fused_k_fp8, w4a16_gemv_tc, w4a4_gemv_mx and
-# w8a16_gemm_pipelined_m32. dsa_indexer.cu, moe_shared_expert_fused.cu,
-# moe_w4a16_grouped_gemm.cu and w8a16_gemv_batch4.cu are b300's own versions
+# w8a16_gemm_pipelined_m32. dsa_indexer.cu, moe_shared_expert_fused.cu and
+# w8a16_gemv_batch4.cu are b300's own versions
 # (kernels/FORKS.md).
 
 [sources]
@@ -172,7 +166,6 @@ use = [
   "../gb10/common/dequant_gguf_bf16.cu",
   "../gb10/common/dequant_nvfp4_bf16.cu",
   "../gb10/common/dflash2.cu",
-  "../gb10/common/e2m1_branchless.cu",
   "../gb10/common/e4m3_lut.cuh",
   "../gb10/common/embed_from_argmax.cu",
   "../gb10/common/fp8_gemm_t_blockscaled.cu",
@@ -203,7 +196,6 @@ use = [
   "../gb10/common/glm5next_ffn.cu",
   "../gb10/common/glm5next_mhc.cu",
   "../gb10/common/attn_prefill.cu",
-  "../gb10/common/attn_prefill_fp8kv.cu",
   "../gb10/common/attn_prefill_h128.cu",
   "../gb10/common/attn_prefill_paged_512.cu",
   "../gb10/common/attn_prefill_paged_batched.cu",
@@ -226,7 +218,6 @@ use = [
   "../gb10/common/attn_prefill_paged_turbo4k_turbo3v.cu",
   "../gb10/common/attn_prefill_paged_turbo4k_turbo8v.cu",
   "../gb10/common/attn_prefill_paged_turbo8.cu",
-  "../gb10/common/attn_prefill_v47.cu",
   "../gb10/common/kda_chunk.cu",
   "../gb10/common/kda_gate.cu",
   "../gb10/common/kda_layer_ops.cu",
@@ -238,7 +229,6 @@ use = [
   "../gb10/common/moe_bf16_grouped_gemm.cu",
   "../gb10/common/moe_decode_atomic_c4.cu",
   "../gb10/common/moe_expert_gemv.cu",
-  "../gb10/common/moe_expert_gemv_fused.cu",
   "../gb10/common/moe_expert_relu2_down_shared.cu",
   "../gb10/common/moe_fp8_grouped_blend.cu",
   "../gb10/common/moe_fp8_grouped_gemm.cu",
@@ -329,7 +319,6 @@ use = [
   "../gb10/common/tq_plus_innerq.cuh",
   "../gb10/common/tq_plus_signs.cuh",
   "../gb10/common/transpose_u8.cu",
-  "../gb10/common/vector_add.cu",
   "../gb10/common/w4a16_fp8_ldmab.cu",
   "../gb10/common/w4a16_gemm.cu",
   "../gb10/common/w4a16_gemv.cu",

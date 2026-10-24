@@ -32,7 +32,6 @@ rope = [
 
 # 2026-09-25: File stem to module name. A stem that no layer's [modules] lists keeps its stem as the module name.
 [modules]
-e2m1_branchless = "e2m1"
 moe_permute = "moe"
 dense_gemm_bf16 = "gemm"
 rms_norm = "norm"
