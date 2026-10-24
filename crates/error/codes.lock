@@ -31,6 +31,9 @@
 0x0180 HostConfig
 0x0181 HostUnavailable
 0x0200 SequenceFailed
+0x0201 EmbedNotSupported
+0x0202 GenerateNotSupported
+0x0203 EmbedInputInvalid
 0x0280 DeviceDriver
 0x0300 ServeEnvNotALever
 0x0301 ServeEnvHarness
