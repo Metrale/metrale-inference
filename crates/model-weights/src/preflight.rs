@@ -51,6 +51,15 @@ pub fn preflight(
         );
         return Ok(());
     }
+    // 2026-10-24: An embedding model's text tower has no LM head and sits under its config's
+    // `weight_prefix`; `EmbedGpuModel::new` checks every tensor's presence, dtype and shape.
+    if config.embedding.is_some() {
+        tracing::info!(
+            "Pre-flight: embedding model — generic decoder checks skipped \
+             (weights validated in EmbedGpuModel::new)"
+        );
+        return Ok(());
+    }
     // Model-agnostic checks — driven purely by `store.all_names()` (2026-10-16: resident AND
     // deferred, so a defer hook such as METRALE_GLM_LAYER_STREAM hides nothing from them) and
     // `config` (which already carries the parsed `config.json` values).

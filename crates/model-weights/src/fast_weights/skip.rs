@@ -52,6 +52,11 @@ impl FastSafetensorsLoader {
         if self.skip_vision && super::is_vision_tensor(name) {
             return true;
         }
+        if let Some(p) = &self.keep_only_prefix
+            && !name.starts_with(p.as_str())
+        {
+            return true;
+        }
         // MTP head weights for a model whose loader does not build one.
         if self.skip_mtp && name.starts_with("mtp.") {
             return true;
@@ -123,6 +128,30 @@ mod activation_scale_tests {
         let l = FastSafetensorsLoader::new();
         assert!(!l.skip_activation_scales);
         assert!(!l.should_skip_tensor("model.layers.0.mlp.gate_proj.input_scale"));
+    }
+
+    /// 2026-10-24: An embedding model's text-tower prefix keeps that tower only: the other
+    /// towers and the projector are skipped, a name that merely contains the prefix is
+    /// skipped too, and every tensor under it loads.
+    #[test]
+    fn keep_only_prefix_keeps_one_tower() {
+        let mut l = FastSafetensorsLoader::new();
+        l.keep_only_prefix = Some("language_model.".into());
+        for skip in [
+            "vision_model.encoder.layers.0.mlp.fc1.weight",
+            "mlp1.0.weight",
+            "x.language_model.norm.weight",
+            "language_modelx.norm.weight",
+        ] {
+            assert!(l.should_skip_tensor(skip), "{skip} must be skipped");
+        }
+        for keep in [
+            "language_model.embed_tokens.weight",
+            "language_model.layers.15.mlp.down_proj.weight",
+        ] {
+            assert!(!l.should_skip_tensor(keep), "{keep} must load");
+        }
+        assert!(!FastSafetensorsLoader::new().should_skip_tensor("mlp1.0.weight"));
     }
 }
 
