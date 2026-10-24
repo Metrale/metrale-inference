@@ -209,6 +209,7 @@ fn module_file(name: &str, kind: ArtifactKind) -> Result<String> {
         ArtifactKind::AmdCodeObject => "co",
         ArtifactKind::ScaleObject => "o",
         ArtifactKind::AppleGpuLibrary => "metallib",
+        ArtifactKind::NvidiaFatbin => "fatbin",
     };
     Ok(format!("{name}.{ext}"))
 }

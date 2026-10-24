@@ -270,7 +270,10 @@ fn sealing_glm_leaks_no_key_material_and_every_recipient_opens_it() {
         .unwrap();
         let internal = internal_of(&plain).unwrap();
         for m in &f.g.bp.kernels.modules {
-            let got = std::fs::read(out_dir.join(format!("{}.ptx", m.name))).unwrap();
+            // 2026-10-24: Named by the module's kind (`module_file`): `.fatbin` since the kernel
+            // build emits fatbins, `.ptx` for a PTX build.
+            let file = super::module_file(&m.name, m.kind).unwrap();
+            let got = std::fs::read(out_dir.join(file)).unwrap();
             assert_eq!(Some(got.as_slice()), internal(&m.name), "{}", m.name);
         }
     }

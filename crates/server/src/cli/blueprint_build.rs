@@ -103,7 +103,8 @@ pub(crate) fn embedded(
         })
 }
 
-/// 2026-10-22: The `.entry` names of a PTX module, sorted.
+/// 2026-10-22: The `.entry` names of a PTX module, sorted. 2026-10-24: A fatbin's are read
+/// from the uncompressed PTX it carries, whose lines survive the lossy decode intact.
 pub(crate) fn ptx_entries(bytes: &[u8]) -> Vec<String> {
     let text = String::from_utf8_lossy(bytes);
     let mut out: Vec<String> = text
@@ -249,7 +250,11 @@ fn kernels(
         .iter()
         .map(|(name, bytes)| w::ModuleSpec {
             name: name.to_string(),
-            kind: w::ArtifactKind::PtxText,
+            kind: if metrale_gpu_runtime::fatbin::is_fatbin(bytes) {
+                w::ArtifactKind::NvidiaFatbin
+            } else {
+                w::ArtifactKind::PtxText
+            },
             arch: set.ptx_arch.to_string(),
             artifact: ArtifactId::of(bytes),
             len: bytes.len() as u64,

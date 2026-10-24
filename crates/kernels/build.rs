@@ -57,6 +57,7 @@ fn main() {
     // come from `build_ptx_cache::emit_env_rerun`.
     println!("cargo:rerun-if-env-changed=METRALE_KERNEL_NO_STRICT");
     println!("cargo:rerun-if-env-changed=CUDA_HOME");
+    println!("cargo:rerun-if-env-changed={}", build_image::IMAGE_ENV);
     build_ptx_cache::emit_env_rerun();
     // 2026-09-25: Skip the kernel build on macOS unless `METRALE_TARGET_HW` is
     // set: the default `gb10` target needs nvcc, which a Mac does not have.
@@ -429,6 +430,11 @@ mod build_codegen;
 
 #[path = "build_target.rs"]
 mod build_target;
+
+// 2026-10-24: The NVIDIA image (fatbin or PTX) `METRALE_KERNEL_IMAGE` selects. Its own file
+// so `tests/kernel_image.rs` compiles the same code.
+#[path = "build_image.rs"]
+mod build_image;
 use build_target::resolve_compute_target;
 
 #[path = "build_diagnose.rs"]

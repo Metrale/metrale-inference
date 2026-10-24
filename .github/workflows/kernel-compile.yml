@@ -193,7 +193,7 @@ jobs:
             echo "::error::METRALE_SKIP_BUILD must not be set for this job."
             exit 1
           fi
-          ptx=$(find target -name '*.ptx' | wc -l)
+          ptx=$(find target \( -name '*.ptx' -o -name '*.fatbin' \) | wc -l)
           echo "compiled $ptx PTX module(s) across $real real target(s)"
           # 22 gb10 targets produce five figures of PTX; 50 only asserts that
           # target resolution did not collapse to a near-empty set.
@@ -282,7 +282,7 @@ jobs:
             echo "::error::the generated target_ptx.rs is build.rs's SKIP STUB — nvcc was never invoked."
             exit 1
           fi
-          ptx=$(find target -name '*.ptx' | wc -l)
+          ptx=$(find target \( -name '*.ptx' -o -name '*.fatbin' \) | wc -l)
           echo "compiled $ptx PTX module(s) for sm_90a"
           # One target over `kernels/hopper/common` (178 sources) plus its own
           # shadows. 50 only asserts resolution did not collapse.
@@ -366,7 +366,7 @@ jobs:
             echo "::error::the generated target_ptx.rs is build.rs's SKIP STUB — nvcc was never invoked."
             exit 1
           fi
-          ptx=$(find target -name '*.ptx' | wc -l)
+          ptx=$(find target \( -name '*.ptx' -o -name '*.fatbin' \) | wc -l)
           echo "compiled $ptx PTX module(s) for sm_100a"
           if [ "$ptx" -lt 50 ]; then
             echo "::error::only $ptx PTX modules — the build resolved too few targets"

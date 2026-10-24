@@ -243,7 +243,7 @@ jobs:
             echo "::error::every generated target_ptx.rs is build.rs's SKIP STUB — nvcc was never invoked."
             exit 1
           fi
-          ptx=$(find target -name '*.ptx' | wc -l)
+          ptx=$(find target \( -name '*.ptx' -o -name '*.fatbin' \) | wc -l)
           echo "compiled $ptx PTX module(s) for ${{ matrix.arch }} across $real real target(s)"
           if [ "$ptx" -lt 50 ]; then
             echo "::error::only $ptx PTX modules — the build resolved too few targets"

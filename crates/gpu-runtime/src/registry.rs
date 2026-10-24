@@ -115,7 +115,8 @@ pub struct MetraleRegistry {
     /// `cuModuleGetGlobal_v2`.
     raw_modules: HashMap<&'static str, *mut c_void>,
     /// 2026-10-14: The variables each PTX module defines (`ptx_globals`); `None` for a
-    /// binary module, whose definitions are not read.
+    /// binary module, whose definitions are not read. 2026-10-24: A fatbin is read through
+    /// the PTX it carries (`fatbin`).
     globals: HashMap<&'static str, Option<HashSet<String>>>,
     /// 2026-10-21: The entries of each PTX module that wait on their grid dependencies
     /// (`ptx_pdl`); a binary module has none listed.
@@ -193,7 +194,21 @@ impl MetraleRegistry {
                 || blob.starts_with(b"__CLANG_OFFLOAD_BUNDLE__")
                 || std::str::from_utf8(&blob[..blob.len().min(64)]).is_err();
 
-            let ptx = if is_binary {
+            let ptx = if crate::fatbin::is_fatbin(blob) {
+                // 2026-10-24: The driver loads the SASS; the metadata comes from the PTX
+                // the fatbin carries beside it, as for a PTX module.
+                let texts = crate::fatbin::ptx_texts(blob)
+                    .map_err(|e| MetraleError::ModuleLoad(format!("{name}: {e}")))?;
+                let defined = texts
+                    .iter()
+                    .flat_map(|t| crate::ptx_globals::defined_globals(t));
+                globals.insert(name, Some(defined.collect()));
+                let waits = texts
+                    .iter()
+                    .flat_map(|t| crate::ptx_pdl::waiting_entries(t));
+                waiting.insert(name, waits.collect());
+                Ptx::from_binary(blob.to_vec())
+            } else if is_binary {
                 globals.insert(name, None);
                 Ptx::from_binary(blob.to_vec())
             } else {
