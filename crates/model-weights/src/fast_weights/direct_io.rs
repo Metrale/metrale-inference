@@ -206,6 +206,20 @@ pub(super) fn read_tensor_aligned(
     Ok((buf, slice_off))
 }
 
+/// 2026-10-24: Exactly `len` bytes at absolute offset `offset` of `path`, read with `O_DIRECT`
+/// (the page cache is neither consulted nor filled): one aligned window, then the tensor's bytes
+/// copied out. An error when the file system refuses `O_DIRECT` (tmpfs, overlayfs) or the file
+/// ends before `offset + len`; no buffered fallback, so the caller states the read mode.
+pub fn read_exact_direct(path: &Path, offset: u64, len: usize) -> Result<Vec<u8>> {
+    use anyhow::Context;
+    use std::os::unix::io::AsRawFd;
+    let f =
+        open_direct(path).with_context(|| format!("opening {} with O_DIRECT", path.display()))?;
+    let (buf, at) = read_tensor_aligned(f.as_raw_fd(), offset, len, true)
+        .with_context(|| format!("O_DIRECT read of {len} B at {offset} of {}", path.display()))?;
+    Ok(buf.as_slice()[at..at + len].to_vec())
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
@@ -269,6 +283,29 @@ mod tests {
             Ok(_) => panic!("a 4096-byte tensor cannot come out of a 1024-byte file"),
         };
         assert!(err.contains("short read"), "{err}");
+        std::fs::remove_file(path).ok();
+    }
+
+    /// 2026-10-24: `read_exact_direct` returns exactly the requested bytes for ranges that start
+    /// and end off the 4 KiB grid, span several windows, touch end-of-file, or are empty; a range
+    /// past the end is an error, never a short vector.
+    #[test]
+    fn direct_read_returns_exactly_the_range() {
+        let data: Vec<u8> = (0..=250u8).cycle().take(3 * O_DIRECT_ALIGN + 777).collect();
+        let (path, _f) = scratch("exactdirect", &data);
+        let n = data.len() as u64;
+        for (off, len) in [
+            (0u64, 1usize),
+            (11, 4096),
+            (4095, 2),
+            (100, 9000),
+            (n - 5, 5),
+            (7, 0),
+        ] {
+            let got = read_exact_direct(&path, off, len).unwrap();
+            assert_eq!(got, &data[off as usize..off as usize + len], "{off}+{len}");
+        }
+        assert!(read_exact_direct(&path, n - 4, 5).is_err());
         std::fs::remove_file(path).ok();
     }
 

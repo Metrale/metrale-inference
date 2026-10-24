@@ -23,7 +23,12 @@
 //! - 2026-10-21: Under a packing layer ([`ScalePack`], `METRALE_GLM_MOE_SCALE_DICT`) a sliced
 //!   projection's block scales are packed on the host before the slab takes them, into the same
 //!   bytes of its slot (`scale_dict::pack`); a whole expert is never packed.
+//! - 2026-10-24: Under `METRALE_GLM_EXPERT_FAST_LOAD` (default on) a sliced layer's experts are
+//!   prepared on the host in parallel before the first upload (`expert_prepare`); the slicing is
+//!   [`sliced_proj`] on either path, only the reads differ.
 
+use super::expert_digest::ExpertDigest;
+use super::expert_prepare::{Buffered, ExpertBytes, ExpertLoad, Prepared};
 use super::expert_scales::has_csf_plane;
 use super::expert_slab::{CSF_SCALE_SLAB_LABEL, ExpertSlab, TP_SLAB_LABEL};
 use super::scale_pack::ScalePack;
@@ -47,18 +52,38 @@ pub(super) fn is_routed_expert_tensor(name: &str) -> bool {
 /// [`slab_label`].
 /// 2026-10-21: `pack`: the layer's scale packing; `None` keeps every scale plain (the MTP layer,
 /// whose 16-bit experts run W4A16).
+/// 2026-10-24: Under `load.fast` a sliced layer's experts are prepared in parallel waves as the
+/// binder takes them ([`Prepared`]); under `load.digest` every sliced expert's uploaded
+/// buffers are digested ([`ExpertDigest`]).
 pub(super) fn routed_expert_binder<'a>(
     gpu: &'a dyn GpuBackend,
     store: &'a WeightStore,
     layer: usize,
     cfg: &Glm5NextMlpConfig,
     pack: Option<&'a ScalePack>,
-) -> impl Fn(usize) -> Result<Glm5NextExpertWeights> + 'a {
+    load: &ExpertLoad,
+) -> Result<impl Fn(usize) -> Result<Glm5NextExpertWeights> + use<'a>> {
     let (shard, slab) = (
         cfg.expert_shard,
         ExpertSlab::new(cfg.local_expert_range(), slab_label(cfg.expert_shard)),
     );
-    move |id| bind_routed_expert(gpu, store, layer, id, shard, &slab, pack)
+    let prepared = match shard {
+        ExpertShard::Sliced(s) if load.fast => {
+            Some(Prepared::new(store, layer, cfg.local_expert_range(), &s))
+        }
+        _ => None,
+    };
+    let digest = load.digest.clone().map(|path| ExpertDigest { path, layer });
+    Ok(move |id| {
+        let ExpertShard::Sliced(s) = shard else {
+            return bind_routed_expert(gpu, store, layer, id, shard, &slab, pack);
+        };
+        let host = match &prepared {
+            Some(p) => p.take(id)?,
+            None => host_expert(store, &Buffered { gpu, store }, layer, id, &s)?,
+        };
+        bind_sliced(gpu, store, id, &s, &slab, pack, host, digest.as_ref())
+    })
 }
 
 /// 2026-10-17: The ledger label of a layer's slab under `shard`: what that layout places in it.
@@ -92,9 +117,40 @@ pub(super) fn bind_routed_expert(
         ExpertShard::Whole => return bind_expert(gpu, store, layer, id, slab),
         ExpertShard::Sliced(s) => s,
     };
-    let mut g = sliced_proj(gpu, store, layer, id, "gate_proj", &s)?;
-    let mut u = sliced_proj(gpu, store, layer, id, "up_proj", &s)?;
-    let mut d = sliced_proj(gpu, store, layer, id, "down_proj", &s)?;
+    let host = host_expert(store, &Buffered { gpu, store }, layer, id, &s)?;
+    bind_sliced(gpu, store, id, &s, slab, Some(pack), host, None)
+}
+
+/// 2026-10-24: Expert `id` of `layer` under slice `s` on the host, gate, up and down, from `b`.
+pub(super) fn host_expert<B: ExpertBytes + ?Sized>(
+    store: &WeightStore,
+    b: &B,
+    layer: usize,
+    id: usize,
+    s: &ExpertSlice,
+) -> Result<[HostProj; 3]> {
+    Ok([
+        sliced_proj(store, b, layer, id, "gate_proj", s)?,
+        sliced_proj(store, b, layer, id, "up_proj", s)?,
+        sliced_proj(store, b, layer, id, "down_proj", s)?,
+    ])
+}
+
+/// 2026-10-24: Pack (under `pack`) and upload a sliced expert's host projections into `id`'s
+/// slot of `slab`; with `digest`, record the uploaded device bytes.
+#[allow(clippy::too_many_arguments)]
+fn bind_sliced(
+    gpu: &dyn GpuBackend,
+    store: &WeightStore,
+    id: usize,
+    s: &ExpertSlice,
+    slab: &ExpertSlab,
+    pack: Option<&ScalePack>,
+    [mut g, mut u, mut d]: [HostProj; 3],
+    digest: Option<&ExpertDigest>,
+) -> Result<Glm5NextExpertWeights> {
+    let plain = ScalePack::new(ScaleDictPlan::Off);
+    let pack = pack.unwrap_or(&plain);
     // 2026-10-21: gate/up keep `s.len` rows of hidden / 16 groups; down hidden rows of
     // `s.len / 16` groups.
     let gu_groups = g.1.len() / s.len.max(1);
@@ -105,6 +161,10 @@ pub(super) fn bind_routed_expert(
     ];
     let blobs = [&g.0[..], &g.1, &u.0, &u.1, &d.0, &d.1];
     let [gp, gs, up, us, dp, ds] = slab.place(gpu, store, id, blobs)?;
+    if let Some(dg) = digest {
+        let scalars = [&g, &u, &d].map(|h| (h.2, h.3));
+        dg.record(gpu, id, &blobs, &[gp, gs, up, us, dp, ds], &scalars)?;
+    }
     let proj = |h: &HostProj, packed, scale, scale_layout| Nvfp4Proj {
         packed,
         scale,
@@ -130,7 +190,7 @@ pub(super) fn meta(store: &WeightStore, name: &str) -> Result<(WeightDtype, Vec<
 
 /// 2026-10-09: Bytes `[start, start + len)` of a tensor: a ranged shard read when deferred, else
 /// read back from the device and cut on the host.
-fn read_range(
+pub(super) fn read_range(
     gpu: &dyn GpuBackend,
     store: &WeightStore,
     name: &str,
@@ -159,10 +219,15 @@ pub(super) fn read_all(gpu: &dyn GpuBackend, store: &WeightStore, name: &str) ->
 }
 
 /// 2026-10-09: The scalar F32 `weight_scale_2` of `base`, deferred or resident.
-fn scale_2(gpu: &dyn GpuBackend, store: &WeightStore, layer: usize, base: &str) -> Result<f32> {
+fn scale_2<B: ExpertBytes + ?Sized>(
+    store: &WeightStore,
+    src: &B,
+    layer: usize,
+    base: &str,
+) -> Result<f32> {
     let name = qualify(layer, &format!("{base}.weight_scale_2"));
     let (dtype, _) = meta(store, &name)?;
-    let b = read_all(gpu, store, &name)?;
+    let b = src.all(&name)?;
     match (dtype, &b[..]) {
         (WeightDtype::FP32, &[a, b2, c, d]) => Ok(f32::from_le_bytes([a, b2, c, d])),
         _ => bail!("{name} is {dtype:?} of {} bytes; expected one F32", b.len()),
@@ -175,10 +240,10 @@ pub(super) type HostProj = (Vec<u8>, Vec<u8>, f32, Option<f32>);
 
 /// 2026-10-09: One sliced projection: gate/up (`[full, hidden]`) keep the slice's rows, down
 /// (`[hidden, full]`) its columns, both zero-padded to `s.len`. 2026-10-14: Returned on the host
-/// for the layer's slab, no longer uploaded here.
-fn sliced_proj(
-    gpu: &dyn GpuBackend,
+/// for the layer's slab, no longer uploaded here. 2026-10-24: Its bytes from `src`.
+fn sliced_proj<B: ExpertBytes + ?Sized>(
     store: &WeightStore,
+    src: &B,
     layer: usize,
     id: usize,
     p: &str,
@@ -226,22 +291,23 @@ fn sliced_proj(
             let (packed, scales) = if by_rows {
                 let rows = s.real_cols();
                 let cut = |name: &str, row_bytes: usize, r: TpSlice| {
-                    read_range(gpu, store, name, r.start * row_bytes, r.len * row_bytes)
+                    src.range(name, r.start * row_bytes, r.len * row_bytes)
                 };
                 pad_expert_rows(cut(&wname, k / 2, rows)?, cut(&sname, k / 16, rows)?, k, s)?
             } else {
-                let scales = read_all(gpu, store, &sname)?;
-                slice_expert_cols(&read_all(gpu, store, &wname)?, &scales, n, s)?
+                let scales = src.all(&sname)?;
+                slice_expert_cols(&src.all(&wname)?, &scales, n, s)?
             };
             (
                 packed,
                 scales,
-                scale_2(gpu, store, layer, &base)?,
-                input_scale(gpu, store, layer, &base)?,
+                scale_2(store, src, layer, &base)?,
+                src.input_scale(layer, &base)?,
             )
         }
         (WeightDtype::BF16, &[rows, cols]) => {
-            let values: Vec<f32> = read_all(gpu, store, &wname)?
+            let values: Vec<f32> = src
+                .all(&wname)?
                 .chunks_exact(2)
                 .map(|c| half::bf16::from_bits(u16::from_le_bytes([c[0], c[1]])).to_f32())
                 .collect();
@@ -263,4 +329,4 @@ fn sliced_proj(
 
 #[cfg(test)]
 #[path = "expert_tp_tests.rs"]
-mod tests;
+pub(super) mod tests;

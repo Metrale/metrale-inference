@@ -22,10 +22,10 @@ use crate::glm5next_mlp::expert_tp::{
 };
 use crate::weight_loader::ModelWeightLoader;
 
-const LAYER: usize = 4;
-const HIDDEN: usize = 32;
+pub(crate) const LAYER: usize = 4;
+pub(crate) const HIDDEN: usize = 32;
 
-fn qualified(leaf: &str) -> String {
+pub(crate) fn qualified(leaf: &str) -> String {
     format!("model.language_model.layers.{LAYER}.{leaf}")
 }
 
@@ -37,9 +37,9 @@ fn tagged(len: usize, salt: usize) -> Vec<u8> {
 }
 
 /// 2026-10-09: Every tensor written into one scratch shard, each deferred at its offset.
-struct Shard {
-    store: WeightStore,
-    path: std::path::PathBuf,
+pub(crate) struct Shard {
+    pub(crate) store: WeightStore,
+    pub(crate) path: std::path::PathBuf,
 }
 
 impl Drop for Shard {
@@ -48,7 +48,7 @@ impl Drop for Shard {
     }
 }
 
-fn shard(tag: &str, tensors: &[(String, WeightDtype, Vec<usize>, Vec<u8>)]) -> Shard {
+pub(crate) fn shard(tag: &str, tensors: &[(String, WeightDtype, Vec<usize>, Vec<u8>)]) -> Shard {
     let dir = std::env::temp_dir().join(format!("metrale-glm5next-etp-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join(format!("{tag}.safetensors"));
@@ -90,7 +90,10 @@ fn packed_expert(full: usize) -> Vec<(String, WeightDtype, Vec<usize>, Vec<u8>)>
 }
 
 /// 2026-10-14: [`packed_expert`] as expert `id`, its bytes salted by `id`.
-fn packed_expert_id(full: usize, id: usize) -> Vec<(String, WeightDtype, Vec<usize>, Vec<u8>)> {
+pub(crate) fn packed_expert_id(
+    full: usize,
+    id: usize,
+) -> Vec<(String, WeightDtype, Vec<usize>, Vec<u8>)> {
     let mut t = Vec::new();
     for (i, (p, n, k)) in [
         ("gate_proj", full, HIDDEN),
@@ -122,7 +125,7 @@ fn packed_expert_id(full: usize, id: usize) -> Vec<(String, WeightDtype, Vec<usi
     t
 }
 
-fn bytes_of(t: &[(String, WeightDtype, Vec<usize>, Vec<u8>)], leaf: &str) -> Vec<u8> {
+pub(crate) fn bytes_of(t: &[(String, WeightDtype, Vec<usize>, Vec<u8>)], leaf: &str) -> Vec<u8> {
     t.iter().find(|x| x.0 == qualified(leaf)).unwrap().3.clone()
 }
 

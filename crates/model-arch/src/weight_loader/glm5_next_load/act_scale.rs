@@ -32,6 +32,25 @@ pub(super) fn input_scale(
     layer: usize,
     base: &str,
 ) -> Result<Option<f32>> {
+    input_scale_by(
+        store,
+        layer,
+        base,
+        |d| d.read_host_bytes(),
+        |t, name| host_f32(gpu, t, name),
+    )
+}
+
+/// 2026-10-24: [`input_scale`] with the two reads supplied: `deferred` returns a deferred
+/// scale's raw shard bytes, `resident` a resident one's values (`expert_prepare`'s O_DIRECT
+/// source reads the first and refuses the second).
+pub(super) fn input_scale_by(
+    store: &WeightStore,
+    layer: usize,
+    base: &str,
+    deferred: impl Fn(&metrale_model_weights::weights::DeferredTensor) -> Result<Vec<u8>>,
+    resident: impl Fn(&WeightTensor, &str) -> Result<Vec<f32>>,
+) -> Result<Option<f32>> {
     let name = qualify(layer, &format!("{base}.input_scale"));
     let values = if let Some(d) = store.deferred(&name) {
         if d.dtype != WeightDtype::FP32 {
@@ -40,13 +59,13 @@ pub(super) fn input_scale(
                 d.dtype
             );
         }
-        d.read_host_bytes()
+        deferred(d)
             .with_context(|| format!("{name}: reading the activation scale from its shard"))?
             .chunks_exact(4)
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
             .collect::<Vec<f32>>()
     } else if store.contains(&name) {
-        host_f32(gpu, store.get(&name)?, &name)?
+        resident(store.get(&name)?, &name)?
     } else {
         return Ok(None);
     };
