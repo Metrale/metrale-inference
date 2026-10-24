@@ -33,7 +33,9 @@ const CLASSES: [&str; 1] = ["gb10"];
 // (FUSED_HANDWRITTEN.toml header); owner signed off 2026-10-23, shrink-only from here.
 // 2026-10-23 (P1): 118 -> 116, w4a16_gemv_pipe_m1/_m2 became instantiations of
 // w4a16_gemv_pipe.cuh; merged with mk-prereq's 118 -> 114: 112.
-const CEILING: [(&str, usize); 1] = [("gb10", 112)];
+// 2026-10-24 (R3): 112 -> 111, glm5next_hc_pre_norm_c1 became an instantiation of
+// glm5next_mhc_c1_body.cuh.
+const CEILING: [(&str, usize); 1] = [("gb10", 111)];
 /// 2026-10-23: The marker an instantiation's first line after the SPDX line carries.
 const MARKER: &str = "// metrale: instantiates ";
 /// 2026-10-23: Constructs an instantiation must not contain: they belong to the template.

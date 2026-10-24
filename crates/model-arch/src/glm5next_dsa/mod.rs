@@ -181,6 +181,13 @@ pub struct DsaRowsKernels {
     /// of [`Self::ready`].
     pub topk_mc_pass: KernelHandle,
     pub topk_mc_collect: KernelHandle,
+    /// 2026-10-24: `dsa_topk_mc_seg.cu`'s `dsa_topk_mc_seg`: those five launches as one
+    /// persistent segment. Not part of [`Self::ready`].
+    pub topk_mc_seg: KernelHandle,
+    /// 2026-10-24: Whether the multi-CTA top-k runs as [`Self::topk_mc_seg`]
+    /// (`--glm-dsa-topk-seg`, or the paired A/B's `dsa_topk_seg` arm; `select::topk`). Only
+    /// [`Self::with_topk_seg`] sets it, so it implies the handle resolved.
+    pub topk_seg: bool,
     /// 2026-10-21: The device's SM count, resolved once with the handles: the grid of
     /// [`Self::scores_heads_paged`] (one block per SM). 0 when the query failed, and then
     /// `scores_heads_paged` is `KernelHandle(0)` too.
@@ -200,6 +207,9 @@ pub const DSA_SCORES_PIPE_MODULE: &str = "dsa_index_scores_pipe";
 
 /// 2026-10-21: Module of the multi-CTA radix top-k: `dsa_topk_mc.cu`.
 pub const DSA_TOPK_MC_MODULE: &str = "dsa_topk_mc";
+
+/// 2026-10-24: Module of the multi-CTA radix top-k as one persistent segment: `dsa_topk_mc_seg.cu`.
+pub const DSA_TOPK_MC_SEG_MODULE: &str = "dsa_topk_mc_seg";
 
 /// 2026-10-15: Module of the SP-split selection's payload fold: `dsa_sel_fold.cu`.
 pub const DSA_SEL_FOLD_MODULE: &str = "dsa_sel_fold";
@@ -250,6 +260,8 @@ impl DsaRowsKernels {
             scores_mma_paged: KernelHandle(0),
             topk_mc_pass: e(plan::entry::TOPK_MC_PASS),
             topk_mc_collect: e(plan::entry::TOPK_MC_COLLECT),
+            topk_mc_seg: e(plan::entry::TOPK_MC_SEG),
+            topk_seg: false,
             sm_count,
         }
     }

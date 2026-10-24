@@ -27,12 +27,16 @@
 #define SEGMENT_MAX_PHASES 4
 
 // 2026-10-23: The control words of one segment launch (device global, zero-initialised).
-struct SegCtl {
+// 2026-10-24: Over NP phases (12 + 4 NP bytes); SegCtl is the 4-phase block the dense segment
+// passes (unchanged layout).
+template <unsigned int NP>
+struct SegCtlN {
     unsigned int ticket;
     unsigned int exited;
     unsigned int gated;
-    unsigned int done[SEGMENT_MAX_PHASES];
+    unsigned int done[NP];
 };
+using SegCtl = SegCtlN<SEGMENT_MAX_PHASES>;
 
 __device__ __forceinline__ unsigned int segment_ld_acquire(const unsigned int* p) {
     unsigned int v;
@@ -40,8 +44,8 @@ __device__ __forceinline__ unsigned int segment_ld_acquire(const unsigned int* p
     return v;
 }
 
-template <class Run>
-__device__ __forceinline__ void segment_run(SegCtl* ctl, const unsigned int (&n)[SEGMENT_MAX_PHASES],
+template <unsigned int NP, class Run>
+__device__ __forceinline__ void segment_run(SegCtlN<NP>* ctl, const unsigned int (&n)[NP],
                                             unsigned int sm_budget, const Run& run) {
     __shared__ unsigned int s_task;
     __shared__ unsigned int s_work;
@@ -54,7 +58,7 @@ __device__ __forceinline__ void segment_run(SegCtl* ctl, const unsigned int (&n)
     const bool work = s_work;
     unsigned int total = 0;
     #pragma unroll
-    for (int p = 0; p < SEGMENT_MAX_PHASES; p++) total += n[p];
+    for (int p = 0; p < (int)NP; p++) total += n[p];
     for (; work;) {
         __syncthreads();
         if (threadIdx.x == 0) s_task = atomicAdd(&ctl->ticket, 1u);
@@ -63,7 +67,7 @@ __device__ __forceinline__ void segment_run(SegCtl* ctl, const unsigned int (&n)
         if (local >= total) break;
         unsigned int phase = 0;
         #pragma unroll
-        for (int p = 0; p < SEGMENT_MAX_PHASES - 1; p++) {
+        for (int p = 0; p < (int)NP - 1; p++) {
             if (phase == (unsigned int)p && local >= n[p]) {
                 local -= n[p];
                 phase = p + 1;
@@ -88,7 +92,7 @@ __device__ __forceinline__ void segment_run(SegCtl* ctl, const unsigned int (&n)
             ctl->ticket = 0;
             ctl->gated = 0;
             #pragma unroll
-            for (int p = 0; p < SEGMENT_MAX_PHASES; p++) ctl->done[p] = 0;
+            for (int p = 0; p < (int)NP; p++) ctl->done[p] = 0;
             __threadfence();
             ctl->exited = 0;
         }

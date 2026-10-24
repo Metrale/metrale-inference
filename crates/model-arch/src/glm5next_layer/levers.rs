@@ -163,6 +163,9 @@ pub struct GlmLevers {
     /// 2026-10-21: `METRALE_GLM_PDL` (on unless switched off): programmatic dependent launch for
     /// the kernels that wait on their grid dependencies (`crate::glm5next_pdl`).
     pub pdl: bool,
+    /// 2026-10-24: The command line's GLM decode levers (`crate::glm5next_decode_levers`), read
+    /// once here so a layer holds them with the rest.
+    pub decode: crate::glm5next_decode_levers::GlmDecodeLevers,
 }
 
 impl GlmLevers {
@@ -175,6 +178,7 @@ impl GlmLevers {
             Some(r) => width("METRALE_GLM_PREFILL_ROWS", r, usize::MAX)?,
         };
         let row_group = width("METRALE_GLM_ROW_GROUP", sc.glm_row_group, MAX_ROW_GROUP)?;
+        let decode = crate::glm5next_decode_levers::glm_decode_levers();
         Ok(Self {
             cublas_wide_proj: m.glm_cublas_proj,
             dsa_batch_qidx: sc.glm_dsa_batch_qidx,
@@ -207,6 +211,7 @@ impl GlmLevers {
             piece_rows: crate::glm5next_prefill_piece::piece_rows(s)?,
             l2_warm_budget: super::l2_warm::budget(s)?,
             pdl: k.glm_pdl,
+            decode,
         })
     }
 

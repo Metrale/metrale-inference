@@ -30,6 +30,7 @@ fn kernels(fused: bool) -> Glm5NextMhcKernels {
         hc_post_rank_sum_vec8: k(18),
         hc_post_pre_norm: k(12),
         hc_post_pre_norm_tok: k(if fused { 16 } else { 0 }),
+        hc_post_pre_norm_c1: k(0),
         hc_head: k(8),
         levers: crate::glm5next_mhc_levers::MhcLevers::declared(),
     }

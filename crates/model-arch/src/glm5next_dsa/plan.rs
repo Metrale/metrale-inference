@@ -27,7 +27,8 @@ pub mod entry {
     use super::super::attend::{DSA_DECODE_HB_MODULE, DSA_DECODE_MODULE};
     use super::super::{
         DSA_MODULE, DSA_ROWS_MODULE, DSA_SCORES_HEADS_BF16_MODULE, DSA_SCORES_HEADS_WINDOW_MODULE,
-        DSA_SCORES_MMA_PAGED_MODULE, DSA_SCORES_WARP_MODULE, DSA_TOPK_MC_MODULE, LAYERNORM_MODULE,
+        DSA_SCORES_MMA_PAGED_MODULE, DSA_SCORES_WARP_MODULE, DSA_TOPK_MC_MODULE,
+        DSA_TOPK_MC_SEG_MODULE, LAYERNORM_MODULE,
     };
 
     pub type Entry = (&'static str, &'static str);
@@ -43,7 +44,10 @@ pub mod entry {
     );
     // 2026-10-24: The BF16 persisted keys (`METRALE_GLM_DSA_POOL_KEYS_BF16`): their store, the
     // lane-per-head readers and the tensor-core scores (`METRALE_GLM_DSA_DECODE_SCORES_MMA`).
-    pub const POOL_KEYS_BF16: Entry = (DSA_SCORES_HEADS_BF16_MODULE, "dsa_pool_keys_store_rows_bf16");
+    pub const POOL_KEYS_BF16: Entry = (
+        DSA_SCORES_HEADS_BF16_MODULE,
+        "dsa_pool_keys_store_rows_bf16",
+    );
     pub const SCORES_HEADS_PAGED_BF16: Entry = (
         DSA_SCORES_HEADS_BF16_MODULE,
         "dsa_index_scores_heads_paged_bf16",
@@ -58,6 +62,7 @@ pub mod entry {
     );
     pub const TOPK_MC_PASS: Entry = (DSA_TOPK_MC_MODULE, "dsa_topk_mc_pass");
     pub const TOPK_MC_COLLECT: Entry = (DSA_TOPK_MC_MODULE, "dsa_topk_mc_collect");
+    pub const TOPK_MC_SEG: Entry = (DSA_TOPK_MC_SEG_MODULE, "dsa_topk_mc_seg");
     pub const EXPAND_ROWS: Entry = (DSA_ROWS_MODULE, "dsa_expand_selection_rows");
     pub const PER_HEAD: Entry = (DSA_DECODE_MODULE, "glm5next_dsa_mla_decode_fp8");
     pub const DECODE_HB: Entry = (DSA_DECODE_HB_MODULE, "glm5next_dsa_mla_decode_hb_fp8");

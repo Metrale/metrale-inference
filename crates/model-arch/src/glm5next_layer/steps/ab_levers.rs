@@ -21,7 +21,7 @@ use crate::glm5next_layer::GlmLevers;
 use crate::glm5next_mlp::Glm5NextMlpKernels;
 
 /// 2026-10-23: The registered levers.
-pub(super) const NAMES: [&str; 6] = [
+pub(super) const NAMES: [&str; 9] = [
     // 2026-10-23: The MoE router's few-row GEMV at one output per block
     // (`glm5next_router_gemv_npb1`): the instrument's known-small validation lever.
     "router_npb1",
@@ -40,6 +40,12 @@ pub(super) const NAMES: [&str; 6] = [
     // (GRAPH-THEORY-MAP E2: the shared expert confined to k_side SMs, the routed sweep keeping the
     // rest); `<sms>` from 1 to the device's SM count.
     "dense_seg@<sms>",
+    // 2026-10-24: `--glm-mhc-post-pre` (R3, `glm5next_hc_post_pre_norm_c1`).
+    "mhc_post_pre",
+    // 2026-10-24: `--glm-router-fused` (R2, `glm5next_router_gemv_topk_few`).
+    "router_fused",
+    // 2026-10-24: `--glm-dsa-topk-seg` (R4, `dsa_topk_mc_seg`).
+    "dsa_topk_seg",
 ];
 
 /// 2026-10-23: `base` under this pass's instrument levers.
@@ -97,8 +103,19 @@ pub(super) fn apply(
                     k.levers.dense.dense_seg_sms = Some(sms);
                 }
             }
-            // 2026-10-23: A KDA lever ([`kda_levers`]) and a DSA one ([`dsa_kernels`]).
-            "kda_conv_one" | "dsa_mma" => {}
+            "router_fused" => {
+                // 2026-10-24: Without the kernel, or with the lever already on, B would be A.
+                if k.router_fused.0 == 0 {
+                    bail!("METRALE_PAIRED_AB: `router_fused` needs glm5next_router_gemv_topk_few");
+                }
+                if base.levers.decode.router_fused {
+                    bail!("METRALE_PAIRED_AB: `router_fused` needs --glm-router-fused off");
+                }
+                k.levers.decode.router_fused |= on.has(i);
+            }
+            // 2026-10-23: A KDA lever ([`kda_levers`]) and DSA ones ([`dsa_kernels`]).
+            // 2026-10-24: And the mHC site's ([`mhc_post_pre`]).
+            "kda_conv_one" | "dsa_mma" | "dsa_topk_seg" | "mhc_post_pre" => {}
             other => bail!(
                 "METRALE_PAIRED_AB: GLM-5.3 registers no lever `{other}` (registered: {})",
                 NAMES.join(", ")
@@ -164,6 +181,16 @@ pub(super) fn dsa_apply(
 ) -> Result<Option<Glm5NextDsaKernels>> {
     let mut k = *base;
     for (i, name) in names.iter().enumerate() {
+        if name == "dsa_topk_seg" {
+            // 2026-10-24: With the segment already on, both arms run it: B would be A.
+            if base.rows.topk_seg {
+                bail!("METRALE_PAIRED_AB: `dsa_topk_seg` needs --glm-dsa-topk-seg off");
+            }
+            let seg = base.rows.with_topk_seg()?;
+            if on.has(i) {
+                k.rows = seg;
+            }
+        }
         if name == "dsa_mma" {
             let r = &base.rows;
             // 2026-10-23: Without BF16 keys there is no tensor-core path; with
@@ -180,8 +207,34 @@ pub(super) fn dsa_apply(
         }
     }
     let changed = k.rows.scores_heads_window.0 != base.rows.scores_heads_window.0
-        || k.rows.scores_heads_paged.0 != base.rows.scores_heads_paged.0;
+        || k.rows.scores_heads_paged.0 != base.rows.scores_heads_paged.0
+        || k.rows.topk_seg != base.rows.topk_seg;
     Ok(changed.then_some(k))
+}
+
+/// 2026-10-24: Whether the mHC site's post-sum + pre-norm run fused this pass (R3): `base`, the
+/// layer's `--glm-mhc-post-pre`, outside the instrument or where it names no `mhc_post_pre`; else
+/// that lever's arm. Refused (every arm) where the flag is already on: B would be A.
+pub(super) fn mhc_post_pre(base: bool, ctx: &ForwardContext) -> Result<bool> {
+    let Some(run) = ctx
+        .stats
+        .paired_ab
+        .get(ctx.settings.telemetry.paired_ab.as_deref())?
+    else {
+        return Ok(base);
+    };
+    mhc_post_pre_apply(base, &run.spec().names, ctx.ab_levers)
+}
+
+/// 2026-10-24: [`mhc_post_pre`] over `names` and `on`.
+pub(super) fn mhc_post_pre_apply(base: bool, names: &[String], on: AbLevers) -> Result<bool> {
+    let Some(i) = names.iter().position(|n| n == "mhc_post_pre") else {
+        return Ok(base);
+    };
+    if base {
+        bail!("METRALE_PAIRED_AB: `mhc_post_pre` needs --glm-mhc-post-pre off");
+    }
+    Ok(on.has(i))
 }
 
 #[cfg(test)]

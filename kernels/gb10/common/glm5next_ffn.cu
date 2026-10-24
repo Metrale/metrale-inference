@@ -19,6 +19,7 @@
 // 2026-10-14: The element expression, shared with the fused routed gate/up epilogue.
 #include "glm5next_swiglu.cuh"
 #include "pdl.cuh"
+#include "glm_router_topk_rank.cuh"
 
 // 2026-09-26: One thread per element; the host launches ceil(n / 256) blocks of 256
 // (swiglu in model-arch glm5next_mlp/forward/launch.rs).
@@ -277,28 +278,9 @@ extern "C" __global__ void glm5next_moe_combine_indexed(
     }
 }
 
-// 2026-10-10: glm5next_router_topk_rank: glm5next_router_topk's ids and weights, byte for byte,
-// without its top_k rounds of block-wide argmax (at one row on GB10 that kernel is ~15 us of
-// barriers). The order is the same total order: by choice descending, an exact tie to the lower
-// id, and an expert takes part exactly when the old kernel's seed (-1e30, id INT_MAX) loses to
-// it, that is when its choice is >= -1e30 (a NaN or a lower choice is never selected). The k-th
-// slot of the old kernel is the expert with exactly k participating experts ahead of it, so:
-//   1. the scores are computed once per expert, with glm5next_router_topk's expressions;
-//   2. each run of 32 consecutive experts ranks its members within the run (warp shuffles) and
-//      keeps those with fewer than top_k ahead: every expert of the global top_k is kept,
-//      because the experts ahead of it within its run are also ahead of it globally;
-//   3. each kept expert counts the kept experts ahead of it; for an expert of the global top_k
-//      every expert ahead of it is kept, so that count is its global rank and its slot, and an
-//      expert outside the global top_k has all top_k winners ahead of it among the kept;
-//   4. thread 0 forms the weights from the slots in slot order, as glm5next_router_topk does.
-// Slots no expert fills keep id -1 and weight 0. Block: a multiple of 32 threads; the experts
-// are strided over the block (expert e = i * blockDim.x + tid). The host launches
-// 32 * ceil(num_experts / 32) threads (at most 1024) and keeps 1 <= top_k <= 16 and
-// num_experts <= ROUTER_RANK_MAX_EXPERTS. n_group != 1 returns without writing anything.
+// 2026-10-10: glm5next_router_topk_rank: glm5next_router_topk's ids and weights, byte for byte;
+// 2026-10-24: the body is glm_router_topk_rank.cuh's (its notes), over the whole block.
 #define ROUTER_RANK_MAX_EXPERTS 1024
-#define ROUTER_RANK_MAX_KEPT ((ROUTER_RANK_MAX_EXPERTS / 32) * 16)
-#define ROUTER_RANK_NEG_INF __int_as_float(0xff800000)
-#define ROUTER_RANK_NO_EXPERT 2147483647
 extern "C" __global__ void glm5next_router_topk_rank(
     const float* __restrict__ logits,
     const float* __restrict__ bias,
@@ -313,101 +295,13 @@ extern "C" __global__ void glm5next_router_topk_rank(
 ) {
     // 2026-10-21: PDL (pdl.cuh): every input is another kernel's output.
     pdl_enter();
+    __shared__ glm_router_rank::Smem<ROUTER_RANK_MAX_EXPERTS> sm;
     const unsigned int t = blockIdx.x;
-    const unsigned int tid = threadIdx.x;
-    const unsigned int lane = tid & 31u;
-    const unsigned int warp = tid >> 5;
-    if (n_group != 1 || num_experts > ROUTER_RANK_MAX_EXPERTS) return;
-
-    const float* row = logits + (size_t)t * num_experts;
-    int* ids = topk_ids + (size_t)t * top_k;
-    float* wts = topk_weights + (size_t)t * top_k;
-
-    // 2026-10-10: Kept experts, top_k slots per run of 32, padded with empty slots to a
-    // multiple of 8: (choice, id bits) pairs and the unbiased scores. An empty slot holds
-    // (-inf, ROUTER_RANK_NO_EXPERT), which is never ahead of a participating expert.
-    __shared__ float2 kept_ce[ROUTER_RANK_MAX_KEPT];
-    __shared__ float  kept_s[ROUTER_RANK_MAX_KEPT];
-    __shared__ int    sel_id[16];
-    __shared__ float  sel_w[16];
-
-    const unsigned int runs = (num_experts + 31u) / 32u;
-    const unsigned int kept = (runs * top_k + 7u) & ~7u;
-    if (tid < top_k) {
-        sel_id[tid] = -1;
-        sel_w[tid] = 0.0f;
-    }
-    for (unsigned int i = runs * top_k + tid; i < kept; i += blockDim.x)
-        kept_ce[i] = make_float2(ROUTER_RANK_NEG_INF, __int_as_float(ROUTER_RANK_NO_EXPERT));
-    for (unsigned int base = 0; base < num_experts; base += blockDim.x) {
-        const unsigned int e = base + tid;
-        const unsigned int run = (base >> 5) + warp;
-        float s = 0.0f;
-        float c = ROUTER_RANK_NEG_INF;
-        bool part = false;
-        if (e < num_experts) {
-            s = 1.0f / (1.0f + expf(-row[e]));
-            if (bf16_ladder) s = (float)__float2bfloat16(s);
-            float ch = s + bias[e];
-            if (bf16_ladder) ch = (float)__float2bfloat16(ch);
-            part = ch >= -1e30f;
-            if (part) c = ch;
-        }
-        unsigned int ahead = 0;
-        #pragma unroll
-        for (unsigned int j = 0; j < 32u; ++j) {
-            const float cj = __shfl_sync(0xffffffffu, c, j);
-            ahead += (unsigned int)(cj > c) | ((unsigned int)(cj == c) & (unsigned int)(j < lane));
-        }
-        if (run < runs && lane < top_k)
-            kept_ce[run * top_k + lane] =
-                make_float2(ROUTER_RANK_NEG_INF, __int_as_float(ROUTER_RANK_NO_EXPERT));
-        __syncwarp();
-        if (part && ahead < top_k) {
-            kept_ce[run * top_k + ahead] = make_float2(c, __int_as_float((int)e));
-            kept_s[run * top_k + ahead] = s;
-        }
-    }
-    __syncthreads();
-
-    for (unsigned int i = tid; i < kept; i += blockDim.x) {
-        const float2 mine = kept_ce[i];
-        const int ei = __float_as_int(mine.y);
-        if (ei == ROUTER_RANK_NO_EXPERT) continue;
-        const float ci = mine.x;
-        unsigned int ahead = 0;
-        for (unsigned int j0 = 0; j0 < kept; j0 += 8u) {
-            #pragma unroll
-            for (unsigned int u = 0; u < 8u; ++u) {
-                const float2 o = kept_ce[j0 + u];
-                ahead += (unsigned int)(o.x > ci) |
-                         ((unsigned int)(o.x == ci) & (unsigned int)(__float_as_int(o.y) < ei));
-            }
-        }
-        if (ahead < top_k) {
-            sel_id[ahead] = ei;
-            sel_w[ahead] = kept_s[i];
-        }
-    }
-    __syncthreads();
-
-    // 2026-10-10: Slot k's thread forms its weight: the slot sum in slot order (every slot
-    // thread adds the same values in the same order), then glm5next_router_topk's steps.
-    if (tid >= top_k) return;
-    float sum = 0.0f;
-    for (unsigned int k = 0; k < top_k; ++k) {
-        sum += sel_w[k];
-        if (bf16_ladder) sum = (float)__float2bfloat16(sum);
-    }
-    float w = sel_w[tid];
-    if (renormalize) {
-        w = w / (sum + 1e-20f);
-        if (bf16_ladder) w = (float)__float2bfloat16(w);
-    }
-    w *= routed_scale;
-    if (bf16_ladder) w = (float)__float2bfloat16(w);
-    ids[tid] = sel_id[tid];
-    wts[tid] = w;
+    glm_router_rank::topk_rank_body<ROUTER_RANK_MAX_EXPERTS>(
+        glm_router_rank::BlockGroup{}, glm_router_rank::LdPlain{}, sm,
+        logits + (size_t)t * num_experts, bias, topk_ids + (size_t)t * top_k,
+        topk_weights + (size_t)t * top_k, num_experts, top_k, n_group, routed_scale, renormalize,
+        bf16_ladder);
 }
 
 // 2026-10-14: glm5next_moe_combine[_indexed]_vec8: the same combine with each thread owning

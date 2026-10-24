@@ -80,6 +80,8 @@ pub(crate) fn kernels() -> Glm5NextDsaKernels {
             scores_mma_paged: h(0),
             topk_mc_pass: h(0),
             topk_mc_collect: h(0),
+            topk_mc_seg: h(0),
+            topk_seg: false,
             sm_count: 0,
         },
         fp8: crate::glm5next_dsa::fp8_rows::DsaFp8Kernels::NONE,

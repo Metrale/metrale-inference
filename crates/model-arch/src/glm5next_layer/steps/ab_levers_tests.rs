@@ -204,3 +204,88 @@ fn dsa_mma_is_refused_where_b_would_be_a() {
         "the MLP map ignores it"
     );
 }
+
+/// 2026-10-24: `router_fused` (R2): A keeps the router pair, B turns on only the fused router;
+/// refused (every arm) without its kernel or with `--glm-router-fused` already on.
+#[test]
+fn router_fused_turns_on_only_on_its_arm_and_is_refused_where_b_would_be_a() {
+    let mut k = kernels();
+    k.router_fused = KernelHandle(0x91);
+    let n = names(&["router_npb1", "router_fused"]);
+    assert_eq!(apply(&k, &n, AbLevers::NONE).unwrap().levers, k.levers);
+    assert_eq!(
+        apply(&k, &n, AbLevers::only(0)).unwrap().levers,
+        k.levers,
+        "another arm"
+    );
+    let b = apply(&k, &n, AbLevers::only(1)).unwrap();
+    assert!(b.levers.decode.router_fused);
+    let mut want = k.levers;
+    want.decode.router_fused = true;
+    assert_eq!(b.levers, want, "only its lever");
+    let mut none = k;
+    none.router_fused = KernelHandle(0);
+    assert!(apply(&none, &n, AbLevers::NONE).is_err());
+    let mut on = k;
+    on.levers.decode.router_fused = true;
+    assert!(apply(&on, &n, AbLevers::only(1)).is_err());
+    assert!(
+        apply(&on, &n, AbLevers::NONE).is_err(),
+        "refused on every arm"
+    );
+}
+
+/// 2026-10-24: `dsa_topk_seg` (R4): A keeps the five launches, B sets only the segment flag;
+/// refused without `dsa_topk_mc_seg` or with the segment already on. The MLP map ignores it.
+#[test]
+fn dsa_topk_seg_sets_only_the_segment_flag_on_its_arm() {
+    let mut k = dsa_kernels();
+    k.rows.topk_mc_seg = KernelHandle(0x84);
+    let n = names(&["dsa_mma", "dsa_topk_seg"]);
+    assert!(dsa_apply(&k, &n, AbLevers::NONE).unwrap().is_none());
+    assert!(
+        dsa_apply(&k, &n, AbLevers::only(0)).unwrap().is_some(),
+        "dsa_mma's arm"
+    );
+    let b = dsa_apply(&k, &n, AbLevers::only(1))
+        .unwrap()
+        .expect("B changes the kernels");
+    assert!(b.rows.topk_seg);
+    assert_eq!(
+        (
+            b.rows.scores_heads_window.0,
+            b.rows.topk_mc_pass.0,
+            b.rows.topk_mc_seg.0
+        ),
+        (k.rows.scores_heads_window.0, k.rows.topk_mc_pass.0, 0x84)
+    );
+    let mut none = k;
+    none.rows.topk_mc_seg = KernelHandle(0);
+    assert!(dsa_apply(&none, &n, AbLevers::NONE).is_err());
+    let mut on = k;
+    on.rows = on.rows.with_topk_seg().unwrap();
+    assert!(dsa_apply(&on, &n, AbLevers::only(1)).is_err());
+    assert!(
+        apply(&kernels(), &n, AbLevers::only(1)).is_ok(),
+        "the MLP map ignores it"
+    );
+}
+
+/// 2026-10-24: `mhc_post_pre` (R3): outside the list the layer's flag stands; in it, its arm
+/// decides; refused (every arm) where the flag is already on.
+#[test]
+fn mhc_post_pre_follows_its_arm_only() {
+    let n = names(&["router_npb1", "mhc_post_pre"]);
+    assert!(!mhc_post_pre_apply(false, &n, AbLevers::NONE).unwrap());
+    assert!(
+        !mhc_post_pre_apply(false, &n, AbLevers::only(0)).unwrap(),
+        "another arm"
+    );
+    assert!(mhc_post_pre_apply(false, &n, AbLevers::only(1)).unwrap());
+    assert!(mhc_post_pre_apply(true, &names(&["router_npb1"]), AbLevers::NONE).unwrap());
+    assert!(mhc_post_pre_apply(true, &n, AbLevers::NONE).is_err());
+    assert!(
+        apply(&kernels(), &n, AbLevers::only(1)).is_ok(),
+        "the MLP map ignores it"
+    );
+}

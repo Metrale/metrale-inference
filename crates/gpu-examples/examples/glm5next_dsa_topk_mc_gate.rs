@@ -14,11 +14,17 @@
 //!    without clearing (replay safety).
 //! 2. Timing: each selection captured 20 times in a CUDA graph, replayed; us per selection.
 //!
+//! 2026-10-24: And the persistent segment `dsa_topk_mc_seg` (`--glm-dsa-topk-seg`, R4): at every
+//! row set and CTA count above it must select the same bytes on `C x rows` blocks, and its
+//! control block must read back zero after every launch (replay safety, here and after each
+//! timed graph). `sabotage` as the first argument presets the control block's phase-0 count, so
+//! pass 1 runs without waiting for pass 0: the gate must then fail.
+//!
 //! Owner: model-arch examples.
 //! Invariants: returns an error unless every compared byte matches.
 //!
 //! Run (GB10): cargo run --release -p metrale-gpu-examples --features cuda,gpu-examples \
-//!   --example glm5next_dsa_topk_mc_gate
+//!   --example glm5next_dsa_topk_mc_gate [-- sabotage]
 
 use anyhow::{Result, ensure};
 use metrale_gpu_runtime::cuda_backend::MetraleCudaBackend;
@@ -65,7 +71,11 @@ struct Kernels {
     radix: KernelHandle,
     pass: KernelHandle,
     collect: KernelHandle,
+    seg: KernelHandle,
 }
+
+/// 2026-10-24: Bytes of `SegCtlN<5>` (ticket, exited, gated, done[5]).
+const SEG_CTL_BYTES: usize = 4 * 8;
 
 /// 2026-10-21: Scores of `rows` rows at the ceiling stride, the device geometry of each.
 struct Rows {
@@ -145,6 +155,51 @@ fn mc(
         .launch(st)
 }
 
+/// 2026-10-24: The five launches of [`mc`] as one `dsa_topk_mc_seg` launch on `c x rows` blocks
+/// (the launch `select::topk::launch_mc_seg` makes). `preset` (the sabotage) first writes the
+/// control block's phase-0 count as already complete.
+#[allow(clippy::too_many_arguments)]
+fn seg(
+    gpu: &dyn GpuBackend,
+    k: &Kernels,
+    r: &Rows,
+    ws: DevicePtr,
+    c: usize,
+    out: DevicePtr,
+    ctl: DevicePtr,
+    preset: bool,
+    st: u64,
+) -> Result<()> {
+    if preset {
+        let mut w = [0u32; 8];
+        w[3] = (c * r.rows) as u32;
+        let b: Vec<u8> = w.iter().flat_map(|x| x.to_le_bytes()).collect();
+        gpu.copy_h2d(&b, ctl)?;
+    }
+    KernelLaunch::new(gpu, k.seg)
+        .grid([(c * r.rows) as u32, 1, 1])
+        .block([256, 1, 1])
+        .arg_ptr(r.sc)
+        .arg_ptr(ws)
+        .arg_ptr(out)
+        .arg_u32(r.rows as u32)
+        .arg_u32(MAX_POOLS as u32)
+        .arg_u32(SEL as u32)
+        .arg_ptr(r.geom)
+        .arg_u32(c as u32)
+        .arg_ptr(ctl)
+        .launch(st)
+}
+
+fn ctl_zero(gpu: &dyn GpuBackend, ctl: DevicePtr) -> Result<()> {
+    let b = read(gpu, ctl, SEG_CTL_BYTES)?;
+    ensure!(
+        b.iter().all(|&x| x == 0),
+        "dsa_topk_mc_seg left its control block at {b:?}"
+    );
+    Ok(())
+}
+
 fn graph_us(gpu: &dyn GpuBackend, f: &dyn Fn(u64) -> Result<()>) -> Result<f64> {
     let s = gpu.create_stream()?;
     f(s)?;
@@ -195,12 +250,16 @@ fn row(rng: &mut Rng, kind: usize, n: usize) -> (String, Vec<f32>) {
 }
 
 fn main() -> Result<()> {
+    let sabotage = std::env::args().nth(1).as_deref() == Some("sabotage");
     let gpu = MetraleCudaBackend::new(0, &metrale_kernels::ptx_modules())?;
     let k = Kernels {
         radix: gpu.kernel("dsa_indexer_rows", "dsa_topk_pools_radix")?,
         pass: gpu.kernel("dsa_topk_mc", "dsa_topk_mc_pass")?,
         collect: gpu.kernel("dsa_topk_mc", "dsa_topk_mc_collect")?,
+        seg: gpu.kernel("dsa_topk_mc_seg", "dsa_topk_mc_seg")?,
     };
+    let ctl = gpu.alloc(SEG_CTL_BYTES)?;
+    gpu.memset(ctl, 0, SEG_CTL_BYTES)?;
     let mut rng = Rng(0xbb67_ae85_84ca_a73b);
     let max_rows = 3;
     let ws = gpu.alloc(max_rows * ws_bytes(64))?;
@@ -255,6 +314,15 @@ fn main() -> Result<()> {
                 );
             }
             checked += 1;
+            gpu.memset(ob, 0x7f, max_rows * SEL * 4)?;
+            seg(&gpu, &k, &r, ws, c, ob, ctl, sabotage, 0)?;
+            let got = read(&gpu, ob, r.rows * SEL * 4)?;
+            ctl_zero(&gpu, ctl)?;
+            if got != want {
+                let names: Vec<&str> = set.iter().map(|(n, _)| n.as_str()).collect();
+                anyhow::bail!("{names:?} C={c}: dsa_topk_mc_seg differs from dsa_topk_pools_radix");
+            }
+            checked += 1;
         }
         gpu.free(r.sc)?;
         gpu.free(r.geom)?;
@@ -283,12 +351,21 @@ fn main() -> Result<()> {
                     "ctx {ctx} rows {rows} C={c}: timed selection differs"
                 );
                 line += &format!(" mc C={c} {t:6.1} us");
+                let t = graph_us(&gpu, &|st| seg(&gpu, &k, &r, ws, c, ob, ctl, false, st))?;
+                ensure!(
+                    read(&gpu, ob, rows * SEL * 4)? == want,
+                    "ctx {ctx} rows {rows} C={c}: timed segment selection differs"
+                );
+                ctl_zero(&gpu, ctl)?;
+                line += &format!(" seg {t:6.1} us");
             }
             println!("{line}");
             gpu.free(r.sc)?;
             gpu.free(r.geom)?;
         }
     }
-    println!("PASS: the multi-CTA top-k selects dsa_topk_pools_radix's bytes");
+    println!(
+        "PASS: the multi-CTA top-k (five launches and the segment) selects dsa_topk_pools_radix's bytes"
+    );
     Ok(())
 }

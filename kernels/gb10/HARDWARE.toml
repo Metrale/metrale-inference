@@ -363,6 +363,7 @@ rows = [1, 16]
 kernels = [
   "glm5next_mhc::glm5next_hc_mix_bf16", "glm5next_mhc::glm5next_hc_finish",
   "glm5next_mhc_c1::glm5next_hc_pre_norm_c1", "glm5next_mhc_fused::glm5next_hc_pre_norm",
+  "glm5next_mhc_post_pre_c1::glm5next_hc_post_pre_norm_c1",
 ]
 kind = "backlog"
 reason = "GLM-5 hyper-connection mix: the 4 x hidden streams projected to 24 FP32 columns by a CUDA-core reduction, then the Sinkhorn finish. At one row it is a GEMV; a tensor-core tile (N = 24 pads to 32) is the path once the multi-sequence decode exists."

@@ -60,8 +60,9 @@ pub fn w4a4_scratch_dims(
 /// sum. `new` computes the same sizes on its own, so the two must change together.
 /// 2026-10-08: Then the W4A4 activation scratch, codes, scales and globals
 /// ([`w4a4_scratch_dims`]); `new` takes those three sizes from here. 2026-10-10: Then the
-/// grouped W4A4 tile offsets; `grouped` is `METRALE_GLM_MOE_W4A4_GROUPED`.
-pub fn mlp_ws_bytes(cfg: &Glm5NextMlpConfig, max_rows: usize, grouped: bool) -> [usize; 18] {
+/// grouped W4A4 tile offsets; `grouped` is `METRALE_GLM_MOE_W4A4_GROUPED`. 2026-10-24: Then the
+/// fused router's ticket (R2).
+pub fn mlp_ws_bytes(cfg: &Glm5NextMlpConfig, max_rows: usize, grouped: bool) -> [usize; 19] {
     let (q_rows, q_k) = w4a4_scratch_dims(cfg, max_rows, grouped);
     let rows = max_rows.max(1);
     let urows = UNION_MAX_ROWS.min(rows);
@@ -92,6 +93,7 @@ pub fn mlp_ws_bytes(cfg: &Glm5NextMlpConfig, max_rows: usize, grouped: bool) -> 
         q_rows * q_k / 16,
         q_rows * 4,
         (cfg.num_experts + 1) * 4,
+        4,
     ]
 }
 
@@ -158,6 +160,11 @@ impl Glm5NextMlpWorkspace {
             w4a4_as: gpu.alloc(sizes[15])?,
             w4a4_ag: gpu.alloc(sizes[16])?,
             w4a4_tile_off: gpu.alloc(sizes[17])?,
+            route_ctl: {
+                let p = gpu.alloc(sizes[18])?;
+                gpu.memset(p, 0, sizes[18])?;
+                p
+            },
             w4a4_rows: w4a4_scratch_dims(cfg, rows, grouped).0,
             w4a4_k: w4a4_scratch_dims(cfg, rows, grouped).1,
             max_inter,

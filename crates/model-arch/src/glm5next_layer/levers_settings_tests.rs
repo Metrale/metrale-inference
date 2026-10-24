@@ -79,6 +79,8 @@ fn from_values(mut value: impl FnMut(&str) -> Option<String>) -> GlmLevers {
         piece_rows: None,
         l2_warm_budget: None,
         pdl,
+        // 2026-10-24: Command-line only (no variable); unpublished in a test, so the default.
+        decode: Default::default(),
     }
 }
 

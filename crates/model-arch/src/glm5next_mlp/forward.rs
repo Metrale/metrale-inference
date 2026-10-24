@@ -25,6 +25,7 @@ mod pieces;
 pub mod plan_moe;
 mod route;
 mod router;
+mod router_fused;
 mod shared_fork;
 mod sweep_entries;
 mod topk_combine;
@@ -40,12 +41,12 @@ mod workspace;
 
 pub use dense::{DenseScratch, forward_dense, forward_dense_site};
 use launch::swiglu;
-pub(crate) use sweep_entries::gate_up_sweeps;
 pub use levers::MlpLevers;
 pub(crate) use levers::count;
 pub(crate) use pieces::check_pieces;
 pub use route::{ExpertRoute, expert_route, grouped_row_floor};
 pub use shared_fork::SHARED_FORK_MAX_ROWS;
+pub(crate) use sweep_entries::gate_up_sweeps;
 pub use w4a4_dense::forward_dense_w4a4;
 pub use w4a4_dense_grouped::DenseGroupedTables;
 pub use w4a4_grouped::{
@@ -117,6 +118,9 @@ pub struct Glm5NextMlpWorkspace {
     /// 2026-10-10: `[num_experts + 1]` I32: the first 32- or 64-slot tile of each expert in the
     /// grouped W4A4 GEMM (`w4a4_grouped_tiles`), the last entry the tile count.
     w4a4_tile_off: DevicePtr,
+    /// 2026-10-24: The fused router's completion ticket (`router_fused`, R2): one U32, zero
+    /// between launches (each launch's last block wraps it back).
+    route_ctl: DevicePtr,
     /// 2026-10-08: Rows, and the widest K, the W4A4 scratch holds.
     w4a4_rows: usize,
     w4a4_k: usize,
@@ -370,9 +374,13 @@ pub fn forward_moe_pieces(
     }
 
     let t = k.levers.profile.start();
-    pieces::router_logits(gpu, k, cfg, w, x, ws, row_pieces, stream)?;
-    // 2026-09-25: One top-k launch for all rows, one block per row (`topk_combine`).
-    topk_combine::router_topk(gpu, k, cfg, w, ws, rows, stream)?;
+    // 2026-10-24: `--glm-router-fused` (R2): the router and its top-k in one launch, where they
+    // would be the few-row GEMV then the rank top-k.
+    if !router_fused::try_launch(gpu, k, cfg, w, x, ws, row_pieces, stream)? {
+        pieces::router_logits(gpu, k, cfg, w, x, ws, row_pieces, stream)?;
+        // 2026-09-25: One top-k launch for all rows, one block per row (`topk_combine`).
+        topk_combine::router_topk(gpu, k, cfg, w, ws, rows, stream)?;
+    }
     profile::end(profile::MOE_ROUTER, t, gpu, stream);
 
     // 2026-09-25: Zero every routed output first: an expert this rank does not own writes

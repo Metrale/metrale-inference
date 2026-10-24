@@ -217,6 +217,8 @@ impl Rig {
                     scores_mma_paged: KernelHandle(0),
                     topk_mc_pass: KernelHandle(0),
                     topk_mc_collect: KernelHandle(0),
+                    topk_mc_seg: KernelHandle(0),
+                    topk_seg: false,
                     sm_count: 0,
                 },
                 fp8: crate::glm5next_dsa::fp8_rows::DsaFp8Kernels::NONE,

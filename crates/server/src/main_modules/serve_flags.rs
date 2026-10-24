@@ -97,6 +97,19 @@ pub(crate) fn publish_kernel_flags(
             args.mtp_draft.mtp_experts_nvfp4
         );
     }
+    // 2026-10-24: The GLM-5.3 decode levers are always published: they have no environment
+    // fallback, and the GLM drafter and layers read them at build.
+    let glm = args.glm_decode.levers();
+    let glm_in_force =
+        metrale_model_arch::glm5next_decode_levers::set_glm_decode_levers_from_cli(glm);
+    if glm_in_force != glm {
+        tracing::warn!(
+            "GLM decode levers were already resolved ({glm_in_force:?}); the command line's \
+             ({glm:?}) did NOT take effect"
+        );
+    } else if glm != Default::default() {
+        tracing::info!("GLM decode levers: {glm:?}");
+    }
     if args.w4a4_downcast_wide && !args.w4a4_downcast {
         tracing::warn!("--w4a4-downcast-wide needs --w4a4-downcast; it did NOT take effect");
     }

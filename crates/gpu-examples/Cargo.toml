@@ -115,6 +115,8 @@ example = [
     { name = "glm5next_c1_fuse_microtest", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_hc_post_fold_gate", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_hc_post_pre_tok_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_hc_post_pre_c1_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_router_fused_gate", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_dsa_rows_microtest", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_kda_prefill_gate", required-features = ["cuda", "gpu-examples"] },
     { name = "glm5next_dsa_paged_parity", required-features = ["cuda", "gpu-examples"] },

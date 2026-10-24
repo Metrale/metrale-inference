@@ -1179,6 +1179,7 @@ kernels = [
   "dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out",
   "dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out_pair",
   "glm5next_router_gemv::glm5next_router_gemv_npb1",
+  "glm5next_router_fused::glm5next_router_gemv_topk_few",
   "dense_gemv_bf16_batchm::dense_gemv_bf16_batchm_wide",
   "dense_gemv_bf16_batchm::dense_gemv_bf16_batchm_wide_fp32out",
 ]
@@ -1200,6 +1201,11 @@ kernel_pipeline."gemm::dense_gemm_bf16_f32out".router = { in = ["bf16"], act = "
 # order, so the same bits.
 kernel_pipeline."dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out".linear = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["f32"] }
 kernel_pipeline."dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out".router = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["f32"] }
+# 2026-10-24: R2 (opt-in --glm-router-fused): dense_gemv_bf16_batchm_few_fp32out's body (the router
+# logits, the same bits) and, in the last block to finish, glm5next_router_topk_rank's body
+# (glm_router_topk_rank.cuh, family glm_router_topk) over every row: the top-k rides on the router
+# launch, its arithmetic the rank kernel's.
+kernel_pipeline."glm5next_router_fused::glm5next_router_gemv_topk_few".router = { in = ["bf16"], act = "bf16", weight = "bf16->bf16", mma = "bf16*bf16", accumulate = "f32", scale = "none", out = ["f32"] }
 # 2026-10-22: dense_gemv_bf16_batchm at 9..16 rows, register-resident (default-on
 # METRALE_GLM_BATCHM_WIDE, dense_gemv_bf16_batchm.cu:403-425); the runtime-M kernel's arithmetic
 # in its order, so the same bits. Its FP32-out twin writes the sums unrounded.
@@ -1219,7 +1225,8 @@ how = "instantiation"
 files = [
   "kernels/gb10/common/dense_gemv_bf16.cu", "kernels/gb10/common/dense_gemv_bf16_batchm.cu",
   "kernels/gb10/common/dense_gemm_bf16.cu", "kernels/gb10/common/dense_gemv_bf16_batchm_few.cu",
-  "kernels/gb10/common/glm5next_router_gemv.cu",
+  "kernels/gb10/common/glm5next_router_gemv.cu", "kernels/gb10/common/glm5next_router_fused.cu",
+  "kernels/gb10/common/glm_router_gemv_topk.cuh",
 ]
 [[family.evidence]]
 point = {}
@@ -2606,6 +2613,7 @@ kernels = [
   "glm5next_mhc_tok::glm5next_hc_post_pre_norm_tok4",
   "glm5next_mhc_tile::glm5next_hc_pre_norm_tile4",
   "glm5next_mhc_c1::glm5next_hc_pre_norm_c1",
+  "glm5next_mhc_post_pre_c1::glm5next_hc_post_pre_norm_c1",
   "glm5next_hc_post_sum::glm5next_hc_post_rank_sum",
   "glm5next_hc_post_sum::glm5next_hc_post_rank_sum_vec8",
 ]
@@ -2635,6 +2643,10 @@ kernel_compute."glm5next_mhc_tile::glm5next_hc_pre_norm_tile4" = { compute = "cu
 # shortened (default-on METRALE_GLM_MHC_PRE_C1); pf64's chains, the block trees on one warp, the
 # same Sinkhorn and norm expressions, so the same bits.
 kernel_compute."glm5next_mhc_c1::glm5next_hc_pre_norm_c1" = { compute = "cuda_core" }
+# 2026-10-24: R3, glm5next_hc_post_rank_sum and the next site's glm5next_hc_pre_norm_c1 in one launch at
+# 1-2 tokens (opt-in --glm-mhc-post-pre): the c1 body (glm5next_mhc_c1_body.cuh) over the post-sum's
+# stream values computed in registers; both halves' expressions in order, so the same bits.
+kernel_compute."glm5next_mhc_post_pre_c1::glm5next_hc_post_pre_norm_c1" = { compute = "cuda_core" }
 # 2026-10-10: The one-shot all-reduce's rank-order sum (bf16_add_rank_sum's arithmetic) fused
 # ahead of hc_post (opt-in METRALE_GLM_AR_FUSED_POST); the post-mix arithmetic is hc_post's.
 kernel_compute."glm5next_hc_post_sum::glm5next_hc_post_rank_sum" = { compute = "cuda_core" }
@@ -2666,7 +2678,7 @@ op = [
 [[family.point]]
 values = {}
 how = "instantiation"
-files = ["kernels/gb10/common/glm5next_mhc.cu", "kernels/gb10/common/glm5next_mhc_fused.cu", "kernels/gb10/common/glm5next_hc_post_sum.cu", "kernels/gb10/common/glm5next_mhc_tok.cu", "kernels/gb10/common/glm5next_mhc_tile.cu", "kernels/gb10/common/glm5next_mhc_c1.cu"]
+files = ["kernels/gb10/common/glm5next_mhc.cu", "kernels/gb10/common/glm5next_mhc_fused.cu", "kernels/gb10/common/glm5next_hc_post_sum.cu", "kernels/gb10/common/glm5next_mhc_tok.cu", "kernels/gb10/common/glm5next_mhc_tile.cu", "kernels/gb10/common/glm5next_mhc_c1.cu", "kernels/gb10/common/glm5next_mhc_c1_body.cuh", "kernels/gb10/common/glm5next_mhc_post_pre_c1.cu"]
 # 2026-10-22: GLM-5.3-Flash NVFP4, TP=3 rank 0, nsys: rows [2] are the MTP verify launches, rows [1] the MTP drafter's.
 [[family.evidence]]
 point = {}
@@ -2968,6 +2980,9 @@ kernels = [
   # default on; the captured decode's ceiling top-k): four histogram passes and a collect.
   "dsa_topk_mc::dsa_topk_mc_pass",
   "dsa_topk_mc::dsa_topk_mc_collect",
+  # 2026-10-24: the same five launches as one persistent segment (segment.cuh over the bodies in
+  # dsa_topk_mc.cuh; `--glm-dsa-topk-seg`, R4, default off): the five launches' bytes at the same C.
+  "dsa_topk_mc_seg::dsa_topk_mc_seg",
   # 2026-10-14: dsa_index_scores_mma's bytes from per-pool BF16 keys + visibility, the key tiles
   # streamed through a cp.async ring (METRALE_GLM_DSA_SCORES_PIPE).
   "dsa_index_scores_pipe::dsa_pool_prep_bf16",
@@ -3007,7 +3022,7 @@ values = {}
 how = "instantiation"
 # 2026-10-09: The bodies live in dsa_indexer_body.cuh; dsa_indexer_rows.cu runs them for one
 # sequence per grid row (the batched decode's paged rows, METRALE_GLM_DSA_INDEXER_ROWS).
-files = ["kernels/gb10/common/dsa_indexer.cu", "kernels/gb10/common/dsa_indexer_body.cuh", "kernels/gb10/common/dsa_indexer_pools.cuh", "kernels/gb10/common/dsa_indexer_rows.cu", "kernels/gb10/common/dsa_scores_warp.cu", "kernels/gb10/common/dsa_scores_heads.cuh", "kernels/gb10/common/dsa_scores_heads_window.cu", "kernels/gb10/common/dsa_scores_heads_bf16.cu", "kernels/gb10/common/dsa_scores_mma_paged.cuh", "kernels/gb10/common/dsa_scores_mma_paged.cu", "kernels/gb10/common/dsa_indexer_fp8.cu", "kernels/gb10/common/dsa_scores_mma.cuh", "kernels/gb10/common/dsa_index_scores_pipe.cu", "kernels/gb10/common/dsa_sel_fold.cu", "kernels/gb10/common/dsa_topk_stream.cuh", "kernels/gb10/common/dsa_topk_radix.cuh", "kernels/gb10/common/dsa_topk_mc.cu"]
+files = ["kernels/gb10/common/dsa_indexer.cu", "kernels/gb10/common/dsa_indexer_body.cuh", "kernels/gb10/common/dsa_indexer_pools.cuh", "kernels/gb10/common/dsa_indexer_rows.cu", "kernels/gb10/common/dsa_scores_warp.cu", "kernels/gb10/common/dsa_scores_heads.cuh", "kernels/gb10/common/dsa_scores_heads_window.cu", "kernels/gb10/common/dsa_scores_heads_bf16.cu", "kernels/gb10/common/dsa_scores_mma_paged.cuh", "kernels/gb10/common/dsa_scores_mma_paged.cu", "kernels/gb10/common/dsa_indexer_fp8.cu", "kernels/gb10/common/dsa_scores_mma.cuh", "kernels/gb10/common/dsa_index_scores_pipe.cu", "kernels/gb10/common/dsa_sel_fold.cu", "kernels/gb10/common/dsa_topk_stream.cuh", "kernels/gb10/common/dsa_topk_radix.cuh", "kernels/gb10/common/dsa_topk_mc.cu", "kernels/gb10/common/dsa_topk_mc.cuh", "kernels/gb10/common/dsa_topk_mc_seg.cu", "kernels/gb10/common/segment.cuh"]
 # 2026-10-22: GLM-5.3-Flash NVFP4, TP=3 rank 0, nsys: rows [2] are the MTP verify launches, rows [1] the MTP drafter's.
 [[family.evidence]]
 point = {}
@@ -3211,7 +3226,9 @@ from = "param:top_k"
 [[family.point]]
 values = { scoring = "sigmoid_bias" }
 how = "instantiation"
-files = ["kernels/gb10/common/glm5next_ffn.cu"]
+# 2026-10-24: The rank kernel's body is glm_router_topk_rank.cuh (R2), also instantiated in the last
+# block of glm5next_router_fused::glm5next_router_gemv_topk_few (family dense_bf16).
+files = ["kernels/gb10/common/glm5next_ffn.cu", "kernels/gb10/common/glm_router_topk_rank.cuh"]
 # 2026-10-22: GLM-5.3-Flash NVFP4, TP=3 rank 0, nsys: rows [2] are the MTP verify launches, rows [1] the MTP drafter's.
 [[family.evidence]]
 point = { scoring = "sigmoid_bias" }

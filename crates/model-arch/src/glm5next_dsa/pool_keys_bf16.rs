@@ -86,6 +86,11 @@ impl Glm5NextDsaKernels {
                 "GLM DSA decode scores: BF16 tensor cores (dsa_index_scores_mma_paged_bf16)"
             );
         }
+        // 2026-10-24: R4, a command-line lever (not a setting): the CLI's published value.
+        if crate::glm5next_decode_levers::glm_decode_levers().topk_seg {
+            k.rows = k.rows.with_topk_seg()?;
+            tracing::info!("GLM DSA multi-CTA top-k: one persistent segment (--glm-dsa-topk-seg)");
+        }
         Ok(k)
     }
 }

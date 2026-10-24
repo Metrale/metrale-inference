@@ -124,6 +124,14 @@ pub fn unmodelled(k: &Glm5NextMlpKernels) -> Vec<&'static str> {
             "METRALE_GLM_MOE_ZERO_IN_SWIGLU=0 (the rules zero expert_out in the SwiGLU)",
         ),
         (
+            k.levers.decode.router_fused,
+            "--glm-router-fused (R2: no rule models the fused router + top-k yet)",
+        ),
+        (
+            k.levers.decode.topk_seg,
+            "--glm-dsa-topk-seg (R4: no rule models the one-launch multi-CTA top-k yet)",
+        ),
+        (
             k.levers.dense.dense_seg,
             "METRALE_GLM_DENSE_SEGMENT (the rules name the shared expert's separate launches)",
         ),

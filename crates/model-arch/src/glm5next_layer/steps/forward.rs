@@ -398,28 +398,31 @@ impl Glm5NextLayer {
             let t = self.levers.profile.start_hot();
             profile::end(profile::REDUCE_ATTN, t, ctx.gpu, stream);
         }
-        let t_mhc_post = self.levers.profile.start();
-        self.hc_post_reduced(
-            gpu, mhc, attn_out, partials, streams, streams, post, comb, k, stream,
-        )?;
-        profile::end(profile::MHC_POST, t_mhc_post, gpu, stream);
-        self.dump_mixer_red(tap, attn_out)?;
-
-        let t_mhc = self.levers.profile.start();
-        self.mhc_pre_norm(
-            gpu,
+        // 2026-10-24: `--glm-mhc-post-pre` (R3): the post-sum and the FFN pre-norm in one launch.
+        let bufs = [streams, hidden, post, comb, normed];
+        let (norm_w, dumping) = (self.post_attn_norm, tap.is_some());
+        if !self.post_pre_c1(
+            ctx,
             mhc,
-            &mhc.ffn,
-            self.post_attn_norm,
-            streams,
-            hidden,
-            post,
-            comb,
-            normed,
+            attn_out,
+            partials.as_ref(),
+            norm_w,
+            bufs,
             k,
-            t_mhc,
+            dumping,
             stream,
-        )?;
+        )? {
+            let t_mhc_post = self.levers.profile.start();
+            self.hc_post_reduced(
+                gpu, mhc, attn_out, partials, streams, streams, post, comb, k, stream,
+            )?;
+            profile::end(profile::MHC_POST, t_mhc_post, gpu, stream);
+            self.dump_mixer_red(tap, attn_out)?;
+            let t_mhc = self.levers.profile.start();
+            self.mhc_pre_norm(
+                gpu, mhc, &mhc.ffn, norm_w, streams, hidden, post, comb, normed, k, t_mhc, stream,
+            )?;
+        }
         dump::site(tap, true, [streams, post, comb, normed])?;
         let partials = self.mlp_forward(normed, ffn_out, k, row_pieces, fused, ctx, stream, tap)?;
         let t_mhc_post = self.levers.profile.start();

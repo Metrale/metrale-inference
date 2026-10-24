@@ -273,3 +273,74 @@ fn the_multi_cta_geometry_is_fixed_by_the_pool_count() {
         16 * 256 + 768 + 2 + 1_024 + 16 + 16 * 512 + 16
     );
 }
+
+const MC_SEG: u64 = 39;
+
+fn bytes_args(a: &[MockArg]) -> Vec<&MockArg> {
+    a.iter()
+        .filter(|a| matches!(a, MockArg::Bytes(_)))
+        .collect()
+}
+
+/// 2026-10-24: `--glm-dsa-topk-seg` (R4, `DsaRowsKernels::with_topk_seg`): where the multi-CTA
+/// top-k runs, one `dsa_topk_mc_seg` launch on `c x rows` blocks replaces its five; it takes the
+/// collect's arguments, then `c` and a control block. The scores before it and the expand after
+/// it are unchanged; with the handle resolved but the lever off (the default) the five launches
+/// run.
+#[test]
+fn the_topk_seg_lever_runs_the_five_launches_as_one() {
+    let mut off = fast_kernels();
+    off.rows.topk_mc_seg = KernelHandle(MC_SEG);
+    assert!(!off.rows.topk_seg, "off by default");
+    let mut on = off;
+    on.rows = on.rows.with_topk_seg().unwrap();
+    let c = topk_mc_ctas(MAX_POOLS);
+    for rows in [1usize, 2] {
+        let five = Case::new(rows).run(&off);
+        assert_eq!(
+            funcs(&five)[1..6],
+            [MC_PASS, MC_PASS, MC_PASS, MC_PASS, MC_COLLECT]
+        );
+        let l = Case::new(rows).run(&on);
+        assert_eq!(
+            funcs(&l),
+            vec![five[0].0, MC_SEG, EXPAND_ROWS],
+            "rows {rows}"
+        );
+        assert_eq!((l[0].0, l[0].1), (five[0].0, five[0].1), "rows {rows}");
+        assert_eq!((l[2].0, l[2].1), (five[6].0, five[6].1), "rows {rows}");
+        assert_eq!(l[1].1, [(c * rows) as u32, 1, 1], "rows {rows}");
+        let (seg, collect) = (&l[1].2, &five[5].2);
+        assert_eq!(seg.len(), collect.len() + 2, "rows {rows}");
+        assert_eq!(
+            seg[..collect.len()],
+            collect[..],
+            "rows {rows}: the collect's arguments"
+        );
+        assert_eq!(
+            seg[collect.len()],
+            MockArg::Bytes((c as u32).to_le_bytes().to_vec()),
+            "rows {rows}"
+        );
+        assert!(
+            matches!(seg.last(), Some(MockArg::Buffer(p)) if p.0 != 0),
+            "a control block: {:?}",
+            seg.last()
+        );
+        assert_eq!(bytes_args(seg).len(), bytes_args(collect).len() + 1);
+    }
+}
+
+/// 2026-10-24: The lever without `dsa_topk_mc_seg` refuses the load, never the five launches;
+/// where the multi-CTA top-k stands down (its lever off) the segment does not run either.
+#[test]
+fn the_topk_seg_lever_never_falls_back_quietly() {
+    let err = fast_kernels().rows.with_topk_seg().unwrap_err().to_string();
+    assert!(err.contains("--glm-dsa-topk-seg"), "{err}");
+    let mut k = fast_kernels();
+    k.rows.topk_mc_seg = KernelHandle(MC_SEG);
+    k.rows = k.rows.with_topk_seg().unwrap();
+    let mut mc_off = Case::new(2);
+    mc_off.levers.topk_mc = false;
+    assert_eq!(funcs(&mc_off.run(&k)), vec![WINDOW, RADIX, EXPAND_ROWS]);
+}

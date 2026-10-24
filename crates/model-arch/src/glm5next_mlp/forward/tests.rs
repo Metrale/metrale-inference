@@ -100,9 +100,11 @@ mod ws_sizing {
             assert_eq!(b[15], 128 * 6144 / 16, "w4a4 scales at {rows}");
             assert_eq!(b[16], 128 * 4, "w4a4 globals at {rows}");
             assert_eq!(b[17], 289 * 4, "w4a4 tile offsets are row-independent");
+            // 2026-10-24: The fused router's completion ticket (`--glm-router-fused`, R2).
+            assert_eq!(b[18], 4, "route_ctl is one word");
             assert_eq!(
                 mlp_ws_total_bytes(&c, rows, false),
-                rows * 173_376 + 8192 + 1156 + 1156 + 442_880
+                rows * 173_376 + 8192 + 1156 + 1156 + 442_880 + 4
             );
         }
     }

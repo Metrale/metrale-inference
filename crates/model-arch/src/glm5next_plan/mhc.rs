@@ -186,6 +186,10 @@ pub fn unmodelled(levers: &crate::glm5next_layer::GlmLevers) -> Vec<&'static str
             "METRALE_GLM_MHC_POST_FOLD (the rules run the mixer site's post-mix alone)",
         ),
         (
+            levers.decode.mhc_post_pre,
+            "--glm-mhc-post-pre (R3: no rule models the fused post-sum + c1 pre-norm yet)",
+        ),
+        (
             m.post_sum_ctas.is_some(),
             "METRALE_GLM_MHC_POST_SUM_CTAS (the plan runs the uncapped post-mix grid)",
         ),

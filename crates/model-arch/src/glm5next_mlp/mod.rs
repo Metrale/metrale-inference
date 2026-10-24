@@ -162,6 +162,9 @@ pub struct Glm5NextMlpKernels {
     /// without its per-slot block-wide argmax; launched under `METRALE_GLM_ROUTER_TOPK_RANK=1`
     /// (`forward::topk_combine`). `0` when absent: the base kernel runs.
     pub router_rank: KernelHandle,
+    /// 2026-10-24: `glm5next_router_gemv_topk_few` (R2, `--glm-router-fused`): the 2..=8-row
+    /// router GEMV and the rank top-k in one launch (`forward::router_fused`). `0` when absent.
+    pub router_fused: KernelHandle,
     pub combine: KernelHandle,
     /// 2026-09-25: `moe_sort_by_expert` (`moe_permute.cu`): counting sort of the `[rows, top_k]`
     /// ids into expert-contiguous order, writing `sorted_token_ids`, `expert_offsets` and
@@ -311,6 +314,11 @@ impl Glm5NextMlpKernels {
                 gpu,
                 FFN_MODULE,
                 "glm5next_router_topk_rank",
+            ),
+            router_fused: metrale_model_layers::layers::try_kernel(
+                gpu,
+                "glm5next_router_fused",
+                "glm5next_router_gemv_topk_few",
             ),
             combine: gpu.kernel(FFN_MODULE, "glm5next_moe_combine")?,
             moe_sort_by_expert: metrale_model_layers::layers::try_kernel(

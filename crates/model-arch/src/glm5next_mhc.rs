@@ -83,6 +83,9 @@ pub struct Glm5NextMhcKernels {
     /// same bits; taken by SP-mHC under `METRALE_GLM_MHC_POST_PRE_FUSED=1`
     /// (`glm5next_mhc_post_pre_tok`). Optional (`try_kernel`, 0 when absent).
     pub hc_post_pre_norm_tok: KernelHandle,
+    /// 2026-10-24: `glm5next_hc_post_pre_norm_c1` (`glm5next_mhc_post_pre_c1`, R3): the post-sum
+    /// and the next site's c1 pre-norm in one launch at 1..=2 tokens. Optional (0 when absent).
+    pub hc_post_pre_norm_c1: KernelHandle,
     pub hc_head: KernelHandle,
     /// 2026-10-17: The mHC launch levers, resolved once at startup (`GlmLevers::mhc`).
     pub levers: crate::glm5next_mhc_levers::MhcLevers,
@@ -178,6 +181,11 @@ impl Glm5NextMhcKernels {
                 gpu,
                 GLM5NEXT_MHC_TOK_MODULE,
                 "glm5next_hc_post_pre_norm_tok4",
+            ),
+            hc_post_pre_norm_c1: metrale_model_layers::layers::try_kernel(
+                gpu,
+                crate::glm5next_mhc_post_pre_c1::HC_POST_PRE_C1_MODULE,
+                crate::glm5next_mhc_post_pre_c1::HC_POST_PRE_C1_KERNEL,
             ),
             hc_head: gpu.kernel(GLM5NEXT_MHC_MODULE, "glm5next_hc_head")?,
             levers,

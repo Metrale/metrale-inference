@@ -254,7 +254,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-glm5next-ffn-cu-glm5next-moe-combine"></a>
 
-### `glm5next_moe_combine` — [kernels/gb10/common/glm5next_ffn.cu](../../kernels/gb10/common/glm5next_ffn.cu#L224)
+### `glm5next_moe_combine` — [kernels/gb10/common/glm5next_ffn.cu](../../kernels/gb10/common/glm5next_ffn.cu#L225)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -263,7 +263,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-glm5next-ffn-cu-glm5next-router-topk-rank"></a>
 
-### `glm5next_router_topk_rank` — [kernels/gb10/common/glm5next_ffn.cu](../../kernels/gb10/common/glm5next_ffn.cu#L302)
+### `glm5next_router_topk_rank` — [kernels/gb10/common/glm5next_ffn.cu](../../kernels/gb10/common/glm5next_ffn.cu#L284)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -272,7 +272,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-glm5next-ffn-cu-glm5next-swiglu-clamp"></a>
 
-### `glm5next_swiglu_clamp` — [kernels/gb10/common/glm5next_ffn.cu](../../kernels/gb10/common/glm5next_ffn.cu#L25)
+### `glm5next_swiglu_clamp` — [kernels/gb10/common/glm5next_ffn.cu](../../kernels/gb10/common/glm5next_ffn.cu#L26)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -290,7 +290,7 @@ Every measured row behind the “% of floor” cells of [KERNEL-PERF.md](../../K
 
 <a id="m-kernels-gb10-common-glm5next-mhc-c1-cu-glm5next-hc-pre-norm-c1"></a>
 
-### `glm5next_hc_pre_norm_c1` — [kernels/gb10/common/glm5next_mhc_c1.cu](../../kernels/gb10/common/glm5next_mhc_c1.cu#L86)
+### `glm5next_hc_pre_norm_c1` — [kernels/gb10/common/glm5next_mhc_c1.cu](../../kernels/gb10/common/glm5next_mhc_c1.cu#L19)
 
 | HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |
 |---|---|---|---|---|---|---|---|---|---|---|

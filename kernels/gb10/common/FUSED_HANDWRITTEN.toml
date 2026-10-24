@@ -56,7 +56,6 @@ handwritten = [
   "glm5next_mhc::glm5next_hc_expand",
   "glm5next_mhc::glm5next_hc_finish",
   "glm5next_mhc::glm5next_hc_mix_bf16",
-  "glm5next_mhc_c1::glm5next_hc_pre_norm_c1",
   "glm5next_mhc_fused::glm5next_hc_pre_norm",
   "glm5next_mla_latent_write::glm5next_mla_latent_write_fp8",
   "glm5next_mtp_xchg::glm5next_mtp_xchg_pack",
