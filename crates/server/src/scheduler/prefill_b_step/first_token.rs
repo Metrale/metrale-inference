@@ -20,7 +20,7 @@ pub(super) fn finish_first_token(
     tool_call_end_token: Option<u32>,
     model: &dyn Model,
     eos_tokens: &[u32],
-    spontaneous_think_budget: u32,
+    spontaneous_think_budget: Option<u32>,
     top_k: u32,
     top_p: f32,
     top_n_sigma: f32,
@@ -74,8 +74,11 @@ pub(super) fn finish_first_token(
             tracing::warn!(target: "met::scheduler::prefill_b_step", "prefill_b_step: prompt-logprobs send failed");
         }
     }
+    // 2026-10-14: An EOS first token is not sent (`phase_promote_prefills`,
+    // the decode path); `eos_hold` lets token 0 be one.
     if !spontaneous_think
         && max_tokens > 0
+        && !eos_tokens.contains(&first)
         && !sched
             .io
             .req
@@ -192,7 +195,9 @@ pub(super) fn finish_first_token(
         session_hash: req_session_hash,
         last_token: first,
         output_tokens,
-        remaining: max_tokens - 1,
+        // 2026-10-20: Saturating: `max_tokens == 0` with a spontaneous think
+        // start reaches here and must not underflow into an unbounded budget.
+        remaining: max_tokens.saturating_sub(1),
         min_tokens: req_min_tokens,
         eos_tokens: eos_tokens.to_vec(),
         finished: false,
@@ -223,7 +228,7 @@ pub(super) fn finish_first_token(
             || born_inside_thinking(req_enable_thinking, think_end_token),
         enable_thinking: req_enable_thinking,
         thinking_budget: if spontaneous_think {
-            Some(spontaneous_think_budget)
+            spontaneous_think_budget.or(req_thinking_budget)
         } else {
             req_thinking_budget
         },

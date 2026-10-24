@@ -10,36 +10,12 @@
 use anyhow::Result;
 
 use super::ctx::MultiSeqCtx;
-use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
+use metrale_gpu_runtime::gpu::{DevicePtr, KernelHandle};
 
 use crate::layers::ops;
+use crate::layers::ops::StridedBatchGemv;
 use crate::layers::qwen3_attention::Qwen3AttentionLayer;
 use crate::weight_map::{Fp8Weight, WeightQuantFormat};
-
-/// 2026-09-25: The signature every strided arm in `ms_qkv_batchm_fp8_gemv`
-/// shares, so the arm choice yields one function pointer.
-type StridedBatchGemv = fn(
-    &dyn GpuBackend,
-    KernelHandle,
-    DevicePtr,
-    DevicePtr,
-    DevicePtr,
-    DevicePtr,
-    u32,
-    u32,
-    u32,
-    u32,
-    u32,
-    u64,
-) -> Result<()>;
-
-/// 2026-09-25: Kill switch for this tier: `METRALE_NO_FP8_QKV_BATCH` set to any
-/// value keeps the per-sequence scalar loop. Read once per process, so the
-/// choice cannot change between a CUDA-graph capture and its replays.
-pub(super) fn fp8_batchm_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("METRALE_NO_FP8_QKV_BATCH").is_none())
-}
 
 /// 2026-09-25: MAX_M of `w8a16_gemv_batch16_strided` (its wrapper refuses `m`
 /// outside `1..=16`): the widest batch the GEMV arms serve. Wider batches take
@@ -49,7 +25,9 @@ const FP8_QKV_GEMV_MAX_ROWS: usize = 16;
 impl Qwen3AttentionLayer {
     /// 2026-09-25: Whether the batched FP8 tier serves this step. `enabled` is the
     /// kill switch, passed in so tests can drive both arms without the
-    /// process-global `OnceLock` in [`fp8_batchm_enabled`].
+    /// layer's `AttnLevers::fp8_qkv_batch` (off when `METRALE_NO_FP8_QKV_BATCH` is set
+    /// at any value), fixed at construction so it cannot change between a capture and
+    /// its replays.
     ///
     /// Branch only on `c.n`, the row count the caller launched with. On the
     /// batched decode path that is `padded_n`, the width the decode graph cache
@@ -217,12 +195,12 @@ impl Qwen3AttentionLayer {
             // 2026-09-27: `RowTiers::Canonical`: the tile family at every row count.
             if n <= 32 {
                 (
-                    ops::w8a16_gemm_pipelined_m32_strided,
+                    fwd.levers.ops.w8a16.m32_strided_arm(),
                     self.w8a16_gemm_pipelined_m32_k,
                 )
             } else {
                 (
-                    ops::w8a16_gemm_pipelined_m64_strided,
+                    fwd.levers.ops.w8a16.m64_strided_arm(),
                     self.w8a16_gemm_pipelined_m64_k,
                 )
             }
@@ -236,7 +214,7 @@ impl Qwen3AttentionLayer {
             // 2026-09-26: 33 or more rows with the 64-row twin linked (same lever as
             // the 32-row tile): one weight pass per 64 rows.
             (
-                ops::w8a16_gemm_pipelined_m64_strided,
+                fwd.levers.ops.w8a16.m64_strided_arm(),
                 self.w8a16_gemm_pipelined_m64_k,
             )
         } else if n > FP8_QKV_GEMV_MAX_ROWS && by_rows {
@@ -245,7 +223,7 @@ impl Qwen3AttentionLayer {
             // to the GEMV arms (its oracle grades it on a tolerance). It comes
             // before the `tc` and N-column arms, which serve at most 16 rows.
             (
-                ops::w8a16_gemm_pipelined_m32_strided,
+                fwd.levers.ops.w8a16.m32_strided_arm(),
                 self.w8a16_gemm_pipelined_m32_k,
             )
         } else if tc {

@@ -44,7 +44,7 @@ impl Qwen3SsmLayer {
     ///
     /// `deep_k_gemm`'s launch has `ceil(m/64)` CTA rows, each reading the whole
     /// weight. `w4a16_gemm_t_m128_k` has `ceil(m/128)` rows, so it is used when
-    /// the handle resolved, `m >= ssm_m128_min_m()` and `ceil(n/128)` alone is
+    /// the handle resolved, `m >= levers.m128_min_m` and `ceil(n/128)` alone is
     /// at least `sm_count` (the halved CTA count still covers every SM).
     /// Otherwise the launch is
     /// `deep_k_gemm(k)`, or the narrow-N `w4a16_gemm_t_k64_n64_k` twin when the
@@ -61,7 +61,7 @@ impl Qwen3SsmLayer {
         k: u32,
         stream: u64,
     ) -> Result<()> {
-        if let Some(min_m) = super::gdn_flags::ssm_m128_min_m()
+        if let Some(min_m) = self.levers.m128_min_m
             && m >= min_m
             && n.div_ceil(128) >= self.sm_count
             && self.w4a16_gemm_t_m128_k.0 != 0

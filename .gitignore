@@ -4,6 +4,8 @@ target/
 # Out-of-tree cargo target dirs used for parallel/experiment builds
 # (target-final, target-fu, target-i84, target-phc, target-rc, ...).
 target-*/
+# ...but not the workspace crate whose directory happens to match.
+!crates/target-defaults/
 *.o
 *.ptx
 *.bak

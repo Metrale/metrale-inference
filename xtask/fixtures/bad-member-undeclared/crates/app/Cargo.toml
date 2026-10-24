@@ -1,0 +1,23 @@
+# 2026-10-17: Four undeclared crates in three kinds of table, written each way a member might:
+# inheriting a declaration that does not exist, its own path, a bare version string, and its
+# own table. `anyhow`, `fixture-lib` and `libc` are correct.
+[package]
+name = "fixture-app"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+fixture-lib = { workspace = true }
+fixture-other = { path = "../other" }
+regex = { workspace = true }
+
+[build-dependencies]
+cc = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[target.'cfg(unix)'.dev-dependencies]
+tempfile = { version = "3", default-features = false }

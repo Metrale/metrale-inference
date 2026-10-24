@@ -94,10 +94,10 @@ impl GrammarEngine {
     /// Returns nothing. A missing, mismatched or corrupt file imports no
     /// masks, and an unreadable one is logged as a warning; in every such
     /// case the saver is still armed. Returns without arming it when
-    /// `METRALE_GRAMMAR_CACHE` disables persistence or the compiler has no
-    /// rule cache.
+    /// `GrammarLevers::mask_cache` is off (`METRALE_GRAMMAR_CACHE`) or the
+    /// compiler has no rule cache.
     pub fn attach_mask_cache(&mut self, model_dir: &Path) {
-        if !cache_enabled_from(std::env::var("METRALE_GRAMMAR_CACHE").ok().as_deref()) {
+        if !self.levers.mask_cache {
             tracing::info!("Grammar: on-disk mask cache disabled (METRALE_GRAMMAR_CACHE)");
             return;
         }
@@ -107,7 +107,7 @@ impl GrammarEngine {
         let identity = self.compiler.snapshot_identity();
         let path = snapshot_path(
             model_dir,
-            std::env::var("METRALE_GRAMMAR_CACHE_DIR").ok().as_deref(),
+            self.levers.mask_cache_dir.as_deref(),
             identity.tokenizer_fingerprint,
         );
         let imported = match self.compiler.load_mask_snapshot(&path) {

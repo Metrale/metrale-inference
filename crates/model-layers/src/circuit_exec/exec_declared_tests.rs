@@ -198,7 +198,7 @@ fn each_w4a4_launch_is_the_one_the_legacy_launcher_makes() {
         };
         let (h, inter) = (5120, 17408);
         let gpu = MockGpuBackend::new();
-        ops::w4a4_proj::prepare(&gpu).unwrap();
+        ops::w4a4_proj::prepare(&gpu, ops::w4a4_proj::W4a4Levers::declared()).unwrap();
         let (x, g, u, y) = (
             ptr(0xA000_0000),
             ptr(0xA100_0000),
@@ -206,11 +206,23 @@ fn each_w4a4_launch_is_the_one_the_legacy_launcher_makes() {
             ptr(0xA300_0000),
         );
         let kh = KernelHandle(0xDEAD);
-        ops::w4a4_proj::nvfp4_proj_small_m(&gpu, kh, x, &w(WeightSlot::FfnGate), g, m, inter, h, 7)
-            .unwrap();
+        ops::w4a4_proj::nvfp4_proj_small_m(
+            &gpu,
+            kh,
+            ops::OpsLevers::declared().w4a16_tc,
+            x,
+            &w(WeightSlot::FfnGate),
+            g,
+            m,
+            inter,
+            h,
+            7,
+        )
+        .unwrap();
         ops::w4a4_proj::nvfp4_proj_small_m_same_input(
             &gpu,
             kh,
+            ops::OpsLevers::declared().w4a16_tc,
             x,
             &w(WeightSlot::FfnUp),
             u,
@@ -223,6 +235,7 @@ fn each_w4a4_launch_is_the_one_the_legacy_launcher_makes() {
         ops::w4a4_proj::nvfp4_proj_small_m(
             &gpu,
             kh,
+            ops::OpsLevers::declared().w4a16_tc,
             g,
             &w(WeightSlot::Linear(LinearRole::Down)),
             y,

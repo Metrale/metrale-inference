@@ -79,6 +79,10 @@ fn native_fp8_attention_layer(gpu: &MockGpuBackend, config: &ModelConfig) -> Qwe
         KvCacheDtype::Bf16,
         0,
         config,
+        crate::load_context::LoadContext {
+            settings: &crate::lever_equivalence::defaults(),
+            levers: &crate::layers::ops::ModelLevers::defaults(),
+        },
     )
     .unwrap();
     let h = config.hidden_size as u32;
@@ -127,6 +131,7 @@ macro_rules! fwd_ctx {
             dispatch: $dispatch,
             derived: $derived,
             levers: $levers,
+            settings: &crate::lever_equivalence::defaults(),
             stats: $stats,
             attn_metadata: None,
             decode_step: false,
@@ -140,6 +145,7 @@ macro_rules! fwd_ctx {
             routed_lora_layers: None,
             midchunk_capture: None,
             moe_lora_route: MoeLoraRoute::Fold,
+            ab_levers: crate::layer::AbLevers::NONE,
         }
     };
 }

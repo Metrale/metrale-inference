@@ -12,6 +12,7 @@
 
 #![allow(unused_imports, dead_code, clippy::too_many_arguments)]
 
+use super::super::lm_head_vocab_tp::HeadRanks;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -172,15 +173,15 @@ impl TransformerModel {
         // 2026-09-25: `METRALE_K4_DIAG=1` runs the verify without a graph and synchronizes
         // after every layer and stage, so a device fault is reported at the layer that
         // raised it.
-        let k4_diag = std::env::var("METRALE_K4_DIAG").ok().as_deref() == Some("1");
+        let k4_diag = self.settings.telemetry.k4_diag;
         // 2026-09-25: With a communicator (EP), the verify is captured unless
         // `METRALE_GLM_VERIFY_GRAPHS=0`. It does not read `METRALE_EP_GRAPHS` (the
         // `ep_graphs` lever of `decode_a`'s decode graph), so the two are gated apart.
-        let ep_graphs = std::env::var("METRALE_GLM_VERIFY_GRAPHS").ok().as_deref() != Some("0");
+        let ep_graphs = self.settings.speculative.glm_verify_graphs;
         // 2026-09-25: `METRALE_GLM_VERIFY_GRAPH_TRACE=1` captures every step, never replays,
         // and logs the enqueued ops that differ from the previous step's. It turns graphs on
         // and caches none.
-        let graph_trace = std::env::var("METRALE_GLM_VERIFY_GRAPH_TRACE").is_ok_and(|v| v == "1");
+        let graph_trace = self.settings.telemetry.glm_verify_graph_trace;
         let ep_graphs = ep_graphs || graph_trace;
         // 2026-09-29: `suppress_graphs` (FP8 KV calibration, `METRALE_DEBUG_NO_GRAPH`) keeps
         // this verify eager, as it does the K=2 verify (`verify_b.rs`).
@@ -204,6 +205,7 @@ impl TransformerModel {
             dispatch: &self.dispatch,
             derived: &self.derived,
             levers: &self.levers,
+            settings: &self.settings,
             stats: &self.stats,
             attn_metadata: Some(metadata),
             profile: false,
@@ -217,6 +219,7 @@ impl TransformerModel {
             routed_lora_layers: None,
             midchunk_capture: None,
             moe_lora_route: self.decode_moe_route(),
+            ab_levers: metrale_model_layers::layer::AbLevers::NONE,
         };
 
         let mut graph_cache = if use_graphs {
@@ -227,7 +230,7 @@ impl TransformerModel {
 
         // 2026-09-25: Replay only when this sequence's SSM slot has a captured graph.
         // 2026-10-03: The graph key: the pool slot and the LoRA routes a capture bakes.
-        let graph_key = super::SlotGraphKey::new(seq.slot_idx, seq_slot, ctx.moe_lora_route);
+        let graph_key = self.slot_graph_key(seq.slot_idx, seq_slot, ctx.moe_lora_route);
         let cached_for_slot = graph_cache
             .as_ref()
             .and_then(|c| c.get(&graph_key).copied());
@@ -335,10 +338,11 @@ impl TransformerModel {
                             stream,
                         )?;
                     }
-                    // 2026-09-25: DFlash: capture this layer's hidden at the last row (K-1) into
-                    // `dflash_hidden_save` for the next propose, inside the captured region. A
-                    // no-op without DFlash.
-                    self.try_dflash_capture(layer_idx, k - 1, stream)?;
+                    // 2026-09-25: DFlash: capture this layer's hidden for the next propose,
+                    // inside the captured region. A no-op without DFlash. 2026-10-09: Every row,
+                    // as the K=γ verify does (`dflash_verify_capture.rs`): the verdict commits
+                    // rows 0..=num_accepted.
+                    self.dflash_capture_verify_rows(layer_idx, k, k - 1, stream)?;
 
                     if k4_diag && let Err(e) = self.gpu.synchronize(stream) {
                         anyhow::bail!(
@@ -361,7 +365,13 @@ impl TransformerModel {
                     anyhow::bail!("K4_DIAG: CUDA error after final norm: {e:#}");
                 }
 
-                self.lm_head_batched(normed, k as u32, self.buffers.logits(), stream)?;
+                self.lm_head_batched(
+                    normed,
+                    k as u32,
+                    self.buffers.logits(),
+                    HeadRanks::Every,
+                    stream,
+                )?;
 
                 if k4_diag && let Err(e) = self.gpu.synchronize(stream) {
                     anyhow::bail!("K4_DIAG: CUDA error after lm_head_batched: {e:#}");
@@ -397,8 +407,7 @@ impl TransformerModel {
                     // step without caching, which separates a wrong capture from a stale replay.
                     if let Some(ref mut cache) = graph_cache
                         && !graph_trace
-                        && !std::env::var("METRALE_GLM_VERIFY_GRAPH_NOCACHE")
-                            .is_ok_and(|v| v == "1")
+                        && !self.settings.speculative.glm_verify_graph_nocache
                     {
                         cache.insert(graph_key, graph);
                     }
@@ -424,6 +433,7 @@ impl TransformerModel {
             seq.tokens.push(t);
         }
         seq.seq_len += k;
+        self.arm_commit_swap(seq.slot_idx);
 
         Ok([tok0, tok1, tok2, tok3])
     }

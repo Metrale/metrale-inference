@@ -14,10 +14,18 @@ nccl = ["cuda", "metrale-gpu-sys/nccl"]
 metal = []
 
 [dependencies]
-metrale-gpu-sys = { path = "../gpu-sys", default-features = false }
-anyhow = { workspace = true }
+metrale-gpu-sys = { workspace = true }
+# 2026-10-23: `CollectivePath`, the plan's all-reduce path this crate executes
+# (`CommBackend::all_reduce_via`), and the one-shot payload test it shares with the fuser.
+metrale-circuit = { workspace = true }
+# 2026-10-23: The registry error a refused path returns (CERF).
+metrale-error = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
 parking_lot = { workspace = true }
-tracing = "0.1"
+tracing = { workspace = true, features = ["std", "attributes"] }
 
 [lints]
 workspace = true
+
+[package.metadata.metrale]
+role = "device"

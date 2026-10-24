@@ -39,10 +39,10 @@ After startup, the fast path is deterministic: a layer's `forward(ctx)` always c
    - `nvidia` → `NvidiaTarget { nvcc }`
    - `apple` → `AppleTarget { xcrun }`
    - `amd` → `ScaleTarget` (SCALE), `hip` → `HipTarget { hipcc }`
-5. Compile every staged source, applying `KERNEL.toml` flags and module-name overrides (some kernels are compiled from `e2m1_branchless.cu` but exposed at runtime as the `e2m1` module).
+5. Compile every staged source, applying `KERNEL.toml` flags and module-name overrides (some kernels are compiled from `rms_norm.cu` but exposed at runtime as the `norm` module).
 6. Emit an auto-generated Rust file, `$OUT_DIR/target_ptx.rs`, that `include!()`'s back into `crates/kernels/src/lib.rs`. The generated file contains one `pub static PTX_<TARGET>: &[PtxModule]` per target plus an `all_ptx_sets()` function that returns the whole set.
 
-The output is one single PTX set per target, embedded in the final `metrale-server` binary as a byte slice. This is why "one Docker image, one binary, zero runtime compilation" is true.
+The output is one single PTX set per target, embedded in the final `met` binary as a byte slice. This is why "one Docker image, one binary, zero runtime compilation" is true.
 
 `METRALE_SKIP_BUILD=1` short-circuits the whole phase: `build.rs` emits a stub `target_ptx.rs` with empty constants so that `clippy`, `fmt`, and non-GPU tests can compile on a Linux host with no `nvcc`. The CI in `.github/workflows/ci.yml` uses this.
 
@@ -102,7 +102,7 @@ Two dynamic-dispatch points:
 - **`dyn TransformerLayer`** — one virtual call per layer per step. Layer types (`Qwen3AttentionLayer`, `MoeLayer`, `Qwen3SsmLayer`, `NemotronMamba2Layer`, `VisionEncoder`) hold their own pre-resolved `KernelHandle`s for the ops they need. The virtual call is cheap — typically ~ns — against a forward pass that takes ~0.1–1 ms per token.
 - **`&dyn GpuBackend`** — one virtual call per kernel launch. Same argument; the overhead is negligible compared to the kernel itself.
 
-Both virtual calls are unavoidable consequences of the specialization thesis: we want `metrale-server` to not know what `GpuBackend` it's talking to, and we want `TransformerModel` to not know what layer shape it's running. That's how new hardware and new models plug in.
+Both virtual calls are unavoidable consequences of the specialization thesis: we want `met` to not know what `GpuBackend` it's talking to, and we want `TransformerModel` to not know what layer shape it's running. That's how new hardware and new models plug in.
 
 With CUDA graphs enabled (the default in production), steps 5–6 collapse to a single `cuGraphLaunch` — the dynamic dispatch cost disappears into the graph capture phase.
 

@@ -12,12 +12,13 @@
 //!   `accept_token` advances are rolled back by history delta, and the
 //!   thinking flags are restored (pick_all.rs, pick_positions.rs).
 //! - `a.output_tokens` does not grow during a pick, so every position sees
-//!   the step-start history. Only the two `min_tokens` checks
-//!   (`MinTokensEosMask`, `ForcedTokenFastPath`) and the sampling seed add
-//!   `verify_pos` to compensate.
+//!   the step-start history. Only the EOS hold checks (`EosHoldMask`,
+//!   `ForcedTokenFastPath`, `eos_masked_in_window`) and the sampling seed
+//!   add `verify_pos` to compensate.
 
 mod argmax;
-mod fast_masked;
+mod bootstrap;
+pub(super) mod fast_masked;
 mod pick_all;
 mod pick_positions;
 #[cfg(test)]
@@ -84,14 +85,16 @@ pub fn verify_pick_with_pipeline(
 
     // 2026-09-25: verify positions take the sequence's repetition, presence,
     // frequency, LZ and DRY penalties and the min-reasoning `</think>` floor
-    // bias, with temperature 0, no seed and no request bias
-    // (`penalty_params_for`). Built before `a` is borrowed mutably below.
+    // bias, with temperature 0 and no seed (`penalty_params_for`). Built before
+    // `a` is borrowed mutably below. 2026-10-21: and the request's
+    // `logit_bias` (with the tools-active `<tool_call>` bias), as the decode
+    // path takes it.
     let penalties = crate::scheduler::sample_step::penalty_params_for(
         a,
         crate::scheduler::sample_step::PositionKind::Verify,
         0.0,
         None,
-        Vec::new(),
+        a.logit_bias.clone(),
         ctx.watchdog.min_reasoning_floor,
     );
 
@@ -173,4 +176,5 @@ pub fn verify_pick_with_pipeline(
     best_id
 }
 
+pub use bootstrap::bootstrap_pick;
 pub use pick_all::verify_pick_all_with_pipeline;

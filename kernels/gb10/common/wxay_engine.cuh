@@ -22,10 +22,13 @@
 // Invariants:
 // - K % 128 == 0. Grid (ceil(N / F::ROWS), 1, 1), block (256, 1, 1), no dynamic shared memory.
 // - Static shared memory: 8 * min(MB, 8) * 4 * 32 * 4 bytes (at most 32 KiB).
+// - 2026-10-21: PDL: mma_gemv loads only weights (F::load_w) before pdl_wait(); a policy's
+//   load_w must read nothing another kernel writes.
 
 #pragma once
 #include <cuda_bf16.h>
 #include <stdint.h>
+#include "pdl.cuh"
 
 namespace wxay {
 
@@ -74,14 +77,22 @@ __device__ __forceinline__ void mma_gemv(const typename F::Args& a, __nv_bfloat1
 #pragma unroll
         for (int c = 0; c < 4; c++) acc[j][c] = 0.0f;
 
+    // 2026-10-21: PDL (pdl.cuh): the first KU chunks' weights are loaded before the wait; the
+    // activations (the predecessor's output) only after it. Same loads, same values.
+    typename F::WReg w[KU];
+#pragma unroll
+    for (int u = 0; u < KU; u++) {
+        const unsigned c = L.warp + (unsigned)u * WARPS;
+        w[u] = F::load_w(tile, c, c < num_c);
+    }
+    pdl_enter();
     for (unsigned c0 = L.warp; c0 < num_c; c0 += WARPS * KU) {
-        typename F::WReg w[KU];
         typename F::AReg b[F::LAZY_A ? 1 : KU][MB];
 #pragma unroll
         for (int u = 0; u < KU; u++) {
             const unsigned c = c0 + (unsigned)u * WARPS;
             const bool live = c < num_c;
-            w[u] = F::load_w(tile, c, live);
+            if (c0 != L.warp) w[u] = F::load_w(tile, c, live);
             if constexpr (!F::LAZY_A) {
 #pragma unroll
                 for (int j = 0; j < MB; j++) b[u][j] = F::load_a(tok[j], c, live);
@@ -129,6 +140,34 @@ __device__ __forceinline__ void mma_gemv(const typename F::Args& a, __nv_bfloat1
             F::store(a, C, r, (unsigned)j0 + jj, n0, L, M, N);
         }
     }
+}
+
+// 2026-10-10: The K <= 128 entry (one 128-value chunk) for one token, one 16-row tile per warp. At K = 128 mma_gemv
+// gives chunk 0 to warp 0 alone: its partial is the one MMA chunk on a zeroed accumulator, and the other seven warps'
+// partials are +0.0, added in warp order. This reproduces that sum per tile without the CTA-wide reduction: the same
+// load_w / prep_w / mma_frag on the same operands, then seven +0.0 additions (which turn a -0.0 partial into +0.0, as
+// the 8-warp sum does). So a tile computed here has mma_gemv's bits at M = 1, K = 128, whichever warp runs it.
+// 2026-10-21: k128_tile_w is the same on a chunk the caller loaded (F::load_w(tile, 0, true)), so the weight load
+// can be issued ahead of the operand's preparation.
+template <class F>
+__device__ __forceinline__ void k128_tile_w(const typename F::WReg& w, const typename F::AReg& b, const Lane& L,
+                                            float (&r)[4]) {
+    float acc[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    const typename F::WFrag wf = F::prep_w(w, L);
+    F::mma_frag(acc, wf, b, L);
+#pragma unroll
+    for (int c = 0; c < 4; c++) {
+        float v = acc[c];
+#pragma unroll
+        for (unsigned ww = 1; ww < WARPS; ww++) v += 0.0f;
+        r[c] = v;
+    }
+}
+
+template <class F>
+__device__ __forceinline__ void k128_tile(const typename F::Tile& tile, const typename F::AReg& b, const Lane& L,
+                                          float (&r)[4]) {
+    k128_tile_w<F>(F::load_w(tile, 0u, true), b, L, r);
 }
 
 }

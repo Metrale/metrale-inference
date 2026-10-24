@@ -126,7 +126,7 @@ re-running them on your own hardware, and the vLLM side too.
 <a id="what-it-is"></a>
 ## <img src="docs/readme/icons/overview.svg" width="20" height="20" alt="Overview icon"> What it is
 
-- **One binary.** `met` (crate `metrale-server`, version `1.0.0-beta-preview`)
+- **One binary.** `met` (package `met`, version `1.0.0-beta-preview`)
   loads Hugging Face safetensors checkpoints, runs the scheduler and serves
   `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, `/v1/models`
   and the Anthropic `/v1/messages` endpoint. It binds

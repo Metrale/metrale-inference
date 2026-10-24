@@ -364,3 +364,49 @@ fn the_hash_does_not_depend_on_the_checkout_location() {
         "the same commit checked out twice must hash the same"
     );
 }
+
+/// 2026-10-17: An include that only a search directory resolves enters the
+/// closure (the glm `dflash_fp8_gemm.cu` → qwen `w4a16_gemm.cu` shape), and
+/// without that directory it is reported unresolved rather than dropped.
+#[test]
+fn include_closure_resolves_through_search_dirs() {
+    let d = tmp();
+    let lib = d.join("common/gemm.cuh");
+    let src = d.join("model/nvfp4/dflash.cu");
+    write(&lib, "#define TILE 64\n");
+    write(&src, "#include \"gemm.cuh\"\n");
+
+    let bare = include_closure(&src, &[]).unwrap();
+    assert_eq!(bare.files.len(), 1, "own directory alone cannot find it");
+    assert_eq!(bare.unresolved.len(), 1);
+
+    let found = include_closure(&src, &[d.join("common")]).unwrap();
+    assert!(found.files.contains(&lib.canonicalize().unwrap()));
+    assert!(found.unresolved.is_empty());
+}
+
+/// 2026-10-17: The including file's own directory wins over a search
+/// directory, and search directories are tried in order, as nvcc does.
+#[test]
+fn include_closure_follows_nvcc_resolution_order() {
+    let d = tmp();
+    std::fs::create_dir_all(d.join("second")).unwrap();
+    let own = d.join("model/nvfp4/tile.cuh");
+    let first = d.join("common/tile.cuh");
+    let second = d.join("second/tile.cuh");
+    let src = d.join("model/nvfp4/k.cu");
+    for p in [&own, &first, &second] {
+        write(p, "#define TILE 1\n");
+    }
+    write(&src, "#include \"tile.cuh\"\n");
+    let search = [d.join("common"), d.join("second")];
+
+    let got = include_closure(&src, &search).unwrap().files;
+    assert!(got.contains(&own.canonicalize().unwrap()));
+    assert!(!got.contains(&first.canonicalize().unwrap()));
+
+    std::fs::remove_file(&own).unwrap();
+    let got = include_closure(&src, &search).unwrap().files;
+    assert!(got.contains(&first.canonicalize().unwrap()));
+    assert!(!got.contains(&second.canonicalize().unwrap()));
+}

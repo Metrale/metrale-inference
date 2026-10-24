@@ -1,0 +1,4 @@
+# env-ban fixture: out of order and duplicated.
+crates/app/src/b.rs
+crates/app/src/a.rs
+crates/app/src/b.rs

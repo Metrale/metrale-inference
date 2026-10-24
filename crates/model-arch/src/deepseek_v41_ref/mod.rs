@@ -291,11 +291,16 @@ pub fn assert_close(what: &str, got: &[f64], want: &[f64], tol: f64) {
 }
 
 pub mod attn;
+pub mod checkpoint;
+mod checkpoint_mapped;
 pub mod compress;
 pub mod engram;
 pub mod hc;
+pub mod mat;
 pub mod model;
 pub mod moe;
+pub mod parity;
+pub mod routes;
 
 /// 2026-09-25: Shared comparison bars for the component tests.
 #[cfg(test)]

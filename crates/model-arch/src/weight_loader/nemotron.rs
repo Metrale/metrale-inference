@@ -14,6 +14,7 @@ use metrale_config::ModelConfig;
 use metrale_gpu_runtime::gpu::GpuBackend;
 use metrale_model_weights::weights::WeightStore;
 
+mod levers;
 mod ssm_layer;
 
 use super::ModelWeightLoader;
@@ -28,10 +29,10 @@ use metrale_model_layers::weight_map::{
 pub struct NemotronHWeightLoader;
 
 impl ModelWeightLoader for NemotronHWeightLoader {
-    fn supports_tp(&self) -> bool {
+    fn tp_support(&self) -> metrale_config::TpSupport {
         // 2026-09-25: Full-attention layers are TP-sharded in both the
         // NVFP4-from-disk and the dense arm; SSM and MoE layers are not.
-        true
+        metrale_config::TpSupport::Even
     }
 
     fn load_layers(
@@ -40,6 +41,7 @@ impl ModelWeightLoader for NemotronHWeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         layer_kv_dtypes: &[KvCacheDtype],
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
         let layer_types = &config.layer_types;
         let mut layers: Vec<Box<dyn TransformerLayer>> =
@@ -66,6 +68,7 @@ impl ModelWeightLoader for NemotronHWeightLoader {
             .max(moe_input * max_moe_inter);
         let scratch_bytes = scratch_elems * 2;
         let scratch = gpu.alloc(scratch_bytes)?;
+        let levers = levers::NemotronLevers::from_settings(lc.settings);
 
         for (i, lt) in layer_types.iter().enumerate() {
             let lp = config.layer_prefix(i);
@@ -75,6 +78,7 @@ impl ModelWeightLoader for NemotronHWeightLoader {
                 metrale_config::LayerType::LinearAttention => {
                     let layer = Self::build_ssm_layer(
                         gpu, store, config, i, h, &lp, norm, quantize_k, absmax_k, scratch, stream,
+                        levers,
                     )?;
                     layers.push(Box::new(layer));
                 }
@@ -125,6 +129,7 @@ impl ModelWeightLoader for NemotronHWeightLoader {
                         gpu,
                         config,
                         crate::nemotron_moe::shared_expert_e4m3(),
+                        levers.shared_fp8_prefill,
                     );
                     layers.push(Box::new(moe_layer));
                 }
@@ -267,8 +272,7 @@ impl ModelWeightLoader for NemotronHWeightLoader {
                         // 2026-09-25: Dense attention stays BF16 unless
                         // `METRALE_NEMOTRON_BF16_ATTN=0`, which quantizes Q/K/V/O to
                         // NVFP4.
-                        let keep_bf16_attn =
-                            std::env::var("METRALE_NEMOTRON_BF16_ATTN").as_deref() != Ok("0");
+                        let keep_bf16_attn = levers.bf16_attn;
                         if keep_bf16_attn {
                             tracing::info!(
                                 "L{i} attention: keeping checkpoint BF16 Q/K/V/O (no NVFP4 requant)"
@@ -352,6 +356,7 @@ impl ModelWeightLoader for NemotronHWeightLoader {
                         layer_kv_dtypes[attn_idx],
                         config.fp8_kv_calibration_tokens,
                         config,
+                        lc,
                     )?;
                     if let Some(od) = bf16_o_dense {
                         attn_layer.set_o_dense_bf16(od);

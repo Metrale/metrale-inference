@@ -34,7 +34,7 @@ pub(super) fn abort_in_flight_on_shutdown(
         send_error_to_sink(io, &mut p.sink, "server shut down during prefill");
         let seq = &mut p.seq;
         let _ = model.free_sequence(seq);
-        let _ = model.ep_broadcast_cmd_for_seq(seq.slot_idx as u32, 0xFFFFFFF1);
+        let _ = model.ep_broadcast_cmd_for_seq(seq.slot_idx as u32, metrale_model_layers::ep_wire::EP_CMD_ALLOC_SLOT);
     }
     for mut s in swapped {
         send_error_to_sink(

@@ -15,9 +15,10 @@
 //! `attn_v41_tests.rs` compares it with the reference layer by layer:
 //! * projections on `dense_gemm_bf16` / `dense_gemv_bf16` (bf16 weights) or the
 //!   `Q2_K` K-quant kernels;
-//! * RMSNorm, RoPE, the fp8/fp4 quantisers, the compressor pooling, the
-//!   indexer scores, sparse attention with the sink and the `wo_a` column
-//!   slices on `kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu`;
+//! * RMSNorm, RoPE, the indexer query's fp4 rounding, the compressor pooling
+//!   and the `wo_a` column slices on `kernels/gb10/deepseek-v4-flash/nvfp4/attn_v41.cu`;
+//! * the cache rows in the checkpoint's declared layout (`kv_codec`), the
+//!   indexer scores and sparse attention with the sink on `attn_v41_kv.cu`;
 //! * the candidate-block and index top-k selections on the CPU through the
 //!   reference's `torch_cpu_topk_set`, which reproduces torch's CPU tie order
 //!   among equal scores; the scores come back in one stream-ordered download.
@@ -36,15 +37,22 @@
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 
-/// 2026-09-25: An attention projection on the device: bf16, or raw `Q2_K`
-/// blocks. `Q3_K` is refused by `AttnV41::gemm`.
+use crate::fp8_block_v41::{Fp8BlockStage, Fp8StageSize};
+use crate::tp_reduce_v41::TpReduce;
+pub use kv_codec::{V41Row, V41Rows};
+use metrale_kv_codec::LatentKvPlan;
+
+/// 2026-09-25: An attention projection on the device: bf16, raw `Q2_K` blocks, or FP8 blocks
+/// (dequantized per launch through `fp8_block_v41`). `Q3_K` is refused by `AttnV41::gemm`.
 pub use metrale_model_layers::layers::ops::ResidentMat as AttnMat;
 
 const MODULE: &str = "attn_v41";
+/// 2026-10-19: The cache row kernels (`attn_v41_kv.cu`).
+const KV_MODULE: &str = "attn_v41_kv";
 const GEMM_MODULE: &str = "gemm";
 /// 2026-09-25: Quantiser blocks per launch block: one warp per block, 8 warps
 /// in the 256-thread launch block (`attn_v41_act_quant_fp8`, `attn_v41_fp4_quant`).
-const QUANT_BLOCKS_PER_LAUNCH: u32 = 8;
+const QUANT_BLOCKS_PER_LAUNCH: u32 = crate::fp8_block_v41::ACT_QUANT_BLOCKS_PER_LAUNCH;
 
 /// 2026-09-25: Model-wide attention geometry, built from `ModelConfig` and the
 /// `METRALE_DS41_*` limits by the DeepSeek-V4.1 weight loader.
@@ -72,6 +80,15 @@ pub struct AttnV41Cfg {
     pub orig_seq: usize,
     pub beta_fast: f32,
     pub beta_slow: f32,
+    /// 2026-10-19: The FP8 block projections' scratch (`Fp8StageSize::NONE` when every
+    /// projection is bf16 or K-quant).
+    pub fp8_stage: Fp8StageSize,
+    /// 2026-10-19: Ranks the heads are split across. 1 keeps the whole attention on one device;
+    /// above 1, `n_heads` and `groups` are this rank's own (whole `wo_a` groups), `wq_b`, `sink`,
+    /// `wo_a` and `wo_b` hold its slices, and `forward` sums the ranks' `wo_b` partials.
+    pub tp_world: usize,
+    /// 2026-10-19: The caches' registry codecs (`kv_codec::declared`, the checkpoint's own).
+    pub kv: LatentKvPlan,
 }
 
 impl AttnV41Cfg {
@@ -99,12 +116,12 @@ pub struct CompressorWeightsGpu {
     pub norm: DevicePtr,
 }
 
-/// 2026-09-25: Indexer weights (index sources only): bf16 `wq_b`
+/// 2026-09-25: Indexer weights (index sources only): `wq_b` (bf16, or FP8 blocks)
 /// `[index_heads * index_hd, q_rank]` and `weights_proj` `[index_heads, dim]`;
 /// on a layer that is also a kv source, bf16 `wk` `[index_hd, hd]` and f32
 /// `k_norm` `[index_hd]`.
 pub struct IndexerWeightsGpu {
-    pub wq_b: DevicePtr,
+    pub wq_b: AttnMat,
     pub weights_proj: DevicePtr,
     pub wk: Option<DevicePtr>,
     pub k_norm: Option<DevicePtr>,
@@ -129,10 +146,10 @@ pub struct AttnV41LayerWeights {
 }
 
 /// 2026-09-25: One sequence's attention state for one layer, across prefill
-/// and decode: the bf16 window ring `[window, hd]`; on kv sources also the
-/// compressor's partial group (f32 kv and score, `[ratio, hd]` each, used at
-/// ratio > 1), the bf16 latent cache `[max_seq / ratio, hd]` and the bf16
-/// index-key cache `[max_seq / ratio, index_hd]`.
+/// and decode: the window ring `[window]` of packed window rows; on kv sources
+/// also the compressor's partial group (f32 kv and score, `[ratio, hd]` each,
+/// used at ratio > 1), the latent cache `[max_seq / ratio]` and the index-key
+/// cache `[max_seq / ratio]` of packed rows (`kv_codec`, 2026-10-19).
 pub struct AttnV41LayerState {
     window: DevicePtr,
     comp_state: Option<(DevicePtr, DevicePtr)>,
@@ -142,8 +159,9 @@ pub struct AttnV41LayerState {
 
 impl AttnV41LayerState {
     pub fn new(gpu: &dyn GpuBackend, c: &AttnV41Cfg, role: LayerRole) -> Result<Self> {
-        let window = gpu.alloc(c.window * c.head_dim * 2)?;
-        gpu.memset(window, 0, c.window * c.head_dim * 2)?;
+        let rows = V41Rows::resolve(&c.kv, c.head_dim, c.index_hd)?;
+        let window = gpu.alloc(c.window * rows.window.bytes)?;
+        gpu.memset(window, 0, c.window * rows.window.bytes)?;
         let (comp_state, compress_kv, index_k) = if role.is_kv_source {
             let ratio = role.ratio.max(1);
             let groups = c.max_seq / ratio;
@@ -157,10 +175,10 @@ impl AttnV41LayerState {
                     .flatten()
                     .collect();
             gpu.copy_h2d(&neg, b)?;
-            let ckv = gpu.alloc(groups.max(1) * c.head_dim * 2)?;
-            gpu.memset(ckv, 0, groups.max(1) * c.head_dim * 2)?;
-            let ik = gpu.alloc(groups.max(1) * c.index_hd * 2)?;
-            gpu.memset(ik, 0, groups.max(1) * c.index_hd * 2)?;
+            let ckv = gpu.alloc(groups.max(1) * rows.latent.bytes)?;
+            gpu.memset(ckv, 0, groups.max(1) * rows.latent.bytes)?;
+            let ik = gpu.alloc(groups.max(1) * rows.index_key.bytes)?;
+            gpu.memset(ik, 0, groups.max(1) * rows.index_key.bytes)?;
             (Some((a, b)), Some(ckv), Some(ik))
         } else {
             (None, None, None)
@@ -173,7 +191,7 @@ impl AttnV41LayerState {
         })
     }
 
-    /// 2026-09-25: The window ring, bf16 `[window, hd]`: a pointer the captured
+    /// 2026-09-25: The window ring of packed rows `[window]`: a pointer the captured
     /// decode steps bake.
     pub fn window(&self) -> DevicePtr {
         self.window
@@ -252,28 +270,47 @@ struct Kernels {
     rmsnorm_bf16: KernelHandle,
     rmsnorm_f32: KernelHandle,
     rope: KernelHandle,
-    act_quant: KernelHandle,
+    // 2026-10-19: bf16 rows into packed cache rows (`kv_codec`): window rows, and the
+    // latent and index-key rows; `fp4_quant` stays for the indexer's in-place query rounding.
+    kv_pack_fp8: KernelHandle,
+    kv_pack_fp4: KernelHandle,
     fp4_quant: KernelHandle,
     gemm_f32: KernelHandle,
     // 2026-09-25: The compressor's f32 product at m = 1 when `dim % 8 == 0`;
     // `gemm_f32` otherwise.
     gemv_f32_staged: KernelHandle,
     pool: KernelHandle,
-    index_score: KernelHandle,
-    sparse_attn: KernelHandle,
+    index_score_packed: KernelHandle,
+    sparse_attn_packed: KernelHandle,
     slice_cols: KernelHandle,
     scatter_cols: KernelHandle,
     scale_bf16: KernelHandle,
     // 2026-09-25: The captured decode step's window ring write; the slot is
     // `pos[0] % window`, read on the device.
-    ring_put: KernelHandle,
+    ring_put_row: KernelHandle,
+}
+
+/// 2026-10-19: The tensor-parallel output projection: `wo_b` into f32 partials, summed across
+/// ranks and rounded to bf16 once by [`TpReduce`].
+struct AttnTp {
+    reduce: TpReduce,
+    gemm_f32out: KernelHandle,
 }
 
 /// 2026-09-25: The attention runtime: kernels, RoPE tables, and workspaces for
 /// up to `max_tokens` positions per call.
 pub struct AttnV41 {
     pub cfg: AttnV41Cfg,
+    /// 2026-10-19: `cfg.kv`'s rows at this geometry, resolved once at init.
+    rows: V41Rows,
+    /// 2026-09-25: The blocks per (token, head) that `attn_v41_sparse_attn_packed` splits the
+    /// output dimension across (`Ds41Levers::sparse_split`). Every block recomputes the same
+    /// scores and sums its outputs in the same order, so the bytes do not depend on the value.
+    sparse_split: u32,
     k: Kernels,
+    /// 2026-10-19: `Some` exactly when `cfg.tp_world > 1`.
+    tp: Option<AttnTp>,
+    fp8: Fp8BlockStage,
     fc_plain: DevicePtr,
     fc_yarn: DevicePtr,
     // 2026-09-25: q8_1 activations for the Q2_K projections, sized for the
@@ -284,6 +321,9 @@ pub struct AttnV41 {
     q: DevicePtr,
     kv_raw: DevicePtr,
     kv: DevicePtr,
+    // 2026-10-19: `kv` as packed window rows `[max_tokens]`: what the ring and, at
+    // `start_pos == 0`, the sparse attention read.
+    kv_pack: DevicePtr,
     o: DevicePtr,
     o_rot: DevicePtr,
     og: DevicePtr,
@@ -344,9 +384,14 @@ fn at(p: DevicePtr, byte_off: usize) -> DevicePtr {
 mod decode;
 mod forward;
 mod init;
+pub mod kv_codec;
 mod primitives;
 mod sources;
 
 #[cfg(test)]
 #[path = "attn_v41_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "attn_v41_tp_tests.rs"]
+mod tp_tests;

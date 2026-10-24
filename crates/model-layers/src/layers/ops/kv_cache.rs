@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: Launchers for paged KV-cache writes (BF16 and FP8, and the fused K norm + RoPE writes), plus the BF16-K/Turbo-V and MLA submodules.
+//! 2026-09-25: Launchers for paged KV-cache writes (BF16 and FP8, and the fused K norm + RoPE writes), plus the MLA submodule.
 //!
 //! Owner: model-layers ops.
 //! Invariants:
@@ -20,13 +20,6 @@ use crate::layers::moe;
 use crate::weight_map::{DenseWeight, Fp8DenseWeight, Fp8Weight, QuantizedWeight};
 
 use super::*;
-#[path = "kv_cache_bf16k_turbov.rs"]
-mod bf16k_turbov;
-pub use bf16k_turbov::{
-    paged_decode_attn_bf16k_turbo2v, paged_decode_attn_bf16k_turbo3v,
-    paged_decode_attn_bf16k_turbo4v, reshape_and_cache_bf16k_turbo2v,
-    reshape_and_cache_bf16k_turbo3v, reshape_and_cache_bf16k_turbo4v,
-};
 #[path = "kv_cache_mla.rs"]
 mod mla;
 pub use mla::{
@@ -207,45 +200,6 @@ pub fn fused_k_norm_rope_cache_write_bf16_mrope(
         .arg_u32(block_size)
         .arg_f32(rms_eps)
         .arg_f32(theta)
-        .launch(stream)
-}
-
-/// 2026-09-25: [`fused_k_norm_rope_cache_write_bf16`] writing an FP8 E4M3 cache. The FP32 result
-/// times `inv_scale` (`1 / k_scale`) goes through one saturating FP8 cast, with no BF16 rounding.
-#[allow(clippy::too_many_arguments)]
-pub fn fused_k_norm_rope_cache_write_fp8(
-    gpu: &dyn GpuBackend,
-    kernel: KernelHandle,
-    k_in: DevicePtr,
-    k_norm_weight: DevicePtr,
-    positions: DevicePtr,
-    k_cache_fp8: DevicePtr,
-    slot_mapping: DevicePtr,
-    num_tokens: u32,
-    num_kv_heads: u32,
-    head_dim: u32,
-    rotary_dim: u32,
-    block_size: u32,
-    rms_eps: f32,
-    theta: f32,
-    inv_scale: f32,
-    stream: u64,
-) -> Result<()> {
-    KernelLaunch::new(gpu, kernel)
-        .grid([num_tokens, num_kv_heads, 1])
-        .block([head_dim, 1, 1])
-        .arg_ptr(k_in)
-        .arg_ptr(k_norm_weight)
-        .arg_ptr(positions)
-        .arg_ptr(k_cache_fp8)
-        .arg_ptr(slot_mapping)
-        .arg_u32(num_kv_heads)
-        .arg_u32(head_dim)
-        .arg_u32(rotary_dim)
-        .arg_u32(block_size)
-        .arg_f32(rms_eps)
-        .arg_f32(theta)
-        .arg_f32(inv_scale)
         .launch(stream)
 }
 

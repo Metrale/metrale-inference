@@ -84,11 +84,7 @@ impl TransformerModel {
             .max()
             .unwrap_or(chunk_len);
 
-        let stream = if self.multi_rank_protocol_active() {
-            self.gpu.default_stream()
-        } else {
-            stream
-        };
+        let stream = self.forward_stream(stream);
 
         let mut kv_cache = self.kv_cache.lock();
 
@@ -172,7 +168,7 @@ impl TransformerModel {
             // prefix is not embedded: `proc_range` re-embeds the uncached suffix
             // at this offset, and admission charged the arena for the suffix
             // only.
-            let embed_skip = if super::batch_kernel::eligible::effective_arena_charge_enabled() {
+            let embed_skip = if self.settings.kernels.q12_effective_arena {
                 let bs_probe = self.kv_cache.lock().block_size();
                 self.prefix_cache
                     .peek_matched_tokens(tokens, bs_probe, seq.adapter_id)
@@ -218,7 +214,7 @@ impl TransformerModel {
                 self.prefix_cache.as_ref(),
                 self.gpu.as_ref(),
                 stream,
-                self.levers.kv_poison,
+                self.prefill_block_fill(),
             )?;
 
             // 2026-09-25: Processing range. This stream's hidden offset is passed
@@ -417,6 +413,7 @@ impl TransformerModel {
             dispatch: &self.dispatch,
             derived: &self.derived,
             levers: &self.levers,
+            settings: &self.settings,
             stats: &self.stats,
             attn_metadata: None,
             profile: self.profile,
@@ -435,6 +432,7 @@ impl TransformerModel {
             // error (`moe_route_gate`) rather than apply one adapter to every
             // packed row. Without a MoE adapter the route is not consulted.
             moe_lora_route: metrale_model_layers::layer::MoeLoraRoute::Refuse,
+            ab_levers: metrale_model_layers::layer::AbLevers::NONE,
         };
 
         // 2026-09-25: Scratch offset of the `h_state_ptrs` array, staged per SSM

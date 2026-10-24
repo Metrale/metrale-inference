@@ -1,0 +1,285 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-18: The DeepSeek-V4.1 (`deepseek_v41`) CSA source sites (`csa_src`): the
+# layers that pool every `csa_ratio` tokens into one compressed latent and index key row, and
+# select which of those rows to attend. Split out of
+# kernels/circuits/deepseek_v41.toml to keep each file short; only that circuit includes it.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/circuit_toml.rs).
+# Invariants:
+# - The window path is blocks/deepseek_v41_attn.toml's; these sites add the compressed side.
+# - Compressor at ratio > 1: `wkv` and `wgate` project the hidden row (BF16 weights, FP32
+#   outputs, as the reference runs them on an FP32 input); each completed run of `csa_ratio`
+#   tokens pools into one latent by a per-channel softmax over the run's gate scores; the
+#   incomplete run waits in a per-sequence FP32 tail.
+#   The pooled latent is RMS-normed; the cache holds it rotated.
+# - Indexer: key = rope(rmsnorm(wk(latent))); query = rope(wq_b(the normed query latent));
+#   per row the scores sum over heads of weights_proj(x) times relu(query . key); the top
+#   `index_topk` compressed rows (at most one per compressed position so far) are attended.
+# - Declared precision: the indexer's `wq_b` is FP8 (block 32x32); the compressor, the
+#   indexer's `wk` and `weights_proj` are BF16.
+
+schema = 1
+description = "DeepSeek-V4.1 CSA source sites: compressor, indexer and compressed caches"
+
+[block.csa_src]
+stream_in = "x"
+stream_out = "y"
+
+# 2026-10-18: The sliding-window ring: the last `window` latent rows, each FP8 with one E8M0
+# scale per 32 channels; a window, so a verify rolls it back like a conv state.
+[[block.csa_src.state]]
+id = "window"
+kind = "recurrent"
+lifetime = "sequence"
+format = "u8"
+shape = "window x head_dim+head_dim/32"
+verify = "conv_steps"
+
+# 2026-10-18: The compressed caches this layer writes and later layers read, per token at the
+# checkpoint's packed formats: the latent row as E2M1 with one E4M3 scale per 16 channels, the
+# index key as E2M1 with one E8M0 scale per 32, each one row per `csa_ratio` tokens.
+[[block.csa_src.state]]
+id = "ckv"
+kind = "paged_kv"
+lifetime = "model"
+format = "u8"
+shape = "head_dim/2/csa_ratio+head_dim/16/csa_ratio"
+
+[[block.csa_src.state]]
+id = "index"
+kind = "paged_kv"
+lifetime = "model"
+format = "u8"
+shape = "index_head_dim/2/csa_ratio+index_head_dim/32/csa_ratio"
+
+# 2026-10-18: The incomplete run: each pending token's projected latent and gate scores, FP32.
+[[block.csa_src.state]]
+id = "tail"
+kind = "recurrent"
+lifetime = "sequence"
+format = "f32"
+shape = "csa_ratio x head_dim*2"
+verify = "conv_steps"
+
+[[block.csa_src.node]]
+id = "mix"
+op = "linear"
+role = "hc_mix"
+in = ["x"]
+out = [{ edge = "mix", format = "f32", shape = "n x hc*hc+hc*2" }]
+binding = ["{L}.hc_attn_fn"]
+unquantized = true
+
+[[block.csa_src.node]]
+id = "pre"
+op = "hc_pre"
+in = ["x", "mix"]
+out = [
+  { edge = "u", format = "bf16", shape = "n x hidden" },
+  { edge = "post", format = "f32", shape = "n x hc" },
+  { edge = "comb", format = "f32", shape = "n x hc*hc" },
+]
+binding = ["{L}.hc_attn_scale", "{L}.hc_attn_base"]
+
+[[block.csa_src.node]]
+id = "attn_norm"
+op = "rms_norm"
+in = ["u"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.attn_norm"]
+params = { weight_form = "plain" }
+
+[[block.csa_src.node]]
+id = "q_a"
+op = "linear"
+role = "mla_q_a"
+in = ["xn"]
+out = [{ edge = "qa", format = "bf16", shape = "n x q_lora" }]
+binding = ["{L}.attn.wq_a"]
+
+[[block.csa_src.node]]
+id = "q_norm"
+op = "rms_norm"
+in = ["qa"]
+out = [{ edge = "qan", format = "bf16", shape = "n x q_lora" }]
+binding = ["{L}.attn.q_norm"]
+params = { weight_form = "plain" }
+
+[[block.csa_src.node]]
+id = "q_b"
+op = "linear"
+role = "mla_q_b"
+in = ["qan"]
+out = [{ edge = "q", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.attn.wq_b"]
+
+[[block.csa_src.node]]
+id = "kv"
+op = "linear"
+role = "mla_kv_a"
+in = ["xn"]
+out = [{ edge = "kva", format = "bf16", shape = "n x head_dim" }]
+binding = ["{L}.attn.wkv"]
+
+[[block.csa_src.node]]
+id = "kv_norm"
+op = "rms_norm"
+in = ["kva"]
+out = [{ edge = "kvn", format = "bf16", shape = "n x head_dim" }]
+binding = ["{L}.attn.kv_norm"]
+params = { weight_form = "plain" }
+
+[[block.csa_src.node]]
+id = "rope"
+op = "rope"
+in = ["q", "kvn"]
+out = [
+  { edge = "qr", format = "bf16", shape = "n x q_heads*head_dim" },
+  { edge = "kvr", format = "bf16", shape = "n x head_dim" },
+]
+
+[[block.csa_src.node]]
+id = "compress_kv"
+op = "linear"
+role = "compress_kv"
+in = ["xn"]
+out = [{ edge = "ck", format = "f32", shape = "n x head_dim" }]
+binding = ["{L}.attn.compressor.wkv"]
+
+[[block.csa_src.node]]
+id = "compress_gate"
+op = "linear"
+role = "compress_gate"
+in = ["xn"]
+out = [{ edge = "cg", format = "f32", shape = "n x head_dim" }]
+binding = ["{L}.attn.compressor.wgate"]
+
+[[block.csa_src.node]]
+id = "compress"
+op = "kv_compress"
+state = { tail = "update" }
+in = ["ck", "cg"]
+out = [{ edge = "pooled", format = "bf16", shape = "n x head_dim" }]
+params = { ratio = "csa_ratio" }
+
+[[block.csa_src.node]]
+id = "compress_norm"
+op = "rms_norm"
+in = ["pooled"]
+out = [{ edge = "latent", format = "bf16", shape = "n x head_dim" }]
+binding = ["{L}.attn.compressor.norm"]
+params = { weight_form = "plain" }
+
+[[block.csa_src.node]]
+id = "idx_k"
+op = "linear"
+role = "index_k"
+in = ["latent"]
+out = [{ edge = "ik", format = "bf16", shape = "n x index_head_dim" }]
+binding = ["{L}.attn.indexer.wk"]
+
+[[block.csa_src.node]]
+id = "idx_k_norm"
+op = "rms_norm"
+in = ["ik"]
+out = [{ edge = "ikn", format = "bf16", shape = "n x index_head_dim" }]
+binding = ["{L}.attn.indexer.k_norm"]
+params = { weight_form = "plain" }
+
+[[block.csa_src.node]]
+id = "idx_k_rope"
+op = "rope"
+in = ["ikn"]
+out = [{ edge = "ikr", format = "bf16", shape = "n x index_head_dim" }]
+
+[[block.csa_src.node]]
+id = "idx_write"
+op = "kv_write"
+state = { index = "write" }
+in = ["ikr"]
+out = []
+params = { layout = "index" }
+
+[[block.csa_src.node]]
+id = "latent_rope"
+op = "rope"
+in = ["latent"]
+out = [{ edge = "latr", format = "bf16", shape = "n x head_dim" }]
+
+[[block.csa_src.node]]
+id = "ckv_write"
+op = "kv_write"
+state = { ckv = "write" }
+in = ["latr"]
+out = []
+params = { layout = "latent" }
+
+[[block.csa_src.node]]
+id = "idx_q"
+op = "linear"
+role = "index_q"
+in = ["qan"]
+out = [{ edge = "iq", format = "bf16", shape = "n x index_heads*index_head_dim" }]
+binding = ["{L}.attn.indexer.wq_b"]
+
+[[block.csa_src.node]]
+id = "idx_q_rope"
+op = "rope"
+in = ["iq"]
+out = [{ edge = "iqr", format = "bf16", shape = "n x index_heads*index_head_dim" }]
+
+[[block.csa_src.node]]
+id = "idx_w"
+op = "linear"
+role = "index_weights"
+in = ["xn"]
+out = [{ edge = "iw", format = "bf16", shape = "n x index_heads" }]
+binding = ["{L}.attn.indexer.weights_proj"]
+
+[[block.csa_src.node]]
+id = "select"
+op = "index_select"
+state = { index = "read" }
+in = ["iqr", "iw"]
+out = [{ edge = "sel", format = "i32", shape = "n x index_topk" }]
+params = { pool = "csa_ratio" }
+
+[[block.csa_src.node]]
+id = "attend"
+op = "latent_sparse_attention"
+state = { window = "update", ckv = "read" }
+in = ["qr", "kvr", "sel"]
+out = [{ edge = "a", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.attn.attn_sink"]
+params = { compressed = "ckv", ratio = "csa_ratio" }
+
+[[block.csa_src.node]]
+id = "unrope"
+op = "rope"
+in = ["a"]
+out = [{ edge = "au", format = "bf16", shape = "n x q_heads*head_dim" }]
+params = { inverse = "true" }
+
+[[block.csa_src.node]]
+id = "o_a"
+op = "linear"
+role = "o_a"
+in = ["au"]
+out = [{ edge = "oa", format = "bf16", shape = "n x o_groups*o_lora" }]
+binding = ["{L}.attn.wo_a"]
+params = { groups = "{o_groups}" }
+
+[[block.csa_src.node]]
+id = "o"
+op = "linear"
+role = "o"
+in = ["oa"]
+out = [{ edge = "o", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.attn.wo_b"]
+
+[[block.csa_src.node]]
+id = "post"
+op = "hc_post"
+in = ["o", "x", "post", "comb"]
+out = [{ edge = "y", format = "bf16", shape = "n x hc*hidden" }]

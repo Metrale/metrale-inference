@@ -134,7 +134,7 @@ fn shape_errors_are_refused() {
 #[test]
 fn unknown_ops_roles_and_formats_are_refused() {
     for (from, to) in [
-        ("op = \"rms_norm\"", "op = \"layer_norm\""),
+        ("op = \"rms_norm\"", "op = \"group_norm\""),
         (
             "op = \"rms_norm\", local",
             "op = \"linear\", role = \"up\", local",
@@ -180,4 +180,92 @@ fn duplicate_ids_bad_toml_and_bad_schema_are_refused() {
         parse_rules(&OK.replace("priority = 100", "priority = 100\nweight = 3")),
         Err(RuleError::Parse(_))
     ));
+}
+
+/// 2026-10-23: `ranks` loads on a collective element as a group-size predicate, and is refused on
+/// any other op (PCND: never read as "any size") and when malformed.
+#[test]
+fn ranks_loads_on_a_collective_only() {
+    let collective = OK.replace(
+        r#"  { op = "residual_add", local = "add", keep = true },
+  { op = "rms_norm", local = "post_norm" },"#,
+        r#"  { op = "all_reduce", ranks = { min = 3 } },"#,
+    );
+    let r = &parse_rules(&collective).unwrap()[0];
+    let p = r.pattern[0].ranks.expect("the predicate loads");
+    assert!(p.holds(3) && p.holds(8) && !p.holds(2));
+    let on_norm = OK.replace(
+        r#"{ op = "rms_norm", local = "post_norm" }"#,
+        r#"{ op = "rms_norm", local = "post_norm", ranks = { max = 2 } }"#,
+    );
+    let e = parse_rules(&on_norm).expect_err("ranks on a norm");
+    assert!(e.to_string().contains("`ranks` on `rms_norm`, which is no collective"), "{e}");
+    let empty = collective.replace("ranks = { min = 3 }", "ranks = {}");
+    let e = parse_rules(&empty).expect_err("a predicate with no test");
+    assert!(e.to_string().contains("ranks: states no test"), "{e}");
+}
+
+/// 2026-10-23: `path` loads on a one-element collective rule with the launches it issues (the
+/// exchange and a summing kernel; the ring all-reduce and no kernel for `nccl`), and is a load
+/// error anywhere else: on a norm, an unknown name, a `nccl` rule with a kernel, a `one_shot`
+/// one without the exchange.
+#[test]
+fn path_loads_on_a_collective_with_its_launches_only() {
+    use crate::collective::CollectivePath;
+    let one_shot = OK.replace(
+        r#"  { op = "residual_add", local = "add", keep = true },
+  { op = "rms_norm", local = "post_norm" },"#,
+        r#"  { op = "all_reduce" },"#,
+    )
+    .replace(
+        "emitter = \"residual_add_rms_norm\"",
+        "emitter = \"tp_all_reduce\"\npath = \"one_shot\"\ncomm = [{ api = \"exchange\", kernel = \"k\", at = 0 }]",
+    );
+    assert_eq!(parse_rules(&one_shot).unwrap()[0].path, Some(CollectivePath::OneShot));
+    let nccl = one_shot
+        .replace("path = \"one_shot\"", "path = \"nccl\"")
+        .replace("api = \"exchange\"", "api = \"all_reduce_ring\"")
+        .replace(r#"kernels = [{ module = "norm", func = "residual_add_rms_norm" }]"#, "kernels = []");
+    assert_eq!(parse_rules(&nccl).unwrap()[0].path, Some(CollectivePath::Nccl));
+    for (bad, want) in [
+        (
+            OK.replace("emitter = \"residual_add_rms_norm\"", "emitter = \"e\"\npath = \"nccl\""),
+            "not headed by an all_reduce or all_gather",
+        ),
+        (one_shot.replace("\"one_shot\"", "\"ring\""), "unknown path `ring`"),
+        (
+            nccl.replace("kernels = []", r#"kernels = [{ module = "m", func = "f" }]"#),
+            "path `nccl` issues one `all_reduce_ring` launch and no kernel",
+        ),
+        (
+            one_shot.replace("api = \"exchange\"", "api = \"all_reduce_ring\""),
+            "path `one_shot` issues one `exchange` launch",
+        ),
+    ] {
+        let e = parse_rules(&bad).expect_err(want);
+        assert!(e.to_string().contains(want), "{e}");
+    }
+}
+
+/// 2026-10-24: `sm_budget` loads onto a rule of one kernel and no exchange; absent it is `None`;
+/// zero, and a rule of two kernels, are refused.
+#[test]
+fn an_sm_budget_loads_on_a_one_kernel_rule_only() {
+    assert_eq!(parse_rules(OK).unwrap()[0].sm_budget, None);
+    let with = |t: &str, v: &str| {
+        t.replace("priority = 100", &format!("priority = 100\nsm_budget = {v}"))
+    };
+    let r = &parse_rules(&with(OK, "32")).unwrap()[0];
+    assert_eq!(r.sm_budget.map(|k| k.get()), Some(32));
+    assert!(parse_rules(&with(OK, "0")).is_err());
+    let two = with(OK, "32").replace(
+        r#"kernels = [{ module = "norm", func = "residual_add_rms_norm" }]"#,
+        r#"kernels = [{ module = "norm", func = "a" }, { module = "norm", func = "b" }]"#,
+    );
+    match parse_rules(&two) {
+        Err(RuleError::Shape { detail, .. }) => {
+            assert!(detail.contains("sm_budget = 32"), "{detail}")
+        }
+        other => panic!("{other:?}"),
+    }
 }

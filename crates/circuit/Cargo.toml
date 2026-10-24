@@ -3,31 +3,55 @@ name = "metrale-circuit"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Architecture circuits: an op graph per model, the fusion rules that cover it, and the fused plan."
 
 # 2026-09-28: Pure logic. No GPU, no file I/O, no environment, no clock and no
 # randomness: callers read `kernels/circuits/*.toml`, `FUSIONS.toml` and the
 # kernel sources and pass their contents in. The server's `met circuit` and the
-# golden-plan tests are the two callers.
+# golden-plan tests are the two callers. 2026-10-17: `checkpoint` embeds the
+# architecture circuits at compile time, from the kernel tree build.rs locates.
+# 2026-10-22: no_std + alloc; builds for both wasm32 targets (NSCC). No features.
 
 [dependencies]
+# 2026-10-23: The moving-block bootstrap, percentile intervals, median and HAC variance headroom's
+# intervals use (`mbb`), with `Serialize` on `Interval` for the JSON reports (was hardware/stats.rs).
+metrale-stats = { workspace = true, features = ["serde"] }
+# 2026-10-17: Its `links` metadata (`DEP_METRALE_KERNEL_TREE_ROOT`) locates kernels/ for build.rs.
+metrale-kernel-root = { workspace = true }
+# 2026-10-22: The registry error of the source port (`venn::Repo`, CERF).
+metrale-error = { workspace = true }
 # 2026-09-28: `DeclaredPrecisionPlan` and `WeightQuantPolicy`, the engine's precision answers the
-# circuit's `PolicyPrecision` adapter asks. Pure: no environment, no I/O.
-metrale-config = { path = "../config", default-features = false }
-serde_json = { workspace = true }
-sha2.workspace = true
-thiserror.workspace = true
-serde = { workspace = true }
-# 2026-09-28: Same pin as `metrale-closure` and `metrale-kernels`.
-toml = "1.1"
+# circuit's `PolicyPrecision` adapter asks. 2026-10-22: From metrale-precision (no_std), which
+# metrale-config re-exports, so the circuit builds for wasm with the same definitions.
+metrale-precision = { workspace = true }
+# 2026-10-18: The KV codec registry: a KV state's bytes and the `kv_cache_dtype` spellings come from
+# each codec's spec. Pure, no_std.
+metrale-kv-codec = { workspace = true }
+# 2026-10-22: `pow` for the roofline's distinct-expert estimate (no_std has no f64::powf).
+libm = { workspace = true }
+# 2026-10-22: no_std + alloc. Without `preserve_order` (which needs std) a JSON object is a
+# BTreeMap; nothing the circuit emits depends on key order (memory/render.rs writes typed
+# records).
+serde_json = { workspace = true, features = ["alloc"] }
+sha2 = { workspace = true, features = ["alloc", "oid"] }
+thiserror = { workspace = true }
+serde = { workspace = true, features = ["alloc", "derive"] }
+# 2026-10-22: toml 1.x is no_std + alloc without `std`; a table is a BTreeMap, as before.
+toml = { workspace = true, features = ["serde", "parse", "display"] }
 
 [dev-dependencies]
+# 2026-10-22: `tp_split` in the DeepSeek-V4.1 test (the engine's own TP split).
+metrale-config = { workspace = true }
 # 2026-09-28: The golden tests enumerate each target's kernel sources through
 # the same resolver the kernels build uses, so "available" means what the
 # build compiles.
-metrale-closure = { path = "../closure" }
+metrale-closure = { workspace = true }
 # 2026-09-28: The display tests measure lines as a terminal does; the renderer counts chars.
-unicode-width = "0.2"
+unicode-width = { workspace = true, features = ["cjk"] }
 
 [lints]
 workspace = true
+
+[package.metadata.metrale]
+role = "core"

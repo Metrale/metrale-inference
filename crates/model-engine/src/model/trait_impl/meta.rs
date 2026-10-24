@@ -48,7 +48,14 @@ impl TransformerModel {
         // derived with the KV convention (`derive_kv`, blob_bytes = 0). When it cannot be
         // derived the field is `None` with a warning, and a `METRALE_KV_PAGING=1` connect then
         // fails unless `METRALE_KV_PAGING_NS` is set.
-        let model_fp = match crate::model::ssm_tier::ModelFingerprint::derive_kv(&self.config) {
+        let model_fp = match crate::model::ssm_tier::ModelFingerprint::derive_kv(
+            &self.config,
+            self.settings_ref()
+                .model
+                .model_id
+                .as_deref()
+                .unwrap_or_default(),
+        ) {
             Ok(fp) => Some(fp.nonzero()),
             Err(e) => {
                 tracing::warn!(
@@ -58,14 +65,22 @@ impl TransformerModel {
                 None
             }
         };
+        // 2026-10-18: The cache's formats are folded into the paging namespace too, so a block
+        // spilled under one codec is a miss under another (`KvCacheConfig::spill_salt`).
+        let (block_size, kv_codec_salt) = {
+            let kv = self.kv_cache.lock();
+            let indexer = self.config.indexer_cache_dtype.codec();
+            (kv.block_size(), kv.config().spill_salt(indexer))
+        };
         Some(metrale_storage::ModelDims {
             num_layers: self.config.num_hidden_layers as u32,
             max_blocks_per_layer: self.max_blocks_per_seq,
             num_q_heads: self.config.num_attention_heads as u16,
             num_kv_heads: self.config.num_key_value_heads as u16,
             head_dim: self.config.head_dim as u16,
-            block_size: self.kv_cache.lock().block_size() as u16,
+            block_size: block_size as u16,
             model_fp,
+            kv_codec_salt,
         })
     }
 
@@ -144,7 +159,7 @@ impl TransformerModel {
                 .copy_d2d_async(scratch, s.h_state, f16_bytes, stream)?;
             s.h_is_f16 = true;
         }
-        if std::env::var("METRALE_SSM_H_FP16_DEBUG").is_ok() {
+        if self.settings.telemetry.ssm_h_fp16_debug {
             tracing::info!(
                 "SSM_H_FP16_CONVERT slot={} seq_len={} prompt_len={} hptr={:#x}",
                 seq.slot_idx,
@@ -222,7 +237,11 @@ impl TransformerModel {
 
     pub(super) fn alloc_sequence_dispatch(&self, budget_tokens: usize) -> Result<SequenceState> {
         // 2026-09-25: `METRALE_SEQ_MEMTRACE`: the opening half of this sequence's memory bracket.
-        crate::model::seq_memtrace::trace(self.gpu.as_ref(), "alloc");
+        crate::model::seq_memtrace::trace(
+            self.settings.telemetry.seq_memtrace,
+            self.gpu.as_ref(),
+            "alloc",
+        );
         // 2026-09-25: Claimed through the RAII guard, which returns the slot to the pool when
         // it drops; the explicit `free_sequence` / `compact_sequence` paths take the index
         // out of the guard first, so the slot is released once. `slot_idx` comes from the guard.
@@ -232,9 +251,12 @@ impl TransformerModel {
             .expect("claim_guarded returns a guard owning a slot");
         // 2026-09-25: Zero the slot's h and conv state on the default stream and wait for it,
         // so no prefill kernel reads a previous sequence's state.
+        // 2026-10-14: Under `seq_alloc_async` the single reset below zeroes these bytes and more.
         let stream = self.gpu.default_stream();
-        self.ssm_pool.zero_slot(slot, self.gpu.as_ref(), stream)?;
-        self.gpu.synchronize(stream)?;
+        if !self.levers.seq_alloc_async {
+            self.ssm_pool.zero_slot(slot, self.gpu.as_ref(), stream)?;
+            self.gpu.synchronize(stream)?;
+        }
         let has_mtp = self.proposer.is_some() || self.self_speculative;
 
         // 2026-09-25: A fresh sequence resets the whole-prompt capture length, so the capture
@@ -262,6 +284,7 @@ impl TransformerModel {
                     conv_state_checkpoint: None,
                     h_state_intermediates: Vec::new(),
                     conv_state_intermediates: Vec::new(),
+                    replay_ring: None,
                     // 2026-09-25: The slot was just zeroed, and zero is zero in both formats.
                     // The pool width decides the format: an f16-sized pool (a staging blob
                     // exists) holds FP16 from here on, and prefill stages its FP32 work in the
@@ -278,6 +301,8 @@ impl TransformerModel {
                         Some(self.ssm_pool.h_checkpoint(ssm_layer_idx, slot));
                     ssm_state.conv_state_checkpoint =
                         Some(self.ssm_pool.conv_checkpoint(ssm_layer_idx, slot));
+                    // 2026-10-08: The slot's replay record region; `None` in snapshot mode.
+                    ssm_state.replay_ring = self.ssm_pool.replay_ring(ssm_layer_idx, slot);
 
                     // 2026-09-25: Tiered pools: the h intermediate count is per slot
                     // (`h_inter_count`); the conv count is the same for every slot.
@@ -286,7 +311,8 @@ impl TransformerModel {
                             .h_state_intermediates
                             .push(self.ssm_pool.h_intermediate(ssm_layer_idx, slot, t));
                     }
-                    for t in 0..self.ssm_pool.num_intermediates {
+                    // 2026-10-09: None under replay (`conv_inter_count`).
+                    for t in 0..self.ssm_pool.conv_inter_count() {
                         ssm_state
                             .conv_state_intermediates
                             .push(self.ssm_pool.conv_intermediate(ssm_layer_idx, slot, t));
@@ -302,8 +328,15 @@ impl TransformerModel {
 
         // 2026-09-25: Zero the slot again, with its MTP checkpoints and intermediates when MTP
         // covers the slot, then synchronise.
-        self.ssm_pool.reset_slot(slot, self.gpu.as_ref())?;
-        self.gpu.synchronize(self.gpu.default_stream())?;
+        // 2026-10-14: `seq_alloc_async` enqueues the same memsets on the default stream, the
+        // stream the synchronous `memset` uses, and waits once instead of once per buffer.
+        if self.levers.seq_alloc_async {
+            self.ssm_pool
+                .reset_slot_async(slot, self.gpu.as_ref(), stream)?;
+        } else {
+            self.ssm_pool.reset_slot(slot, self.gpu.as_ref())?;
+        }
+        self.gpu.synchronize(stream)?;
 
         // 2026-09-25: MTP proposer state, sized to this request's reach, not --max-seq-len.
         let proposer_state = match &self.proposer {
@@ -359,6 +392,10 @@ impl TransformerModel {
         logits_ptr: DevicePtr,
         dst: &mut [u8],
     ) -> Result<()> {
+        // 2026-10-21: The lazy logits of a screened verify (`screen_head_lazy.rs`).
+        if self.screen_lazy_copy(logits_ptr, dst)? {
+            return Ok(());
+        }
         self.gpu.copy_d2h(logits_ptr, dst)
     }
 

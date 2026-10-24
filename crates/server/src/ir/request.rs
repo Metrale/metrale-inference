@@ -44,6 +44,10 @@ pub struct ChatRequest {
     /// too, the template variable is left undefined and the template's own
     /// default applies (`tokenizer/chat_render.rs`).
     pub preserve_thinking: Option<bool>,
+    /// 2026-10-08: `chat_template_kwargs.thinking`, handed to the template as its
+    /// `thinking` variable and to nothing else; `None` leaves the variable
+    /// undefined. GLM-5.3's template reads it (thinking off means low effort).
+    pub template_thinking: Option<bool>,
     pub repetition_detection: Option<crate::api::inference_types::RepetitionDetectionParams>,
     /// 2026-09-26: LoRA adapter name for this request. The handler resolves
     /// it to a pool slot with `api::lora_control::resolve_request_adapter_slot`;

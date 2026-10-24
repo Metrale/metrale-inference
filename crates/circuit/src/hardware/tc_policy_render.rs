@@ -8,7 +8,9 @@
 //! Owner: metrale-circuit (hardware).
 //! Invariants: deterministic text from the report's values.
 
-use std::fmt::Write as _;
+use crate::prelude::*;
+
+use core::fmt::Write as _;
 
 use super::HwReport;
 use super::tc_policy::{TcPolicy, Weights};

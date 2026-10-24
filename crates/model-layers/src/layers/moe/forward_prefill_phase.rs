@@ -58,6 +58,7 @@ impl MoeLayer {
             ops::fp8_gemm_n128(
                 ctx.gpu,
                 self.fp8_gemm_k,
+                ctx.levers.ops.fp8_ldmab,
                 input,
                 sg_fp8,
                 shared_gate_out,
@@ -69,6 +70,7 @@ impl MoeLayer {
             ops::fp8_gemm_n128(
                 ctx.gpu,
                 self.fp8_gemm_k,
+                ctx.levers.ops.fp8_ldmab,
                 input,
                 su_fp8,
                 shared_up_out,
@@ -141,6 +143,7 @@ impl MoeLayer {
             ops::fp8_gemm_n128(
                 ctx.gpu,
                 self.fp8_gemm_k,
+                ctx.levers.ops.fp8_ldmab,
                 shared_gate_out,
                 sd_fp8,
                 shared_down_out,

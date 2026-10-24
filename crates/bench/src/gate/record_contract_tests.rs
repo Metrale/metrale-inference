@@ -240,33 +240,12 @@ fn a_set_control_wins_and_an_empty_one_does_not() {
     );
 }
 
-/// 2026-09-26: The co-dispatch defaults in `PERF_CONTROLS` are copied from
-/// `crates/server/src/scheduler/levers.rs`, because `metrale-bench` does not
-/// depend on `metrale-server`. This reads that source and fails when a
-/// default moves there.
+/// 2026-09-26: The co-dispatch enable is disclosed only as a flag, which reads as
+/// off when absent. That holds only while an unset variable means off.
+/// (2026-10-17: the timing defaults are no longer copied; `PERF_CONTROLS` reads
+/// the declared lever table.)
 #[test]
-fn perf_env_defaults_match_the_scheduler() {
-    // 2026-09-26: `SchedLevers::from_env` reads both as `num(VAR, default)`.
-    let path = repo_root().join("crates/server/src/scheduler/levers.rs");
-    let src = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    // 2026-09-26: Anchored on the `num("VAR",` call, not the first mention,
-    // because doc comments name each control before it is read.
-    let resolution = |var: &str| -> String {
-        let at = src
-            .find(&format!("num(\"{var}\","))
-            .unwrap_or_else(|| panic!("{var} is not resolved in levers.rs"));
-        src[at..].chars().take(80).collect()
-    };
-    assert!(
-        resolution("METRALE_PREFILL_CODISPATCH_WINDOW_MS").contains(", 100)"),
-        "the scheduler's co-dispatch WINDOW default moved; PERF_CONTROLS in record_env.rs still \
-         says 100 and every record would disclose a value the server never used"
-    );
-    assert!(
-        resolution("METRALE_PREFILL_CODISPATCH_SETTLE_MS").contains(", 10)"),
-        "the scheduler's co-dispatch SETTLE default moved; PERF_CONTROLS in record_env.rs still \
-         says 10"
-    );
+fn the_codispatch_enable_reads_as_off_when_unset() {
     // 2026-09-26: The co-dispatch enable is `prefill_codispatch_enabled()` in
     // model-layers: `--prefill-codispatch` when given, else
     // `METRALE_PREFILL_CODISPATCH` through `bool_value_enabled`. The record
@@ -297,6 +276,8 @@ fn perf_env_defaults_match_the_scheduler() {
     );
     // 2026-09-26: `levers.rs` must not read the variable directly, bypassing
     // the flag.
+    let path = repo_root().join("crates/server/src/scheduler/levers.rs");
+    let src = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     assert!(
         !src.contains("std::env::var(\"METRALE_PREFILL_CODISPATCH\")"),
         "mod_helpers.rs reads the codispatch variable directly again, bypassing the \
@@ -369,7 +350,7 @@ fn the_record_carries_the_box_identity_the_frame_captured() {
     with_state.frame.hardware_state = Some(HardwareStateReport::opened(
         Sensitivity::Correctness,
         before,
-        None,
+        crate::hardware::policy::PolicyOptions::default(),
     ));
     let record = GateRecord::from_run(&with_state, hw(), SHA.into(), Vec::new(), None).unwrap();
     let machine = &record

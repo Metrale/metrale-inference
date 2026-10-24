@@ -12,12 +12,43 @@ use metrale_gpu_runtime::gpu::GpuBackend;
 
 use metrale_model_layers::layer::TransformerLayer;
 
+/// 2026-10-17: The transpose pass's layout levers, resolved from the startup settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MoeTransposeLevers {
+    /// 2026-10-17: `METRALE_UNIFIED_MOE_LAYOUT` is `1` or `true` in any case.
+    unified_layout: bool,
+    /// 2026-10-17: The `kernels.hybrid_moe_layout` switch (`METRALE_HYBRID_MOE_LAYOUT`).
+    hybrid_layout: bool,
+    /// 2026-10-17: Bytes kept free after the pass: `METRALE_MOE_TRANSPOSE_SAFETY_MB` MiB when it
+    /// is a non-negative count, else 2 GiB.
+    safety: usize,
+}
+
+impl MoeTransposeLevers {
+    fn from_settings(s: &metrale_settings::InferenceServerSettings) -> Self {
+        Self {
+            unified_layout: s
+                .kernels
+                .unified_moe_layout
+                .as_deref()
+                .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true")),
+            hybrid_layout: s.kernels.hybrid_moe_layout,
+            safety: s
+                .kernels
+                .moe_transpose_safety_mb
+                .and_then(|v| usize::try_from(v).ok())
+                .map_or(2 * 1024 * 1024 * 1024, |mb| mb * 1024 * 1024),
+        }
+    }
+}
+
 /// 2026-09-25: Run the MoE transpose pass for `minimax_m2`, `step3p7` and `deepseek_v4`, and
 /// return `Ok(())` without changes for every other model type.
 pub(super) fn maybe_run_minimax_m2_moe_transpose(
     config: &ModelConfig,
     gpu: &dyn GpuBackend,
     layers: &mut [Box<dyn TransformerLayer>],
+    settings: &metrale_settings::InferenceServerSettings,
 ) -> Result<()> {
     // 2026-09-25: `deepseek_v4` is included because the prefill GEMMs for E8M0 (native MXFP4)
     // routed experts exist only on the transposed tables; the non-transposed fallback panics on
@@ -28,12 +59,11 @@ pub(super) fn maybe_run_minimax_m2_moe_transpose(
     {
         return Ok(());
     }
-    let unified_layout = std::env::var("METRALE_UNIFIED_MOE_LAYOUT")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-    let hybrid_layout = std::env::var("METRALE_HYBRID_MOE_LAYOUT")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
+    let MoeTransposeLevers {
+        unified_layout,
+        hybrid_layout,
+        safety,
+    } = MoeTransposeLevers::from_settings(settings);
     let local_experts: usize = (0..config.num_experts)
         .filter(|e| config.is_local_expert(*e))
         .count();
@@ -42,11 +72,6 @@ pub(super) fn maybe_run_minimax_m2_moe_transpose(
     let per_expert_one: usize = config.moe_intermediate_size * config.hidden_size * 9 / 16;
     let cost_full: usize = local_experts * 3 * per_expert_one * config.num_hidden_layers;
     let cost_gate_up: usize = local_experts * 2 * per_expert_one * config.num_hidden_layers;
-    let safety: usize = std::env::var("METRALE_MOE_TRANSPOSE_SAFETY_MB")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .map(|mb| mb * 1024 * 1024)
-        .unwrap_or(2 * 1024 * 1024 * 1024);
     let free = gpu.free_memory()?;
     let gb = |b: usize| b as f64 / (1024.0 * 1024.0 * 1024.0);
     // 2026-09-25: Hybrid keeps the originals and adds transposed copies, so it needs
@@ -183,3 +208,7 @@ pub(super) fn maybe_run_minimax_m2_moe_transpose(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "m2_setup_tests.rs"]
+mod tests;

@@ -33,6 +33,7 @@ pub fn alloc_kda_ssm_state(gpu: &dyn GpuBackend, cfg: &Glm5NextKdaConfig) -> Res
         conv_state_checkpoint: None,
         h_state_intermediates: Vec::new(),
         conv_state_intermediates: Vec::new(),
+        replay_ring: None,
         h_is_f16: false,
         h_prefill_stage: None,
         ple: None,

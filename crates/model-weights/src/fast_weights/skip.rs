@@ -35,6 +35,14 @@ impl FastSafetensorsLoader {
     pub fn is_deferred(&self, name: &str, dtype: WeightDtype) -> bool {
         self.defer.as_ref().is_some_and(|f| f(name, dtype))
     }
+
+    /// 2026-10-17: The pre-flight bytes of a tensor the model's loader deferred; 0 when no
+    /// [`crate::weights::DeferCharge`] is set.
+    pub fn deferred_charge(&self, name: &str, dtype: WeightDtype, shape: &[usize]) -> usize {
+        self.defer_charge
+            .as_ref()
+            .map_or(0, |f| f(name, dtype, shape))
+    }
 }
 
 impl FastSafetensorsLoader {
@@ -42,6 +50,11 @@ impl FastSafetensorsLoader {
         // Checked before the EP short-circuit: a text-only port skips the
         // vision tower at tp/ep 1 too.
         if self.skip_vision && super::is_vision_tensor(name) {
+            return true;
+        }
+        if let Some(p) = &self.keep_only_prefix
+            && !name.starts_with(p.as_str())
+        {
             return true;
         }
         // MTP head weights for a model whose loader does not build one.
@@ -115,6 +128,30 @@ mod activation_scale_tests {
         let l = FastSafetensorsLoader::new();
         assert!(!l.skip_activation_scales);
         assert!(!l.should_skip_tensor("model.layers.0.mlp.gate_proj.input_scale"));
+    }
+
+    /// 2026-10-24: An embedding model's text-tower prefix keeps that tower only: the other
+    /// towers and the projector are skipped, a name that merely contains the prefix is
+    /// skipped too, and every tensor under it loads.
+    #[test]
+    fn keep_only_prefix_keeps_one_tower() {
+        let mut l = FastSafetensorsLoader::new();
+        l.keep_only_prefix = Some("language_model.".into());
+        for skip in [
+            "vision_model.encoder.layers.0.mlp.fc1.weight",
+            "mlp1.0.weight",
+            "x.language_model.norm.weight",
+            "language_modelx.norm.weight",
+        ] {
+            assert!(l.should_skip_tensor(skip), "{skip} must be skipped");
+        }
+        for keep in [
+            "language_model.embed_tokens.weight",
+            "language_model.layers.15.mlp.down_proj.weight",
+        ] {
+            assert!(!l.should_skip_tensor(keep), "{keep} must load");
+        }
+        assert!(!FastSafetensorsLoader::new().should_skip_tensor("mlp1.0.weight"));
     }
 }
 

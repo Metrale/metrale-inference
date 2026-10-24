@@ -17,6 +17,7 @@
 
 use parking_lot::Mutex;
 
+use metrale_settings::groups::device_cache::CacheTuning;
 use metrale_telemetry::prefix_cache::{EvictedBlocks, PrefixCache, PrefixMatch};
 
 mod inner;
@@ -64,10 +65,17 @@ impl Default for RadixTree {
 }
 
 impl RadixTree {
+    /// 2026-10-17: [`Self::with_tuning`] at the declared `CacheTuning`, for tests and tools; a
+    /// serve passes the tuning it resolved at startup.
     pub fn new() -> Self {
+        Self::with_tuning(&CacheTuning::declared().expect("the declared cache table projects"))
+    }
+
+    /// 2026-10-17: An empty tree and snapshot index, read at `tuning` for their lifetime.
+    pub fn with_tuning(tuning: &CacheTuning) -> Self {
         Self {
-            inner: Mutex::new(RadixTreeInner::new()),
-            snapshot_index: Mutex::new(SsmSnapshotIndex::new()),
+            inner: Mutex::new(RadixTreeInner::new(tuning.prefix_subblock)),
+            snapshot_index: Mutex::new(SsmSnapshotIndex::new(*tuning)),
         }
     }
 }

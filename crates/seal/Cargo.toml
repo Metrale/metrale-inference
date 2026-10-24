@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-seal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: sealed kernels: the hybrid X25519 + ML-KEM-768 recipient key, the content-key wrap and per-artifact AES-256-GCM, with HKDF-SHA-256 contexts. no_std + alloc."
+
+# 2026-10-22: No features (NSCC). Randomness enters as values the host draws from the Entropy
+# port (`SealRandom`); this crate never names getrandom.
+[features]
+
+[dependencies]
+# 2026-10-22: The Entropy port only (a typed draw per seal run, BPPT); no host.
+metrale-abstract-io = { workspace = true }
+metrale-error = { workspace = true }
+# 2026-10-22: DESIGN-encrypted-kernels.md §1.4: the KKB1 envelope's ML-KEM pin, `hazmat` for
+# deterministic encapsulation; aes-gcm 0.11 / hkdf 0.13 on digest 0.11 (the workspace sha2).
+aes-gcm = { workspace = true, features = ["aes", "alloc", "zeroize"] }
+hkdf = { workspace = true }
+# 2026-10-22: The wire forms of Fingerprint, SealSuite and WrappedCek, so the `.kbp` sealed
+# manifest carries this crate's own types (SSOT) rather than mirrors.
+serde = { workspace = true, features = ["alloc", "derive"] }
+ml-kem = { workspace = true, features = ["hazmat", "zeroize"] }
+sha2 = { workspace = true }
+x25519-dalek = { workspace = true, features = ["static_secrets", "zeroize"] }
+zeroize = { workspace = true, features = ["alloc"] }
+
+[dev-dependencies]
+postcard = { workspace = true, features = ["alloc"] }
+
+[lints]
+workspace = true
+
+[package.metadata.metrale]
+role = "core"

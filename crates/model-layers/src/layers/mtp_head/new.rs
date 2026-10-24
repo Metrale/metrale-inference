@@ -262,6 +262,7 @@ impl MtpHead {
             layer_dtypes: vec![],
             layer_dims: vec![],
             cache_blocks_per_seq: None,
+            v_block_bytes: None,
         };
         // 2026-09-26: `max_seq_len / block + 1` blocks for each of
         // `mtp_max_seqs()` sequences, capped at the main pool's block count
@@ -273,11 +274,14 @@ impl MtpHead {
             .saturating_mul(crate::speculative::mtp_max_seqs())
             .min(main_kv_blocks.max(per_seq_blocks));
         // 2026-09-25: The per-sequence `propose_meta` stride, from the drafter
-        // pool's block size (`batch_caps::propose_meta_stride_env`: computed
+        // pool's block size (`batch_caps::propose_meta_stride`: computed
         // from `max_seq_len`, floor 2048, override
         // `METRALE_PROPOSE_META_STRIDE`).
-        let propose_meta_stride =
-            super::batch_caps::propose_meta_stride_env(max_seq_len, kv_config.block_size);
+        let propose_meta_stride = super::batch_caps::propose_meta_stride(
+            max_seq_len,
+            kv_config.block_size,
+            levers.mtp.propose_meta_stride,
+        );
         let kv_cache = PagedKvCache::new(kv_config, mtp_num_blocks, gpu)?;
 
         let (
@@ -400,9 +404,9 @@ impl MtpHead {
             rms_norm_residual_k: gpu.kernel("norm", "rms_norm_residual")?,
             w4a16_gemv_k: gpu.kernel("w4a16_gemv", "w4a16_gemv")?,
             w4a16_gemv_sw_k: crate::layers::try_kernel(gpu, "w4a16_gemv", "w4a16_gemv_sw"),
-            gemv_sw: crate::layers::ops::gemv_sw_from(
-                std::env::var("METRALE_NO_GEMV_SW").ok().as_deref(),
-            ),
+            gemv_sw: levers.gemv_sw,
+            mtp_tc: levers.ops.mtp_tc,
+            moe_fp8_tc: levers.moe.fp8_tc,
             w4a16_gemv_qg_k: gpu.kernel("w4a16_gemv", "w4a16_gemv_qg")?,
             w4a16_gemv_dual_k: gpu.kernel("w4a16_gemv_fused", "w4a16_gemv_dual")?,
             rope_k: gpu.kernel("rope", "rope_forward")?,
@@ -456,7 +460,10 @@ impl MtpHead {
                 "dense_gemv_bf16_batchm",
                 "dense_gemv_bf16_batchm",
             ),
-            w4a16_batchm: crate::layers::w4a16_gemv_tiers::W4a16BatchmTiers::resolve(gpu),
+            w4a16_batchm: crate::layers::w4a16_gemv_tiers::W4a16BatchmTiers::resolve(
+                gpu,
+                &levers.ops,
+            ),
             w4a16_gemv_batch16_k: crate::layers::try_kernel(
                 gpu,
                 "w4a16_gemv",
@@ -468,9 +475,8 @@ impl MtpHead {
                 "w4a16_gemv_batch32",
             ),
             // 2026-09-25: Dropped when `METRALE_NO_MTP_LMHEAD_TGEMM` is set to
-            // any value, `0` included.
-            lm_head_nvfp4_t: lm_head_nvfp4_t
-                .filter(|_| std::env::var_os("METRALE_NO_MTP_LMHEAD_TGEMM").is_none()),
+            // any value, `0` included (`MtpLevers::lmhead_tgemm`).
+            lm_head_nvfp4_t: lm_head_nvfp4_t.filter(|_| levers.mtp.lmhead_tgemm),
             w4a16_gemm_t_k: crate::layers::tgemm_kernel(gpu),
             argmax_batch_k: crate::layers::try_kernel(gpu, "argmax", "argmax_bf16_batch"),
             argmax_batch_lp_k: crate::layers::try_kernel(gpu, "argmax", "argmax_bf16_batch_lp"),
@@ -481,6 +487,7 @@ impl MtpHead {
             propose_meta_stride,
             prefill_scratch,
             circuit_draft: parking_lot::RwLock::new(None),
+            levers: levers.mtp,
         })
     }
 }

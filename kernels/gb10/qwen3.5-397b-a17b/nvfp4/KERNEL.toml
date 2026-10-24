@@ -4,7 +4,6 @@ extra_nvcc_flags = ["--fmad=false"]
 # 2026-09-25: File stem to module name. A stem that no layer's [modules] lists keeps its stem as the
 # module name (crates/kernels/build.rs).
 [modules]
-e2m1_branchless = "e2m1"
 moe_permute = "moe"
 dense_gemm_bf16 = "gemm"
 rms_norm = "norm"
@@ -24,7 +23,6 @@ moe_sorted_prefill = "moe_sorted"
 attn_prefill_paged = "prefill_paged"
 attn_prefill_paged_fp8 = "prefill_paged_fp8"
 attn_prefill_paged_nvfp4 = "prefill_paged_nvfp4"
-attn_prefill_fp8kv = "prefill_fp8kv"
 gated_delta_rule = "gated_delta_rule"
 reshape_and_cache_turbo = "reshape_and_cache_turbo"
 paged_decode_attn_turbo4 = "paged_decode_turbo4"

@@ -19,6 +19,7 @@ use super::{ffn_gateup_fused_selected, gdn_fp8_arm_selected};
 pub(super) fn doomed_after_load(
     store: &WeightStore,
     config: &ModelConfig,
+    s: &metrale_settings::InferenceServerSettings,
 ) -> std::collections::HashSet<String> {
     // 2026-09-25: The same `layer_types` resolution as `load_layers`.
     let layer_types = if config.layer_types.is_empty() {
@@ -36,7 +37,7 @@ pub(super) fn doomed_after_load(
     let variant = detect_nvfp4_variant(store, config);
     for i in 0..layer_types.len() {
         let lp = config.layer_prefix(i);
-        if !ffn_gateup_fused_selected(store, config, variant, &lp) {
+        if !ffn_gateup_fused_selected(store, config, variant, &lp, s) {
             continue;
         }
         for proj in ["gate_proj", "up_proj"] {
@@ -50,7 +51,7 @@ pub(super) fn doomed_after_load(
             continue;
         }
         let la = format!("{}.linear_attn", config.layer_prefix(i));
-        if !gdn_fp8_arm_selected(store, &la, config.tp_world_size) {
+        if !gdn_fp8_arm_selected(store, &la, config.tp_world_size, s) {
             continue;
         }
         for leaf in [

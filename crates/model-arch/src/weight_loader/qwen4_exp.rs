@@ -33,6 +33,7 @@ use metrale_model_layers::weight_map::{DenseWeight, MtpWeights, dense};
 mod aux;
 mod ffn;
 mod hc;
+mod levers;
 mod ple;
 mod probe;
 
@@ -104,8 +105,8 @@ pub fn ple_shard_layout(snapshot: &str) -> Result<(Vec<(std::path::PathBuf, u64)
 pub struct Qwen4ExpWeightLoader;
 
 impl ModelWeightLoader for Qwen4ExpWeightLoader {
-    fn supports_tp(&self) -> bool {
-        false
+    fn tp_support(&self) -> metrale_config::TpSupport {
+        metrale_config::TpSupport::Unsupported
     }
 
     fn load_layers(
@@ -114,6 +115,7 @@ impl ModelWeightLoader for Qwen4ExpWeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         layer_kv_dtypes: &[KvCacheDtype],
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
         let report = audit_namespace(store, config);
         report.log();
@@ -160,18 +162,13 @@ impl ModelWeightLoader for Qwen4ExpWeightLoader {
         // 2026-09-25: The PLE scratch is sized once, for the largest prefill
         // chunk, not the context: `METRALE_PLE_MAX_TOKENS`, default 2048. A
         // larger chunk is refused by the PLE layer with a message naming the
-        // variable (`ple/layer.rs`).
-        let max_ple_tokens: usize = std::env::var("METRALE_PLE_MAX_TOKENS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(2048);
-        // 2026-09-25: With `METRALE_QWEN4EXP_NO_PLE=1`, `ple::load` is not
-        // called, so no row cache is opened.
-        let ple_off = std::env::var("METRALE_QWEN4EXP_NO_PLE").as_deref() == Ok("1");
-        // 2026-09-25: GDN layers are built with BF16 projections
-        // (`build_linear_attention_dense_bf16`) unless
-        // `METRALE_QWEN4EXP_BF16_GDN=0`, which requantizes them to NVFP4.
-        let bf16_gdn = std::env::var("METRALE_QWEN4EXP_BF16_GDN").as_deref() != Ok("0");
+        // variable (`ple/layer.rs`). With `METRALE_QWEN4EXP_NO_PLE` on,
+        // `ple::load` is not called, so no row cache is opened. GDN layers are
+        // built with BF16 projections (`build_linear_attention_dense_bf16`)
+        // unless `METRALE_QWEN4EXP_BF16_GDN` is off, which requantizes them to
+        // NVFP4.
+        let lv = levers::Qwen4ExpLevers::from_settings(lc.settings);
+        let (max_ple_tokens, ple_off, bf16_gdn) = (lv.ple_max_tokens, lv.no_ple, lv.bf16_gdn);
         tracing::info!(
             "GDN projections: {} on the {} linear-attention layers",
             if bf16_gdn {
@@ -198,7 +195,7 @@ impl ModelWeightLoader for Qwen4ExpWeightLoader {
         for i in 0..config.num_hidden_layers {
             let lp = config.layer_prefix(i);
             let f0 = free_now(gpu);
-            let ffn = ffn::build_moe(store, &lp, config, gpu, variant)?;
+            let ffn = ffn::build_moe(store, &lp, config, gpu, variant, lv.grouped_cutlass)?;
             let f1 = free_now(gpu);
             moe_bytes += f0.saturating_sub(f1);
 
@@ -214,25 +211,22 @@ impl ModelWeightLoader for Qwen4ExpWeightLoader {
                 LayerType::LinearAttention if bf16_gdn => {
                     crate::weight_loader::qwen35::load_layers::linear_attn_arms::build_linear_attention_dense_bf16(
                         i, store, &lp, gpu, variant, config, h,
-                        input_norm, post_attn_norm, ffn,
+                        input_norm, post_attn_norm, ffn, lc,
                     )
                     .with_context(|| format!("qwen4_exp: GDN layer {i} (BF16)"))?
                 }
                 LayerType::LinearAttention => {
                     crate::weight_loader::qwen35::load_layers::linear_attn_arms::build_linear_attention_nvfp4(
                         store, &lp, gpu, variant, config, h, absmax_k, quantize_k, stream,
-                        input_norm, post_attn_norm, ffn,
+                        input_norm, post_attn_norm, ffn, lc,
                     )
                     .with_context(|| format!("qwen4_exp: GDN layer {i}"))?
                 }
                 LayerType::FullAttention => {
-                    let kv_dtype = layer_kv_dtypes
-                        .get(attn_idx)
-                        .copied()
-                        .unwrap_or(KvCacheDtype::Bf16);
+                    let kv_dtype = metrale_kv_codec::layer_entry(layer_kv_dtypes, attn_idx)?;
                     let l = crate::weight_loader::qwen35::load_layers::attention_arms::build_full_attention_nvfp4(
                         i, store, &lp, gpu, variant, config, h, absmax_k, quantize_k, stream,
-                        kv_dtype, attn_idx, input_norm, post_attn_norm, ffn,
+                        kv_dtype, attn_idx, input_norm, post_attn_norm, ffn, lc,
                     )
                     .with_context(|| format!("qwen4_exp: full-attention layer {i}"))?;
                     attn_idx += 1;
@@ -253,13 +247,15 @@ impl ModelWeightLoader for Qwen4ExpWeightLoader {
                 let (attn, ffn) = hc::load_layer_sites(store, &lp, config)?;
                 aux::attach_hc(&mut layer, i, attn, ffn, hc_head.clone(), config)?;
             }
-            aux::attach_qsa(&mut layer, i, &lp, store, config, gpu)?;
+            if !lv.qsa_disable {
+                aux::attach_qsa(&mut layer, i, &lp, store, config, gpu)?;
+            };
             // 2026-09-25: `ple::load` returns `None` for a layer that
             // `ple_layer_ids` does not list; `attach_ple` refuses a non-GDN host.
             let ple_layer = if ple_off {
                 None
             } else {
-                ple::load(store, config, i, max_ple_tokens, gpu)?
+                ple::load(store, config, i, max_ple_tokens, lv.ple_cache_slots, gpu)?
             };
             if let Some(p) = ple_layer {
                 aux::attach_ple(&mut layer, i, p)?;
@@ -277,9 +273,7 @@ impl ModelWeightLoader for Qwen4ExpWeightLoader {
             hc_bytes as f64 / 1e9,
         );
 
-        if !config.ple_layer_ids.is_empty()
-            && std::env::var("METRALE_QWEN4EXP_NO_PLE").as_deref() == Ok("1")
-        {
+        if !config.ple_layer_ids.is_empty() && ple_off {
             tracing::warn!(
                 "METRALE_QWEN4EXP_NO_PLE=1: PLE n-gram injection at model layer {} \
                  is DISABLED. Output is wrong by construction — this arm exists \

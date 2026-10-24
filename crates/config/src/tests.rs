@@ -12,6 +12,7 @@ mod tests_b;
 use super::*;
 
 mod deepseek_v4;
+pub(crate) mod deepseek_v41;
 mod eos;
 mod gemma4;
 mod holo;

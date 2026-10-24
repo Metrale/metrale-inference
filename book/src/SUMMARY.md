@@ -44,7 +44,7 @@
 - [metrale-model-engine](./crates/metrale-model-engine.md)
 - [metrale-speculative](./crates/metrale-speculative.md)
 - [metrale-bench](./crates/metrale-bench.md)
-- [metrale-server](./crates/metrale-server.md)
+- [met](./crates/metrale-server.md)
 
 # Part IV — Engineering Deep Dives
 

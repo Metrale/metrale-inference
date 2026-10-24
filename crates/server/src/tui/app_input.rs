@@ -38,6 +38,7 @@ impl App {
             self.on_library_key(key);
             return;
         }
+        #[cfg(feature = "bench")]
         if self.section == Section::Benchmarks {
             self.on_bench_key(key);
             return;
@@ -249,6 +250,7 @@ impl App {
             // 2026-09-26: A picker modal navigates; there is nothing to paste into.
             return;
         }
+        #[cfg(feature = "bench")]
         if self.section == Section::Benchmarks {
             if self.bench.is_editing() {
                 let row = self.bench.row;

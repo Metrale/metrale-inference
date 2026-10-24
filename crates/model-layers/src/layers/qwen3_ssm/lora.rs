@@ -65,7 +65,7 @@ impl Qwen3SsmLayer {
     /// 2026-09-25: `out += pair.scale * (normed_out @ A^T) @ B^T`, in place.
     ///
     /// Returns without launching when no delta is installed or
-    /// `METRALE_LORA_NO_FFN=1` (`lora_no_ffn`). Its caller,
+    /// `METRALE_LORA_NO_FFN` is on (`OpsLevers::lora_no_ffn`). Its caller,
     /// `ssm_tp_all_reduce`, runs it after the TP all-reduce: before that `out`
     /// is a per-rank partial, and a delta added there would be summed once per
     /// rank.
@@ -77,7 +77,7 @@ impl Qwen3SsmLayer {
         m: u32,
         stream: u64,
     ) -> Result<()> {
-        if crate::layers::ops::lora_delta::lora_no_ffn() {
+        if ctx.levers.ops.lora_no_ffn {
             return Ok(());
         }
         let Some((ref pair, ref kernels)) = self.lora_out_proj else {

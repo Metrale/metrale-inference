@@ -22,6 +22,8 @@ use std::num::NonZeroU64;
 use anyhow::{Result, anyhow, bail};
 use metrale_config::ModelConfig;
 
+use super::SsmTierLevers;
+
 pub(crate) use metrale_storage::tier::hash::{FNV_OFFSET, fnv1a_64, mix64};
 
 /// 2026-09-25: Encoding version, hashed as the tag-0x00 record. Bump it whenever the
@@ -46,12 +48,16 @@ fn put_str(buf: &mut Vec<u8>, tag: u8, s: &str) {
 pub(crate) struct ModelFingerprint(NonZeroU64);
 
 impl ModelFingerprint {
-    /// 2026-09-25: Derive the fingerprint and log it at INFO. `METRALE_MODEL_ID` is an
-    /// optional extra salt for checkpoints whose config is identical; unset, it is
-    /// encoded as an empty string.
-    pub(crate) fn derive(cfg: &ModelConfig, blob_bytes: usize) -> Result<Self> {
-        let model_id = std::env::var("METRALE_MODEL_ID").unwrap_or_default();
-        let fp = Self::derive_with_id(cfg, blob_bytes, &model_id)?;
+    /// 2026-09-25: Derive the fingerprint and log it at INFO. `levers.model_id`
+    /// (`METRALE_MODEL_ID`) is an optional extra salt for checkpoints whose config is
+    /// identical; unset, it is encoded as an empty string.
+    pub(crate) fn derive(
+        cfg: &ModelConfig,
+        blob_bytes: usize,
+        levers: &SsmTierLevers,
+    ) -> Result<Self> {
+        let model_id = levers.model_id.as_str();
+        let fp = Self::derive_with_id(cfg, blob_bytes, model_id)?;
         tracing::info!(
             "SSM tier model fingerprint = {:#018x} (model_type={}, blob_bytes={blob_bytes}, \
              METRALE_MODEL_ID={model_id:?}); pin with METRALE_SSM_SWAP_NS / METRALE_SSM_DECODE_NS",
@@ -61,11 +67,8 @@ impl ModelFingerprint {
         // 2026-09-25: The config carries no weight identity, so checkpoints with an
         // identical config derive the same namespace. Warn when a shared store is
         // selected and neither `METRALE_MODEL_ID` nor a namespace override is set.
-        let shared_store = std::env::var("METRALE_SSM_SWAP").ok().as_deref() == Some("1")
-            || std::env::var("METRALE_SSM_DECODE_TIER").ok().as_deref() == Some("peer");
-        let overridden = std::env::var_os("METRALE_SSM_SWAP_NS").is_some()
-            || std::env::var_os("METRALE_SSM_DECODE_NS").is_some();
-        if shared_store && model_id.is_empty() && !overridden {
+        let shared_store = levers.swap || levers.decode_tier.as_deref() == Some("peer");
+        if shared_store && model_id.is_empty() && !levers.ns_overridden {
             tracing::warn!(
                 "a SHARED SSM cache store is selected (METRALE_SSM_SWAP=1 local swap file, or \
                  METRALE_SSM_DECODE_TIER=peer) but METRALE_MODEL_ID is unset: the fingerprint is \
@@ -84,9 +87,9 @@ impl ModelFingerprint {
     /// tag-0x40 record is non-zero and the two never share an input. Models without
     /// SSM layers still get a fingerprint. KV fields belong in
     /// `metrale_storage::kv_paging::ns`; adding them here would change every SSM key.
-    pub(crate) fn derive_kv(cfg: &ModelConfig) -> Result<Self> {
-        let model_id = std::env::var("METRALE_MODEL_ID").unwrap_or_default();
-        let fp = Self::derive_with_id(cfg, 0, &model_id)?;
+    /// `model_id` is `model.model_id` (`METRALE_MODEL_ID`), empty when unset.
+    pub(crate) fn derive_kv(cfg: &ModelConfig, model_id: &str) -> Result<Self> {
+        let fp = Self::derive_with_id(cfg, 0, model_id)?;
         tracing::info!(
             "KV paging model fingerprint = {:#018x} (model_type={}, \
              METRALE_MODEL_ID={model_id:?}); folded into the METRALE_KV_PAGING namespace",
@@ -217,17 +220,21 @@ fn decode_client_salt() -> Result<u64> {
 /// separates processes. A zero from the first fold falls back to `DECODE_DOMAIN`, a
 /// zero from the second to the first fold's value, so the result is never zero.
 pub(crate) fn derive_decode_ns_salted(fp: u64, salt: u64) -> NonZeroU64 {
-    let base = NonZeroU64::new(mix64(fp, metrale_kernels::DECODE_DOMAIN)).unwrap_or_else(|| {
-        NonZeroU64::new(metrale_kernels::DECODE_DOMAIN)
-            .expect("DECODE_DOMAIN is a non-zero constant")
-    });
+    let base =
+        NonZeroU64::new(mix64(fp, metrale_core::decode_ring::DECODE_DOMAIN)).unwrap_or_else(|| {
+            NonZeroU64::new(metrale_core::decode_ring::DECODE_DOMAIN)
+                .expect("DECODE_DOMAIN is a non-zero constant")
+        });
     NonZeroU64::new(mix64(base.get(), salt)).unwrap_or(base)
 }
 
 /// 2026-09-25: Decode namespace: `METRALE_SSM_DECODE_NS` when set, used unsalted and
 /// parsed by [`parse_ns`]; else [`derive_decode_ns_salted`] with the process salt,
 /// which is logged at INFO.
-pub(crate) fn resolve_decode_ns(fp: ModelFingerprint) -> Result<NonZeroU64> {
+pub(crate) fn resolve_decode_ns(
+    fp: ModelFingerprint,
+    levers: &SsmTierLevers,
+) -> Result<NonZeroU64> {
     if let Ok(raw) = std::env::var("METRALE_SSM_DECODE_NS") {
         tracing::warn!(
             "METRALE_SSM_DECODE_NS={raw:?} bypasses the per-process decode client salt: decode \
@@ -236,7 +243,7 @@ pub(crate) fn resolve_decode_ns(fp: ModelFingerprint) -> Result<NonZeroU64> {
              (silent corruption + spurious 'cold MISS on live target'). Ensure a DISTINCT \
              value per process, or unset it and pin METRALE_SSM_DECODE_CLIENT_ID instead."
         );
-        if std::env::var_os("METRALE_SSM_DECODE_CLIENT_ID").is_some() {
+        if levers.decode_client_id_set {
             tracing::warn!(
                 "METRALE_SSM_DECODE_CLIENT_ID is IGNORED while METRALE_SSM_DECODE_NS is set \
                  (the explicit namespace fully determines the wire keys)"

@@ -17,6 +17,14 @@ mod nvfp4;
 pub(super) const CUDA_MEMCPY_HOST_TO_DEVICE: i32 = 1;
 pub(super) const CUDA_MEMCPY_DEVICE_TO_HOST: i32 = 2;
 
+/// 2026-10-17: Fix the CUTLASS workspace at its declared size, as a backend built with
+/// `DeviceSettings::declared()` would; these tests call the wrappers without a backend.
+pub(super) fn fix_declared_workspace() {
+    let device = metrale_settings::groups::device::DeviceSettings::declared()
+        .expect("the declared device settings resolve");
+    fix_workspace_bytes(device.cutlass_workspace_bytes).expect("one workspace size per process");
+}
+
 unsafe extern "C" {
     pub(super) fn cudaMalloc(ptr: *mut *mut c_void, size: usize) -> i32;
     pub(super) fn cudaFree(ptr: *mut c_void) -> i32;

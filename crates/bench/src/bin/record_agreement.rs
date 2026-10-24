@@ -53,9 +53,18 @@ fn main() -> std::process::ExitCode {
             return std::process::ExitCode::FAILURE;
         }
     };
+    // 2026-10-17: The levers resolve once, here; a malformed one is an error, not a guess.
+    let levers = match metrale_bench::levers::BenchLevers::resolve(&metrale_io_host_std::ProcessEnv)
+    {
+        Ok(l) => l,
+        Err(e) => {
+            println!("::error title=Malformed lever::{e:#}");
+            return std::process::ExitCode::FAILURE;
+        }
+    };
     let head = match std::env::var("RECORD_AGREEMENT_HEAD")
         .ok()
-        .or_else(|| metrale_bench::gate::git_sha(&root).ok())
+        .or_else(|| metrale_bench::gate::git_sha(&root, levers.gate_sha.as_deref()).ok())
     {
         Some(h) => h,
         None => {

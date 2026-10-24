@@ -8,11 +8,15 @@
 
 use super::*;
 
-fn gb10_ceilings() -> Option<policy::TempCeilings> {
-    Some(policy::TempCeilings {
-        gpu_c: 75.0,
-        chassis_c: 80.0,
-    })
+/// 2026-10-17: No switch set, with the GB10 class ceilings.
+fn gb10_options() -> policy::PolicyOptions {
+    policy::PolicyOptions {
+        ceilings: Some(policy::TempCeilings {
+            gpu_c: 75.0,
+            chassis_c: 80.0,
+        }),
+        ..policy::PolicyOptions::default()
+    }
 }
 use crate::hardware::policy::{Decision, Validity};
 use crate::hardware::state::{GpuComputeApp, ThrottleActive, ThrottleCounters};
@@ -52,7 +56,7 @@ fn state(sw_thermal_us: u64, apps: usize) -> HardwareState {
 
 #[test]
 fn opening_stamps_the_perf_class_and_the_precheck() {
-    let r = HardwareStateReport::opened(Sensitivity::Speed, state(0, 1), gb10_ceilings());
+    let r = HardwareStateReport::opened(Sensitivity::Speed, state(0, 1), gb10_options());
     assert_eq!(r.perf_class, "gb10@dgx2");
     assert_eq!(r.precheck.decision, Decision::Proceed);
     assert!(!r.refuses());
@@ -62,16 +66,16 @@ fn opening_stamps_the_perf_class_and_the_precheck() {
 /// 2026-09-26: A report that never closed is unmeasured, not invalid.
 #[test]
 fn an_unclosed_report_is_not_invalid() {
-    let r = HardwareStateReport::opened(Sensitivity::Speed, state(0, 1), gb10_ceilings());
+    let r = HardwareStateReport::opened(Sensitivity::Speed, state(0, 1), gb10_options());
     assert!(!r.invalidated());
 }
 
 #[test]
 fn closing_computes_the_delta_and_the_validity() {
-    let mut r = HardwareStateReport::opened(Sensitivity::Speed, state(0, 1), gb10_ceilings());
+    let mut r = HardwareStateReport::opened(Sensitivity::Speed, state(0, 1), gb10_options());
     let mut after = state(12_000_000, 1);
     after.captured_at = 1_692;
-    r.close(after);
+    r.close(after, gb10_options());
     assert_eq!(r.delta.as_ref().unwrap().sw_thermal_us, Some(12_000_000));
     assert_eq!(r.postcheck.as_ref().unwrap().validity, Validity::Invalid);
     assert!(r.invalidated());
@@ -79,23 +83,23 @@ fn closing_computes_the_delta_and_the_validity() {
 
 #[test]
 fn a_clean_run_closes_valid() {
-    let mut r = HardwareStateReport::opened(Sensitivity::Speed, state(0, 1), gb10_ceilings());
+    let mut r = HardwareStateReport::opened(Sensitivity::Speed, state(0, 1), gb10_options());
     let mut after = state(0, 1);
     after.captured_at = 1_692;
-    r.close(after);
+    r.close(after, gb10_options());
     assert_eq!(r.postcheck.as_ref().unwrap().validity, Validity::Valid);
     assert!(!r.invalidated());
 }
 
 #[test]
 fn concerns_come_out_in_phase_order() {
-    let mut r = HardwareStateReport::opened(Sensitivity::Speed, state(0, 3), gb10_ceilings());
+    let mut r = HardwareStateReport::opened(Sensitivity::Speed, state(0, 3), gb10_options());
     assert!(r.refuses());
     let pre = r.concerns().len();
     assert!(pre > 0);
     let mut after = state(12_000_000, 3);
     after.captured_at = 1_692;
-    r.close(after);
+    r.close(after, gb10_options());
     let all = r.concerns();
     let expected: Vec<&str> = r
         .precheck
@@ -116,10 +120,10 @@ fn concerns_come_out_in_phase_order() {
 /// verbatim: before, after, delta and both verdicts.
 #[test]
 fn the_report_round_trips_through_the_record_json() {
-    let mut r = HardwareStateReport::opened(Sensitivity::Speed, state(0, 1), gb10_ceilings());
+    let mut r = HardwareStateReport::opened(Sensitivity::Speed, state(0, 1), gb10_options());
     let mut after = state(5, 1);
     after.captured_at = 1_692;
-    r.close(after);
+    r.close(after, gb10_options());
     let json = serde_json::to_string(&r).unwrap();
     let back: HardwareStateReport = serde_json::from_str(&json).unwrap();
     assert_eq!(r, back);

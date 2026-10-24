@@ -76,7 +76,7 @@ pub(super) fn batchm_runs(
         !ops::w4a4_proj::routes_w4a4(cx.gpu, w, m, n, k),
         "the projection at {m}x{n}x{k} routes to W4A4; the plan launches W4A16"
     );
-    let tc = ops::gemv_tc::tc_kernel(cx.gpu, m, n, k);
+    let tc = ops::gemv_tc::tc_kernel(cx.gpu, cx.ops.w4a16_tc, m, n, k);
     ensure!(
         tc.is_some_and(|(h, _)| h.0 == handle.0),
         "the batched GEMV at {m}x{n}x{k} does not route to the plan's tensor-core kernel"
@@ -99,9 +99,12 @@ impl OpEmitter for W4a16GemvBatchm {
         let (x, y, n, k_dim) = io(cx, 0)?;
         let (k, m) = (cx.handle(0)?, rows(cx)?);
         batchm_runs(cx, k, &w, [m, n, k_dim])?;
+        let w4a16_tc = cx.ops.w4a16_tc;
         cx.push(
             0,
-            Box::new(move |e| ops::w4a16_gemv_batchm(e.gpu, k, x, &w, y, m, n, k_dim, e.stream)),
+            Box::new(move |e| {
+                ops::w4a16_gemv_batchm(e.gpu, k, w4a16_tc, x, &w, y, m, n, k_dim, e.stream)
+            }),
         )
     }
 }
@@ -122,7 +125,7 @@ fn fixed_m(cx: &Cx<'_>, stem: &str) -> Result<u32> {
         cx.rows
     );
     ensure!(
-        !ops::gemv_tc::wide_rows_enabled(),
+        !cx.ops.w4a16_tc.wide,
         "{func}: METRALE_W4A16_TC_WIDE reroutes it to the tensor-core kernel"
     );
     Ok(m)
@@ -142,13 +145,14 @@ impl OpEmitter for W4a16GemvBatch {
         let w = weight(cx, 0, false)?;
         let (x, y, n, k_dim) = io(cx, 0)?;
         let k = cx.handle(0)?;
+        let w4a16_tc = cx.ops.w4a16_tc;
         cx.push(
             0,
             Box::new(move |e| {
                 if m == 2 {
-                    ops::w4a16_gemv_batch2(e.gpu, k, x, &w, y, n, k_dim, e.stream)
+                    ops::w4a16_gemv_batch2(e.gpu, k, w4a16_tc, x, &w, y, n, k_dim, e.stream)
                 } else {
-                    ops::w4a16_gemv_batch3(e.gpu, k, x, &w, y, n, k_dim, e.stream)
+                    ops::w4a16_gemv_batch3(e.gpu, k, w4a16_tc, x, &w, y, n, k_dim, e.stream)
                 }
             }),
         )
@@ -185,13 +189,18 @@ impl OpEmitter for W4a16GemvDualBatch {
             (kw, cx.ptr(ko)?, vw, cx.ptr(vo)?, width(cx, ko)?)
         };
         let x = cx.ptr(cx.g.input(0, 0)?)?;
+        let w4a16_tc = cx.ops.w4a16_tc;
         cx.push(
             0,
             Box::new(move |e| {
                 if m == 2 {
-                    ops::w4a16_gemv_dual_batch2(e.gpu, k, x, &w1, y1, &w2, y2, n, h, e.stream)
+                    ops::w4a16_gemv_dual_batch2(
+                        e.gpu, k, w4a16_tc, x, &w1, y1, &w2, y2, n, h, e.stream,
+                    )
                 } else {
-                    ops::w4a16_gemv_dual_batch3(e.gpu, k, x, &w1, y1, &w2, y2, n, h, e.stream)
+                    ops::w4a16_gemv_dual_batch3(
+                        e.gpu, k, w4a16_tc, x, &w1, y1, &w2, y2, n, h, e.stream,
+                    )
                 }
             }),
         )

@@ -183,6 +183,34 @@ fn when_settings_select_and_an_unstated_setting_is_an_error() {
     );
 }
 
+// 2026-10-22: Another model's lever: a rule whose pattern matches no node of the circuit may
+// read a setting the policy does not state; the same rule matching a node may not.
+#[test]
+fn an_unstated_setting_is_an_error_only_where_its_rule_matches() {
+    let c = circuit(1);
+    let foreign = fused("foreign", r#"{ op = "hc_pre" }"#, 100).replace(
+        "priority = 100",
+        "priority = 100\nwhen = { other_lever = \"on\" }",
+    );
+    let r = rules(&foreign);
+    let avail = AvailableKernels::all_named_by(&r);
+    let p = fuse(&c, &r, &avail, &policy(), Mode::Decode, 1).expect("foreign lever ignored");
+    assert!(p.groups.iter().all(|g| g.rule != "foreign"));
+    let matching = fused("a_act_down", ACT_DOWN, 100).replace(
+        "priority = 100",
+        "priority = 100\nwhen = { other_lever = \"on\" }",
+    );
+    let r = rules(&matching);
+    let avail = AvailableKernels::all_named_by(&r);
+    assert_eq!(
+        fuse(&c, &r, &avail, &policy(), Mode::Decode, 1),
+        Err(FuseError::PolicyMissing {
+            rule: "a_act_down".into(),
+            key: "other_lever".into()
+        })
+    );
+}
+
 #[test]
 fn an_escaping_intermediate_needs_keep_and_then_stays_materialized() {
     let c = circuit(3);
@@ -363,4 +391,99 @@ fn the_rules_digest_covers_the_whole_file() {
     assert_eq!(a, crate::digest::rules_digest("schema = 1\n"));
     assert_ne!(a, crate::digest::rules_digest("schema = 1\n# a comment\n"));
     assert_eq!(a.len(), 64);
+}
+
+/// 2026-10-08: A pattern element's params must equal the node's: a rule for one policy point
+/// takes only nodes that state it, never a node without params or with another value.
+#[test]
+fn a_pattern_param_matches_only_nodes_that_state_it() {
+    let table = crate::precision::PrecisionTable::parse(crate::test_toy::PRECISION).unwrap();
+    let text = crate::test_toy::CIRCUIT.replacen(
+        "op = \"silu_mul\"",
+        "op = \"silu_mul\"\nparams = { clamp = \"swiglu\" }",
+        1,
+    );
+    let stated = crate::instantiate(&text, &[], &crate::test_toy::shape(1), &table).unwrap();
+    let plain = circuit(1);
+    let r = rules(
+        &(fused(
+            "clamped",
+            r#"{ op = "silu_mul", params = { clamp = "swiglu" } }"#,
+            100,
+        ) + &fused(
+            "other",
+            r#"{ op = "silu_mul", params = { clamp = "none" } }"#,
+            200,
+        )),
+    );
+    let p = plan(&stated, &r, &policy(), 1);
+    assert_eq!(rule_of_node(&stated, &p, "l0.ffn.act"), "clamped");
+    let p = plan(&plain, &r, &policy(), 1);
+    assert_eq!(rule_of_node(&plain, &p, "l0.ffn.act"), "act");
+}
+
+/// 2026-10-23: The toy circuit with `inter` set, as a TP rank's slice sets it.
+fn circuit_at_inter(inter: u64) -> Circuit {
+    let mut shape = crate::test_toy::shape(1);
+    shape.dims.insert("inter".into(), inter);
+    let table = crate::precision::PrecisionTable::parse(crate::test_toy::PRECISION).unwrap();
+    crate::instantiate(crate::test_toy::CIRCUIT, &[], &shape, &table).unwrap()
+}
+
+const K64: &str = "numerics = \"reference\"\ndims = { inter = { mod = 128, rem = 64 } }";
+
+/// 2026-10-23: A dim predicate picks the twin at the shape it names and only there: 192 % 128 is
+/// 64, so the `_k64`-style rule takes `act -> down`; at 128 or 256 the plain rule does.
+#[test]
+fn a_dim_predicate_selects_by_the_circuits_shape() {
+    let set = rules(
+        &(fused_with("act_down_k64", ACT_DOWN, 101, (1, 128), K64)
+            + &fused("act_down_plain", ACT_DOWN, 100)),
+    );
+    for (inter, want) in [(192, "act_down_k64"), (128, "act_down_plain"), (256, "act_down_plain")] {
+        let c = circuit_at_inter(inter);
+        let p = plan(&c, &set, &policy(), 1);
+        assert_eq!(rule_of_node(&c, &p, "l0.ffn.act"), want, "inter {inter}");
+    }
+}
+
+/// 2026-10-23: A predicate over a dim the circuit lacks refuses the plan, naming rule and dim; it
+/// is never read as "does not apply".
+#[test]
+fn a_predicate_over_an_undefined_dim_is_refused() {
+    let set = rules(&fused_with(
+        "act_down_experts",
+        ACT_DOWN,
+        101,
+        (1, 128),
+        "numerics = \"reference\"\ndims = { experts = { eq = 8 } }",
+    ));
+    let c = circuit(1);
+    let e = fuse(&c, &set, &AvailableKernels::all_named_by(&set), &policy(), Mode::Decode, 1)
+        .unwrap_err();
+    assert_eq!(
+        e,
+        FuseError::DimMissing {
+            rule: "act_down_experts".into(),
+            dim: "experts".into(),
+        }
+    );
+}
+
+/// 2026-10-23: A circuit output read inside the chain (the toy head's normed row, made an output)
+/// refuses the chain unless the element states `elides`, and the elided output stays in the group.
+#[test]
+fn a_circuit_output_is_swallowed_only_by_an_element_that_elides_it() {
+    let text = crate::test_toy::CIRCUIT.replace(r#"outputs = ["logits"]"#, r#"outputs = ["xn", "logits"]"#);
+    let table = crate::precision::PrecisionTable::parse(crate::test_toy::PRECISION).unwrap();
+    let c = crate::instantiate(&text, &[], &crate::test_toy::shape(1), &table).unwrap();
+    let xn = c.edge("head.xn").unwrap();
+    assert!(c.edges[xn].is_output);
+    let pat = r#"{ op = "final_norm" }, { op = "lm_head" }"#;
+    let refused = plan(&c, &rules(&fused("head_fused", pat, 100)), &policy(), 1);
+    assert!(refused.groups.iter().all(|g| g.rule != "head_fused"), "an output escapes the group");
+    let elides = r#"{ op = "final_norm", elides = true }, { op = "lm_head" }"#;
+    let p = plan(&c, &rules(&fused("head_fused", elides, 100)), &policy(), 1);
+    assert_eq!(rule_of_node(&c, &p, "head.final_norm"), "head_fused");
+    assert!(matches!(p.edge_states[xn], Some(EdgeState::Fused(_))), "{:?}", p.edge_states[xn]);
 }

@@ -31,11 +31,13 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 fn main() {
-    let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
-    let root = manifest
-        .join("../..")
-        .canonicalize()
-        .expect("repository root");
+    // 2026-10-17: metrale-kernel-root's `links` metadata names the directory holding `kernels/`
+    // (the repository root in a checkout, that crate's own directory once published), so the
+    // packed paths start at `kernels/` and the digest is the same in both.
+    let root = PathBuf::from(
+        std::env::var("DEP_METRALE_KERNEL_TREE_ROOT")
+            .expect("DEP_METRALE_KERNEL_TREE_ROOT: metrale-kernel-root is a dependency"),
+    );
     let kernels = root.join("kernels");
     println!("cargo:rerun-if-changed={}", kernels.display());
     let mut files = Vec::new();

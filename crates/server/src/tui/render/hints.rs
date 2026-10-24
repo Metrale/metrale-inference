@@ -81,6 +81,7 @@ pub(super) fn help_hints(app: &App) -> &'static str {
 }
 
 /// 2026-09-26: The Benchmarks footer, by subsection, view and edit mode.
+#[cfg(feature = "bench")]
 pub(super) fn bench_hints(app: &App) -> &'static str {
     use crate::tui::app::BenchSub;
     use crate::tui::bench_state::View;

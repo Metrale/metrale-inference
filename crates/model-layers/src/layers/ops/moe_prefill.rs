@@ -346,24 +346,3 @@ pub fn w8a16_gemv_silu_input(
         .launch(stream)
 }
 
-/// 2026-09-25: `output[i] += sigmoid(*gate_ptr) * src[i]`, where `gate_ptr` is
-/// one BF16 scalar in device memory (`bf16_sigmoid_blend_device` in
-/// `kernels/gb10/common/residual_add.cu`).
-pub fn sigmoid_blend_device(
-    gpu: &dyn GpuBackend,
-    kernel: KernelHandle,
-    output: DevicePtr,
-    src: DevicePtr,
-    gate_ptr: DevicePtr,
-    num_elements: u32,
-    stream: u64,
-) -> Result<()> {
-    KernelLaunch::new(gpu, kernel)
-        .grid([div_ceil(num_elements, 256), 1, 1])
-        .block([256, 1, 1])
-        .arg_ptr(output)
-        .arg_ptr(src)
-        .arg_ptr(gate_ptr)
-        .arg_u32(num_elements)
-        .launch(stream)
-}

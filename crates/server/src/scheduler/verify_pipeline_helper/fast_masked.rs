@@ -18,14 +18,15 @@ use metrale_model_engine::traits::Model;
 ///
 /// Requires: the `dflash_masked_verify` and `fast_masked` levers on, no
 /// grammar, AdaDec diagnostics off, `F2ConfidenceEarlyStop`, the forced
-/// `</think>` and the tool-call pin all inactive, penalties not `Blocked`,
+/// `</think>` (armed now or by a thinking budget the window's picks reach)
+/// and the tool-call pin all inactive, penalties not `Blocked`,
 /// and at every position an argmax that is not the think-end, think-start
-/// or tool-call-start token and, for `ReduceOnly` penalties, is
-/// penalty-immune (`fast_greedy`).
+/// or tool-call-start token and that the penalties and the request's
+/// `logit_bias` cannot move (`fast_greedy::argmax_survives`).
 ///
-/// Not checked: `MinTokensEosMask`, so an EOS argmax below `min_tokens` is
-/// returned unmasked; and the temperature, so above 0 this returns the
-/// argmax where the host path, with `mtp_verify_sample` on, would sample.
+/// An EOS argmax that `eos_hold::presample_hold` masks (`EosHoldMask`)
+/// declines the path. Not checked: the temperature, so above 0 this returns
+/// the argmax where the host path, with `mtp_verify_sample` on, would sample.
 ///
 /// `row_base` is as for `verify_pick_all_with_pipeline`.
 pub(super) fn try_chat_fast_path(
@@ -45,42 +46,26 @@ pub(super) fn try_chat_fast_path(
     }
     let fast_masked_enabled = ctx.sampling.fast_masked;
     let adadec_recording = ctx.sampling.adadec_diagnostic;
-    if !fast_masked_enabled || a.grammar_state.is_some() || adadec_recording {
+    if !fast_masked_enabled
+        || a.grammar_state.is_some()
+        || adadec_recording
+        || crate::scheduler::eos_hold::eos_masked_in_window(a, argmax_ids)
+    {
         return None;
     }
-    use crate::scheduler::confidence::{
-        MAX_SENTENCE_DEFER_TOKENS, THINK_DEFER_ABS_CEILING, THINK_DEFER_BUDGET_FACTOR,
-    };
-    // 2026-09-25: each flag is true whenever `F2ConfidenceEarlyStop`,
-    // `ForcedThinkEndInjector` (inject or defer) or `PinToToolCallStart`
-    // would act (see their `apply` bodies), and sometimes when it would not.
-    let f2_active = !ctx.sampling.disable_watchdogs
-        && a.inside_thinking
-        && !a.force_end_thinking
-        && a.thinking_tokens >= 400
-        && ctx.watchdog.confidence_early_stop;
-    let defer_hard_override = match a.thinking_budget {
-        Some(b) => a.thinking_tokens >= b.saturating_mul(THINK_DEFER_BUDGET_FACTOR),
-        None => a.thinking_tokens >= THINK_DEFER_ABS_CEILING,
-    } || a.sentence_defer_count >= MAX_SENTENCE_DEFER_TOKENS;
-    let think_end_inject_armed = a.inside_thinking && (a.force_end_thinking || defer_hard_override);
-    let pin_tool_armed =
-        a.think_just_ended && a.require_tool_call && !a.tool_call_opened && !a.inside_thinking;
     // 2026-09-25: the same `penalty_params_for` call the host path makes for
-    // every verify position.
-    let penalty_gate = crate::scheduler::fast_greedy::classify_penalties(
-        &crate::scheduler::sample_step::penalty_params_for(
-            a,
-            crate::scheduler::sample_step::PositionKind::Verify,
-            0.0,
-            None,
-            Vec::new(),
-            ctx.watchdog.min_reasoning_floor,
-        ),
+    // every verify position. 2026-10-21: its `logit_bias` is checked per
+    // position below (`fast_greedy::argmax_survives`).
+    let penalties = crate::scheduler::sample_step::penalty_params_for(
+        a,
+        crate::scheduler::sample_step::PositionKind::Verify,
+        0.0,
+        None,
+        a.logit_bias.clone(),
+        ctx.watchdog.min_reasoning_floor,
     );
-    if f2_active
-        || think_end_inject_armed
-        || pin_tool_armed
+    let penalty_gate = crate::scheduler::fast_greedy::classify_penalties_except_bias(&penalties);
+    if stages_may_act(a, ctx, argmax_ids.len())
         || penalty_gate == crate::scheduler::fast_greedy::PenaltyGate::Blocked
     {
         return None;
@@ -100,26 +85,20 @@ pub(super) fn try_chat_fast_path(
     let logits_base = model.logits_buffer_ptr();
     let mut all_clear = true;
     for (i, &tok) in argmax_ids.iter().enumerate() {
-        // 2026-09-25: the ids `MidWordThinkEndMask`, `PostCloseThinkMask`
-        // and `ToolCallDuringThinkingMask` can mask or lower.
-        if Some(tok) == ctx.think_end_token
-            || Some(tok) == a.think_start_token
-            || Some(tok) == ctx.tool_call_start_token
-        {
+        if is_think_or_tool_id(tok, a, ctx) {
             all_clear = false;
             break;
         }
-        if penalty_gate == crate::scheduler::fast_greedy::PenaltyGate::ReduceOnly
-            && !crate::scheduler::fast_greedy::argmax_immune(tok, &scoped_history, || {
-                crate::scheduler::fast_greedy::logit_is_positive(
-                    model,
-                    logits_base,
-                    row_base + i,
-                    vocab,
-                    tok,
-                )
-            })
-        {
+        if !crate::scheduler::fast_greedy::argmax_survives(
+            model,
+            logits_base,
+            row_base + i,
+            vocab,
+            tok,
+            penalty_gate,
+            &scoped_history,
+            &penalties.logit_bias,
+        ) {
             all_clear = false;
             break;
         }
@@ -135,4 +114,47 @@ pub(super) fn try_chat_fast_path(
         return Some(argmax_ids.to_vec());
     }
     None
+}
+
+/// 2026-10-21: Whether `F2ConfidenceEarlyStop`, `ForcedThinkEndInjector`
+/// (inject or defer) or `PinToToolCallStart` may act at some position of a
+/// `window`-position pick (see their `apply` bodies): true whenever one would,
+/// and sometimes when it would not. The window's thinking picks count toward
+/// `thinking_budget` (`pick_positions.rs`), so a budget they reach arms the
+/// forced `</think>` for the positions after it.
+///
+/// 2026-10-21: The injector acts (injects, or counts a deferral) only with
+/// `force_end_thinking` armed (`confidence::should_inject_think_end` returns
+/// false without it); its hard-override ceiling alone never moves a logit, so it
+/// no longer counts here. Each stage's own steering gates come from
+/// `WatchdogParams` (`from_behavior`: with MODEL.toml `thinking_steering` off,
+/// `confidence_early_stop` is off), so a thinking step of such a model passes
+/// unless a budget or an armed close is in play.
+pub(in crate::scheduler) fn stages_may_act(
+    a: &ActiveSeq,
+    ctx: &LogitsContext,
+    window: usize,
+) -> bool {
+    let f2_active = !ctx.sampling.disable_watchdogs
+        && a.inside_thinking
+        && !a.force_end_thinking
+        && a.thinking_tokens >= 400
+        && ctx.watchdog.confidence_early_stop;
+    let think_end_inject_armed = a.inside_thinking && a.force_end_thinking;
+    let window_thinking_picks = window.saturating_sub(1) as u32;
+    let budget_reached_in_window = a.inside_thinking
+        && a
+            .thinking_budget
+            .is_some_and(|b| a.thinking_tokens.saturating_add(window_thinking_picks) >= b);
+    let pin_tool_armed =
+        a.think_just_ended && a.require_tool_call && !a.tool_call_opened && !a.inside_thinking;
+    f2_active || think_end_inject_armed || budget_reached_in_window || pin_tool_armed
+}
+
+/// 2026-09-25: the ids `MidWordThinkEndMask`, `PostCloseThinkMask` and
+/// `ToolCallDuringThinkingMask` can mask or lower.
+pub(super) fn is_think_or_tool_id(tok: u32, a: &ActiveSeq, ctx: &LogitsContext) -> bool {
+    Some(tok) == ctx.think_end_token
+        || Some(tok) == a.think_start_token
+        || Some(tok) == ctx.tool_call_start_token
 }

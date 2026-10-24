@@ -7,13 +7,14 @@
 //! Invariants: none beyond the types.
 
 use super::*;
+use crate::lever_equivalence::default_settings;
 
 /// 2026-09-26: A clone of `Carried` points at the same stores and limiter.
 /// Checked by pointer identity (`Arc::ptr_eq`), which a swap relies on; an
 /// equal but separate store would have lost its contents.
 #[test]
 fn carried_state_is_the_same_allocation_not_an_equal_one() {
-    let first = Carried::from_env().expect("no METRALE_* config is set in the test environment");
+    let first = Carried::from_settings(&default_settings()).expect("the defaults build the stores");
     let cloned = first.clone();
 
     assert!(
@@ -30,15 +31,16 @@ fn carried_state_is_the_same_allocation_not_an_equal_one() {
     );
 }
 
-/// 2026-09-26: Two `from_env()` calls build different allocations, which is
+/// 2026-09-26: Two `from_settings` calls build different allocations, which is
 /// why `load_model` takes `Carried` instead of building its own.
 #[test]
-fn building_from_env_twice_would_lose_the_stores() {
-    let first = Carried::from_env().expect("no METRALE_* config is set in the test environment");
-    let second = Carried::from_env().expect("no METRALE_* config is set in the test environment");
+fn building_twice_would_lose_the_stores() {
+    let first = Carried::from_settings(&default_settings()).expect("the defaults build the stores");
+    let second =
+        Carried::from_settings(&default_settings()).expect("the defaults build the stores");
     assert!(
         !std::sync::Arc::ptr_eq(&first.conversation_store, &second.conversation_store),
-        "if this ever passes, from_env has become a singleton and the carried \
+        "if this ever passes, from_settings has become a singleton and the carried \
          parameter is no longer what protects the stores — re-check the swap"
     );
 }
@@ -49,7 +51,8 @@ fn carried_uses_the_process_limiter_rather_than_minting_its_own() {
     // middleware debits through the host's limiter, so they must be one
     // instance.
     let host = crate::main_modules::model_host::ModelHost::empty();
-    let carried = Carried::from_env().expect("no METRALE_* config is set in the test environment");
+    let carried =
+        Carried::from_settings(&default_settings()).expect("the defaults build the stores");
     let process = carried.rate_limiter.clone();
     host.set_process(carried);
     assert!(

@@ -357,6 +357,71 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
+  # 2026-10-17: The workspace dependency convention (xtask/src/rules.rs): the root declares every
+  # dependency once with `default-features = false`, and members inherit it with
+  # `workspace = true` and name only their features. The selftest runs first, so a gate that
+  # stopped refusing its known-bad fixtures fails here before its verdict on the tree is read.
+  # `cargo xtask env-ban` (xtask/src/env_ban): only the ProcessEnv host, build scripts and the
+  # files in xtask/env-ban-allow.txt read the process environment. On a pull request the list
+  # may also only shrink: an entry added since the merge-base with the base branch needs an
+  # `Env-Ban-Allow: <reason>` trailer on the commit that added it (full history for the
+  # merge-base). A merge group or push may be a squash, whose message no longer carries the
+  # PR's trailers as trailers, so those events run the tree check alone; the gate says so.
+  # No `if:` and no `needs:`, so the job can become a required context unchanged.
+  xtask-deps:
+    name: xtask deps
+    runs-on: >-
+      ${{ (github.event_name != 'pull_request'
+           || github.event.pull_request.head.repo.full_name == github.repository)
+          && vars.MACOS_RUNNER_LABEL || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+      # 2026-10-17: `cargo xtask selftest` also builds the purity wasm fixtures, on the toolchain
+      # rust-toolchain.toml pins. The action installs `stable`, so its `targets:` would land on
+      # the wrong toolchain: `cargo --version` installs the pinned one, then the targets go on it.
+      - name: wasm targets on the pinned toolchain
+        run: cargo --version && rustup target add wasm32-unknown-unknown wasm32v1-none
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: cargo xtask selftest
+      - run: cargo xtask deps
+      - name: cargo xtask env-ban
+        env:
+          # Through the environment, never interpolated into the script text.
+          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = pull_request ]; then
+            git fetch --no-tags origin "${PR_BASE_REF}"
+            cargo xtask env-ban --base "origin/${PR_BASE_REF}"
+          else
+            cargo xtask env-ban
+          fi
+
+  # 2026-10-17: The purity gates (xtask/src/gates.rs): crate roles, the role dependency graph,
+  # wasm builds of the pure crates, the 500-line file cap, the GPU vendor ban and the pure
+  # crates' cast lints. Each gate reconciles the tree with its checked-in allowlist, which may
+  # only shrink. The selftest runs first (including the wasm fixture builds), so a gate that
+  # stopped refusing its known-bad fixtures fails before its verdict on the tree is read.
+  # No `if:` and no `needs:`, so the job can become a required context unchanged.
+  purity:
+    name: xtask purity
+    runs-on: >-
+      ${{ (github.event_name != 'pull_request'
+           || github.event.pull_request.head.repo.full_name == github.repository)
+          && vars.MACOS_RUNNER_LABEL || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+      # 2026-10-17: The wasm gate builds on the pinned toolchain; see `xtask-deps`.
+      - name: wasm targets on the pinned toolchain
+        run: cargo --version && rustup target add wasm32-unknown-unknown wasm32v1-none
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - run: cargo xtask selftest
+      - run: cargo xtask purity
+
   clippy:
     name: cargo clippy --tests
     needs: [changes]
@@ -410,7 +475,7 @@ jobs:
       - name: Linux std for the Mac's cross-target lint
         if: runner.os == 'macOS'
         run: rustup target add x86_64-unknown-linux-gnu
-      - run: cargo clippy --workspace --tests ${{ runner.os == 'macOS' && '--target x86_64-unknown-linux-gnu' || '' }}
+      - run: cargo clippy --workspace --tests --features met/bench ${{ runner.os == 'macOS' && '--target x86_64-unknown-linux-gnu' || '' }}
       # 2026-09-30: The GPU microtests are examples behind `required-features = ["cuda",
       # "gpu-examples"]`, and `--tests` never builds an example, so nothing compiled them: 17
       # lints and a real type error (an API that moved to `Fp8ActQuant` while an example still
@@ -419,10 +484,13 @@ jobs:
       # CUDARC_CUDA_VERSION, and `gpu-examples` only unlocks the targets. An example whose
       # required features are not enabled here (the Metal ones) is skipped by cargo; the macOS
       # jobs build those.
+      # 2026-10-17: The GPU microtests moved from metrale-model-arch to the non-default
+      # metrale-gpu-examples package; `--workspace` still reaches it, and its `gpu-examples`
+      # feature is the one named below.
       - name: cargo clippy --examples --benches (GPU microtests included)
         run: >-
           cargo clippy --workspace --examples --benches
-          --features metrale-model-arch/gpu-examples,metrale-server/gpu-examples
+          --features metrale-gpu-examples/gpu-examples,met/gpu-examples,met/bench
           ${{ runner.os == 'macOS' && '--target x86_64-unknown-linux-gnu' || '' }}
       # 2026-09-26: The Metal build compiles metrale-storage without its `cuda`
       # feature. Checking that combination here, on Linux, catches a module
@@ -574,7 +642,6 @@ jobs:
           run "Dockerfiles copy what the server build reads" bash docker/dockerfile_context_test.sh
           run "harvest triage decision table" bash .github/scripts/harvest-triage-test.sh
           run "site follow triage decision table" bash .github/scripts/site-follow-triage-test.sh
-          run "Enforce <=500 LoC per source file" bash .github/scripts/check-file-size-cap.sh
           run "No block_on under tui/ or recipe/"  bash .github/scripts/check-no-block-on.sh
           run "CLI booleans are presence flags" bash .github/scripts/check-cli-booleans.sh
           run "Merge-ancestry guard self-test" bash scripts/check_merge_ancestry_test.sh
@@ -1002,9 +1069,47 @@ jobs:
       # Default `cargo test` skips `#[ignore]`-gated tests, which is
       # exactly what we want — every test that requires a real GPU
       # (metrale-gpu-runtime, metrale-storage, metrale-kernels, metrale-bench
-      # correctness, metrale-server integration) carries `#[ignore]` and
+      # correctness, met integration) carries `#[ignore]` and
       # is run locally on GB10 hardware via `-- --ignored`.
-      - run: cargo test --workspace --locked
+      - run: cargo test --workspace --locked --features met/bench
+
+  # 2026-10-17: `met` builds two ways. The `bench` feature (off by default) compiles in
+  # the benchmark harness; every other job here passes it. This job builds, lints and
+  # links the tests of the default serving binary, the configuration a plain
+  # `cargo install met` produces, plus the bench build of `met` alone so a cfg that
+  # only one configuration compiles fails here by name.
+  met-bench-feature:
+    name: met builds with and without bench
+    needs: [changes]
+    if: ${{ !cancelled() && needs.changes.outputs.web_only != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Generate no-GPU library stubs
+        run: bash scripts/ci_gpu_stubs.sh
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: met without bench (default)
+        run: |
+          # 2026-10-24: `met` is the binary package; the code is metrale-server's library.
+          cargo clippy --locked -p met -p metrale-server --all-targets -- -D warnings
+          cargo test --locked -p met -p metrale-server --no-run
+          cargo build --locked -p met --bin met
+          # `cargo tree -i` fails when the package is outside the graph; any other
+          # failure (a lockfile error, say) must not read as "absent".
+          if out=$(cargo tree --locked -p met -e normal -i metrale-bench 2>&1); then
+            echo "::error::met without the bench feature still depends on metrale-bench"
+            echo "$out"
+            exit 1
+          fi
+          grep -q 'did not match any packages' <<<"$out" || { echo "$out"; exit 1; }
+      - name: met with bench
+        run: |
+          cargo clippy --locked -p met -p metrale-server --all-targets --features met/bench -- -D warnings
+          cargo test --locked -p met -p metrale-server --no-run --features met/bench
+          cargo build --locked -p met --bin met --features bench
 
   # 2026-09-27: Every launch recipe under recipes/ against THIS tree's `met`: the
   # flag surface it dumps, `met serve` itself (clap, the METRALE_* lever check and
@@ -1043,7 +1148,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Build met
-        run: cargo build --locked -p metrale-server --bin met
+        run: cargo build --locked -p met --bin met --features bench
       - name: Recipe checker self-test (through met)
         run: python3 .github/scripts/recipes-selftest.py --met target/debug/met
       - name: Check every recipe and write the bundle
@@ -1130,12 +1235,12 @@ jobs:
       # runtime backend (objc2-metal). xcrun + metallib are part of
       # macOS's built-in Xcode Command Line Tools and don't need a
       # separate install on the self-hosted Apple Silicon runner.
-      # `-p metrale-server --features metal` activates the metal
-      # feature on every transitive workspace crate via metrale-server's
+      # `-p met --features metal` activates the metal
+      # feature on every transitive workspace crate via met's
       # forwarding feature flags. Single-flag spelling — no long
       # `metrale-core/metal,metrale-gpu-runtime/metal,...` comma list needed.
-      - name: cargo check metrale-server --features metal
-        run: cargo check -p metrale-server --no-default-features --features metal
+      - name: cargo check met --features metal
+        run: cargo check -p met --no-default-features --features metal
       # Also check metrale-gpu-runtime alone so a regression in the metal
       # backend tests can be diagnosed independently of higher layers.
       - name: cargo check metrale-gpu-runtime --features metal
@@ -1201,12 +1306,12 @@ jobs:
         run: |
           cargo test -p metrale-gpu-runtime --no-default-features \
             --features metal --locked metal_backend
-      # Sanity check: the metal-feature metrale-server binary must not
+      # Sanity check: the metal-feature met binary must not
       # link against libcuda. Anything else means a stray
       # `rustc-link-lib=cuda` directive snuck through a build.rs.
       - name: assert no libcuda linkage in metal binary
         run: |
-          cargo build -p metrale-server --bin met --no-default-features --features metal
+          cargo build -p met --bin met --no-default-features --features metal
           if otool -L target/debug/met | grep -i cuda; then
             echo "::error::metal-feature met binary links libcuda"
             exit 1
@@ -2182,7 +2287,7 @@ jobs:
           # default-branch harvester, so nothing a PR author writes reaches
           # this gate through the flag within the PR's own run.
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: cargo run --locked -p metrale-server --bin met -- benchmark --pull-request-gate-check ${PR_NUMBER:+--pr "$PR_NUMBER"}
+        run: cargo run --locked -p met --bin met --features bench -- benchmark --pull-request-gate-check ${PR_NUMBER:+--pr "$PR_NUMBER"}
       # ── Queue-bounce diagnosis ───────────────────────────────────────────
       # A record-bearing perf PR can be GREEN at its head and still bounce
       # here, and TWO different conditions produce that identical symptom:

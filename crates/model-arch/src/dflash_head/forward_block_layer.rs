@@ -239,6 +239,7 @@ impl BlockDiffusionDraftHead {
         // 2026-09-25: Non-causal attention, q_len = kv_len = n_attn.
         ops::prefill_attention(
             gpu,
+            ctx.levers.ops.attn_512_tc,
             self.kernels.prefill_attn,
             self.scratch.q_buf,
             self.scratch.k_buf,

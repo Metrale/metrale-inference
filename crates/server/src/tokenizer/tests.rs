@@ -10,6 +10,8 @@
 use super::*;
 
 mod deepseek_v4;
+mod deepseek_v41;
+mod heap_trim;
 mod kimi_k3;
 use serde_json::json;
 
@@ -17,6 +19,7 @@ mod laguna;
 mod mistral_effort;
 mod qwen_dense;
 mod qwen_dense_parity;
+mod template_source;
 
 fn render_minimax_openai_template(
     messages: &[serde_json::Value],
@@ -30,7 +33,11 @@ fn render_minimax_openai_template(
     let raw = std::fs::read_to_string(template_path)
         .expect("bundled MiniMax OpenAI template must be present in the repo");
     let converted = super::jinja_helpers::convert_python_jinja_to_minijinja(&raw);
-    let env = super::jinja_helpers::build_jinja_env(&converted).expect("template compiles");
+    let env = super::jinja_helpers::build_jinja_env_with(
+        &converted,
+        crate::tokenizer::ToolJsonStyle::Compact,
+    )
+    .expect("template compiles");
     let tmpl = env.get_template("chat").unwrap();
     let messages_for_render = normalize_tool_call_arguments(messages);
     let messages_val = minijinja::Value::from_serialize(&messages_for_render);
@@ -60,7 +67,11 @@ fn render_holo_template(messages: &[serde_json::Value], enable_thinking: bool) -
     let raw = std::fs::read_to_string(template_path)
         .expect("bundled Holo3.1 template must be present in the repo");
     let converted = super::jinja_helpers::convert_python_jinja_to_minijinja(&raw);
-    let env = super::jinja_helpers::build_jinja_env(&converted).expect("template compiles");
+    let env = super::jinja_helpers::build_jinja_env_with(
+        &converted,
+        crate::tokenizer::ToolJsonStyle::Compact,
+    )
+    .expect("template compiles");
     let tmpl = env.get_template("chat").unwrap();
     let messages_for_render = normalize_tool_call_arguments(messages);
     let messages_val = minijinja::Value::from_serialize(&messages_for_render);
@@ -163,7 +174,11 @@ fn render_minimax_template_with_string_tool_call_args() {
         eprintln!("MiniMax template not on disk; skipping");
         return;
     };
-    let env = super::jinja_helpers::build_jinja_env(&template).expect("template compiles");
+    let env = super::jinja_helpers::build_jinja_env_with(
+        &template,
+        crate::tokenizer::ToolJsonStyle::Compact,
+    )
+    .expect("template compiles");
     let tmpl = env.get_template("chat").unwrap();
     let messages = vec![
         json!({"role": "user", "content": "List /tmp"}),
@@ -298,7 +313,11 @@ fn render_gemma4_template_with_assistant_and_null_tool_content() {
     let raw = std::fs::read_to_string(template_path)
         .expect("bundled gemma4.jinja must be present in the repo");
     let converted = super::jinja_helpers::convert_python_jinja_to_minijinja(&raw);
-    let env = super::jinja_helpers::build_jinja_env(&converted).expect("template compiles");
+    let env = super::jinja_helpers::build_jinja_env_with(
+        &converted,
+        crate::tokenizer::ToolJsonStyle::Compact,
+    )
+    .expect("template compiles");
     let tmpl = env.get_template("chat").unwrap();
     let messages = vec![
         json!({"role": "user", "content": "What time is it?"}),
@@ -334,7 +353,11 @@ fn deepseek_v4_reasoning_primer_is_opt_in() {
     let raw = std::fs::read_to_string(template_path)
         .expect("bundled deepseek_v4.jinja must be present in the repo");
     let converted = super::jinja_helpers::convert_python_jinja_to_minijinja(&raw);
-    let env = super::jinja_helpers::build_jinja_env(&converted).expect("template compiles");
+    let env = super::jinja_helpers::build_jinja_env_with(
+        &converted,
+        crate::tokenizer::ToolJsonStyle::Compact,
+    )
+    .expect("template compiles");
     let tmpl = env.get_template("chat").unwrap();
 
     let messages = vec![json!({"role": "user", "content": "2+2?"})];
@@ -394,7 +417,8 @@ fn deepseek_v4_reasoning_parser_is_registered() {
     assert_eq!(p.end_tag(), "</think>", "DS4F reasoning end tag");
 }
 
-/// 2026-09-26: `tojson` is compact from `build_jinja_env` without the env var and spaced with
+/// 2026-09-26: `tojson` is compact with no lever set (2026-10-17: the style the default
+/// settings resolve to) and spaced with
 /// `ToolJsonStyle::HfSpaced`; both keep the input's key order.
 #[test]
 fn tojson_filter_default_compact_hf_ref_opt_in() {
@@ -417,8 +441,17 @@ fn tojson_filter_default_compact_hf_ref_opt_in() {
         }
     });
 
-    let env_default = super::jinja_helpers::build_jinja_env("{{ tool | tojson }}")
-        .expect("inline template compiles");
+    let defaults = metrale_settings::resolve(
+        &metrale_io_host_mem::MapEnv::new(std::iter::empty::<(&str, &str)>()),
+        &metrale_settings::sources::CliLayer::empty(),
+        &metrale_settings::sources::RecipeLayer::empty(),
+    )
+    .expect("default settings resolve");
+    let env_default = super::jinja_helpers::build_jinja_env_with(
+        "{{ tool | tojson }}",
+        super::ToolJsonStyle::from_settings(&defaults),
+    )
+    .expect("inline template compiles");
     let compact = "{\"type\":\"function\",\"function\":{\"name\":\"bash\",\"description\":\"Execute a bash command\",\"parameters\":{\"type\":\"object\",\"properties\":{\"command\":{\"type\":\"string\",\"description\":\"The command to run\"}},\"required\":[\"command\"]}}}";
     let got_default = env_default
         .get_template("chat")

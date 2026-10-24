@@ -43,7 +43,8 @@ use metrale_gpu_runtime::gpu::KernelHandle;
 
 /// 2026-09-25: The resolved `w8a16_gemm_m16` levers: which projection families
 /// take the tier, and the FFN arm's CTA N width. `DenseFfnLayer::new_with_activation`
-/// and the attention layer's init copy them into fields at construction.
+/// and the attention layer's init copy them into fields at construction
+/// ([`M16TcLevers::of`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct M16TcLevers {
     /// 2026-09-25: The dense-FFN arm (`TargetLevers::ffn_m16_tc`).
@@ -53,41 +54,25 @@ pub struct M16TcLevers {
     pub attn: bool,
     /// 2026-09-25: CTA N width for the FFN arm: `ops::W8A16_GEMM_M16_N_TILE` (32),
     /// or `ops::W8A16_GEMM_M16_N_TILE_WIDE` (64) when
-    /// `METRALE_FFN_M16_TC_NTILE=64`. The attention tiers always launch with 32.
+    /// `METRALE_FFN_M16_TC_NTILE=64` (`DenseFfnLevers::m16_tc_n_tile`). The
+    /// attention tiers always launch with 32.
     pub ffn_n_tile: u32,
 }
 
-/// 2026-09-25: The pure resolver. `ffn` and `attn` are the resolved target
-/// levers; `n_tile` is the raw `METRALE_FFN_M16_TC_NTILE` value. Only `"64"`
-/// selects the wide tile. Any other value, or none, keeps 32 without failing
-/// the boot, and the route log prints the tile that ran.
-pub(crate) fn resolve_m16_tc_levers(ffn: bool, attn: bool, n_tile: Option<&str>) -> M16TcLevers {
-    M16TcLevers {
-        ffn,
-        attn,
-        ffn_n_tile: match n_tile {
-            Some("64") => ops::W8A16_GEMM_M16_N_TILE_WIDE,
-            _ => ops::W8A16_GEMM_M16_N_TILE,
-        },
+impl M16TcLevers {
+    /// 2026-10-18: The levers of this model: the FFN tile from `levers.ffn`, and
+    /// the two families from the target's `[defaults]` rows, with
+    /// `METRALE_FFN_M16_TC`, `METRALE_ATTN_M16_TC` and the `METRALE_M16_TC`
+    /// umbrella already applied by `ops::target_defaults::resolve`. When both a
+    /// narrow variable and the umbrella are set, the narrow one wins.
+    pub fn of(levers: &ops::ModelLevers) -> Self {
+        let target = ops::target_defaults::resolved();
+        Self {
+            ffn: target.ffn_m16_tc.value,
+            attn: target.attn_m16_tc.value,
+            ffn_n_tile: levers.ffn.m16_tc_n_tile,
+        }
     }
-}
-
-/// 2026-09-25: The resolved levers for this process, computed once
-/// (`OnceLock`).
-pub fn m16_tc_levers() -> M16TcLevers {
-    static ON: std::sync::OnceLock<M16TcLevers> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        let n_tile = std::env::var("METRALE_FFN_M16_TC_NTILE").ok();
-        resolve_m16_tc_levers(
-            // 2026-09-25: The target's `[defaults]` rows, with `METRALE_FFN_M16_TC`,
-            // `METRALE_ATTN_M16_TC` and the `METRALE_M16_TC` umbrella already
-            // applied by `ops::target_defaults::resolve`. When both a narrow
-            // variable and the umbrella are set, the narrow one wins.
-            ops::target_defaults::resolved().ffn_m16_tc.value,
-            ops::target_defaults::resolved().attn_m16_tc.value,
-            n_tile.as_deref(),
-        )
-    })
 }
 
 /// 2026-09-25: How the tier splits `m` rows into launches; `m16_tc_plan`

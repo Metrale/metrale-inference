@@ -45,6 +45,8 @@ pub(super) struct ModelKernels {
 pub(super) fn resolve_model_kernels(
     config: &ModelConfig,
     gpu: &dyn GpuBackend,
+    ops: &metrale_model_layers::layers::ops::OpsLevers,
+    settings: &metrale_settings::InferenceServerSettings,
 ) -> Result<ModelKernels> {
     let dense_gemv_kernel = gpu.kernel("gemv", "dense_gemv_bf16")?;
     // 2026-09-25: Always 0. Its only launch site is the FP32-logits branch
@@ -59,10 +61,10 @@ pub(super) fn resolve_model_kernels(
     } else {
         KernelHandle(0)
     };
-    // 2026-09-25: Lossless BF16-MMA lm_head variant, loaded when
-    // `METRALE_LMHEAD_LOSSLESS` is set to any value. Otherwise 0, and the
+    // 2026-09-25: Lossless BF16-MMA lm_head variant, loaded when the `kernels.lmhead_lossless`
+    // setting is on (`METRALE_LMHEAD_LOSSLESS` set to any value). Otherwise 0, and the
     // lm_head uses `w4a16_gemm_t_kernel`.
-    let w4a16_gemm_t_bf16_kernel = if std::env::var("METRALE_LMHEAD_LOSSLESS").is_ok() {
+    let w4a16_gemm_t_bf16_kernel = if settings.kernels.lmhead_lossless {
         metrale_model_layers::layers::try_kernel(gpu, "w4a16", "w4a16_gemm_t_m128_bf16_v2")
     } else {
         metrale_gpu_runtime::gpu::KernelHandle(0)
@@ -74,7 +76,7 @@ pub(super) fn resolve_model_kernels(
     // dispatch takes the narrowest loaded tier that covers the rows, else
     // falls back to the GEMM.
     let w4a16_batchm =
-        metrale_model_layers::layers::w4a16_gemv_tiers::W4a16BatchmTiers::resolve(gpu);
+        metrale_model_layers::layers::w4a16_gemv_tiers::W4a16BatchmTiers::resolve(gpu, ops);
     // 2026-09-25: Batched GEMV for lm_head calls of up to 16 rows; handle 0
     // when the target lacks it, and dispatch then falls back.
     let w4a16_gemv_batch16_kernel =
@@ -291,4 +293,26 @@ pub(super) fn start_innerq(
                     }
                 }
             })
+}
+
+/// 2026-10-10: The pinned metadata staging buffer, at least 64 KB and as large as the scratch
+/// buffer (moved here from `TransformerModel::new` unchanged).
+pub(super) fn alloc_pinned_staging(
+    buffers: &metrale_gpu_runtime::buffers::BufferArena,
+    gpu: &dyn GpuBackend,
+) -> Result<std::cell::UnsafeCell<super::super::types::PinnedMetaStaging>> {
+    let pinned_bytes = buffers.sizes().scratch.max(64 * 1024);
+    let pinned_ptr = gpu.alloc_host_pinned(pinned_bytes)?;
+    tracing::info!("Pinned metadata staging: {} KB", pinned_bytes / 1024);
+    let max_batch_tokens = buffers.max_batch_tokens();
+    Ok(std::cell::UnsafeCell::new(
+        super::super::types::PinnedMetaStaging {
+            ptr: pinned_ptr,
+            bytes: pinned_bytes,
+            positions: Vec::with_capacity(max_batch_tokens),
+            positions_h: Vec::with_capacity(max_batch_tokens),
+            positions_w: Vec::with_capacity(max_batch_tokens),
+            slots: Vec::with_capacity(max_batch_tokens),
+        },
+    ))
 }

@@ -7,8 +7,10 @@
 //! Invariants: deterministic text (fixed decimals, sorted maps); every number names its basis in
 //! the report's inputs table.
 
-use std::collections::BTreeMap;
-use std::fmt::Write as _;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
+use core::fmt::Write as _;
 
 use super::HwReport;
 use super::gaps::GapTable;
@@ -44,6 +46,20 @@ fn run_name(t: &GapTable) -> String {
     format!("{} n={}", t.planned.plan.mode.name(), t.planned.plan.rows)
 }
 
+/// 2026-10-22: The serving case a plan's step is: decode at C = its rows, or the verify of one
+/// sequence, whose rows are the bonus token and its drafts. A verify's tok/s counts every row,
+/// so it holds only when every draft is accepted.
+pub(super) fn case_name(p: &crate::fuser::FusionPlan) -> String {
+    match p.mode {
+        crate::rules::Mode::Verify => format!(
+            "verify C=1, {} draft{} (every draft accepted)",
+            p.rows - 1,
+            if p.rows == 2 { "" } else { "s" }
+        ),
+        _ => format!("decode C={}", p.rows),
+    }
+}
+
 /// 2026-09-30: The report text.
 pub fn render_report(r: &HwReport) -> String {
     let mut s = String::new();
@@ -64,6 +80,7 @@ pub fn render_report(r: &HwReport) -> String {
     if let Some(t) = r.tables.first() {
         plan_sites(&mut s, t, r);
     }
+    super::ranks::section(&mut s, &r.model.circuit, &r.model.ranks, r.model.layout.as_ref(), &r.ranks);
     for t in &r.tables {
         gap_rows(&mut s, t, projection(r));
     }
@@ -223,7 +240,8 @@ fn estimates(s: &mut String, r: &HwReport) {
         let rows = t.planned.plan.rows;
         let _ = writeln!(
             s,
-            "| decode C={rows} ({}){} | {:.3} | {:.1} |",
+            "| {} ({}){} | {:.3} | {:.1} |",
+            case_name(&t.planned.plan),
             run_name(t),
             projection(r),
             t.total_us / 1e3,
@@ -298,7 +316,7 @@ fn memory(s: &mut String, r: &HwReport) {
 /// 2026-09-30: What would hold `need` bytes: tensor parallelism over this device, or the
 /// registry devices whose usable memory holds it.
 fn advice(r: &HwReport, need: f64, usable: f64) -> String {
-    let tp = (need / usable).ceil() as u64;
+    let tp = crate::num::sat_u64(libm::ceil(need / usable));
     let fits: Vec<&str> = r
         .others
         .iter()
@@ -382,19 +400,7 @@ fn plan_sites(s: &mut String, t: &GapTable, r: &HwReport) {
     );
     let mut sites: BTreeMap<(String, String, String), usize> = BTreeMap::new();
     for g in &p.groups {
-        let first = &c.nodes[g.nodes[0]];
-        let locals: Vec<&str> = g.nodes.iter().map(|&n| c.nodes[n].local.as_str()).collect();
-        let what = if g.kernels.is_empty() {
-            format!("({})", g.emitter)
-        } else {
-            let k: Vec<String> = g.kernels.iter().map(|k| k.to_string()).collect();
-            k.join(" + ")
-        };
-        let key = (
-            format!("{} [{}]", first.block, locals.join(",")),
-            what,
-            g.rule.clone(),
-        );
+        let key = (group_site(c, g), group_kernels(g), g.rule.clone());
         *sites.entry(key).or_insert(0) += 1;
     }
     for (rule, why) in &t.planned.refused {
@@ -405,6 +411,24 @@ fn plan_sites(s: &mut String, t: &GapTable, r: &HwReport) {
         let _ = writeln!(s, "| {site} | {what} | {rule} | {n} |");
     }
     let _ = writeln!(s);
+}
+
+/// 2026-10-22: A group's site as the plan tables name it: its first node's block and every
+/// member's local id, `kda [q,k,v]` (one name for a template group across its layers).
+pub(crate) fn group_site(c: &crate::ir::Circuit, g: &crate::fuser::Group) -> String {
+    let locals: Vec<&str> = g.nodes.iter().map(|&n| c.nodes[n].local.as_str()).collect();
+    format!("{} [{}]", c.nodes[g.nodes[0]].block, locals.join(","))
+}
+
+/// 2026-10-22: What a group launches, as the plan tables name it: its kernels joined by ` + `,
+/// or `(emitter)` for a group that launches none.
+pub(crate) fn group_kernels(g: &crate::fuser::Group) -> String {
+    if g.kernels.is_empty() {
+        format!("({})", g.emitter)
+    } else {
+        let k: Vec<String> = g.kernels.iter().map(|k| k.to_string()).collect();
+        k.join(" + ")
+    }
 }
 
 fn gap_rows(s: &mut String, t: &GapTable, projection: &str) {

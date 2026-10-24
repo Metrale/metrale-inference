@@ -312,6 +312,7 @@ fn harness(num_experts: usize, max_batch_tokens: usize) -> Harness {
             down_proj_t: None,
         },
         &gpu,
+        crate::lever_equivalence::DefaultLoad::at_defaults().lc(),
     )
     .unwrap();
     layer.per_token_group_quant_fp8_k = QUANT_K;
@@ -336,6 +337,7 @@ fn harness(num_experts: usize, max_batch_tokens: usize) -> Harness {
 fn with_ctx<R>(h: &Harness, dispatch: GemmDispatch, f: impl FnOnce(&ForwardContext) -> R) -> R {
     let derived = DerivedWeights::new();
     let levers = ModelLevers::defaults();
+    let settings = crate::lever_equivalence::defaults();
     let stats = ModelStats::new();
     let ctx = ForwardContext {
         buffers: &h.buffers,
@@ -345,6 +347,7 @@ fn with_ctx<R>(h: &Harness, dispatch: GemmDispatch, f: impl FnOnce(&ForwardConte
         dispatch: &dispatch,
         derived: &derived,
         levers: &levers,
+        settings: &settings,
         stats: &stats,
         attn_metadata: None,
         profile: false,
@@ -358,6 +361,7 @@ fn with_ctx<R>(h: &Harness, dispatch: GemmDispatch, f: impl FnOnce(&ForwardConte
         routed_lora_layers: None,
         midchunk_capture: None,
         moe_lora_route: MoeLoraRoute::Fold,
+        ab_levers: crate::layer::AbLevers::NONE,
     };
     f(&ctx)
 }
@@ -365,7 +369,7 @@ fn with_ctx<R>(h: &Harness, dispatch: GemmDispatch, f: impl FnOnce(&ForwardConte
 /// 2026-09-25: The layer reads the ceiling the compiled target declares, so the
 /// test asserts the relationship (selected at the ceiling or at
 /// `PROMPT_TOKENS`, declined one row above the ceiling) rather than a value.
-/// The per-target values are pinned by `crates/kernels/tests/target_defaults.rs`.
+/// The per-target values are pinned by `crates/target-defaults/tests/target_defaults.rs`.
 #[test]
 fn layer_selects_w8a8_on_a_dense_config() {
     let h = harness(0, 2048);

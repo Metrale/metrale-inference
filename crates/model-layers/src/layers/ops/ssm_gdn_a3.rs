@@ -129,6 +129,8 @@ pub fn gdn_prefill_fla(
     cu_seqlens: DevicePtr,
     cu_chunks: DevicePtr,
     is_varlen: bool,
+    // 2026-10-17: The spine, kernel-3 twin and remnant levers (`OpsLevers::gdn_prefill`).
+    plan: super::GdnPrefillPlan,
     profile: bool,
     stream: u64,
 ) -> Result<()> {
@@ -167,6 +169,7 @@ pub fn gdn_prefill_fla(
     let tc_requested = super::target_defaults::resolved().gdn_prefill_tc.value;
     let (wu, fo) = gdn_hopper_remnants(
         tc_requested,
+        plan.remnants_killed,
         k_recompute_wu,
         smem_wu,
         k_chunk_fwd_o,
@@ -179,7 +182,7 @@ pub fn gdn_prefill_fla(
     );
 
     // 2026-09-28: Kernel 3 without a Hopper twin: the bit-identical 8-warp twin when present.
-    let fo = super::gdn_fwd_o_mma8(gpu, fo, k_chunk_fwd_o, kd, vd)?;
+    let fo = super::gdn_fwd_o_mma8(gpu, plan.fwd_o_mma8, fo, k_chunk_fwd_o, kd, vd)?;
 
     // 2026-09-25: Kernel 1: recompute_wu, or its Hopper twin.
     KernelLaunch::new(gpu, wu.kernel)
@@ -212,18 +215,15 @@ pub fn gdn_prefill_fla(
     // 2026-09-25: Kernel 2, the state spine. The non-TMA candidates take the
     // same arguments; grid y, block size and shared memory differ. In order of
     // precedence: TMA and the tensor-core spine (both below); the fused spine
-    // that `init_kernels::fused_spine_kernel` loaded (`gdn_scalar_spine`:
+    // that `init_kernels::fused_spine_kernel` loaded (`plan.spine`:
     // 2026-09-28 `_pipe` by default, `_vtile` under `METRALE_GDN_VTILE=1`,
     // `_vfused` under `METRALE_GDN_PIPE=0`), unless its handle is 0 or
     // `METRALE_GDN_VTILE=0`; `_tc_vblock` under `METRALE_GDN_TC_VBLOCK=1`; else
     // `_ksplit`. The fused spine folds the two per-chunk passes into one, so at
     // kd = vd = 128 `_vfused` / `_vtile` take 49,412 B against ksplit's 99,336 B
     // (`_pipe` double-buffers, so it takes ksplit's).
-    let use_fused = k_chunk_delta_h_fused.0 != 0
-        && std::env::var("METRALE_GDN_VTILE").ok().as_deref() != Some("0");
-    let use_tcvb = !use_fused
-        && k_chunk_delta_h_tc_vblock.0 != 0
-        && std::env::var("METRALE_GDN_TC_VBLOCK").ok().as_deref() == Some("1");
+    let use_fused = k_chunk_delta_h_fused.0 != 0 && plan.fused;
+    let use_tcvb = !use_fused && k_chunk_delta_h_tc_vblock.0 != 0 && plan.tc_vblock;
     const DV_BLK: u32 = 64; // 2026-09-25: the kernel's compile-time `DV_BLK`.
     let num_dv_blk = (vd / DV_BLK).max(1);
     // 2026-09-25: tc_vblock smem: St[DV_BLK*kd] + ws[C*DV_BLK] f32
@@ -236,10 +236,10 @@ pub fn gdn_prefill_fla(
     // 2026-09-25: `_vfused` and `_vtile` stage W, K and U single-buffered plus one
     // decay row and do not split the DV axis, so grid y stays `batch_size`; they
     // differ only in thread count. `_pipe` double-buffers W, K and U, so it needs
-    // `smem_dh`, the ksplit footprint. The env reads here must select the same
-    // build that `init_kernels::fused_spine_kernel` loaded, or the second buffer
-    // is read out of bounds.
-    let spine = super::gdn_scalar_spine();
+    // `smem_dh`, the ksplit footprint. The spine here must be the build that
+    // `init_kernels::fused_spine_kernel` loaded (both take `plan.spine`), or the
+    // second buffer is read out of bounds.
+    let spine = plan.spine;
     let pipe = spine == super::GdnScalarSpine::Pipe;
     let smem_fused = if pipe {
         smem_dh
@@ -282,7 +282,7 @@ pub fn gdn_prefill_fla(
     // checked here. The descriptors encode the compile-time tile
     // (K_DIM = V_DIM = 128, CHUNK = 64), so a narrower head would load the wrong
     // columns.
-    let tma_requested = std::env::var("METRALE_GDN_TMA").ok().as_deref() == Some("1");
+    let tma_requested = plan.tma;
     let tma_reject: Option<&str> = if !tma_requested {
         Some("not requested")
     } else if tc_ok {

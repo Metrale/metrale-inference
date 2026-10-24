@@ -53,22 +53,13 @@ pub(super) fn resolve_max_batch_size(
     Ok(max_batch_size)
 }
 
-/// 2026-09-26: `(use_speculative, use_self_spec, use_ngram_spec, num_drafts,
-/// dflash_rung)`.
-pub(super) fn resolve_speculation(
+/// 2026-10-23: The draft depth the serve speculates at: the DFlash head's `gamma - 1` (at least
+/// 1), else `--num-drafts` as resolved.
+fn effective_num_drafts(
     args: &cli::ServeArgs,
     scheduler_model: &dyn metrale_model_engine::traits::Model,
-) -> (
-    bool,
-    bool,
-    bool,
-    usize,
-    metrale_speculative::dflash_rung::DflashRung,
-) {
-    let use_speculative = (args.speculative || args.dflash) && scheduler_model.has_proposer();
-    let use_self_spec = args.self_speculative && scheduler_model.has_self_speculative();
-    let use_ngram_spec = args.ngram_speculative;
-    let num_drafts = if args.dflash {
+) -> usize {
+    if args.dflash {
         // 2026-09-26: The drafter head's resolved gamma wins over the flag.
         let g = scheduler_model
             .dflash_gamma()
@@ -76,15 +67,73 @@ pub(super) fn resolve_speculation(
         g.saturating_sub(1).max(1)
     } else {
         args.resolved_num_drafts()
+    }
+}
+
+/// 2026-10-23: `(use_speculative, use_self_spec, use_ngram_spec, num_drafts)`: the speculation
+/// the serve runs, for the scheduler and the forward's verify widths alike.
+fn speculation_modes(
+    args: &cli::ServeArgs,
+    scheduler_model: &dyn metrale_model_engine::traits::Model,
+) -> (bool, bool, bool, usize) {
+    (
+        (args.speculative || args.dflash) && scheduler_model.has_proposer(),
+        args.self_speculative && scheduler_model.has_self_speculative(),
+        args.ngram_speculative,
+        effective_num_drafts(args, scheduler_model),
+    )
+}
+
+/// 2026-10-23: The one-sequence verify widths the serve runs (`ForwardSelect::Circuit`): every
+/// width of its draft depth under drafter or self speculation, two rows under n-gram
+/// speculation, none without speculation.
+pub(super) fn verify_rows(
+    args: &cli::ServeArgs,
+    scheduler_model: &dyn metrale_model_engine::traits::Model,
+) -> Vec<u64> {
+    let (speculative, self_spec, ngram, num_drafts) = speculation_modes(args, scheduler_model);
+    let mut rows = if speculative || self_spec {
+        metrale_model_layers::circuit_exec::rank_shapes::speculative_verify_rows(num_drafts)
+    } else {
+        Vec::new()
     };
+    if ngram && !rows.contains(&2) {
+        rows.insert(0, 2);
+    }
+    rows
+}
+
+/// 2026-09-26: `(use_speculative, use_self_spec, use_ngram_spec, num_drafts,
+/// dflash_rung)`.
+pub(super) fn resolve_speculation(
+    args: &cli::ServeArgs,
+    scheduler_model: &dyn metrale_model_engine::traits::Model,
+    drafter: &metrale_settings::groups::device_drafter::DrafterSettings,
+) -> (
+    bool,
+    bool,
+    bool,
+    usize,
+    metrale_speculative::dflash_rung::DflashRung,
+) {
+    let (use_speculative, use_self_spec, use_ngram_spec, num_drafts) =
+        speculation_modes(args, scheduler_model);
     let dflash_rung = metrale_speculative::dflash_rung::DflashRung::new();
     if args.dflash {
         // 2026-09-26: The head's gamma is the cap; `--dflash-gamma` pins it
         // unless `METRALE_DFLASH_GAMMA_RESOLVER` is set.
-        dflash_rung.configure(
+        dflash_rung.configure_with_settings(
             num_drafts + 1,
             args.dflash_gamma.is_some(),
             metrale_model_layers::layers::qwen3_ssm::gdn_flags::gdn_woa_enabled(),
+            drafter,
+        );
+        dflash_rung.set_ladder(args.dflash_draft_ladder_resolved.clone());
+        dflash_rung.set_adaptive_k(
+            args.dflash_args
+                .dflash_adaptive_k_resolved
+                .clone()
+                .map(metrale_speculative::dflash_adaptive_k::AdaptiveK::new),
         );
     }
 

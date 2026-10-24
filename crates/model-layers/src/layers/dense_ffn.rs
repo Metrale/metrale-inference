@@ -107,8 +107,8 @@ pub struct DenseFfnLayer {
     // `nvfp4_silu_mul_quant` or `nvfp4_scale_bf16`).
     nvfp4_mmq_nc_k: KernelHandle,
     nvfp4_mmq_wc_k: KernelHandle,
-    /// 2026-09-25: The 16-, 32- and 64-row MMQ tiles, chosen for m <= 16, 32 or 64
-    /// (`mmq_small_tile_enabled`, `mmq_tile64_enabled`). A zero handle keeps the 128-row tile.
+    /// 2026-09-25: The 16-, 32- and 64-row MMQ tiles, chosen for m <= 16, 32 or 64. A zero handle
+    /// keeps the 128-row tile; `OpsLevers::mmq_small_tile` and `mmq_tile64` off leave it zero.
     nvfp4_mmq16_nc_k: KernelHandle,
     nvfp4_mmq16_wc_k: KernelHandle,
     nvfp4_mmq32_nc_k: KernelHandle,
@@ -150,9 +150,9 @@ pub struct DenseFfnLayer {
     /// 2026-09-25: `w8a16_gemv_batch16` for the opt-in 5..=32-row tier; zero when the target lacks
     /// it. Rule: `batch16_decode::batch16_plan`.
     w8a16_gemv_batch16_k: KernelHandle,
-    /// 2026-09-25: Whether the batch16 tier is armed (`METRALE_FFN_BATCH16=1`), copied from
-    /// `ffn_batch16_enabled()` at construction. A field, so the dispatch tests can set either
-    /// value without touching the process-wide `OnceLock`.
+    /// 2026-09-25: Whether the batch16 tier is armed (`METRALE_FFN_BATCH16`), copied from
+    /// `DenseFfnLevers::batch16` at construction. A field, so the dispatch tests can set either
+    /// value without building the levers.
     batch16_enabled: bool,
     /// 2026-09-25: `w8a16_gemm_m16`, the tensor-core tier `w8_gemm!` tries ahead of batch16 at
     /// 5..=32 rows when `m16_tc` is on; zero when the target lacks the module. Rule:
@@ -161,7 +161,7 @@ pub struct DenseFfnLayer {
     /// 2026-09-25: The 64-wide N tile twin, used when `METRALE_FFN_M16_TC_NTILE=64` and it
     /// resolved; otherwise the 32-wide kernel runs (`m16_tc::m16_tc_kernel`).
     w8a16_gemm_m16_n64_k: KernelHandle,
-    /// 2026-09-25: `m16_tc::m16_tc_levers().ffn`, copied at construction: the target's `[defaults]
+    /// 2026-09-25: `M16TcLevers::of(..).ffn`, copied at construction: the target's `[defaults]
     /// ffn_m16_tc`, overridden by `METRALE_FFN_M16_TC`, or by `METRALE_M16_TC` when that is
     /// unset. A field for the same reason as `batch16_enabled`.
     m16_tc: bool,
@@ -180,7 +180,7 @@ pub struct DenseFfnLayer {
     per_token_group_quant_fp8_k: ops::Fp8ActQuant,
     fp8_gemm_t_blockscaled_k: KernelHandle,
     // 2026-09-25: Activation-scale layout adapter for the cuBLASLt arm of `w8a8_gemm`. When
-    // `ops::cublas_scale_layout_kmajor()` holds, a zero handle makes that arm decline and the
+    // `OpsLevers::cublas_kmajor` holds, a zero handle makes that arm decline and the
     // in-tree GEMM run.
     fp8_act_scale_kmajor_k: KernelHandle,
     /// 2026-09-25: The `[2*inter, hidden]` FP8 gate+up weight installed by `set_fp8_gate_up_fused`;
@@ -218,29 +218,22 @@ pub struct DenseFfnLayer {
     // prefill on the dequant path.
     q2_0_mmq_nc_k: KernelHandle,
     q2_0_mmq_wc_k: KernelHandle,
+    /// 2026-10-17: The levers `finalize_q4k_load` and `finalize_nvfp4_mmq_load` read.
+    mmq_load: MmqLoadLevers,
 }
 
-/// 2026-09-25: The 16/32/64-row MMQ tiles: on unless `METRALE_NO_MMQ_SMALL_TILE` is exactly `1`.
-/// Read once per process.
-fn mmq_small_tile_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_NO_MMQ_SMALL_TILE").as_deref() != Ok("1"))
-}
-
-/// 2026-09-25: The 64-row MMQ tile: on unless `METRALE_NO_MMQ_TILE64` is exactly `1`;
-/// `METRALE_NO_MMQ_SMALL_TILE=1` also turns it off. Read once per process.
-fn mmq_tile64_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_NO_MMQ_TILE64").as_deref() != Ok("1"))
-}
 impl DenseFfnLayer {
-    pub fn new(weights: DenseFfnWeights, gpu: &dyn GpuBackend) -> Result<Self> {
-        Self::new_with_activation(weights, FfnActivation::SiLU, gpu)
+    pub fn new(
+        weights: DenseFfnWeights,
+        gpu: &dyn GpuBackend,
+        lc: crate::load_context::LoadContext<'_>,
+    ) -> Result<Self> {
+        Self::new_with_activation(weights, FfnActivation::SiLU, gpu, lc)
     }
 
     /// 2026-09-25: Load-time setup for the Q4_K MMQ prefill arm. Returns at once for packed-Q2 or
     /// FP8 layers, when one of the four Q4_K kernels is missing, or when `METRALE_FFN_MMQ` is
-    /// unset. Otherwise it builds the gate/up Q4_K copies and the down copy (int8 when
+    /// unset (`MmqLoadLevers`). Otherwise it builds the gate/up Q4_K copies and the down copy (int8 when
     /// `int8_gemm_faith2` and `requant_a_bf16_int8` resolved and `METRALE_FFN_MMQ_DOWN_Q4K` is
     /// unset, Q4_K otherwise), synchronizes `stream`, and frees the transposed `_t` copies.
     pub fn finalize_q4k_load(
@@ -263,7 +256,7 @@ impl DenseFfnLayer {
             && self.q4k_quant_act_k.0 != 0
             && self.q4k_quant_w_k.0 != 0
             && self.dequant_nvfp4_bf16_k.0 != 0
-            && std::env::var_os("METRALE_FFN_MMQ").is_some();
+            && self.mmq_load.ffn_mmq;
         if !q4k_active {
             return Ok(());
         }
@@ -271,7 +264,7 @@ impl DenseFfnLayer {
         self.build_q4k_gate_up(gpu, h, inter, stream)?;
         let down_faith2 = self.int8_faith2_k.0 != 0
             && self.requant_a_int8_k.0 != 0
-            && std::env::var_os("METRALE_FFN_MMQ_DOWN_Q4K").is_none();
+            && !self.mmq_load.ffn_mmq_down_q4k;
         self.finish_q4k_load(gpu, h, inter, stream, down_faith2)
     }
 
@@ -301,12 +294,12 @@ impl DenseFfnLayer {
             && self.nvfp4_silu_scaled_k.0 != 0
             && matches!(self.activation, FfnActivation::SiLU)
             && self.mmq_gate_up_declared()
-            && std::env::var_os("METRALE_NO_FFN_NVFP4_MMQ").is_none();
+            && self.mmq_load.ffn_nvfp4_mmq;
         if !active {
             return Ok(());
         }
         self.build_nvfp4_mmq_gate_up(gpu, h, inter, stream)?;
-        let down_mmq = std::env::var_os("METRALE_NO_FFN_NVFP4_MMQ_DOWN").is_none();
+        let down_mmq = self.mmq_load.ffn_nvfp4_mmq_down;
         self.finish_nvfp4_mmq_load(gpu, h, inter, stream, down_mmq)
     }
 
@@ -402,6 +395,11 @@ pub mod batch16_decode;
 #[path = "dense_ffn_m16_tc.rs"]
 pub mod m16_tc;
 
+/// 2026-10-18: The dense FFN's levers, resolved once from the settings (`ModelLevers::ffn`).
+#[path = "dense_ffn_levers.rs"]
+mod levers;
+pub use levers::DenseFfnLevers;
+
 /// 2026-09-25: The fused FP8 gate+up GEMM (`ffn_gateup_fused`).
 #[path = "dense_ffn_gateup_fused.rs"]
 pub mod gateup_fused;
@@ -415,6 +413,7 @@ mod w8a8;
 /// 2026-09-26: The `ensure_*_weight` builders and the steps of the `finalize_*_load` functions.
 #[path = "dense_ffn_load.rs"]
 mod load;
+use load::MmqLoadLevers;
 
 /// 2026-09-26: The weight-overlay installers and the LoRA delta launches.
 #[path = "dense_ffn_overlays.rs"]

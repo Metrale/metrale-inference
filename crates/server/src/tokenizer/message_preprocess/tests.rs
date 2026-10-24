@@ -165,7 +165,11 @@ fn render_holo_model_template(messages: &[Value], enable_thinking: bool) -> Stri
     // 2026-09-26: The same conversion `load_config_template` applies to a model's own
     // template.
     let converted = super::super::jinja_helpers::convert_python_jinja_to_minijinja(&raw);
-    let env = super::super::jinja_helpers::build_jinja_env(&converted).expect("template compiles");
+    let env = super::super::jinja_helpers::build_jinja_env_with(
+        &converted,
+        crate::tokenizer::ToolJsonStyle::Compact,
+    )
+    .expect("template compiles");
     let tmpl = env.get_template("chat").unwrap();
     let (prepared, effective) = preprocess(messages, enable_thinking);
     let reasoning_effort: minijinja::Value = if effective { "high" } else { "none" }.into();
@@ -268,7 +272,11 @@ fn holo_autocloses_think_before_tool_call() {
 
     let raw = std::fs::read_to_string(HOLO_MODEL_TEMPLATE).unwrap();
     let converted = super::super::jinja_helpers::convert_python_jinja_to_minijinja(&raw);
-    let env = super::super::jinja_helpers::build_jinja_env(&converted).unwrap();
+    let env = super::super::jinja_helpers::build_jinja_env_with(
+        &converted,
+        crate::tokenizer::ToolJsonStyle::Compact,
+    )
+    .unwrap();
     let tmpl = env.get_template("chat").unwrap();
     let unrepaired = tmpl
         .render(minijinja::context! {

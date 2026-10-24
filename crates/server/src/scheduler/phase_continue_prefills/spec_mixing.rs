@@ -58,11 +58,9 @@ mod tests {
     /// width gate disagree: `2..=mtp_max_seqs()`.
     #[test]
     fn divergence_from_the_real_dispatch_gate_is_exactly_two_through_the_cap() {
-        // 2026-09-25: The variable changes the cap, so the test checks
-        // only the default.
-        if std::env::var_os("METRALE_NO_MTP_K_LADDER").is_some() {
-            return;
-        }
+        // 2026-10-17: `expected` is built from the cap in force, so the test holds for
+        // any cap of at least one (the ladder variables only move it between 4 and the
+        // default); it no longer skips when one is set.
         let cap = metrale_model_layers::speculative::mtp_max_seqs();
         // 2026-09-25: `spec_width_ok` (core/lane_decode.rs) allows MTP at
         // `active.len() <= cap`.

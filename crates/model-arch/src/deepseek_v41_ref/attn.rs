@@ -11,8 +11,7 @@
 //! then `wo_b`). Also the RoPE, window and fp8 helpers the compressed layers
 //! and `attn_v41` share.
 //!
-//! Precision: every projection is `linear_bf16` (f32 accumulate, bf16
-//! result), RMSNorm is f32 back to bf16, RoPE multiplies in f32 and writes
+//! Precision: every projection is a bf16-result `linear` (f32 accumulate), RMSNorm is f32 back to bf16, RoPE multiplies in f32 and writes
 //! bf16, the fp8 round trip is bf16-exact (e4m3 times a power of two), and
 //! `sparse_attn` runs in f32 and returns bf16. The tests compare tensors at
 //! bf16 tolerance and the window indices exactly.
@@ -26,9 +25,9 @@
 //! Owner: model-arch, DeepSeek-V4.1 reference.
 //! Invariants: none beyond the types.
 
-use super::engram::{e4m3_to_f32, f32_to_e4m3_rne};
+use super::engram::f32_to_e4m3_rne;
 use super::hc::rms_norm;
-use super::moe::linear_bf16;
+use super::mat::{OutPrec, Weight, e4m3, linear, linear_grouped};
 use super::to_bf16_rne;
 
 const FP8_MAX: f32 = 448.0;
@@ -55,7 +54,7 @@ pub fn act_quant_inplace(x: &mut [f32]) {
         let s = pow2_ceil(amax / FP8_MAX);
         for v in blk.iter_mut() {
             let q = f32_to_e4m3_rne((*v / s).clamp(-FP8_MAX, FP8_MAX));
-            *v = to_bf16_rne(e4m3_to_f32(q) * s);
+            *v = to_bf16_rne(e4m3(q) * s);
         }
     }
 }
@@ -184,17 +183,17 @@ pub fn sparse_attn(
     o
 }
 
-/// 2026-09-25: The layer's parameters, all bf16 values except the f32 sink;
-/// projections are `[out, in]`.
-pub struct AttnWeights<'a> {
+/// 2026-09-25: The layer's parameters: f32 sink, bf16 norms, projections `[out, in]` in
+/// whatever storage `W` is (bf16 values on the fixture).
+pub struct AttnWeights<'a, W: Weight + ?Sized = [f32]> {
     pub sink: &'a [f32],
-    pub wq_a: &'a [f32],
+    pub wq_a: &'a W,
     pub q_norm: &'a [f32],
-    pub wq_b: &'a [f32],
-    pub wkv: &'a [f32],
+    pub wq_b: &'a W,
+    pub wkv: &'a W,
     pub kv_norm: &'a [f32],
-    pub wo_a: &'a [f32],
-    pub wo_b: &'a [f32],
+    pub wo_a: &'a W,
+    pub wo_b: &'a W,
 }
 
 pub struct AttnCfg {
@@ -233,14 +232,50 @@ pub struct AttnRun {
     pub out: Vec<f32>,
 }
 
+/// 2026-10-19: The output projection after the inverse rotation: `o` `[seqlen][nh * hd]` to
+/// `[seqlen][dim]`. `wo_a` is block-diagonal over `groups` (`[groups * o_rank, nh * hd /
+/// groups]`), then `wo_b`. With `o_act_quant` (the 1017 revision) `o` is fp8 QDQ'd in blocks
+/// of 32 first; the earlier revision fed it as it is.
+#[allow(clippy::too_many_arguments)]
+pub fn o_projection<W: Weight + ?Sized>(
+    w: &AttnWeights<'_, W>,
+    o: &[f32],
+    seqlen: usize,
+    width: usize,
+    groups: usize,
+    o_rank: usize,
+    dim: usize,
+    o_act_quant: bool,
+) -> Vec<f32> {
+    let quantized;
+    let o = if o_act_quant {
+        let mut q = o.to_vec();
+        act_quant_inplace(&mut q);
+        quantized = q;
+        &quantized
+    } else {
+        o
+    };
+    let og = linear_grouped(
+        w.wo_a,
+        o,
+        seqlen,
+        groups,
+        width / groups,
+        o_rank,
+        OutPrec::Bf16,
+    );
+    linear(w.wo_b, &og, seqlen, groups * o_rank, dim, OutPrec::Bf16)
+}
+
 /// 2026-09-25: The ratio-0 attention forward. `x`: `[seqlen][dim]` bf16 values;
 /// `fc` from [`freqs_cis`] over the maximum sequence length. Writes the new kv
 /// rows into `cache`'s ring.
-pub fn attention(
+pub fn attention<W: Weight + ?Sized>(
     x: &[f32],
     seqlen: usize,
     start_pos: usize,
-    w: &AttnWeights,
+    w: &AttnWeights<'_, W>,
     c: &AttnCfg,
     fc: &[(f32, f32)],
     cache: &mut WindowCache,
@@ -249,13 +284,13 @@ pub fn attention(
     let pos: Vec<usize> = (0..seqlen).map(|t| start_pos + t).collect();
 
     let qr = rms_norm(
-        &linear_bf16(x, w.wq_a, seqlen, c.dim, c.q_rank),
+        &linear(w.wq_a, x, seqlen, c.dim, c.q_rank, OutPrec::Bf16),
         w.q_norm,
         seqlen,
         c.q_rank,
         c.eps,
     );
-    let mut q = linear_bf16(&qr, w.wq_b, seqlen, c.q_rank, nh * hd);
+    let mut q = linear(w.wq_b, &qr, seqlen, c.q_rank, nh * hd, OutPrec::Bf16);
     let head_pos: Vec<usize> = pos
         .iter()
         .flat_map(|&p| std::iter::repeat_n(p, nh))
@@ -263,7 +298,7 @@ pub fn attention(
     apply_rotary(&mut q, hd, rd, &head_pos, fc, false);
 
     let mut kv = rms_norm(
-        &linear_bf16(x, w.wkv, seqlen, c.dim, hd),
+        &linear(w.wkv, x, seqlen, c.dim, hd, OutPrec::Bf16),
         w.kv_norm,
         seqlen,
         hd,
@@ -297,20 +332,7 @@ pub fn attention(
     let mut o = o_sa.clone();
     apply_rotary(&mut o, hd, rd, &head_pos, fc, true);
 
-    // 2026-09-25: wo_a is [groups][o_rank][heads_per_group * hd], then wo_b.
-    let gw = nh * hd / c.groups;
-    let mut og = vec![0f32; seqlen * c.groups * c.o_rank];
-    for t in 0..seqlen {
-        for g in 0..c.groups {
-            let ov = &o[t * nh * hd + g * gw..t * nh * hd + (g + 1) * gw];
-            for r in 0..c.o_rank {
-                let wr = &w.wo_a[(g * c.o_rank + r) * gw..(g * c.o_rank + r + 1) * gw];
-                og[(t * c.groups + g) * c.o_rank + r] =
-                    to_bf16_rne(ov.iter().zip(wr).map(|(a, b)| a * b).sum());
-            }
-        }
-    }
-    let out = linear_bf16(&og, w.wo_b, seqlen, c.groups * c.o_rank, c.dim);
+    let out = o_projection(w, &o, seqlen, nh * hd, c.groups, c.o_rank, c.dim, false);
     AttnRun {
         q,
         kv_rows,

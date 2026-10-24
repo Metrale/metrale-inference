@@ -9,6 +9,8 @@
 //!   a frame's sides, or blanks outside a frame, so boxes line up either way.
 //! - Inside a frame a connector is always drawn on-chip; outside it uses the edge's state.
 
+use crate::prelude::*;
+
 use super::glyphs::{Frame, Set};
 use super::labels::{Geo, INDENT, WIRE, badge, edge_label, format_label};
 use super::rows::Row;

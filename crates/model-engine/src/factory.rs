@@ -16,9 +16,9 @@ use metrale_model_arch::mistral_loader::MistralWeightLoader;
 use metrale_model_arch::weight_loader::LongcatWeightLoader;
 use metrale_model_arch::weight_loader::Qwen4ExpWeightLoader;
 use metrale_model_arch::weight_loader::{
-    DeepSeekV4WeightLoader, DflashConfig, Gemma4WeightLoader, Glm5NextWeightLoader,
-    LagunaWeightLoader, MinimaxM2WeightLoader, ModelWeightLoader, NemotronHWeightLoader,
-    NllbWeightLoader, Qwen3VLWeightLoader, Qwen3WeightLoader, Qwen35DenseWeightLoader,
+    DedicatedRuntimeLoader, DeepSeekV4WeightLoader, DflashConfig, Gemma4WeightLoader,
+    Glm5NextWeightLoader, LagunaWeightLoader, MinimaxM2WeightLoader, ModelWeightLoader,
+    NemotronHWeightLoader, Qwen3VLWeightLoader, Qwen3WeightLoader, Qwen35DenseWeightLoader,
     Qwen35WeightLoader, Step3p7WeightLoader,
 };
 
@@ -36,6 +36,11 @@ pub struct DflashBuildArgs<'a> {
     pub drafter_config: DflashConfig,
     pub gamma: Option<usize>,
     pub window_size: Option<usize>,
+    /// 2026-10-10: The drafter's tensor-parallel degree (`--draft-tp-size`): 1, or the world
+    /// size to split the drafter over every rank (`dflash_head::tp`).
+    pub tp_size: usize,
+    /// 2026-10-10: The drafter's weight copies (`--draft-weight-quantization`).
+    pub weight_quant: metrale_model_arch::dflash_head::DraftWeightQuantization,
 }
 
 /// 2026-09-25: LoRA inputs for [`build_model`] (`--lora-adapter NAME=PATH`):
@@ -75,7 +80,8 @@ pub fn loader_for_config(config: &ModelConfig) -> Result<Box<dyn ModelWeightLoad
         }
         "qwen3_6_moe" | "holo3_1_moe" => Ok(Box::new(Qwen35WeightLoader)),
         "nemotron_h" | "nemotron_h_puzzle" => Ok(Box::new(NemotronHWeightLoader)),
-        "m2m_100" | "nllb" => Ok(Box::new(NllbWeightLoader)),
+        "m2m_100" | "nllb" => Ok(Box::new(DedicatedRuntimeLoader::NLLB)),
+        "llama_nemotron_vl" => Ok(Box::new(DedicatedRuntimeLoader::EMBEDDING)),
         "gemma4" | "gemma_4" => Ok(Box::new(Gemma4WeightLoader)),
         "mistral" => Ok(Box::new(MistralWeightLoader)),
         "longcat_flash_ngram" | "longcat_flash" => Ok(Box::new(LongcatWeightLoader)),
@@ -94,7 +100,7 @@ pub fn loader_for_config(config: &ModelConfig) -> Result<Box<dyn ModelWeightLoad
         )),
         _ => bail!(
             "Unsupported model type: '{}' (normalized: '{}'). \
-             Supported: qwen3_next, glm5_next, qwen3_5_moe, qwen3_5, qwen3_6_moe, holo3_1_moe, qwen3_vl_moe, nemotron_h, nemotron_h_puzzle, gemma4, mistral, minimax_m2, step3p7, laguna, deepseek_v4, qwen4_exp, m2m_100, deepseek_v41",
+             Supported: qwen3_next, glm5_next, qwen3_5_moe, qwen3_5, qwen3_6_moe, holo3_1_moe, qwen3_vl_moe, nemotron_h, nemotron_h_puzzle, gemma4, mistral, minimax_m2, step3p7, laguna, deepseek_v4, qwen4_exp, m2m_100, deepseek_v41, llama_nemotron_vl",
             config.model_type,
             normalized,
         ),
@@ -153,6 +159,7 @@ mod tests {
             None,
             None,
             None,
+            std::sync::Arc::new(metrale_model_layers::lever_equivalence::defaults()),
         );
         match result {
             Err(e) => assert!(e.to_string().contains("Unsupported model type: 'llama'")),
@@ -183,6 +190,7 @@ mod tests {
             "step3p7",
             "laguna",
             "deepseek_v4",
+            "llama_nemotron_vl",
             // 2026-09-25: Case, hyphens and dots are normalized before the match.
             "QWEN3-NEXT",
             "nemotron.h.puzzle",
@@ -204,33 +212,45 @@ mod tests {
     // optional hooks return their defaults.
     #[test]
     fn nllb_mandatory_generic_loads_fail_fast() {
-        let mut config = ModelConfig::qwen3_next_80b_nvfp4();
-        config.model_type = "nllb".to_string();
-        let loader = loader_for_config(&config).unwrap();
-        let store = WeightStore::empty();
-        let gpu = metrale_gpu_runtime::gpu::mock::MockGpuBackend::new();
+        // 2026-10-24: The embedding model shares the marker; each names its own runtime.
+        for (model_type, kind) in [
+            ("nllb", "encoder-decoder"),
+            ("llama_nemotron_vl", "embedding"),
+        ] {
+            let mut config = ModelConfig::qwen3_next_80b_nvfp4();
+            config.model_type = model_type.to_string();
+            let loader = loader_for_config(&config).unwrap();
+            let store = WeightStore::empty();
+            let gpu = metrale_gpu_runtime::gpu::mock::MockGpuBackend::new();
 
-        let errors = [
-            loader
-                .load_layers(&store, &config, &gpu, &[])
-                .err()
-                .expect("generic layer load unexpectedly succeeded"),
-            loader
-                .load_embedding(&store, &config, &gpu)
-                .expect_err("generic embedding load unexpectedly succeeded"),
-            loader
-                .load_final_norm(&store, &config, &gpu)
-                .expect_err("generic final-norm load unexpectedly succeeded"),
-            loader
-                .load_lm_head(&store, &config, &gpu)
-                .expect_err("generic LM-head load unexpectedly succeeded"),
-        ];
-        for err in errors {
-            assert!(
-                err.to_string()
-                    .contains("dedicated GPU encoder-decoder runtime"),
-                "unexpected fail-fast diagnostic: {err}"
-            );
+            let errors = [
+                loader
+                    .load_layers(
+                        &store,
+                        &config,
+                        &gpu,
+                        &[],
+                        metrale_model_layers::lever_equivalence::DefaultLoad::at_defaults().lc(),
+                    )
+                    .err()
+                    .expect("generic layer load unexpectedly succeeded"),
+                loader
+                    .load_embedding(&store, &config, &gpu)
+                    .expect_err("generic embedding load unexpectedly succeeded"),
+                loader
+                    .load_final_norm(&store, &config, &gpu)
+                    .expect_err("generic final-norm load unexpectedly succeeded"),
+                loader
+                    .load_lm_head(&store, &config, &gpu)
+                    .expect_err("generic LM-head load unexpectedly succeeded"),
+            ];
+            for err in errors {
+                assert!(
+                    err.to_string()
+                        .contains(&format!("dedicated GPU {kind} runtime")),
+                    "unexpected fail-fast diagnostic: {err}"
+                );
+            }
         }
     }
 }

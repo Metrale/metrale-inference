@@ -16,10 +16,47 @@ use crate::tool_parser;
 
 use super::chat_blocking::{extract_hoisted_tool_calls, merge_hoisted_tool_calls};
 
+/// 2026-10-09: Under `ChatLevers::log_tool_raw`, log `tokens` decoded with special tokens
+/// kept, so a turn's role and stop markers show. `what` names the response. Only the
+/// tokens the response received are here: a streamed EOS and an EOS the scheduler held
+/// back never reach it (the `metrale::eos` debug target logs the held-back ones).
+pub(super) fn log_raw_generation(state: &AppState, tokens: &[u32], what: &str) {
+    if !state.chat.log_tool_raw {
+        return;
+    }
+    match state.tokenizer.decode_with_special(tokens) {
+        Ok(text) => tracing::info!(
+            target: "metrale::tool_debug",
+            "raw generation ({what}, {} tokens, special tokens kept): {text:?}",
+            tokens.len()
+        ),
+        Err(e) => tracing::warn!(
+            target: "metrale::tool_debug",
+            "raw generation ({what}): decode failed: {e:#}"
+        ),
+    }
+}
+
+/// 2026-10-13: The content vLLM returns beside a reasoning split. Empty content is
+/// null (`parser_engine.py`: `content or None`). When `tool_choice` forces a call
+/// (`required` or a named tool), vLLM sends `""` instead (`serving.py`:
+/// `content or ""`).
+pub(super) fn vllm_split_content(
+    content: Option<String>,
+    forced_tool_choice: bool,
+) -> Option<String> {
+    let content = content.filter(|c| !c.is_empty());
+    if forced_tool_choice {
+        Some(content.unwrap_or_default())
+    } else {
+        content
+    }
+}
+
 /// 2026-09-26: Build the assistant message and finish reason for one choice: tool
 /// parsing and validation, content stripping, and the refusal classifier. It awaits
 /// nothing, so it is not `async`. `matched_stop` and `logprobs` are left `None` for the
-/// caller.
+/// caller. `forced_tool_choice` is the request's `tool_choice_required`.
 pub(super) fn build_choice_message(
     state: &AppState,
     req: &crate::ir::ChatRequest,
@@ -27,18 +64,43 @@ pub(super) fn build_choice_message(
     reasoning_content_i: Option<String>,
     output_text_i: String,
     tools_active: bool,
+    forced_tool_choice: bool,
     cwd_hint: Option<&str>,
     choice_idx: usize,
 ) -> ir::Choice {
-    let _ = response;
+    log_raw_generation(
+        state,
+        &response.output_tokens,
+        &format!("blocking choice {choice_idx}"),
+    );
     let mut reasoning_content = reasoning_content_i;
     let mut msg_content: Option<String> = Some(output_text_i.clone());
     let mut msg_tool_calls: Option<Vec<tool_parser::ToolCall>> = None;
     let mut msg_refusal: Option<String> = None;
     let mut finish_reason_i = response.finish_reason.clone();
+    let fail_closed = state
+        .tool_call_parser
+        .as_ref()
+        .is_some_and(|p| matches!(p.call_policy(), tool_parser::CallPolicy::FailClosed { .. }));
 
-    if tools_active {
-        if std::env::var("METRALE_LOG_TOOL_RAW").as_deref() == Ok("1") {
+    if tools_active && fail_closed {
+        // 2026-10-08: Every `<tool_call>` envelope is delivered, as written or as a
+        // refusal (`tool_parser::glm47`); nothing is repaired, dropped or cut.
+        let (content, verdicts) = tool_parser::parse_glm47_answer(&output_text_i, &req.tools);
+        msg_content = content;
+        if !verdicts.is_empty() {
+            let calls: Vec<tool_parser::ToolCall> = verdicts
+                .into_iter()
+                .map(tool_parser::Verdict::into_tool_call)
+                .collect();
+            crate::metrics::TOOL_CALLS_TOTAL.inc_by(calls.len() as u64);
+            msg_tool_calls = Some(calls);
+            if finish_reason_i != ir::FINISH_REASON_TIMEOUT {
+                finish_reason_i = "tool_calls".to_string();
+            }
+        }
+    } else if tools_active {
+        if state.chat.log_tool_raw {
             tracing::info!(
                 target: "metrale::tool_debug",
                 "raw pre-parse output (tools_active, choice {choice_idx}): {output_text_i:?}"
@@ -80,7 +142,11 @@ pub(super) fn build_choice_message(
             if let Some(cwd) = cwd_hint {
                 tool_parser::normalize_paths(&mut tool_calls_i, cwd);
             }
-            let validated = tool_parser::validate_tool_calls(tool_calls_i, &tools_ref);
+            let validated = tool_parser::validate_tool_calls(
+                tool_calls_i,
+                &tools_ref,
+                state.chat.toolcall_debug,
+            );
             if !validated.errors.is_empty() {
                 for err in &validated.errors {
                     tracing::warn!("Tool call validation error: {err}");
@@ -129,18 +195,31 @@ pub(super) fn build_choice_message(
 
     // 2026-09-26: No valid tool call (tools off, or nothing valid parsed): cut any
     // tool-call markup, and everything after it, from the content.
-    if msg_tool_calls.is_none() {
+    if msg_tool_calls.is_none() && !(tools_active && fail_closed) {
         msg_content = msg_content.map(|c| super::strip::strip_orphan_tool_markup(&c));
     }
 
     // 2026-09-26: With no tool call, content that opens with a known refusal pattern
     // (`refusal::detect`) moves to `refusal` and `content` becomes `None`.
     if msg_tool_calls.is_none()
+        && state.chat.refusal_detection
         && let Some(content_text) = msg_content.as_deref()
         && let Some(refusal_sentence) = crate::refusal::detect(content_text)
     {
         msg_refusal = Some(refusal_sentence);
         msg_content = None;
+    }
+
+    // 2026-10-13: Under a format whose tool call closes the reasoning (GLM), the split
+    // follows vLLM's GLM parser, and so does its content: an unclosed `<think>` leaves
+    // the answer empty, which vLLM returns as null.
+    if msg_refusal.is_none()
+        && state
+            .reasoning_parser
+            .as_deref()
+            .is_some_and(|p| p.tool_call_closes_reasoning())
+    {
+        msg_content = vllm_split_content(msg_content, forced_tool_choice);
     }
 
     // 2026-09-26: Arguments that do not parse as JSON become an empty object.

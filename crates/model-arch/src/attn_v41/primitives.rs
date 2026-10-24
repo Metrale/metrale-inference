@@ -3,7 +3,7 @@
 
 //! 2026-09-25: The per-stage launch wrappers every [`AttnV41`] path is built
 //! from: the projection GEMM/GEMV (bf16 or `Q2_K`), RMSNorm, RoPE and the
-//! fp8/fp4 quantisers.
+//! fp4 query rounding and the cache-row packing.
 //!
 //! Owner: model-arch, DeepSeek-V4.1.
 //! Invariants: none beyond the types.
@@ -12,7 +12,9 @@ use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
-use super::{AttnMat, AttnV41, QUANT_BLOCKS_PER_LAUNCH};
+use super::kv_codec::{RowPack, V41Row};
+use super::{AttnMat, AttnTp, AttnV41, QUANT_BLOCKS_PER_LAUNCH};
+use crate::deepseek_v41_ref::attn::FP8_BLOCK;
 use metrale_model_layers::layers::ops;
 use metrale_model_layers::layers::ops::{
     Q2K_MMQ_SMEM, kquant_mmq_gemm, kquant_mmvq_groups_w, kquant_mmvq_w, kquant_q8_1_rows,
@@ -20,6 +22,37 @@ use metrale_model_layers::layers::ops::{
 use metrale_model_layers::weight_map::DenseWeight;
 
 impl AttnV41 {
+    /// 2026-10-19: `tp.partial = a . w^T` in f32 (`[m, n]`), for the cross-rank sum. Only bf16
+    /// and FP8 block weights: the K-quant products have no f32-output form.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn gemm_f32_partial(
+        &self,
+        gpu: &dyn GpuBackend,
+        tp: &AttnTp,
+        a: DevicePtr,
+        w: AttnMat,
+        m: usize,
+        n: usize,
+        kk: usize,
+        stream: u64,
+    ) -> Result<()> {
+        let (a, w) = self.fp8.lower(gpu, a, w, m, n, kk, stream)?;
+        let AttnMat::Bf16(w) = w else {
+            anyhow::bail!("a tensor-parallel output projection must be bf16 or FP8 blocks");
+        };
+        ops::dense_gemm(
+            gpu,
+            tp.gemm_f32out,
+            a,
+            &DenseWeight { weight: w },
+            tp.reduce.partial(),
+            m as u32,
+            n as u32,
+            kk as u32,
+            stream,
+        )
+    }
+
     pub(super) fn gemm(
         &self,
         gpu: &dyn GpuBackend,
@@ -31,9 +64,11 @@ impl AttnV41 {
         kk: usize,
         stream: u64,
     ) -> Result<()> {
+        let (a, w) = self.fp8.lower(gpu, a, w, m, n, kk, stream)?;
         let w = match w {
             AttnMat::Bf16(p) => p,
             AttnMat::Q3K(_) => anyhow::bail!("attention projections are never Q3_K"),
+            AttnMat::Fp8Block { .. } => anyhow::bail!("an FP8 block projection was not lowered"),
             AttnMat::Q2K(blocks) => {
                 let (m, n, kk) = (m as u32, n as u32, kk as u32);
                 if m <= 8 {
@@ -186,23 +221,43 @@ impl AttnV41 {
             .launch(stream)
     }
 
-    pub(super) fn act_quant(
+    /// 2026-10-19: `rows` bf16 rows of `values` at `x`, quantised as the reference does, into
+    /// `row`'s packed rows at `out`, with the packing kernel resolved for its codec at init.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn pack_rows(
         &self,
         gpu: &dyn GpuBackend,
+        row: &V41Row,
         x: DevicePtr,
-        n_values: usize,
+        rows: usize,
+        values: usize,
+        out: DevicePtr,
         stream: u64,
     ) -> Result<()> {
-        let n_blocks = n_values / 32;
+        let group = match row.pack {
+            RowPack::Fp8E8m0 => FP8_BLOCK,
+            RowPack::Fp4 { group, .. } => usize::try_from(group)?,
+        };
+        let n_blocks = rows * values / group;
         if n_blocks == 0 {
             return Ok(());
         }
-        KernelLaunch::new(gpu, self.k.act_quant)
-            .grid([(n_blocks as u32).div_ceil(QUANT_BLOCKS_PER_LAUNCH), 1, 1])
-            .block([256, 1, 1])
-            .arg_ptr(x)
-            .arg_u32(n_blocks as u32)
-            .launch(stream)
+        let grid = [(n_blocks as u32).div_ceil(QUANT_BLOCKS_PER_LAUNCH), 1, 1];
+        let launch = match row.pack {
+            RowPack::Fp8E8m0 => KernelLaunch::new(gpu, self.k.kv_pack_fp8)
+                .grid(grid)
+                .block([256, 1, 1])
+                .arg_ptr(x)
+                .arg_u32(n_blocks as u32),
+            RowPack::Fp4 { e4m3_scale, .. } => KernelLaunch::new(gpu, self.k.kv_pack_fp4)
+                .grid(grid)
+                .block([256, 1, 1])
+                .arg_ptr(x)
+                .arg_u32(n_blocks as u32)
+                .arg_u32(group as u32)
+                .arg_u32(u32::from(e4m3_scale)),
+        };
+        launch.arg_ptr(out).arg_u32(values as u32).launch(stream)
     }
 
     pub(super) fn fp4_quant(

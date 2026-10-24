@@ -385,8 +385,16 @@ pub fn resume_swapped_seq(
 
 /// 2026-09-25: Mark a sequence for retirement as a failure. The caller
 /// keeps it in `active`; `finish_sequence` turns `error` into an error frame
-/// for the client instead of a normal finish.
+/// for the client instead of a normal finish. 2026-10-23: The frame's text
+/// leads with the CERF code ([`coded`] of `SequenceFailed`).
 pub fn fail_sequence(a: &mut ActiveSeq, msg: String) {
-    a.error = Some(msg);
+    let e = metrale_error::error!(metrale_error::ErrorCode::SequenceFailed, msg);
+    a.error = Some(coded(&e));
     a.finished = true;
+}
+
+/// 2026-10-23: `[0xNNNN Name] <form rendered>`: an error's code and text, for a client-facing
+/// frame that carries only text.
+pub fn coded(e: &metrale_error::Error) -> String {
+    format!("[{:#06x} {}] {e}", e.code().as_u16(), e.code().name())
 }

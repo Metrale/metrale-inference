@@ -9,7 +9,7 @@
 //! Owner: metrale-kernels tests.
 //! Invariants: none beyond the types.
 //!
-//! Without the guard, the vendored `quantize_impl.cuh` compiles
+//! Without the guard, `gb10/common/mmq/mmq_quantize.cuh` compiles
 //! `quantize_mmq_nvfp4_worker` to `NO_DEVICE_CODE` on such a target.
 
 use std::path::{Path, PathBuf};
@@ -46,18 +46,13 @@ fn every_mmq_export_is_inside_the_vendor_capability_guard() {
             .ends_with("#endif // Metrale Engine optional module")
     );
     assert_eq!(exports(inside).len(), 14);
-    // 2026-09-25: quantize_mmq_nvfp4_worker and the vendored MMA path use the
+    // 2026-09-25: quantize_mmq_nvfp4_worker and the MMQ block-scaled MMA path use the
     // same macro. Its range, 1200 up to 1300, leaves out B200's sm_100.
-    let vendor =
-        std::fs::read_to_string(root().join("gb10/qwen3.6-27b/nvfp4/q4k_vendor/common.cuh"))
-            .unwrap();
-    assert!(vendor.contains("#define GGML_CUDA_CC_BLACKWELL       1200"));
-    assert!(vendor.contains("#define GGML_CUDA_CC_RUBIN           1300"));
-    assert!(
-        vendor.contains(
-            "__CUDA_ARCH__ >= GGML_CUDA_CC_BLACKWELL && __CUDA_ARCH__ < GGML_CUDA_CC_RUBIN"
-        )
-    );
+    let device =
+        std::fs::read_to_string(root().join("gb10/common/mmq/mmq_device.cuh")).unwrap();
+    assert!(device.contains("#define MMQ_CC_BLACKWELL       1200"));
+    assert!(device.contains("#define MMQ_CC_RUBIN           1300"));
+    assert!(device.contains("__CUDA_ARCH__ >= MMQ_CC_BLACKWELL && __CUDA_ARCH__ < MMQ_CC_RUBIN"));
 }
 
 #[test]

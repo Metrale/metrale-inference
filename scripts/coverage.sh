@@ -10,7 +10,7 @@
 # Usage:
 #   scripts/coverage.sh lcov.info                  # write LCOV + print the summary
 #   COVERAGE_HTML=1 scripts/coverage.sh lcov.info  # ...also target/llvm-cov/html
-#   scripts/coverage.sh lcov.info -p metrale-server  # extra args go to the run
+#   scripts/coverage.sh lcov.info -p met  # extra args go to the run
 #
 # HTML is an env var rather than a passed-through flag on purpose: cargo-llvm-cov
 # rejects `--html` alongside `--lcov` ("--html may not be used together with
@@ -93,7 +93,7 @@ IGNORE_REGEX='(^|/)vendor/|(^|/)target/|/build\.rs$|(^|/)crates/(kernels|comm)/|
 # dedicated target dir, so every object in it is already instrumented.
 cargo llvm-cov clean --profraw-only
 status=0
-cargo llvm-cov --no-report --workspace --locked --no-fail-fast "$@" || status=$?
+cargo llvm-cov --no-report --workspace --features met/bench --locked --no-fail-fast "$@" || status=$?
 
 # Both reports read the same profdata — no rebuild, no re-run.
 cargo llvm-cov report --ignore-filename-regex "$IGNORE_REGEX" \

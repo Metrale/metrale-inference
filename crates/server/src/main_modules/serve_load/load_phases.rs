@@ -18,16 +18,17 @@ use crate::main_modules::serve_phases;
 
 pub(super) fn reserve_preflight(
     args: &cli::ServeArgs,
+    levers: &serve_phases::LoadLevers,
     config: &ModelConfig,
     gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
     free_mem: usize,
     model_dir: &Path,
-    ptx_set: &metrale_kernels::TargetPtxSet,
+    ptx_set: &metrale_kernel_set::TargetPtxSet,
 ) -> Result<serve_phases::ReservePreflight> {
     // 2026-09-26: Inputs the preflight's decode-ring auto-fit needs. The KV
     // dtype comes from `resolve_kv_dtype_str`, the resolver the cache uses
-    // below; a value that does not parse is taken as BF16 here, and the
-    // cache's own parse reports the error.
+    // below. 2026-10-18: A value that does not parse stops the load here with the
+    // registry's coded error (PCND); it used to be taken as BF16 until the cache's own parse.
     let (preflight_kv_dtype_str, _) = serve_phases::kv_cache::resolve_kv_dtype_str(
         args.kv_cache_dtype.as_deref(),
         ptx_set.behavior.default_kv_dtype,
@@ -35,23 +36,23 @@ pub(super) fn reserve_preflight(
     let post_load_inputs = serve_phases::PostLoadInputs {
         total_mem: gpu.total_memory().unwrap_or(0),
         model_dir,
-        kv_dtype: preflight_kv_dtype_str
-            .parse()
-            .unwrap_or(metrale_cache::kv_cache::KvCacheDtype::Bf16),
+        kv_dtype: preflight_kv_dtype_str.parse()?,
         w8a8_prefill_kernels:
             metrale_model_layers::layers::qwen3_attention::w8a8_prefill_kernels_loaded(gpu),
+        kv_floor_tokens: levers.kv_floor_tokens,
     };
-    serve_phases::preflight_reserve(args, config, free_mem, &post_load_inputs)
+    serve_phases::preflight_reserve(args, config, free_mem, &post_load_inputs, levers)
 }
 
 pub(super) fn load_weights(
     args: &cli::ServeArgs,
+    levers: &serve_phases::LoadLevers,
     config: &mut ModelConfig,
     model_dir: &Path,
     gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
     ep_rank: usize,
     ep_size: usize,
-    ptx_set: &metrale_kernels::TargetPtxSet,
+    ptx_set: &metrale_kernel_set::TargetPtxSet,
     free_mem: usize,
     inference_reserve: usize,
     total_reserve: usize,
@@ -62,13 +63,14 @@ pub(super) fn load_weights(
     let oom_reserve_bytes = args.oom_guard_mb * 1024 * 1024;
     tracing::info!(target: "met::main_modules::serve_load", "OOM guard reserve: {} MB", args.oom_guard_mb);
     let store = serve_phases::load_weight_store(
-        args,
         config,
         model_dir,
         gpu,
         ep_rank,
         ep_size,
         oom_reserve_bytes,
+        levers.fast_load,
+        levers.fast_load_prefetch_shards,
     )?;
 
     metrale_model_weights::weights::auto_detect_weight_prefix(&store, config);

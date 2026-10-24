@@ -100,7 +100,7 @@ fn mtp_cfg() -> ModelCfg {
     }
 }
 
-fn verify_k(name: &'static str, num_drafts: usize) -> Scenario {
+pub(super) fn verify_k(name: &'static str, num_drafts: usize) -> Scenario {
     let mut r = ReqSpec::new(1, 5, gen_eos(14, 10));
     r.draft_wrong_every = Some(4);
     Scenario {
@@ -132,7 +132,7 @@ fn batched_verify() -> Scenario {
     }
 }
 
-fn dflash(name: &'static str, n: u64) -> Scenario {
+pub(super) fn dflash(name: &'static str, n: u64) -> Scenario {
     let reqs: Vec<ReqSpec> = (1..=n)
         .map(|i| {
             let mut r = ReqSpec::new(i, 5, gen_eos(16, 10 * i as u32));

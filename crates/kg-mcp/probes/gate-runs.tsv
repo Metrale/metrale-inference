@@ -1,0 +1,4 @@
+date	binary_sha12	built_from	run	hits	need	mode	pass	embed_calls	http_200	client_timeouts	http_4xx	max_inputs	max_input_chars	max_batch_chars	note
+2026-10-23	(pre-amend)	90343cb04	1	10	8	hybrid	true	-	-	-	0	-	-	-	run log lost with the killed session; request shapes are in calls 1-174 of embed-calls.jsonl with run 2 and the partial run 3
+2026-10-23	(pre-amend)	90343cb04	2	-	8	hybrid	true	-	-	-	0	-	-	-	exit 0 (pass); its JSON was not kept
+2026-10-24	ef6bc7148ccc	2c8e63ab2	3	10	8	hybrid	true	84	35	49	0	64	2039	21761	rerun after the session kill; --data-dir data-p2 (not the live store)

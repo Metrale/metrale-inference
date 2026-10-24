@@ -133,10 +133,11 @@ pub fn gather(
     yes: bool,
     remote_only: bool,
     min_free_fraction: f64,
+    levers: &metrale_bench::levers::BenchLevers,
 ) -> Result<PreflightFacts> {
-    let head = gate::git_sha(root)?;
+    let head = gate::git_sha(root, levers.gate_sha.as_deref())?;
     let dirty_perf_paths = gate::dirty_perf_paths(root)?;
-    let store = metrale_bench::ArtifactStore::discover().context("locating METRALE_HOME")?;
+    let store = metrale_bench::ArtifactStore::discover(levers).context("locating METRALE_HOME")?;
     let metrale_home = store.root().display().to_string();
     let identity = gate::signing::load_or_create(store.root())
         .with_context(|| format!("loading the signing identity under {metrale_home}"))?;

@@ -11,8 +11,7 @@
 //! graph per `verify_batched_graph_key`. Embeds, KV-block allocation, the
 //! metadata, block-table and WY-table uploads, and the argmax readback run
 //! outside the graph; the uploads go to fixed addresses before every replay.
-//! `METRALE_NO_MTP_VERIFY_GRAPHS` (presence) or `METRALE_K4_DIAG=1` makes the
-//! forward eager.
+//! `METRALE_NO_MTP_VERIFY_GRAPHS` (presence) or `METRALE_K4_DIAG=1` makes the forward eager.
 //!
 //! Owner: model-engine (speculative verify).
 //! Invariants:
@@ -24,20 +23,20 @@
 
 #![allow(unused_imports, dead_code, clippy::too_many_arguments)]
 
+use super::super::lm_head_vocab_tp::HeadRanks;
 use anyhow::{Result, bail, ensure};
 
-/// 2026-09-25: Byte offsets of the batched-verify metadata from `meta_base`,
-/// all derived from `R = verify_e2::VERIFY_ROW_CAP`:
+/// 2026-09-25: Byte offsets of the batched-verify metadata from `meta_base`, all derived from
+/// `R = verify_e2::VERIFY_ROW_CAP`:
 ///   positions  u32 × R at [0, 4R)
 ///   seq_slot   u32 × R at [4R, 8R)
 ///   slots      i64 × R at [8R, 16R)
 ///   seq_lens   i32 × R at [16R, 20R)
-///   bt         i32 × R × max_blocks from 24R
+/// The block table lives in its own region since 2026-10-13 (`BlockTables`, `Region::Verify`).
 const VMETA_R: usize = super::verify_e2::VERIFY_ROW_CAP;
 const VMETA_SEQ_SLOT: usize = VMETA_R * 4;
 const VMETA_SLOTS: usize = VMETA_R * 8;
 const VMETA_SEQ_LENS: usize = VMETA_R * 16;
-const VMETA_BT: usize = VMETA_R * 24;
 use metrale_cache::kv_cache::PagedKvCache;
 use metrale_config::{LayerType, ModelConfig};
 use metrale_gpu_runtime::gpu::DevicePtr;
@@ -48,70 +47,14 @@ use crate::traits::{Model, SequenceState};
 use metrale_model_layers::layer::{AttnMetadataDev, ForwardContext, LayerState};
 use metrale_model_layers::layers::ops;
 
+mod can_batch;
 mod eager;
 mod graphs;
 mod mapped_argmax;
 mod readback;
 mod stage;
 
-pub(super) use mapped_argmax::mapped_argmax_host_dev;
-
 impl TransformerModel {
-    /// 2026-09-25: Whether `decode_verify_batched_dispatch` can take `ks.len()`
-    /// sequences with `ks[i]` rows each. The scheduler verifies the sequences
-    /// one at a time when it returns false.
-    ///
-    /// It requires `2 <= n <= VERIFY_WY_TABLE_SEQS`, `Σ ks <= VERIFY_ROW_CAP`,
-    /// no EP comm backend, a verify hidden stash (allocated only with a
-    /// proposer), no layer that declines `decode_verify_multi`, no HSS
-    /// (`cache_blocks_per_seq`), and, with an adapter loaded, no
-    /// `METRALE_LORA_NO_BATCH_VERIFY=1`. Without DFlash every `ks[i]` must be
-    /// in 2..=4. With DFlash the batch must be uniform with k in
-    /// 2..=`dflash_kgamma`, and `n * dflash_kgamma` must fit
-    /// `dflash_hidden_save_rows`.
-    pub(super) fn can_batch_verify_dispatch(&self, ks: &[usize]) -> bool {
-        let n = ks.len();
-        let shape_ok = if self.dflash_hidden_save.is_some() {
-            // 2026-09-25: DFlash: one k for the whole batch, any value a
-            // capture band holds, and a full band per sequence.
-            self.dflash_kgamma >= 2
-                && ks.iter().all(|&k| (2..=self.dflash_kgamma).contains(&k))
-                && ks.iter().all(|&k| k == ks[0])
-                && n * self.dflash_kgamma <= self.dflash_hidden_save_rows
-        } else {
-            ks.iter().all(|k| (2..=4).contains(k))
-        };
-        (2..=metrale_model_layers::layer::VERIFY_WY_TABLE_SEQS).contains(&n)
-            && shape_ok
-            && ks.iter().sum::<usize>() <= super::verify_e2::VERIFY_ROW_CAP
-            && self.comm.is_none()
-            // 2026-09-30: Under `--forward circuit` only when the executor compiles batched
-            // verifies (`CircuitExec::verify_batch`).
-            && self
-                .circuit
-                .read()
-                .as_ref()
-                .is_none_or(|e| {
-                    e.verify_batch
-                        .as_ref()
-                        .is_some_and(|v| ks.iter().sum::<usize>() as u64 <= v.max_rows)
-                })
-            && !(self.lora.is_some() && metrale_model_layers::lora::no_batch_verify())
-            && !self.verify_hidden_stash.is_null()
-            && !self
-                .layers
-                .iter()
-                .any(|l| l.decode_verify_multi_unsupported())
-            // 2026-09-25: HSS: `decode_multi_seq` takes no disk block ids, so
-            // history offloaded to disk would be missing.
-            && self
-                .kv_cache
-                .lock()
-                .config()
-                .cache_blocks_per_seq
-                .is_none()
-    }
-
     /// 2026-09-25: Verify `n = seqs.len()` sequences in one forward over
     /// `R = Σ ks` rows. `tokens` is flat and seq-major: row `off_i + j` is
     /// sequence `i`'s token `j`. Returns the argmax token of each row.
@@ -134,7 +77,7 @@ impl TransformerModel {
         self.gdn_woa_eligible
             .store(false, std::sync::atomic::Ordering::Release);
         let t_launch = std::time::Instant::now();
-        let mapped_argmax = mapped_argmax_host_dev(self.gpu.as_ref());
+        let mapped_argmax = self.mapped_argmax();
         let stream = self.gpu.default_stream();
         let h = self.config.hidden_size;
         let bf16 = 2usize;
@@ -203,12 +146,13 @@ impl TransformerModel {
         // 2026-09-25: METRALE_K4_DIAG=1 synchronises the stream after every
         // layer so a fault names its layer. It also turns graphs off
         // (`graphs_on` below), because a synchronise cannot be captured.
-        let k4_diag = super::verify_e2::k4_diag_enabled();
+        let k4_diag = self.settings.telemetry.k4_diag;
 
         // 2026-09-25: Stage the per-GDN-layer WY pointer tables before any
         // replay, at the batch's widest row count `k_max`. Table strides do
         // not depend on k (`VERIFY_WY_LAYER_STRIDE_BYTES`). NULL means no
         // tables were staged, and the layers get a NULL slice below.
+        seqs.iter_mut().try_for_each(|s| self.unswap_for_batch(s))?; // 2026-10-21: commit_swap.rs
         let wy_tables_base = self.upload_verify_wy_tables(&*seqs, k_max, &[], stream)?;
         // 2026-09-25: A write-on-accept request is honoured only with the WY
         // tables staged, since the fold reads them. `gdn_woa_bind` allocates
@@ -233,9 +177,15 @@ impl TransformerModel {
         // batch's, so the active rows keep their `off[i]`. Its extra pairs
         // become ghost rows this step must feed: pad metadata, pad embeds and
         // WY entries. Each ghost slot must be free and, with WY tables, its
-        // intermediate pool must cover the ghost's depth (the closure in
-        // `pick_verify_graph`).
-        let graphs_on = super::verify_e2::verify_graphs_enabled() && !k4_diag;
+        // intermediate pool must cover the ghost's depth (the closure in `pick_verify_graph`).
+        // 2026-10-09: With a comm backend under the decode graphs' rule (`verify_d.rs`):
+        // every rank runs this verify, so every rank captures and replays the same collectives.
+        let graphs_on = !self.settings.speculative.no_mtp_verify_graphs
+            && !k4_diag
+            && (self.comm.is_none() || self.levers.ep_graphs || self.layers_capture_with_comm())
+            // 2026-10-10: No capture past a layer's captured-row limit (GLM-5.3: below the
+            // routed-MoE grouped floor, whose host-side tile sizing a capture cannot run).
+            && self.rows_capturable(r_total);
         let graph_key = if graphs_on {
             self.verify_batched_graph_key(
                 &*seqs,
@@ -283,8 +233,26 @@ impl TransformerModel {
         if let Some(graph) = replay {
             // 2026-09-25: The graph reads this step's metadata and WY tables
             // from the fixed addresses refreshed above.
+            // 2026-10-09: As around the single-sequence verify replays (`verify_d.rs`): refuse
+            // a replay whose GLM-5.3 DSA indexer rows would pass their buffer, and after it
+            // bring each sequence's host-side indexer length to `seq_len + k`, which a replay
+            // does not advance. Every other layer's hooks do nothing.
             if graph.0 != 0 {
+                for (i, seq) in seqs.iter().enumerate() {
+                    for (l, layer) in self.layers.iter().enumerate() {
+                        layer.check_replay_room(&*seq.layer_states[l], seq.seq_len, ks[i])?;
+                    }
+                }
                 self.gpu.launch_graph(graph, stream)?;
+                for (i, seq) in seqs.iter_mut().enumerate() {
+                    for (l, layer) in self.layers.iter().enumerate() {
+                        layer.sync_replayed_step(
+                            seq.layer_states[l].as_mut(),
+                            seq.seq_len,
+                            ks[i],
+                        )?;
+                    }
+                }
             }
         } else {
             // 2026-09-25: No graph to replay: run the forward, under capture
@@ -335,8 +303,10 @@ impl TransformerModel {
                     config: &self.config,
                     dispatch: &self.dispatch,
                     moe_lora_route: self.decode_moe_route(),
+                    ab_levers: metrale_model_layers::layer::AbLevers::NONE,
                     derived: &self.derived,
                     levers: &self.levers,
+                    settings: &self.settings,
                     stats: &self.stats,
                     attn_metadata: Some(metadata),
                     profile: false,
@@ -351,6 +321,9 @@ impl TransformerModel {
                     midchunk_capture: None,
                 };
 
+                // 2026-10-09: Each sequence's length before this verify, for the layers that
+                // place rows by position themselves (`decode_verify_multi`).
+                let seq_lens_pre: Vec<usize> = seqs.iter().map(|s| s.seq_len).collect();
                 let mut seq_lens_vec: Vec<usize> = Vec::with_capacity(r_total);
                 let mut block_tables_vec: Vec<Vec<u32>> = Vec::with_capacity(r_total);
                 for (i, seq) in seqs.iter().enumerate() {
@@ -388,6 +361,7 @@ impl TransformerModel {
                     r_total,
                     n,
                     ks,
+                    &seq_lens_pre,
                     &off,
                     wy_tables_base,
                     k4_diag,
@@ -409,7 +383,13 @@ impl TransformerModel {
                     anyhow::bail!("K4_DIAG(batched): CUDA error after final norm: {e:#}");
                 }
 
-                self.lm_head_batched(normed, r_total as u32, self.buffers.logits(), stream)?;
+                self.lm_head_batched(
+                    normed,
+                    r_total as u32,
+                    self.buffers.logits(),
+                    HeadRanks::Every,
+                    stream,
+                )?;
 
                 if k4_diag && let Err(e) = self.gpu.synchronize(stream) {
                     anyhow::bail!("K4_DIAG(batched): CUDA error after lm_head_batched: {e:#}");
@@ -453,8 +433,7 @@ impl TransformerModel {
             static LAUNCH_US: AtomicU64 = AtomicU64::new(0);
             static D2H_US: AtomicU64 = AtomicU64::new(0);
             static N: AtomicU64 = AtomicU64::new(0);
-            static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-            if *ON.get_or_init(|| std::env::var("METRALE_MTP_TIMING").as_deref() == Ok("1")) {
+            if self.settings.telemetry.mtp_timing {
                 let d2h_us = t_d2h.elapsed().as_micros() as u64;
                 LAUNCH_US.fetch_add(launch_us, Ordering::Relaxed);
                 D2H_US.fetch_add(d2h_us, Ordering::Relaxed);

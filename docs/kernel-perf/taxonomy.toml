@@ -140,6 +140,14 @@ models = ["nllb-200-3.3b"]
 components = ["nllb"]
 shared_engine = false
 
+[[family]]
+id = "embed"
+label = "Embed"
+name = "Llama-Nemotron-Embed VL (text tower, mean-pooled embeddings)"
+models = ["llama-nemotron-embed-vl-1b-v2"]
+components = ["embed-pool"]
+shared_engine = false
+
 # ------------------------------------------------------------------------------------------------
 # Components. generic = true: every shared-engine family has it (attention, projections, norms,
 # ...). generic = false: only the families that list it. `sites` are path prefixes of Rust call
@@ -304,6 +312,12 @@ generic = false
 sites = ["crates/model-engine/src/model/nllb"]
 
 [[component]]
+id = "embed-pool"
+name = "Embedding pooling (masked mean over the text tower's last hidden state)"
+generic = false
+sites = ["crates/model-engine/src/model/embed"]
+
+[[component]]
 id = "lora"
 name = "LoRA adapters (BGMV shrink/expand)"
 generic = true
@@ -375,6 +389,10 @@ paths = ["crates/model-engine/src/model/nllb"]
 families = ["nllb"]
 
 [[family_site]]
+paths = ["crates/model-engine/src/model/embed"]
+families = ["embed"]
+
+[[family_site]]
 paths = ["crates/gpu-runtime/src/mlx_int8.rs"]
 families = ["qwen-gdn-dense"]
 
@@ -390,9 +408,14 @@ kind = "NLLB encoder/decoder op"
 names = ["nllb_*"]
 
 [[rule]]
+component = "embed-pool"
+kind = "masked mean pool"
+names = ["mean_pool_*"]
+
+[[rule]]
 component = "diag"
 kind = "microtest / smoke"
-names = ["fp4_microtest_*", "noop_smoke", "moe_w4a16_grouped_stream_probe", "lora_bgmv_*_stub"]
+names = ["noop_smoke", "lora_bgmv_*_stub"]
 
 [[rule]]
 component = "vision"
@@ -409,6 +432,21 @@ names = ["lora_bgmv_*", "moe_lora_*"]
 component = "spec"
 kind = "DFlash drafter"
 names = ["dflash2_*"]
+
+[[rule]]
+component = "spec"
+kind = "MTP verify helpers (device step, verdict, rank exchange)"
+names = ["glm5next_mtp_xchg_*", "k2_step_advance", "k2_verify_meta", "predicated_copy_2d", "mtp_k2_verdict"]
+
+[[rule]]
+component = "embed-head"
+kind = "screened LM head (INT8 screen, exact rescore)"
+names = ["screen_head_*"]
+
+[[rule]]
+component = "gemm-w4a4"
+kind = "L2 warm of the next projections' weights"
+names = ["l2_warm_ldcg"]
 
 # --- attention family -------------------------------------------------------------------------------
 [[rule]]
@@ -439,7 +477,7 @@ names = ["reshape_and_cache*", "kv_cache_append*", "fused_k_norm_rope_*cache*", 
 [[rule]]
 component = "kv-cache"
 kind = "TurboQuant rotation"
-names = ["wht_bf16_*", "tq_plus_innerq_apply_*"]
+names = ["wht_bf16_*", "tq_plus_innerq_apply_*", "tq128_dequant_bf16_*"]
 
 [[rule]]
 component = "attention"
@@ -449,7 +487,7 @@ names = ["paged_decode_attn*", "attention_decode*"]
 [[rule]]
 component = "attention"
 kind = "prefill (flash)"
-names = ["attn_prefill*", "attention_prefill", "attention_full"]
+names = ["attn_prefill*", "attention_prefill", "attention_full", "paged_prefill_attn_*"]
 
 [[rule]]
 component = "rope"
@@ -492,7 +530,7 @@ files = ["kernels/metal/*"]
 [[rule]]
 component = "moe"
 kind = "routing / top-k"
-names = ["moe_topk*", "moe_gate_topk*", "moe_hash_route*", "moe_router_*", "moe_v41_route_*", "moe_v41_router_*", "glm5next_router_topk", "nemotron_moe_topk_*", "dense_gemm_bf16_router"]
+names = ["moe_topk*", "moe_gate_topk*", "moe_hash_route*", "moe_router_*", "moe_v41_route_*", "moe_v41_router_*", "glm5next_router_topk*", "glm5next_router_gemv*", "nemotron_moe_topk_*", "dense_gemm_bf16_router"]
 
 [[rule]]
 component = "moe"
@@ -520,11 +558,6 @@ component = "ngram-mem"
 kind = "memory embedding"
 names = ["engram_*", "ple_*"]
 
-[[rule]]
-component = "quant"
-kind = "dequant / repack / transpose"
-names = ["w8a16_dequant", "w4a16_dequant"]
-
 # --- projection GEMM/GEMV by format -------------------------------------------------------------------
 [[rule]]
 component = "gemm-w4a4"
@@ -539,12 +572,12 @@ names = ["int8_*", "q2_0_*", "metrale_q*_mmq*", "kquant_mmvq_*", "mlx_int8_*", "
 [[rule]]
 component = "gemm-fp8"
 kind = "FP8 GEMM/GEMV"
-names = ["w8a8_gemv*", "w8a16_gemm*", "w8a16_gemv*", "w8a16_tc_rows_*", "fp8_gemm*", "fp8_fp8_gemm*", "fp8_gemv*", "dense_gemv_fp8w*", "w4a16_gemm_t_m128_v*", "fp8_gemm_t_blockscaled"]
+names = ["w8a8_gemv*", "w8a16_gemm*", "w8a16_gemv*", "w8a16_tc_rows_*", "fp8_gemm*", "fp8_fp8_gemm*", "fp8_gemv*", "dense_gemv_fp8w*", "w4a16_gemm_t_m128_v*", "fp8_gemm_t_blockscaled", "fp8_block_gemm*", "fp8_block_gemv*"]
 
 [[rule]]
 component = "gemm-nvfp4"
 kind = "NVFP4 W4A16 GEMM/GEMV"
-names = ["w4a16_*"]
+names = ["w4a16_*", "glm5next_dense_seg_*"]
 
 [[rule]]
 component = "gemm-bf16"
@@ -586,4 +619,4 @@ names = ["argmax_*", "softmax_topp", "feed_resolve"]
 [[rule]]
 component = "elementwise"
 kind = "activation / gate / residual"
-names = ["*silu*", "gelu*", "relu_squared*", "*sigmoid*", "softplus_*", "bias_add_*", "bf16_add*", "vector_add", "bf16_residual_add", "f32_residual_add", "bf16_scaled_add", "bf16_concat", "sigmoid_gate", "silu_gate", "metrale_nvfp4_silu_*"]
+names = ["*silu*", "gelu*", "relu_squared*", "*sigmoid*", "softplus_*", "bias_add_*", "bf16_add*", "bf16_residual_add", "bf16_scaled_add", "bf16_concat", "sigmoid_gate", "silu_gate", "metrale_nvfp4_silu_*"]

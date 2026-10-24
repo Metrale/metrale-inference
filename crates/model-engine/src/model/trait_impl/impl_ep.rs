@@ -21,6 +21,21 @@ impl ModelEp for TransformerModel {
         self.is_ep_dispatch()
     }
 
+    fn is_healthy(&self) -> bool {
+        self.comms_healthy()
+    }
+
+    fn attach_ctrl_comm(
+        &self,
+        bootstrap: &mut dyn FnMut(u64) -> Result<std::sync::Arc<dyn metrale_comm::CommBackend>>,
+    ) -> Result<()> {
+        self.attach_ctrl_comm_impl(bootstrap)
+    }
+
+    fn ep_prefill_batch_rows(&self) -> Option<usize> {
+        self.prefill_spans_rows_dispatch()
+    }
+
     fn ep_broadcast_cmd(&self, cmd: u32) -> Result<()> {
         self.ep_broadcast_cmd_dispatch(cmd)
     }
@@ -37,5 +52,35 @@ impl ModelEp for TransformerModel {
 
     fn ep_broadcast_tokens(&self, tokens: &[u32]) -> Result<Vec<u32>> {
         self.ep_broadcast_tokens_dispatch(tokens)
+    }
+
+    fn k2_fused_wire(&self) -> bool {
+        self.k2_fused_wire_impl()
+    }
+
+    fn ep_announce_k2_fused(
+        &self,
+        seq_id: u32,
+        tokens: [u32; 2],
+        flags: metrale_model_layers::speculative::K2Flags,
+    ) -> Result<()> {
+        self.ep_announce_k2_fused_impl(seq_id, tokens, flags)
+    }
+
+    fn ep_send_k2_verdict_after_propose(
+        &self,
+        verdict: metrale_model_layers::speculative::K2Verdict,
+    ) -> Result<()> {
+        if self.ctrl_send_verdict(verdict)? {
+            return Ok(());
+        }
+        self.ep_send_k2_verdict_staged(verdict)
+    }
+
+    fn ep_send_k2_verdict(
+        &self,
+        verdict: metrale_model_layers::speculative::K2Verdict,
+    ) -> Result<()> {
+        self.ep_send_k2_verdict_impl(verdict)
     }
 }

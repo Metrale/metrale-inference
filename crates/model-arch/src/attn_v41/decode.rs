@@ -21,25 +21,9 @@ use super::{
 use crate::deepseek_v41_ref::attn::window_topk_idxs;
 use metrale_model_layers::layers::ops::{kquant_mmvq_pair_w, kquant_q8_1_rows};
 
-/// 2026-09-25: `METRALE_DS41_SPARSE_SPLIT`, read once: the blocks per (token,
-/// head) that `attn_v41_sparse_attn` splits the output dimension across,
-/// 1..=8, default 2 (other values fall back to 2). Every block recomputes the
-/// same scores and sums its outputs in the same order, so the bytes do not
-/// depend on the value.
-fn sparse_split() -> u32 {
-    static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    *V.get_or_init(|| {
-        std::env::var("METRALE_DS41_SPARSE_SPLIT")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .filter(|&s| (1..=8).contains(&s))
-            .unwrap_or(2)
-    })
-}
-
 impl AttnV41 {
     /// 2026-09-25: q (low-rank, normed, up-projected, rotated) and kv (one
-    /// latent row per token, normed, rotated, fp8-rounded) from the normed
+    /// latent row per token, normed, rotated, packed as a window row into `kv_pack`) from the normed
     /// input `x`. Device work only: the positions are read from `pos` /
     /// `head_pos`.
     pub(super) fn q_kv_projections(
@@ -93,7 +77,7 @@ impl AttnV41 {
         self.rope(gpu, self.q, self.head_pos, m * nh, hd, yarn, false, stream)?;
         self.rmsnorm(gpu, false, self.kv_raw, w.kv_norm, self.kv, m, hd, stream)?;
         self.rope(gpu, self.kv, self.pos, m, hd, yarn, false, stream)?;
-        self.act_quant(gpu, self.kv, m * hd, stream)
+        self.pack_rows(gpu, &self.rows.window, self.kv, m, hd, self.kv_pack, stream)
     }
 
     /// 2026-09-25: Sparse attention over the selection in `idx` (`topk` entries
@@ -116,8 +100,8 @@ impl AttnV41 {
         let c = &self.cfg;
         let (nh, hd, dim) = (c.n_heads, c.head_dim, c.dim);
         let scale = (hd as f32).powf(-0.5);
-        KernelLaunch::new(gpu, self.k.sparse_attn)
-            .grid([m as u32, nh as u32, sparse_split()])
+        KernelLaunch::new(gpu, self.k.sparse_attn_packed)
+            .grid([m as u32, nh as u32, self.sparse_split])
             .block([256, 1, 1])
             .arg_ptr(self.q)
             .arg_ptr(rows_a)
@@ -143,17 +127,11 @@ impl AttnV41 {
         } else {
             self.wo_a_per_group(gpu, w, o_copy, m, stream)?;
         }
-        self.gemm(
-            gpu,
-            self.og,
-            w.wo_b,
-            self.out,
-            m,
-            dim,
-            c.groups * c.o_rank,
-            stream,
-        )?;
-        Ok(())
+        let k_ob = c.groups * c.o_rank;
+        match &self.tp {
+            None => self.gemm(gpu, self.og, w.wo_b, self.out, m, dim, k_ob, stream),
+            Some(tp) => self.gemm_f32_partial(gpu, tp, self.og, w.wo_b, m, dim, k_ob, stream),
+        }
     }
 
     /// 2026-09-25: The per-group `wo_a` path (bf16 `wo_a`, or m > 8): slice the
@@ -207,8 +185,12 @@ impl AttnV41 {
     /// a CUDA graph: false on kv and index sources, whose forward decides the
     /// compressor group and the index top-k on the host mid-forward (position
     /// parity, a score download). Every other layer is kernels and copies once
-    /// its per-token inputs are read from the device.
+    /// its per-token inputs are read from the device. False on every layer under tensor
+    /// parallelism, whose output needs the cross-rank reduce of `forward`.
     pub fn decode_capturable(&self, w: &AttnV41LayerWeights) -> bool {
+        if self.tp.is_some() {
+            return false;
+        }
         !w.role.is_kv_source && !w.role.is_index_source
     }
 
@@ -266,7 +248,7 @@ impl AttnV41 {
     ) -> Result<Option<DevicePtr>> {
         ensure!(
             self.decode_capturable(w),
-            "attn_v41: decode_prep on a kv/index source layer"
+            "attn_v41: decode_prep on a layer that cannot be captured (kv/index source, or tensor-parallel)"
         );
         self.decode_prep_role(w.role.ratio > 0, shared, gpu, start_pos, stream)
     }
@@ -351,7 +333,7 @@ impl AttnV41 {
         let c = &self.cfg;
         ensure!(
             self.decode_capturable(w),
-            "attn_v41: decode_body on a kv/index source layer"
+            "attn_v41: decode_body on a layer that cannot be captured (kv/index source, or tensor-parallel)"
         );
         ensure!(
             (w.role.ratio > 0) == rows_b.is_some(),
@@ -361,14 +343,14 @@ impl AttnV41 {
         );
         let yarn = w.role.ratio > 0;
         self.q_kv_projections(gpu, w, x, 1, yarn, stream)?;
-        KernelLaunch::new(gpu, self.k.ring_put)
+        KernelLaunch::new(gpu, self.k.ring_put_row)
             .grid([1, 1, 1])
             .block([256, 1, 1])
-            .arg_ptr(self.kv)
+            .arg_ptr(self.kv_pack)
             .arg_ptr(st.window)
             .arg_ptr(self.pos)
             .arg_u32(c.window as u32)
-            .arg_u32(c.head_dim as u32)
+            .arg_u32(self.rows.window.bytes as u32)
             .launch(stream)?;
         self.attend_and_project(
             gpu,

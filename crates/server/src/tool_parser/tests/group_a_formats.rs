@@ -116,7 +116,7 @@ fn parse_qwen3_coder_empty_body_then_backfill() {
         args["command"], "",
         "backfill must add the required string key with an empty default"
     );
-    let err = validate_single_tool_call(&calls[0], std::slice::from_ref(&tool))
+    let err = validate_single_tool_call(&calls[0], std::slice::from_ref(&tool), false)
         .expect_err("SHELL_FAMILY rejects `exec` with an empty command");
     assert!(
         err.contains("non-empty 'command'"),

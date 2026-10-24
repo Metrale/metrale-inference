@@ -19,15 +19,29 @@
 //! - Deterministic: the same inputs render the same report bytes (the `--check` tests rely on
 //!   it).
 
+use crate::prelude::*;
+
 pub mod avail;
+mod avail_paste;
 pub mod class;
+pub mod critical;
+pub mod critical_hw;
 pub mod device;
 pub mod estimate;
 pub mod exec;
 pub mod gaps;
+pub mod headroom;
+pub mod headroom_ci;
+mod headroom_model;
+mod headroom_render;
+mod headroom_shares;
+pub mod headroom_sites;
+mod headroom_svg;
+pub mod headroom_trace;
 pub mod model;
 pub mod model_checkpoint;
 pub mod plan;
+pub mod ranks;
 mod render;
 mod render_matrix;
 mod render_routes;
@@ -40,12 +54,14 @@ mod fp4_costing_tests;
 #[cfg(test)]
 mod hardware_tests;
 #[cfg(test)]
+mod headroom_tests;
+#[cfg(test)]
 #[path = "runtime_tests.rs"]
 mod runtime_tests;
 #[cfg(test)]
 mod test_fixture;
 
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
 
 use crate::fuser::Policy;
 use crate::render::Header;
@@ -54,6 +70,8 @@ use crate::venn::Class;
 use crate::venn::roofline::CostError;
 
 pub use device::{Device, Registry, parse_devices};
+pub use headroom_render::render_headroom;
+pub use headroom_svg::{Ceilings, roofline_svg, waterfall_svg};
 pub use model::{CircuitSource, InstancesSource, ModelSpec, ModelUnderPlan, PrecisionChoice};
 pub use model_checkpoint::CheckpointSource;
 pub use render::render_report;
@@ -139,6 +157,8 @@ pub struct HwReport {
     pub tensor_core: Vec<tc_policy::TcAudit>,
     /// 2026-09-30: The runtime routes that apply to those runs, estimated.
     pub routes: Vec<render_routes::RouteRow>,
+    /// 2026-10-23: Each TP rank's plans ([`ranks::plan_ranks`]); empty for a single-rank model.
+    pub ranks: Vec<ranks::RankPlans>,
     /// 2026-09-30: Prefill estimates: (tokens, microseconds).
     pub prefill: Vec<(u64, f64)>,
     /// 2026-09-30: Weights, KV and state.
@@ -230,12 +250,17 @@ pub fn display_on(
 }
 
 /// 2026-09-30: Some node of `c` has the op (and, for a linear, a role) the rule's first pattern
-/// op names: the rule could apply to this model at all.
+/// op names: the rule could apply to this model at all. 2026-10-22: and its layer kind, when the
+/// pattern names one (a GLM-only rule names a GLM layer kind, which no other model has).
 fn heads_a_node(r: &crate::rules::Rule, c: &crate::ir::Circuit) -> bool {
     r.pattern.first().is_some_and(|p| {
-        c.nodes.iter().any(|n| match n.op {
-            crate::ir::OpKind::Linear(role) if !p.roles.is_empty() => p.roles.contains(&role),
-            op => op == p.op,
+        c.nodes.iter().any(|n| {
+            let kind = n.layer.map(|l| c.layer_kinds[l]);
+            let op = match n.op {
+                crate::ir::OpKind::Linear(role) if !p.roles.is_empty() => p.roles.contains(&role),
+                op => op == p.op,
+            };
+            op && p.layer_kind.is_none_or(|k| kind == Some(k))
         })
     })
 }
@@ -274,6 +299,7 @@ pub fn build_report(
         )?);
     }
     let routes = render_routes::route_rows(&resolved, c, &policy, &model.label, &tables)?;
+    let ranks = ranks::plan_ranks(&resolved, &model.ranks, &policy)?;
     let rf = |n| resolved.roofline_of(n);
     let prefill = PREFILL_TOKENS
         .iter()
@@ -321,6 +347,7 @@ pub fn build_report(
         tables,
         tensor_core,
         routes,
+        ranks,
         prefill,
         footprint,
         weight_floor,
@@ -333,4 +360,77 @@ pub fn build_report(
             .collect(),
         command,
     })
+}
+
+/// 2026-10-23: `model` resolved on `device_id`, its class policy, and each of `runs` planned as
+/// [`plan_one`] plans it: what the headroom and the what-if both cost.
+fn plan_runs(
+    registry: &Registry,
+    device_id: &str,
+    tree: &dyn KernelTree,
+    model: &ModelUnderPlan,
+    runs: &[crate::venn::Run],
+) -> Result<(plan::Resolved, crate::fuser::Policy, Vec<plan::Planned>), HwError> {
+    let resolved = plan::resolve(registry, device_id, tree, model)?;
+    let (policy, _) = model::policy_on_class(
+        &model.policy,
+        model.settings_class.as_deref(),
+        &resolved.chain[0],
+    )?;
+    let planned = runs
+        .iter()
+        .map(|&run| {
+            let p = plan::fuse_on(&resolved, &model.circuit, &policy, run)?;
+            tc_policy::enforce(&resolved, &model.circuit, &p)?;
+            Ok(p)
+        })
+        .collect::<Result<Vec<_>, HwError>>()?;
+    Ok((resolved, policy, planned))
+}
+
+/// 2026-10-22: The headroom of `model` on `device_id` for the step that runs `runs`
+/// ([`headroom::headroom`]), each run planned as [`plan_one`] plans it.
+pub fn build_headroom(
+    registry: &Registry,
+    device_id: &str,
+    tree: &dyn KernelTree,
+    model: &ModelUnderPlan,
+    runs: &[crate::venn::Run],
+    inputs: &headroom::Inputs<'_>,
+) -> Result<headroom::Headroom, headroom::HeadroomError> {
+    let (resolved, policy, planned) = plan_runs(registry, device_id, tree, model, runs)?;
+    headroom::headroom(
+        &resolved,
+        &model.circuit,
+        &policy.settings,
+        &planned,
+        inputs,
+    )
+}
+
+/// 2026-10-23: The headroom of the step (as [`build_headroom`]) and, for every launch group of
+/// an event capture, the `(run, site)` of the headroom row it is attributed to (`None`: outside
+/// the plan): the inputs of [`critical::analyze`].
+pub fn build_whatif_sites(
+    registry: &Registry,
+    device_id: &str,
+    tree: &dyn KernelTree,
+    model: &ModelUnderPlan,
+    runs: &[crate::venn::Run],
+    inputs: &headroom::Inputs<'_>,
+    groups: &[critical::capture::Group],
+) -> Result<(headroom::Headroom, Vec<Option<(String, String)>>), headroom::HeadroomError> {
+    let (resolved, policy, planned) = plan_runs(registry, device_id, tree, model, runs)?;
+    let h = headroom::headroom(&resolved, &model.circuit, &policy.settings, &planned, inputs)?;
+    let kv = inputs
+        .kv_tokens
+        .as_ref()
+        .map(|k| crate::num::sat_u64(k.value.max(1.0)));
+    let mut sites = Vec::new();
+    for p in &planned {
+        sites.extend(headroom_sites::launch_sites(&resolved, &model.circuit, &policy.settings, p, kv)?);
+    }
+    let of = critical::sites::group_sites(&resolved, &sites, groups)
+        .map_err(headroom::HeadroomError::Mismatch)?;
+    Ok((h, of))
 }

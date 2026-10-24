@@ -14,6 +14,7 @@
 //! Invariants: none beyond the types.
 
 use super::*;
+use crate::deepseek_v41_layer::levers::tests::at_defaults;
 use crate::deepseek_v41_ref::engram::EngramTables;
 use crate::deepseek_v41_ref::model::{ModelCfg, ModelState, ModelWeights, StepTrace, forward};
 use crate::deepseek_v41_ref::{Golden, fixed_int};
@@ -29,7 +30,7 @@ fn f32_of_bf16(b: u16) -> f32 {
 }
 
 #[cfg(feature = "cuda")]
-fn backend() -> metrale_gpu_runtime::cuda_backend::MetraleCudaBackend {
+pub(super) fn backend() -> metrale_gpu_runtime::cuda_backend::MetraleCudaBackend {
     let set = metrale_kernels::ptx_for_exact_target("deepseek-v4-flash", "nvfp4")
         .expect("deepseek-v4-flash/nvfp4 not in this build");
     metrale_gpu_runtime::cuda_backend::MetraleCudaBackend::new(0, &set.modules)
@@ -96,6 +97,9 @@ fn cfg_of(c: &ModelCfg) -> AttnV41Cfg {
         orig_seq: c.orig_seq,
         beta_fast: c.beta_fast,
         beta_slow: c.beta_slow,
+        fp8_stage: Fp8StageSize::NONE,
+        tp_world: 1,
+        kv: kv_codec::declared().unwrap(),
     }
 }
 
@@ -129,6 +133,113 @@ fn down_bf16(g: &dyn metrale_gpu_runtime::gpu::GpuBackend, p: DevicePtr, n: usiz
     b.chunks_exact(2)
         .map(|c| f32_of_bf16(u16::from_le_bytes([c[0], c[1]])))
         .collect()
+}
+
+/// 2026-10-19: `rows` packed cache rows of `values` values each, decoded on the host.
+#[cfg(feature = "cuda")]
+fn down_rows(
+    g: &dyn metrale_gpu_runtime::gpu::GpuBackend,
+    p: DevicePtr,
+    row: &V41Row,
+    rows: usize,
+    values: usize,
+) -> Vec<f32> {
+    let mut b = vec![0u8; rows * row.bytes];
+    g.copy_d2h(p, &mut b).unwrap();
+    kv_codec::decode_rows(row.codec, &b, rows, values).unwrap()
+}
+
+/// 2026-10-19: The heads and `wo_a` groups one rank holds (all of them on one device).
+#[cfg(feature = "cuda")]
+struct Shard {
+    heads: std::ops::Range<usize>,
+    groups: std::ops::Range<usize>,
+}
+
+#[cfg(feature = "cuda")]
+impl Shard {
+    fn whole(c: &ModelCfg) -> Self {
+        Shard {
+            heads: 0..c.n_heads,
+            groups: 0..c.groups,
+        }
+    }
+}
+
+/// 2026-10-19: Rows `rows` and columns `cols` of the f32 `[_, n_cols]` matrix `v`, through the
+/// loader's byte slicer.
+#[cfg(feature = "cuda")]
+fn cut(
+    v: &[f32],
+    n_cols: usize,
+    rows: std::ops::Range<usize>,
+    cols: std::ops::Range<usize>,
+) -> Vec<f32> {
+    let bytes: Vec<u8> = v.iter().flat_map(|x| x.to_le_bytes()).collect();
+    crate::tp_slice_v41::slice2d(&bytes, n_cols * 4, rows, cols.start * 4..cols.end * 4)
+        .unwrap()
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+        .collect()
+}
+
+/// 2026-10-19: Layer `l`'s reference weights on the device, `wq_b`, `sink`, `wo_a` and `wo_b`
+/// cut to `shard` (row-sliced by its heads and groups; `wo_b` column-sliced), the rest whole.
+#[cfg(feature = "cuda")]
+fn layer_weights(
+    g: &dyn metrale_gpu_runtime::gpu::GpuBackend,
+    c: &ModelCfg,
+    rw: &ModelWeights,
+    l: usize,
+    s: &Shard,
+) -> AttnV41LayerWeights {
+    let lw = &rw.layers[l];
+    let role = role_of(c, l);
+    let (hd, or) = (c.head_dim, c.o_rank);
+    let gw = c.n_heads * hd / c.groups;
+    let comp = lw.comp_wkv.as_ref().map(|wkv| CompressorWeightsGpu {
+        kv: if role.ratio > 1 {
+            up_f32(g, wkv)
+        } else {
+            up_bf16(g, wkv)
+        },
+        gate: lw.comp_wgate.as_ref().map(|w| up_f32(g, w)),
+        norm: up_f32(g, lw.comp_norm.as_ref().unwrap()),
+    });
+    let idx = lw.idx_wq_b.as_ref().map(|wq_b| IndexerWeightsGpu {
+        wq_b: AttnMat::Bf16(up_bf16(g, wq_b)),
+        weights_proj: up_bf16(g, lw.idx_weights_proj.as_ref().unwrap()),
+        wk: lw.idx_wk.as_ref().map(|w| up_bf16(g, w)),
+        k_norm: lw.idx_k_norm.as_ref().map(|w| up_f32(g, w)),
+    });
+    let (h, gr) = (&s.heads, &s.groups);
+    AttnV41LayerWeights {
+        role,
+        sink: up_f32(g, &lw.sink[h.clone()]),
+        wq_a: AttnMat::Bf16(up_bf16(g, &lw.wq_a)),
+        q_norm: up_f32(g, &lw.q_norm),
+        wq_b: AttnMat::Bf16(up_bf16(
+            g,
+            &cut(&lw.wq_b, c.q_rank, h.start * hd..h.end * hd, 0..c.q_rank),
+        )),
+        wkv: AttnMat::Bf16(up_bf16(g, &lw.wkv)),
+        kv_norm: up_f32(g, &lw.kv_norm),
+        wo_a: AttnMat::Bf16(up_bf16(
+            g,
+            &cut(&lw.wo_a, gw, gr.start * or..gr.end * or, 0..gw),
+        )),
+        wo_b: AttnMat::Bf16(up_bf16(
+            g,
+            &cut(
+                &lw.wo_b,
+                c.groups * or,
+                0..c.dim,
+                gr.start * or..gr.end * or,
+            ),
+        )),
+        comp,
+        idx,
+    }
 }
 
 /// 2026-09-25: Tolerance `max|want| * 2^-7 + 1e-4`: one to two bf16 ulps at the
@@ -175,41 +286,13 @@ fn gpu_attention_matches_the_reference_on_every_layer_and_regime() {
     let g: &dyn GpuBackend = &gpu;
     let stream = g.default_stream();
     let cfg = cfg_of(&c);
-    let mut attn = AttnV41::new(g, cfg.clone()).unwrap();
+    let mut attn = AttnV41::new(g, cfg.clone(), at_defaults()).unwrap();
     let mut weights = Vec::new();
     let mut states = Vec::new();
+    let whole = Shard::whole(&c);
     for l in 0..c.n_layers {
-        let lw = &rw.layers[l];
-        let role = role_of(&c, l);
-        let comp = lw.comp_wkv.as_ref().map(|wkv| CompressorWeightsGpu {
-            kv: if role.ratio > 1 {
-                up_f32(g, wkv)
-            } else {
-                up_bf16(g, wkv)
-            },
-            gate: lw.comp_wgate.as_ref().map(|w| up_f32(g, w)),
-            norm: up_f32(g, lw.comp_norm.as_ref().unwrap()),
-        });
-        let idx = lw.idx_wq_b.as_ref().map(|wq_b| IndexerWeightsGpu {
-            wq_b: up_bf16(g, wq_b),
-            weights_proj: up_bf16(g, lw.idx_weights_proj.as_ref().unwrap()),
-            wk: lw.idx_wk.as_ref().map(|w| up_bf16(g, w)),
-            k_norm: lw.idx_k_norm.as_ref().map(|w| up_f32(g, w)),
-        });
-        weights.push(AttnV41LayerWeights {
-            role,
-            sink: up_f32(g, &lw.sink),
-            wq_a: AttnMat::Bf16(up_bf16(g, &lw.wq_a)),
-            q_norm: up_f32(g, &lw.q_norm),
-            wq_b: AttnMat::Bf16(up_bf16(g, &lw.wq_b)),
-            wkv: AttnMat::Bf16(up_bf16(g, &lw.wkv)),
-            kv_norm: up_f32(g, &lw.kv_norm),
-            wo_a: AttnMat::Bf16(up_bf16(g, &lw.wo_a)),
-            wo_b: AttnMat::Bf16(up_bf16(g, &lw.wo_b)),
-            comp,
-            idx,
-        });
-        states.push(AttnV41LayerState::new(g, &cfg, role).unwrap());
+        weights.push(layer_weights(g, &c, &rw, l, &whole));
+        states.push(AttnV41LayerState::new(g, &cfg, role_of(&c, l)).unwrap());
     }
     let mut shared = SharedV41::default();
     let (nh, hd) = (c.n_heads, c.head_dim);
@@ -256,6 +339,7 @@ fn gpu_attention_matches_the_reference_on_every_layer_and_regime() {
                     x,
                     m,
                     *start_pos,
+                    None,
                     stream,
                 )
                 .unwrap();
@@ -277,9 +361,9 @@ fn gpu_attention_matches_the_reference_on_every_layer_and_regime() {
             );
             let q = down_bf16(g, run.q, m * nh * hd);
             assert_within_bf16(&format!("{what}.sa_q"), &q, &lt.attn.q);
-            let mut rows = down_bf16(g, run.rows_a, run.rows_a_len * hd);
+            let mut rows = down_rows(g, run.rows_a, &attn.rows.window, run.rows_a_len, hd);
             if let Some(b) = run.rows_b {
-                rows.extend(down_bf16(g, b, run.rows_b_len * hd));
+                rows.extend(down_rows(g, b, &attn.rows.latent, run.rows_b_len, hd));
             }
             assert_within_bf16(&format!("{what}.sa_kv"), &rows, &lt.attn.kv_rows);
             let o = down_bf16(g, run.o, m * nh * hd);
@@ -291,13 +375,25 @@ fn gpu_attention_matches_the_reference_on_every_layer_and_regime() {
             }
             if weights[l].role.is_kv_source {
                 let groups = lt.shared_compress_kv.len() / hd;
-                let ck = down_bf16(g, shared.compress_kv.unwrap(), groups * hd);
+                let ck = down_rows(
+                    g,
+                    shared.compress_kv.unwrap(),
+                    &attn.rows.latent,
+                    groups,
+                    hd,
+                );
                 assert_within_bf16(
                     &format!("{what}.shared.compress_kv"),
                     &ck,
                     &lt.shared_compress_kv,
                 );
-                let ik = down_bf16(g, shared.index_k.unwrap(), lt.shared_index_k.len());
+                let ik = down_rows(
+                    g,
+                    shared.index_k.unwrap(),
+                    &attn.rows.index_key,
+                    lt.shared_index_k.len() / c.index_hd,
+                    c.index_hd,
+                );
                 assert_within_bf16(&format!("{what}.shared.index_k"), &ik, &lt.shared_index_k);
             }
             println!(
@@ -319,3 +415,7 @@ fn gpu_attention_matches_the_reference_on_every_layer_and_regime() {
     }
     attn.free(g).unwrap();
 }
+
+#[cfg(feature = "cuda")]
+#[path = "attn_v41_tp_gpu_tests.rs"]
+mod tp_gpu;

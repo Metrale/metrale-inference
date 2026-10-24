@@ -62,8 +62,7 @@ fn defaults_are_clap_defaults_not_inventions() {
 #[test]
 fn enumerated_and_boolean_fields_carry_their_option_sets() {
     let kv = spec_for_key("kv_cache_dtype").expect("kv_cache_dtype exists");
-    let expected: Vec<String> = metrale_cache::kv_cache::KvCacheDtype::ALL
-        .iter()
+    let expected: Vec<String> = metrale_cache::kv_cache::KvCacheDtype::all()
         .map(|d| d.name().to_string())
         .collect();
     assert_eq!(kv.options, expected, "the picker offers exactly the enum");

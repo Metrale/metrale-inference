@@ -94,16 +94,20 @@ pub(super) fn gdn_prefill_tc_kernel(gpu: &dyn GpuBackend) -> KernelHandle {
 }
 
 /// 2026-09-25: The scalar fused GDN state-spine handle from
-/// `gated_delta_rule_fla`, the entry `ops::gdn_scalar_spine` picks (2026-09-28: the pipe
-/// spine unless `METRALE_GDN_PIPE=0` or `METRALE_GDN_VTILE=1`). `ops::gdn_prefill_fla`
-/// derives the launch's block size and shared memory from the same choice.
+/// `gated_delta_rule_fla`, the entry `spine` names (`GdnPrefillPlan::spine`; 2026-09-28: the
+/// pipe spine unless `METRALE_GDN_PIPE=0` or `METRALE_GDN_VTILE=1`). `ops::gdn_prefill_fla`
+/// derives the launch's block size and shared memory from the same plan field.
 ///
 /// Logs one route line (`gdn_init_spine_line`): the tensor-core entry when
 /// `tc_spine` (the handle [`gdn_prefill_tc_kernel`] returned) is non-zero,
 /// else this scalar entry.
-pub(super) fn fused_spine_kernel(gpu: &dyn GpuBackend, tc_spine: KernelHandle) -> KernelHandle {
-    use crate::layers::ops::{gdn_init_spine_line, gdn_scalar_spine};
-    let scalar = gdn_scalar_spine().entry();
+pub(super) fn fused_spine_kernel(
+    gpu: &dyn GpuBackend,
+    tc_spine: KernelHandle,
+    spine: crate::layers::ops::GdnScalarSpine,
+) -> KernelHandle {
+    use crate::layers::ops::gdn_init_spine_line;
+    let scalar = spine.entry();
     tracing::info!("{}", gdn_init_spine_line(tc_spine.0 != 0, scalar));
     crate::layers::try_kernel(gpu, "gated_delta_rule_fla", scalar)
 }

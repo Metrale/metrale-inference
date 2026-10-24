@@ -198,6 +198,36 @@ pub trait CircuitBindings {
     ) -> Option<CircuitLayer> {
         None
     }
+
+    /// 2026-10-23: `policy` (the instance's) with the settings this layer's family reads live
+    /// from its own levers, for fusing the plans [`Self::install_plans`] runs: the plan is then
+    /// chosen under the switches the serve runs. Errors on a lever the rules do not model.
+    /// Default: `policy` unchanged.
+    fn plan_policy(&self, policy: &metrale_circuit::Policy) -> Result<metrale_circuit::Policy> {
+        Ok(policy.clone())
+    }
+
+    /// 2026-10-23: Run the sites this layer's family emitters compile from `plans` from the plan
+    /// from the next forward on, and return them; `None` returns every site to the layer's own
+    /// code. Default: a layer type with no emitters executes nothing from a plan.
+    fn install_plans(
+        &self,
+        _gpu: &dyn GpuBackend,
+        _plans: Option<super::family::RankPlans<'_>>,
+    ) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+
+    /// 2026-10-23: The sites [`Self::install_plans`] installed, for the forward disclosure.
+    fn plan_sites(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// 2026-10-23: The `(mode, rows)` shapes [`Self::install_plans`] installs sites at: what the
+    /// rank fuses (`rank_shapes::rank_plan_shapes`). Default: none.
+    fn plan_shapes(&self) -> Vec<(metrale_circuit::Mode, u64)> {
+        Vec::new()
+    }
 }
 
 /// 2026-09-29: The MTP draft head as the executor binds it: its one layer (weights by slot,

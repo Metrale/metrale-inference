@@ -126,6 +126,7 @@ fn run_layers_try(
     let dispatch = GemmDispatch::defaults();
     let derived = DerivedWeights::new();
     let levers = ModelLevers::defaults();
+    let settings = metrale_model_layers::lever_equivalence::defaults();
     let stats = ModelStats::new();
     let ctx = ForwardContext {
         buffers: &buffers,
@@ -135,6 +136,7 @@ fn run_layers_try(
         dispatch: &dispatch,
         derived: &derived,
         levers: &levers,
+        settings: &settings,
         stats: &stats,
         attn_metadata: None,
         profile: false,
@@ -148,6 +150,7 @@ fn run_layers_try(
         routed_lora_layers: None,
         midchunk_capture: None,
         moe_lora_route: MoeLoraRoute::Fold,
+        ab_levers: metrale_model_layers::layer::AbLevers::NONE,
     };
     for &(layer_idx, want_cuda_kda, want_cuda_mla) in steps {
         let host = OnceLock::new();

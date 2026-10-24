@@ -11,8 +11,10 @@
 //!
 //! ## Stage order
 //!
-//! 1. [`min_tokens_eos::MinTokensEosMask`] — masks EOS token ids while the
-//!    effective output length is below the request's `min_tokens` floor.
+//! 1. [`min_tokens_eos::EosHoldMask`] — masks EOS token ids while
+//!    `eos_hold::presample_hold` holds them: the effective output length is
+//!    below `min_tokens`, or a required tool call has not opened outside
+//!    thinking.
 //! 2. [`f2_confidence::F2ConfidenceEarlyStop`] — arms `force_end_thinking`
 //!    when top-1 probability stays ≥ 0.95 for the configured run.
 //! 3. [`mid_word::MidWordThinkEndMask`] — suppresses `</think>` when
@@ -55,6 +57,8 @@ pub mod tool_during_think;
 
 #[cfg(test)]
 mod pipeline_tests;
+#[cfg(test)]
+mod steering_off_tests;
 
 /// 2026-09-25: What every stage receives besides the logits and the sequence:
 /// special-token ids, vocab masks, levers, the model's watchdog tunables and
@@ -70,6 +74,9 @@ pub struct LogitsContext<'a> {
     pub think_start_token: Option<u32>,
     pub tool_call_start_token: Option<u32>,
     pub tool_call_end_token: Option<u32>,
+    /// 2026-10-09: `SchedLimits::thinking_closed_by`: the tool-call opener that also
+    /// closes the thinking block, which `ToolCallDuringThinkingMask` then leaves alone.
+    pub thinking_closed_by: Option<u32>,
     /// 2026-09-25: This position's index in the verify window (0 on the decode path).
     /// The `min_tokens` checks count `output_tokens.len() + verify_pos`.
     pub verify_pos: usize,
@@ -180,7 +187,7 @@ pub fn run_pipeline_with_path(
     path: &'static str,
 ) -> Option<u32> {
     let stages: [&dyn LogitsProcessor; 9] = [
-        &min_tokens_eos::MinTokensEosMask,
+        &min_tokens_eos::EosHoldMask,
         &f2_confidence::F2ConfidenceEarlyStop,
         &mid_word::MidWordThinkEndMask,
         &post_close::PostCloseThinkMask,

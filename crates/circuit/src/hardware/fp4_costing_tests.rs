@@ -256,6 +256,39 @@ HELPER(not_a_kernel)
     assert_eq!(guard_of(text, "not_a_kernel", &guards), None);
 }
 
+// 2026-10-22: A kernel a macro pastes together (`k_##R##_s##S`) through another macro takes the
+// guard of the top-level invocation; names the expansion does not produce, and pastes in a
+// macro that defines no kernel, are no kernel. Mutation: dropping the pasted lines from
+// `guard_of` leaves `seg_16_s2` unguarded where its region is compiled out (w4a16_tc_rows_seg.cu
+// shape).
+#[test]
+fn a_pasted_kernel_name_takes_the_guard_of_its_invocation() {
+    let guards = [Guard {
+        macro_name: "METRALE_NO_WARP_BLOCKSCALE_MMA".into(),
+        polarity: Polarity::Ifndef,
+        requires: Instr::parse("mma_sync.fp4_block_scale").unwrap(),
+    }];
+    let text = r#"
+#define ENTRY(R, NT, S, CLUSTER) \
+    extern "C" __global__ void CLUSTER seg_##R##_s##S( \
+        int x) { body<NT, S>(x); }
+#define SPLITS(R, NT) \
+    ENTRY(R, NT, 1, ) \
+    ENTRY(R, NT, 2, __cluster_dims__(1, 2, 1))
+#define HELPER(R) int help_##R(int x) { return x; }
+SPLITS(8, 1)
+#ifndef METRALE_NO_WARP_BLOCKSCALE_MMA
+SPLITS(16, 2)
+HELPER(16)
+#endif
+"#;
+    assert_eq!(guard_of(text, "seg_16_s2", &guards), Some(&guards[0]));
+    assert_eq!(guard_of(text, "seg_16_s1", &guards), Some(&guards[0]));
+    assert_eq!(guard_of(text, "seg_8_s2", &guards), None);
+    assert_eq!(guard_of(text, "seg_16_s4", &guards), None);
+    assert_eq!(guard_of(text, "help_16", &guards), None);
+}
+
 // 2026-10-01: Every number estimated from datasheet constants is labelled where it is shown,
 // and none from constants measured on the class is. Mutation: dropping the label from any of
 // the estimate rows, the weight floor, a gap report's step or the matrix row fails here.
@@ -274,12 +307,15 @@ fn every_datasheet_estimate_is_labelled_a_roofline_projection() {
         .lines()
         .filter(|l| {
             l.starts_with("| decode C=")
+                || l.starts_with("| verify C=")
                 || l.starts_with("| prefill ")
                 || l.starts_with("Weight floor")
                 || l.starts_with("Estimated step")
         })
         .collect();
-    assert_eq!(shown.len(), 3 + 2 + 1 + 3, "{text}");
+    // 2026-10-22: Four report runs (decode n=1, multi_seq n=16 and n=128, verify n=2), each an
+    // estimate line and a gap-table step; two prefill lengths; one weight floor.
+    assert_eq!(shown.len(), 4 + 2 + 1 + 4, "{text}");
     for l in shown {
         assert!(l.contains(LABEL), "unlabelled: {l}");
     }

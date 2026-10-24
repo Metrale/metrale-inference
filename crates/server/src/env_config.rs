@@ -21,8 +21,8 @@
 //!
 //! [`parse_min`] takes the raw value rather than reading the environment, so
 //! tests call it without `set_var`, which is process-global. Each caller's
-//! `from_env` reads the variable. `Carried::from_env`
-//! (`main_modules/serve_load.rs`) runs all three before the listener binds,
+//! `from_settings` passes the resolved value. `Carried::from_settings`
+//! (`main_modules/serve_load/carried.rs`) runs all three before the listener binds,
 //! and `serve` returns its error, so a bad value stops startup.
 
 use std::fmt::Display;

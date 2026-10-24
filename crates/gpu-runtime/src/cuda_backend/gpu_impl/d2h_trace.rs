@@ -12,17 +12,11 @@
 /// variable is set.
 static D2H_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-pub(super) fn d2h_trace_tick() {
+/// 2026-10-17: `target` is the backend's `DeviceSettings::d2h_trace`. `None` (unset) returns
+/// before the counter; 0 counts without a backtrace.
+pub(super) fn d2h_trace_tick(target: Option<u64>) {
     use std::sync::atomic::Ordering;
-    // 2026-09-25: The variable is read once. Unset, this returns before the
-    // counter. A value that does not parse as `u64` reads as 0: no backtrace,
-    // only the every-10,000th count.
-    static TARGET: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
-    let Some(target) = *TARGET.get_or_init(|| {
-        std::env::var("METRALE_D2H_TRACE")
-            .ok()
-            .map(|v| v.parse().unwrap_or(0))
-    }) else {
+    let Some(target) = target else {
         return;
     };
     let n = D2H_COUNT.fetch_add(1, Ordering::Relaxed) + 1;

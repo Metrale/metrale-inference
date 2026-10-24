@@ -8,6 +8,7 @@
 
 #![allow(unused_imports, dead_code, clippy::too_many_arguments)]
 
+use super::super::lm_head_vocab_tp::HeadRanks;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -160,6 +161,7 @@ impl TransformerModel {
                         dispatch: &self.dispatch,
                         derived: &self.derived,
                         levers: &self.levers,
+                        settings: &self.settings,
                         stats: &self.stats,
                         attn_metadata: Some(attn_metadata),
                         profile: false,
@@ -172,6 +174,7 @@ impl TransformerModel {
                         routed_lora_layers: None,
                         midchunk_capture: None,
                         moe_lora_route: self.decode_moe_route(),
+                        ab_levers: metrale_model_layers::layer::AbLevers::NONE,
                     };
 
                     let h_t = hidden.offset(t * h * fp32);
@@ -199,6 +202,7 @@ impl TransformerModel {
                     dispatch: &self.dispatch,
                     derived: &self.derived,
                     levers: &self.levers,
+                    settings: &self.settings,
                     stats: &self.stats,
                     attn_metadata: None,
                     profile: false,
@@ -211,6 +215,7 @@ impl TransformerModel {
                     routed_lora_layers: None,
                     midchunk_capture: None,
                     moe_lora_route: self.decode_moe_route(),
+                    ab_levers: metrale_model_layers::layer::AbLevers::NONE,
                 };
 
                 layer.decode_batched(
@@ -233,7 +238,13 @@ impl TransformerModel {
         let eps = self.config.rms_norm_eps as f32;
         self.final_norm_apply(hidden, normed, k as u32, h as u32, eps, stream)?;
 
-        self.lm_head_batched(normed, k as u32, self.buffers.logits(), stream)?;
+        self.lm_head_batched(
+            normed,
+            k as u32,
+            self.buffers.logits(),
+            HeadRanks::Every,
+            stream,
+        )?;
 
         let vocab = self.config.vocab_size;
         let mut results = Vec::with_capacity(k);
@@ -373,6 +384,7 @@ impl TransformerModel {
                 dispatch: &self.dispatch,
                 derived: &self.derived,
                 levers: &self.levers,
+                settings: &self.settings,
                 stats: &self.stats,
                 attn_metadata: Some(attn_metadata),
                 profile: false,
@@ -386,6 +398,7 @@ impl TransformerModel {
                 routed_lora_layers: None,
                 midchunk_capture: None,
                 moe_lora_route: self.decode_moe_route(),
+                ab_levers: metrale_model_layers::layer::AbLevers::NONE,
             };
 
             let h_t = hidden.offset(t * h * bf16);

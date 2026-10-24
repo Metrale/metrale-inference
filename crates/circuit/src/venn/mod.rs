@@ -22,6 +22,8 @@
 //! - A compared node whose plan kernel belongs to no family, and a parameter a node cannot
 //!   supply, are typed errors: the report is never built from a guess.
 
+use crate::prelude::*;
+
 pub mod checkpoint;
 pub mod classify;
 mod cli_args;
@@ -35,15 +37,15 @@ pub mod repo;
 pub mod report;
 pub mod roofline;
 
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
 
 use crate::fuser::FusionPlan;
 use crate::ir::Circuit;
 use crate::rules::Mode;
 
 pub use cli_args::VennArgs;
-pub use families::{Families, FamilyError, ParamKind, parse_families};
-pub use measurements::{Measurements, parse_measurements};
+pub use families::{EnergyRoofline, Families, FamilyError, ParamKind, parse_families};
+pub use measurements::{MeasurementRow, Measurements, parse_measurement_rows, parse_measurements};
 pub use render::render;
 pub use repo::{Repo, checkpoint_id_of, report_text, resolve};
 pub use report::{VennInputs, VennReport, build};

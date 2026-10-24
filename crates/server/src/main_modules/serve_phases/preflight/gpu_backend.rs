@@ -24,17 +24,26 @@ use crate::main_modules::memory_probe::{DeviceBudget, budget_bytes};
 #[cfg(feature = "cuda")]
 pub(crate) fn init_gpu_backend(
     args: &cli::ServeArgs,
-    ptx_set: &metrale_kernels::TargetPtxSet,
+    ptx_set: &metrale_kernel_set::TargetPtxSet,
 ) -> Result<(
     Box<dyn metrale_gpu_runtime::gpu::GpuBackend>,
     usize,
     DeviceBudget,
 )> {
-    super::super::kernel_gate::gate_device_arch(args.check_kernels, ptx_set, args.gpu_ordinal)?;
+    let device_settings = metrale_settings::groups::device::DeviceSettings::try_from(
+        &super::super::build::lever_settings()?,
+    )?;
+    super::super::kernel_gate::gate_device_arch(
+        args.check_kernels,
+        ptx_set,
+        args.gpu_ordinal,
+        device_settings.stream_priority,
+    )?;
 
-    let backend = metrale_gpu_runtime::cuda_backend::MetraleCudaBackend::new(
+    let backend = metrale_gpu_runtime::cuda_backend::MetraleCudaBackend::with_settings(
         args.gpu_ordinal,
         &ptx_set.modules,
+        &device_settings,
     )
     .context("Failed to initialize CUDA backend")?;
 
@@ -62,7 +71,7 @@ pub(crate) fn init_gpu_backend(
 #[cfg(all(feature = "metal", not(feature = "cuda")))]
 pub(crate) fn init_gpu_backend(
     args: &cli::ServeArgs,
-    ptx_set: &metrale_kernels::TargetPtxSet,
+    ptx_set: &metrale_kernel_set::TargetPtxSet,
 ) -> Result<(
     Box<dyn metrale_gpu_runtime::gpu::GpuBackend>,
     usize,

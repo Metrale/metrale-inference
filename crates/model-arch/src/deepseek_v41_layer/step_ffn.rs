@@ -13,8 +13,8 @@
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::DevicePtr;
 
-use super::DeepSeekV41Layer;
-use super::step::{diag_on, diag_rms_bf16, trace_hash, trace_on};
+use super::step::{diag_rms_bf16, trace_hash};
+use super::{DeepSeekV41Layer, V41Experts};
 use metrale_model_layers::layer::ForwardContext;
 use metrale_model_layers::layers::ops;
 
@@ -35,7 +35,7 @@ impl DeepSeekV41Layer {
         let streams = ctx.buffers.hc_streams();
         let normed = ctx.buffers.norm_output();
         let (h, hc) = (rt.hidden, rt.hc_mult);
-        let diag = diag_on();
+        let diag = self.rt.levers.diag;
         let attn_out = rt.attn.lock().unwrap().out_ptr();
         self.hc_post(gpu, attn_out, streams, rt.post_s, rt.comb_s, m, stream)?;
         self.mixes_collapse(
@@ -59,7 +59,7 @@ impl DeepSeekV41Layer {
             rt.norm_eps,
             stream,
         )?;
-        if trace_on() {
+        if self.rt.levers.trace {
             gpu.synchronize(stream)?;
             tracing::info!(
                 "DS41 trace pos={} L{} moein={:016x} hwyin={:016x}",
@@ -70,15 +70,32 @@ impl DeepSeekV41Layer {
             );
         }
         let pred = self.predict_before_moe(gpu, normed, m, start_pos, stream)?;
-        let moe_out = {
+        let moe_out = if let V41Experts::Resident(set) = &rt.experts {
             let moe = rt.moe.lock().unwrap();
-            let mut lru = rt.lru.lock().unwrap();
+            let ex = set.layers.get(self.idx).ok_or_else(|| {
+                anyhow::anyhow!("deepseek-v4.1: layer {} has no resident experts", self.idx)
+            })?;
+            let (out, _, i_) =
+                moe.forward_resident(gpu, &self.moe_w, &set.moe, ex, ctx.comm, normed, m, stream)?;
+            if self.rt.levers.trace {
+                tracing::info!(
+                    "DS41 trace pos={} L{} route={:?}",
+                    start_pos,
+                    self.idx,
+                    &i_[..i_.len().min(12)]
+                );
+            }
+            out
+        } else {
+            let st = rt.streamed()?;
+            let moe = rt.moe.lock().unwrap();
+            let mut lru = st.lru.lock().unwrap();
             let before = lru.stats();
             let (out, w_, i_) = moe.forward(
                 gpu,
                 &self.moe_w,
                 &mut lru,
-                &*rt.slices,
+                &*st.slices,
                 normed,
                 m,
                 rt.reader_threads,
@@ -89,7 +106,7 @@ impl DeepSeekV41Layer {
             if let Some((resident, preds)) = pred {
                 self.predict_log(start_pos, &resident, &preds, &i_);
             }
-            if trace_on() {
+            if self.rt.levers.trace {
                 let after = lru.stats();
                 let wb: Vec<u8> = w_.iter().flat_map(|x| x.to_le_bytes()).collect();
                 let mut hw: u64 = 0xcbf2_9ce4_8422_2325;
@@ -122,7 +139,7 @@ impl DeepSeekV41Layer {
         }
         self.hc_post(gpu, moe_out, streams, rt.post_s, rt.comb_s, m, stream)?;
         gpu.copy_d2d_async(rt.pre_f, rt.pre_prev, m * hc * 4, stream)?;
-        if trace_on() {
+        if self.rt.levers.trace {
             gpu.synchronize(stream)?;
             tracing::info!(
                 "DS41 trace pos={} L{} moe={:016x} hwy={:016x}",

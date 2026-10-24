@@ -46,7 +46,7 @@ hardware. CI runs all of these on a standard `ubuntu-latest` runner:
 METRALE_SKIP_BUILD=1 CUDARC_CUDA_VERSION=13000 cargo check --workspace
 METRALE_SKIP_BUILD=1 CUDARC_CUDA_VERSION=13000 cargo clippy --workspace --tests
 METRALE_SKIP_BUILD=1 CUDARC_CUDA_VERSION=13000 cargo clippy --workspace --examples --benches \
-  --features metrale-model-arch/gpu-examples,metrale-server/gpu-examples   # GPU microtests
+  --features metrale-gpu-examples/gpu-examples,met/gpu-examples   # GPU microtests
 METRALE_SKIP_BUILD=1 CUDARC_CUDA_VERSION=13000 cargo test --workspace
 cargo fmt --all -- --check          # formatting
 ```
@@ -79,7 +79,7 @@ cargo test -p metrale-server --release -- --ignored
 python3 tests/run_all_models.py
 
 # GPU kernel microtests (single GPU), e.g.
-cargo run --release -p metrale-model-arch --features gpu-examples --example fp8gemm_microtest
+cargo run --release -p metrale-gpu-examples --features gpu-examples --example fp8gemm_microtest
 ```
 
 CI enforces (all GPU-free): `fmt`, `clippy`, `cargo test --workspace`
@@ -188,10 +188,10 @@ new target:
    override or a duplicate regular copy.
 2. Declare the target's SERVING levers in `kernels/<hardware>/HARDWARE.toml`
    `[defaults]`, and its `[hardware] sm_count`. `build.rs` bakes them into
-   `metrale_kernels::TARGET_DEFAULTS` / `TARGET_SM_COUNT` and every resolver in
+   `metrale_target_defaults::TARGET_DEFAULTS` / `TARGET_SM_COUNT` and every resolver in
    `metrale-model-layers` reads the declaration before the environment, so a target's
    measured configuration is a reviewable file rather than a launch script.
-   `crates/kernels/build_defaults.rs` panics on an unknown key. Adding a
+   `crates/closure/src/hardware_defaults.rs` panics on an unknown key. Adding a
    LEVER is one commit across four places — the `TargetDefaults` field, the
    parse arm, the resolver and every target's table — and that commit is the one
    landing the arm which reads it.

@@ -84,7 +84,7 @@ fn validate_rejects_write_with_empty_filepath() {
             arguments: r#"{"content":"some code","filePath":""}"#.to_string(),
         },
     };
-    let res = validate_single_tool_call(&call, &[tool]);
+    let res = validate_single_tool_call(&call, &[tool], false);
     assert!(res.is_err(), "expected reject, got {res:?}");
     assert!(
         res.as_ref().unwrap_err().contains("non-empty"),
@@ -116,7 +116,7 @@ fn validate_allows_read_with_empty_path() {
             arguments: r#"{"path":""}"#.to_string(),
         },
     };
-    assert!(validate_single_tool_call(&call, &[tool]).is_ok());
+    assert!(validate_single_tool_call(&call, &[tool], false).is_ok());
 }
 
 #[test]

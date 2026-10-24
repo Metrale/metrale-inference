@@ -278,6 +278,11 @@ pub struct ModelConfig {
     pub engram_pad_token_id: u32,
     #[serde(default)]
     pub engram_compressed_vocab_size: usize,
+    /// 2026-10-19: The compressed engram id of every tokenizer id (`[vocab]`). Serve fills it from
+    /// the tokenizer when `engram_compressed_vocab_size` is set and the checkpoint ships no map of
+    /// its own (`fill_engram_token_map`); empty otherwise.
+    #[serde(skip)]
+    pub engram_token_map: Vec<u32>,
     #[serde(default)]
     pub engram_multipliers: Vec<u64>,
     #[serde(default)]
@@ -303,6 +308,15 @@ pub struct ModelConfig {
     /// 2026-09-26: `None` for text-only models, and for GLM-5.3 unless `glm_vision_enabled()`.
     #[serde(skip)]
     pub vision: Option<VisionConfig>,
+
+    /// 2026-10-24: Set by an embedding family's parser: the model pools hidden states into
+    /// one vector per input and does not generate (`crate::embedding`).
+    #[serde(skip)]
+    pub embedding: Option<crate::embedding::EmbeddingSpec>,
+    /// 2026-10-24: `rope_scaling` of type `llama3`, set by the parsers that map it; every other
+    /// family leaves it `None`.
+    #[serde(skip)]
+    pub rope_llama3: Option<crate::embedding::Llama3Rope>,
 
     /// 2026-09-26: Set by `finalize_config` from `quantization_config`. When that leaves it
     /// `None`, serve fills it from a sibling `hf_quant_config.json`
@@ -344,11 +358,35 @@ pub struct ModelConfig {
     pub tp_rank: usize,
     #[serde(skip)]
     pub tp_world_size: usize,
+    /// 2026-10-09: Serve's `--moe-expert-layout`: whole experts over EP ranks, or every expert
+    /// sliced over TP ranks (`MoeExpertLayout`). Only a loader whose
+    /// `ModelWeightLoader::slices_experts_over_tp` is true reads it.
+    #[serde(skip)]
+    pub moe_expert_layout: crate::MoeExpertLayout,
+    /// 2026-10-16: Serve's `--indexer-cache-dtype`: how a paged sparse-attention indexer
+    /// stores its rows (`IndexerCacheDtype`). Only the glm5_next loader reads it.
+    #[serde(skip)]
+    pub indexer_cache_dtype: crate::IndexerCacheDtype,
+    /// 2026-10-16: The most rows one rewind may drop (the verify pass's draft count under
+    /// speculative decoding, else 0). Serve sets it; the FP8 indexer cache sizes its tail ring
+    /// from it.
+    #[serde(skip)]
+    pub indexer_rewind_rows: usize,
+    /// 2026-10-08: The head counts before serve divided them for TP
+    /// (`ModelConfig::shard_heads_for_tp`); `None` until then. Read through
+    /// `ModelConfig::pre_shard_heads`.
+    #[serde(skip)]
+    pub tp_pre_shard_heads: Option<crate::TpPreShardHeads>,
 
     /// 2026-09-26: The serve's `--max-seq-len`, set at startup. It is 0 when nothing set it (a
     /// unit test, an offline tool), which readers must treat as unknown, not as zero context.
     #[serde(skip)]
     pub serve_max_seq_len: usize,
+
+    /// 2026-10-19: The serve's resolved `max_batch_tokens` (the most rows one forward step
+    /// carries), set at startup. 0 when nothing set it, which readers treat as unknown.
+    #[serde(skip)]
+    pub serve_max_batch_tokens: usize,
 
     #[serde(skip)]
     pub fp8_kv_calibration_tokens: usize,

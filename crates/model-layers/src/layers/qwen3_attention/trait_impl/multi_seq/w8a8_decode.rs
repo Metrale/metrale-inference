@@ -40,6 +40,7 @@ impl Qwen3AttentionLayer {
             act_scale_kmajor_bytes: fwd.buffers.fp8_act_scale_kmajor_bytes(),
             quant_k: self.per_token_group_quant_fp8_k,
             scale_kmajor_k: self.fp8_act_scale_kmajor_k,
+            kmajor: fwd.levers.ops.cublas_kmajor,
         }
     }
 
@@ -51,7 +52,7 @@ impl Qwen3AttentionLayer {
     ) -> bool {
         ops::decode_w8a8_selected(
             attn_decode_family_armed(fwd.dispatch.cublas),
-            ops::w8a8_decode_proj_disabled(),
+            !fwd.levers.ops.w8a8_decode_proj,
             plan,
             fp8w.scale_format,
             &self.decode_w8a8_scratch(fwd),

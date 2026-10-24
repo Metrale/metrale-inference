@@ -48,11 +48,11 @@ struct W4a4State {
     mx8: KernelHandle,
     mx16: KernelHandle,
     mx32: KernelHandle,
-    /// 2026-09-25: Activation-reuse twins (`METRALE_W4A4_MX_NT`). The
+    /// 2026-09-25: Activation-reuse twins ([`W4a4Levers::nt`]). The
     /// `w4a4_gemv_nt_oracle` example compares them bit for bit with mx16/mx32.
     mx16_nt2: KernelHandle,
     mx32_nt4: KernelHandle,
-    /// 2026-09-25: Persistent activation-staged entries (`METRALE_W4A4_MX_PS`),
+    /// 2026-09-25: Persistent activation-staged entries ([`W4a4Levers::ps`]),
     /// compared bit for bit with mx16/mx32 by the same example.
     mx16_ps: KernelHandle,
     mx32_ps: KernelHandle,
@@ -67,25 +67,16 @@ struct W4a4State {
     aq: DevicePtr,
     a_scale: DevicePtr,
     a_gs: DevicePtr,
-    /// 2026-09-25: W4A16 reference output for [`audit_enabled`] (null
+    /// 2026-09-25: W4A16 reference output for [`W4a4Levers::audit`] (null
     /// otherwise).
     audit_ref: DevicePtr,
+    /// 2026-10-17: The levers the first [`prepare`] on this backend ran under.
+    levers: W4a4Levers,
 }
 
 /// 2026-09-25: Largest projection N the audit reference buffer holds; a wider
 /// launch is not audited.
 const AUDIT_MAX_N: usize = 65536;
-
-/// 2026-09-25: `METRALE_W4A4_PROJ_AUDIT` (non-empty), a diagnostic. Every W4A4
-/// projection launched outside a graph capture also runs the W4A16 path,
-/// synchronises, and accumulates `||y_w4a4 - y_w4a16|| / ||y_w4a16||` per call
-/// site, logged every 64 samples. Captured launches are not audited, so it
-/// needs graphs off (`METRALE_NO_MTP_VERIFY_GRAPHS=1
-/// METRALE_NO_DECODE_GRAPHS_MULTISEQ=1`) to see the decode and verify steps.
-fn audit_enabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("METRALE_W4A4_PROJ_AUDIT").is_some_and(|v| !v.is_empty()))
-}
 
 // 2026-09-25: `w4a4_proj.rs` is loaded via `#[path = "ops/w4a4_proj.rs"]`, so
 // the explicit `#[path]` is required to nest the submodule under this file.
@@ -111,8 +102,9 @@ fn key(gpu: &dyn GpuBackend) -> usize {
 /// 2026-09-28: Resolve the kernels and allocate the scratch once per backend, when the
 /// published tier can take the W4A4 path (`WeightQuantTier::uses_w4a4_decode`). Call at
 /// model build, never inside a graph capture. When a kernel is missing it records `None`
-/// for the backend and logs, and every projection stays W4A16.
-pub fn prepare(gpu: &dyn GpuBackend) -> Result<()> {
+/// for the backend and logs, and every projection stays W4A16. 2026-10-17: The first call on a
+/// backend fixes the levers its launches run under (`w4a4`); a later call keeps them.
+pub fn prepare(gpu: &dyn GpuBackend, w4a4: W4a4Levers) -> Result<()> {
     let tier = crate::layers::weight_quantization();
     // 2026-09-30: A fixed `--activation-quantization` may run NVFP4 activations under any tier
     // (`nvfp4_proj_mx`).
@@ -142,8 +134,8 @@ pub fn prepare(gpu: &dyn GpuBackend) -> Result<()> {
             wide_entries(tier, fixed, h("w4a4_gemv_mx64"), h("w4a4_gemv_mx64_nt2"));
         tracing::info!(
             "w4a4 projection ({tier:?}): METRALE_W4A4_MX_NT={} METRALE_W4A4_MX_PS={} ({sms} SMs), max rows {max_m}",
-            mx_nt(),
-            u8::from(mx_ps()),
+            w4a4.nt,
+            u8::from(w4a4.ps),
         );
         let (m, k) = (max_m as usize, W4A4_MAX_K as usize);
         Some(W4a4State {
@@ -162,11 +154,12 @@ pub fn prepare(gpu: &dyn GpuBackend) -> Result<()> {
             aq: gpu.alloc(m * k / 2)?,
             a_scale: gpu.alloc(m * k / 16)?,
             a_gs: gpu.alloc(m * 4)?,
-            audit_ref: if audit_enabled() {
+            audit_ref: if w4a4.audit {
                 gpu.alloc(m * AUDIT_MAX_N * 2)?
             } else {
                 DevicePtr::NULL
             },
+            levers: w4a4,
         })
     } else {
         tracing::info!("w4a4_gemv_mx kernels are not in this target; NVFP4 projections run W4A16");
@@ -244,6 +237,7 @@ pub fn w4a4_route(m: u32, n: u32, k: u32, max_m: u32) -> bool {
 pub fn nvfp4_proj_small_m(
     gpu: &dyn GpuBackend,
     batch_kernel: KernelHandle,
+    tc: super::W4a16TcPlan,
     input: DevicePtr,
     weight: &QuantizedWeight,
     output: DevicePtr,
@@ -255,6 +249,7 @@ pub fn nvfp4_proj_small_m(
     proj(
         gpu,
         batch_kernel,
+        tc,
         input,
         weight,
         output,
@@ -277,6 +272,7 @@ pub fn nvfp4_proj_small_m(
 pub fn nvfp4_proj_small_m_same_input(
     gpu: &dyn GpuBackend,
     batch_kernel: KernelHandle,
+    tc: super::W4a16TcPlan,
     input: DevicePtr,
     weight: &QuantizedWeight,
     output: DevicePtr,
@@ -288,6 +284,7 @@ pub fn nvfp4_proj_small_m_same_input(
     proj(
         gpu,
         batch_kernel,
+        tc,
         input,
         weight,
         output,
@@ -334,6 +331,7 @@ fn last_quant() -> &'static Mutex<Option<QuantKey>> {
 fn proj(
     gpu: &dyn GpuBackend,
     batch_kernel: KernelHandle,
+    tc: super::W4a16TcPlan,
     input: DevicePtr,
     weight: &QuantizedWeight,
     output: DevicePtr,
@@ -354,7 +352,7 @@ fn proj(
         }
         drop(last);
         p.gemv(gpu, p.scratch(), weight, output, m, n, k, stream)?;
-        if audit_enabled()
+        if s.levers.audit
             && !s.audit_ref.is_null()
             && (n as usize) <= AUDIT_MAX_N
             && !gpu.stream_is_capturing(stream)
@@ -363,6 +361,7 @@ fn proj(
             super::w4a16_gemv_batchm(
                 gpu,
                 batch_kernel,
+                tc,
                 input,
                 weight,
                 s.audit_ref,
@@ -394,10 +393,21 @@ fn proj(
         m <= W4A4_MAX_M,
         "w4a4: {m} rows reached the W4A16 fallback, which covers at most {W4A4_MAX_M}"
     );
-    super::w4a16_gemv_batchm(gpu, batch_kernel, input, weight, output, m, n, k, stream)
+    super::w4a16_gemv_batchm(
+        gpu,
+        batch_kernel,
+        tc,
+        input,
+        weight,
+        output,
+        m,
+        n,
+        k,
+        stream,
+    )
 }
 
-/// 2026-09-25: Per-site relative-error accumulator for [`audit_enabled`].
+/// 2026-09-25: Per-site relative-error accumulator for [`W4a4Levers::audit`].
 #[allow(clippy::too_many_arguments)]
 fn audit(
     gpu: &dyn GpuBackend,

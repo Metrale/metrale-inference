@@ -91,6 +91,7 @@ impl DenseFfnLayer {
         ops::w4a16_gemv_dual_batch2(
             ctx.gpu,
             self.w4a16_gemv_dual_batch2,
+            ctx.levers.ops.w4a16_tc,
             input,
             &self.weights.gate_proj,
             gate_out,
@@ -114,6 +115,7 @@ impl DenseFfnLayer {
         ops::w4a16_gemv_batch2(
             ctx.gpu,
             self.w4a16_gemv_batch2,
+            ctx.levers.ops.w4a16_tc,
             gate_out,
             &self.weights.down_proj,
             output,
@@ -152,6 +154,7 @@ impl DenseFfnLayer {
         ops::w4a16_gemv_dual_batch3(
             ctx.gpu,
             self.w4a16_gemv_dual_batch3,
+            ctx.levers.ops.w4a16_tc,
             input,
             &self.weights.gate_proj,
             gate_out,
@@ -175,6 +178,7 @@ impl DenseFfnLayer {
         ops::w4a16_gemv_batch3(
             ctx.gpu,
             self.w4a16_gemv_batch3,
+            ctx.levers.ops.w4a16_tc,
             gate_out,
             &self.weights.down_proj,
             output,
@@ -259,6 +263,7 @@ impl DenseFfnLayer {
         ops::w4a4_proj::nvfp4_proj_small_m(
             ctx.gpu,
             kh,
+            ctx.levers.ops.w4a16_tc,
             input,
             &self.weights.gate_proj,
             gate_out,
@@ -271,6 +276,7 @@ impl DenseFfnLayer {
         ops::w4a4_proj::nvfp4_proj_small_m_same_input(
             ctx.gpu,
             kh,
+            ctx.levers.ops.w4a16_tc,
             input,
             &self.weights.up_proj,
             up_out,
@@ -293,6 +299,7 @@ impl DenseFfnLayer {
         ops::w4a4_proj::nvfp4_proj_small_m(
             ctx.gpu,
             kh,
+            ctx.levers.ops.w4a16_tc,
             gate_out,
             &self.weights.down_proj,
             output,

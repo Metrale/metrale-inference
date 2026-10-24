@@ -12,9 +12,8 @@
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, GraphHandle};
 
-use super::step_seg::{SegState, step_log_on};
+use super::step_seg::SegState;
 use super::{DeepSeekV41Layer, V41LayerState};
-use crate::engram_v41::ENGRAM_ROW_BYTES;
 use crate::moe_v41::MoeV41;
 use metrale_model_layers::layer::ForwardContext;
 
@@ -38,18 +37,16 @@ impl DeepSeekV41Layer {
         stream: u64,
     ) -> Result<()> {
         let rt = &self.rt;
-        if std::env::var("METRALE_DS41_NO_ENGRAM").is_ok_and(|v| v == "1") {
+        if self.rt.levers.no_engram {
             return Ok(());
         }
         let ids = self.step_token_ids(ctx, 1)?;
         let mut hasher = rt.hasher.lock().unwrap();
         let hashes = hasher.hash(&ids, start_pos)?;
-        let engram = rt.engram.lock().unwrap();
-        for &(layer, hi) in rt.engram_layers.lock().unwrap().iter() {
+        let layers = rt.engram_layers.lock().unwrap().clone();
+        for (layer, hi) in layers {
             let row_ids = hasher.layer_row_ids(&hashes, 1, hi);
-            let mut raw = vec![0u8; row_ids.len() * ENGRAM_ROW_BYTES];
-            rt.rows.read_rows(layer, &row_ids, &mut raw)?;
-            engram.rows_from_q2k(ctx.gpu, Some(layer), &raw, row_ids.len(), stream)?;
+            rt.fill_engram_rows(ctx.gpu, layer, &row_ids, stream)?;
         }
         *rt.step_hashes.lock().unwrap() = Some(hashes);
         Ok(())
@@ -68,9 +65,7 @@ impl DeepSeekV41Layer {
         stream: u64,
     ) -> Result<()> {
         let rt = &self.rt;
-        if self.engram_index.is_some()
-            && !std::env::var("METRALE_DS41_NO_ENGRAM").is_ok_and(|v| v == "1")
-        {
+        if self.engram_index.is_some() && !self.rt.levers.no_engram {
             rt.engram
                 .lock()
                 .unwrap()
@@ -188,9 +183,7 @@ impl DeepSeekV41Layer {
         streams: DevicePtr,
         stream: u64,
     ) -> Result<()> {
-        if self.engram_index.is_some()
-            && !std::env::var("METRALE_DS41_NO_ENGRAM").is_ok_and(|v| v == "1")
-        {
+        if self.engram_index.is_some() && !self.rt.levers.no_engram {
             self.rt
                 .engram
                 .lock()
@@ -233,7 +226,8 @@ impl DeepSeekV41Layer {
         let moe = rt.moe.lock().unwrap();
         gpu.launch_graph(g, stream)?;
         let hdr = moe.read_headers(gpu, stream)?;
-        let mut lru = rt.lru.lock().unwrap();
+        let st = rt.streamed()?;
+        let mut lru = st.lru.lock().unwrap();
         lru.begin_token();
         let misses0 = lru.stats().misses;
         let mut first: Option<usize> = None;
@@ -241,7 +235,7 @@ impl DeepSeekV41Layer {
         for &l in moe_layers {
             let (flag, picks, _) = moe.parse_header(&hdr, l)?;
             let keys: Vec<(u32, u32)> = picks.iter().map(|&e| (l, e as u32)).collect();
-            lru.fetch_many_on(gpu, stream, &*rt.slices, &keys, &[], rt.reader_threads)?;
+            lru.fetch_many_on(gpu, stream, &*st.slices, &keys, &[], rt.reader_threads)?;
             changes.extend(lru.drain_slot_changes());
             if flag || !changes.is_empty() {
                 first = Some(l as usize);
@@ -251,7 +245,7 @@ impl DeepSeekV41Layer {
         moe.slot_table_update(gpu, &changes, stream)?;
         let misses = lru.stats().misses - misses0;
         drop(lru);
-        if step_log_on()
+        if self.rt.levers.step_graph_log
             && let Some(k) = first
         {
             tracing::info!(
@@ -292,6 +286,7 @@ impl DeepSeekV41Layer {
                 normed,
                 1,
                 start_pos,
+                ctx.comm,
                 stream,
             )?;
             attn.invalidate_decode_uploads();
@@ -307,7 +302,7 @@ impl DeepSeekV41Layer {
         }
         drop(shared);
         drop(attn);
-        let pending = rt.lru.lock().unwrap().drain_slot_changes();
+        let pending = rt.streamed()?.lru.lock().unwrap().drain_slot_changes();
         rt.moe
             .lock()
             .unwrap()

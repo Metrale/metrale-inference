@@ -23,8 +23,8 @@ pub(crate) struct Engine {
     pub config: metrale_config::ModelConfig,
     pub config_json: String,
     pub model_dir: std::path::PathBuf,
-    pub ptx_set: metrale_kernels::TargetPtxSet,
-    pub sampling_presets: metrale_kernels::SamplingPresets,
+    pub ptx_set: metrale_kernel_set::TargetPtxSet,
+    pub sampling_presets: metrale_kernel_set::SamplingPresets,
     pub vision_max_pixels: Option<usize>,
     pub remote_image_policy: crate::api::chat::remote_image::RemoteImagePolicy,
     pub video_ffmpeg: metrale_model_layers::video_decode_ffmpeg::FfmpegPolicy,
@@ -42,11 +42,20 @@ pub(crate) struct Engine {
     /// 2026-10-04: sha256 over the drafter's stored weights, `None` for a checkpoint with no
     /// `mtp.*` tensors. `--spec-cost-model measured`'s drafter key.
     pub drafter_weights_sha256: Option<String>,
+    /// 2026-10-21: `METRALE_HOST_WAKE_KEEPER`, moved to the thread that runs the model.
+    pub wake_keeper: Option<serve_phases::wake_keeper::KeeperGuard>,
 }
 
 /// 2026-09-28: Build the model `args` names. `Ok(None)` means this rank is an EP worker: it ran
 /// its command loop and has nothing to serve.
-pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
+pub(crate) fn load_engine(
+    mut args: cli::ServeArgs,
+    settings: &metrale_settings::InferenceServerSettings,
+) -> Result<Option<Engine>> {
+    // 2026-10-17: Every lever the load phases read, resolved before any model work so a
+    // malformed one stops the load first (ROTI, PCND).
+    let levers = serve_phases::LoadLevers::from_settings(settings)?;
+    let wake_plan = serve_phases::wake_keeper::plan_from_settings(settings)?;
     metrale_telemetry::progress::phase(1, "model resolve");
     let model_dir = serve_phases::resolve_model_dir(&args)?;
 
@@ -66,24 +75,24 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     let (mut config, config_json) = model_setup::configure_model(&args, &model_dir)?;
 
     let (vision_max_pixels, remote_image_policy, video_ffmpeg) =
-        model_setup::resolve_media_policies(&args, &model_dir, &mut config)?;
+        model_setup::resolve_media_policies(&args, &levers, &model_dir, &mut config)?;
 
     model_setup::log_model_config(&config);
 
     let ptx_set = model_setup::select_kernel_target(&args, &config, &model_dir)?;
     let sampling_presets = ptx_set.sampling;
     model_setup::check_kernel_target(&ptx_set, &mut config)?;
-    model_setup::publish_row_tiers(&args, &config);
+    model_setup::publish_row_tiers(&args, &config, settings);
     act_quant_support::check(&config, &args.lm_head_dtype)?;
     model_setup::publish_moe_expert_act(&config);
 
     // 2026-09-26: After this call `args.num_drafts` is `Some`, so
     // `args.resolved_num_drafts()` is valid.
     serve_phases::apply_model_default_num_drafts(&mut args, &ptx_set);
-    serve_phases::publish_mtp_max_seqs(&args, &ptx_set)?;
+    serve_phases::publish_mtp_max_seqs(&args, &ptx_set, settings)?;
     serve_phases::publish_copy_tier(&args)?;
     serve_phases::publish_draft_confidence_stop(&args)?;
-    serve_phases::publish_mtp_k_ladder(&args)?;
+    serve_phases::publish_mtp_k_ladder(settings)?;
     // 2026-09-30: One γ for the reserve, the pools and the scheduler.
     serve_phases::apply_dflash_gamma(&mut args, serve_phases::model_default_drafter(&ptx_set))?;
 
@@ -103,7 +112,7 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         ep_size,
         tp_rank: _tp_rank,
         ep_rank,
-    } = serve_phases::resolve_topology(&args, &mut config)?;
+    } = serve_phases::resolve_topology(&args, &levers, &mut config)?;
 
     let serve_phases::ReservePreflight {
         inference_reserve,
@@ -114,6 +123,7 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         plan: reserve_plan,
     } = load_phases::reserve_preflight(
         &args,
+        &levers,
         &config,
         gpu.as_ref(),
         free_mem,
@@ -143,9 +153,11 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     // (`#[serde(skip)]`), and `validate_serve_args` has checked the flag is at
     // least 1.0.
     config.fp8_kv_headroom = args.fp8_kv_headroom;
+    serve_phases::fill_engram_token_map(&model_dir, &mut config)?;
 
     let store = load_phases::load_weights(
         &args,
+        &levers,
         &mut config,
         &model_dir,
         gpu.as_ref(),
@@ -164,16 +176,35 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         prefill_budget,
         max_batch_tokens,
         spec_tokens: _spec_tokens,
-    } = serve_phases::resolve_prefill_budget(&args, ssm_prefill_chunk);
-    let prefix_cache = serve_phases::build_prefix_cache(&args, &config);
+    } = serve_phases::resolve_prefill_budget(&args, ssm_prefill_chunk, levers.max_batch_tokens);
+    // 2026-10-19: Loaders that size per-step workspaces read the bound here.
+    config.serve_max_batch_tokens = max_batch_tokens;
+    // 2026-10-14: `METRALE_GLM_PREFILL_PIECE_ROWS`: refuse a prefill sizing the piece grid does
+    // not divide before the KV cache is sized (`glm5next_prefill_piece::check_piece_budget`).
+    let lever_settings = serve_phases::lever_settings()?;
+    if let Some(piece) = metrale_model_arch::glm5next_prefill_piece::piece_rows(&lever_settings)? {
+        metrale_model_arch::glm5next_prefill_piece::check_piece_budget(
+            piece,
+            metrale_model_arch::glm5next_layer::GlmLevers::from_settings(&lever_settings)?
+                .prefill_rows,
+            prefill_budget,
+            max_batch_tokens,
+        )
+        .map_err(anyhow::Error::msg)?;
+    }
+    let prefix_cache = serve_phases::build_prefix_cache(&args, &config, levers.prefix_cache_gate)?;
     let comm = serve_phases::init_nccl_comm(
         &args,
+        settings,
         gpu.as_ref(),
         world_size,
         max_batch_tokens,
         config.hidden_size,
         config.vocab_size,
     )?;
+    // 2026-10-21: After the communicator, so its proxy threads exist to be pinned; a worker
+    // holds the keeper through its command loop, rank 0 hands it to the scheduler thread.
+    let wake_keeper = serve_phases::wake_keeper::start(wake_plan, gpu.as_ref(), world_size)?;
     config.profile = args.profile;
     serve_phases::cap_vocab_size_to_tokenizer(&model_dir, &mut config);
     let serve_phases::KvCacheConfig {
@@ -250,20 +281,39 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         .then_some(built.max_batch_size);
     args.max_batch_size = metrale_model_engine::factory::SlotRequest::Count(built.max_batch_size);
     let model = built.model;
+    // 2026-10-21: `METRALE_GLM_EP_CTRL_COMM`: the control communicator, bootstrapped once the
+    // model is built, so every rank has agreed on the lever and its port first.
+    if let Some(port) = serve_phases::ctrl_port(
+        settings.runtime.glm_ep_ctrl_comm,
+        settings.runtime.glm_ep_ctrl_port,
+        args.master_port,
+        world_size,
+    )? {
+        model.attach_ctrl_comm(&mut |stream| {
+            serve_phases::init_ctrl_comm(&args, settings, world_size, port, stream)
+        })?;
+    }
     let drafter_weights_sha256 = built.drafter_weights_sha256;
     // 2026-10-04: Always logged, not only under --spec-cost-model measured: it is the only way
     // to learn the value `met benchmark spec-cost-table --drafter-weights-sha256` and a future
     // boot's `--spec-cost-calibration` must agree on.
     match &drafter_weights_sha256 {
         Some(h) => tracing::info!("MTP drafter weights sha256: {h} (--spec-cost-model's key)"),
-        None => tracing::info!("No MTP drafter weights (checkpoint has no mtp.* tensors)"),
+        // 2026-10-14: None only means no `mtp.*` tensors were hashed. A drafter read from a
+        // next-n decoder layer (GLM-5.3: layers.45) still loads and drafts.
+        None => tracing::info!(
+            "MTP drafter weights sha256: none (no mtp.* tensors to hash for --spec-cost-model; \
+             a next-n layer drafter, if the model has one, is loaded separately)"
+        ),
     }
 
     // 2026-09-28: `--forward`, applied before the audit so the gate sees the executor's lookups.
+    let verify_rows = super::scheduler_setup::verify_rows(&args, model.as_ref());
     model.set_forward(&serve_phases::forward_select(
         &args,
         &ptx_set,
         &config_json,
+        verify_rows,
     )?)?;
     let forward = model.forward_disclosure();
 
@@ -278,7 +328,13 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
     let early_high_speed_swap_cfg = serve_phases::build_high_speed_swap_config(&args)?;
 
     let mut model_opt = Some(model);
-    if serve_phases::maybe_run_ep_worker(&args, &mut model_opt, &early_high_speed_swap_cfg)? {
+    if serve_phases::maybe_run_ep_worker(
+        &args,
+        levers.allow_spec_mismatch,
+        &mut model_opt,
+        &early_high_speed_swap_cfg,
+    )? {
+        drop(wake_keeper);
         return Ok(None);
     }
     let model = model_opt.expect("head retains model on rank 0");
@@ -303,6 +359,7 @@ pub(crate) fn load_engine(mut args: cli::ServeArgs) -> Result<Option<Engine>> {
         auto_max_batch_size,
         device_budget,
         drafter_weights_sha256,
+        wake_keeper,
     }))
 }
 

@@ -7,6 +7,7 @@
 
 use super::*;
 use crate::circuit_toml::CircuitError as E;
+use crate::ir::LayerKind;
 use crate::ir::OpParseError;
 use crate::test_toy::{CIRCUIT, PRECISION, circuit, shape};
 
@@ -320,5 +321,163 @@ fn an_included_library_supplies_blocks_and_every_include_fault_is_refused() {
     assert_eq!(
         err(instantiate(&main, &[("lib", &stray)], &shape(2), &table)).0,
         "lib"
+    );
+}
+
+/// 2026-10-08: `[layout.prefix]` maps the first `count` layers through its own blocks (a dense
+/// FFN before the MoE layers): exactly layers `0..count`, whatever the count, and a kind it does
+/// not map inside the prefix, an undeclared count dim and a missing one are refused.
+#[test]
+fn a_layout_prefix_maps_the_first_layers_through_its_blocks() {
+    let table = crate::precision::PrecisionTable::parse(PRECISION).unwrap();
+    let ffn_at = CIRCUIT.find("[block.ffn]").unwrap();
+    let head_at = CIRCUIT.find("[block.head]").unwrap();
+    let dense = CIRCUIT[ffn_at..head_at].replace("block.ffn", "block.dense");
+    let text = CIRCUIT
+        .replacen(
+            "dims = [\"hidden\", \"inter\", \"vocab\"]",
+            "dims = [\"hidden\", \"inter\", \"vocab\", \"first_dense\"]",
+            1,
+        )
+        .replacen(
+            "[block.embed]",
+            &format!(
+                "[layout.prefix]\ncount = \"first_dense\"\nblocks = {{ linear_attention = \
+                 [\"dense\"] }}\n\n{dense}[block.embed]"
+            ),
+            1,
+        );
+    let with = |layers: usize, first: u64| {
+        let mut s = shape(layers);
+        s.dims.insert("first_dense".into(), first);
+        s
+    };
+    let templates = |c: &Circuit| {
+        c.blocks
+            .iter()
+            .filter(|b| b.layer.is_some())
+            .map(|b| b.template.clone())
+            .collect::<Vec<_>>()
+    };
+    let c = instantiate(&text, &[], &with(4, 2), &table).unwrap();
+    assert_eq!(templates(&c), ["dense", "dense", "ffn", "ffn"]);
+    assert_eq!(
+        c.nodes[c.node("l1.dense.down").unwrap()].binding,
+        ["layers.1.down"]
+    );
+    let none = instantiate(&text, &[], &with(3, 0), &table).unwrap();
+    assert_eq!(templates(&none), ["ffn", "ffn", "ffn"]);
+    // 2026-10-08: A prefix over every layer leaves the layout's own block unused, which is
+    // refused as any unused block is.
+    assert_eq!(
+        instantiate(&text, &[], &with(2, 5), &table),
+        Err(E::Layout("block template `ffn` is never used".into()))
+    );
+
+    let mut s = with(3, 2);
+    s.layer_kinds[1] = LayerKind::FullAttention;
+    assert_eq!(
+        instantiate(&text, &[], &s, &table),
+        Err(E::Layout(
+            "layer 1 is full_attention, which the `first_dense` prefix maps to no blocks".into()
+        ))
+    );
+    let undeclared = text.replacen(", \"first_dense\"]", "]", 1);
+    assert!(matches!(
+        instantiate(&undeclared, &[], &with(3, 2), &table),
+        Err(E::ShapeMismatch(m)) if m.contains("not in the circuit's `dims` list")
+    ));
+    assert!(matches!(
+        instantiate(&text, &[], &shape(3), &table),
+        Err(E::ShapeMismatch(m)) if m.contains("first_dense")
+    ));
+}
+
+/// 2026-10-18: `[layout.at]` gives single layers their own blocks ahead of the prefix and the
+/// layout: exactly the named layers, whatever their kind, and a non-canonical key, a layer past
+/// the model, an empty list and an unknown block are refused.
+#[test]
+fn a_layout_at_entry_overrides_one_layer_ahead_of_the_prefix() {
+    let table = crate::precision::PrecisionTable::parse(PRECISION).unwrap();
+    let ffn_at = CIRCUIT.find("[block.ffn]").unwrap();
+    let head_at = CIRCUIT.find("[block.head]").unwrap();
+    let own = CIRCUIT[ffn_at..head_at].replace("block.ffn", "block.own");
+    let dense = CIRCUIT[ffn_at..head_at].replace("block.ffn", "block.dense");
+    let with_at = |at: &str| {
+        CIRCUIT
+            .replacen(
+                "dims = [\"hidden\", \"inter\", \"vocab\"]",
+                "dims = [\"hidden\", \"inter\", \"vocab\", \"first_dense\"]",
+                1,
+            )
+            .replacen(
+                "[block.embed]",
+                &format!(
+                    "[layout.prefix]\ncount = \"first_dense\"\nblocks = {{ linear_attention = \
+                     [\"dense\"] }}\n\n[layout.at]\n{at}\n\n{own}{dense}[block.embed]"
+                ),
+                1,
+            )
+    };
+    let mut s = shape(5);
+    s.dims.insert("first_dense".into(), 2);
+    let templates = |c: &Circuit| {
+        c.blocks
+            .iter()
+            .filter(|b| b.layer.is_some())
+            .map(|b| (b.layer.unwrap(), b.template.clone()))
+            .collect::<Vec<_>>()
+    };
+    let c = instantiate(
+        &with_at("\"1\" = [\"own\"]\n\"3\" = [\"own\", \"ffn\"]"),
+        &[],
+        &s,
+        &table,
+    )
+    .unwrap();
+    let want: Vec<(usize, String)> = [
+        (0, "dense"),
+        (1, "own"),
+        (2, "ffn"),
+        (3, "own"),
+        (3, "ffn"),
+        (4, "ffn"),
+    ]
+    .into_iter()
+    .map(|(l, t)| (l, t.to_string()))
+    .collect();
+    assert_eq!(templates(&c), want);
+    assert_eq!(
+        c.nodes[c.node("l3.own.down").unwrap()].binding,
+        ["layers.3.down"]
+    );
+    // 2026-10-18: An at-layer ignores its kind: one the layout maps to no blocks still loads.
+    let mut odd = s.clone();
+    odd.layer_kinds[3] = LayerKind::FullAttention;
+    assert!(instantiate(&with_at("\"3\" = [\"own\"]"), &[], &odd, &table).is_ok());
+
+    let refused = |at: &str| instantiate(&with_at(at), &[], &s, &table).unwrap_err();
+    for key in ["03", "+3", "x", "-1", ""] {
+        assert_eq!(
+            refused(&format!("\"{key}\" = [\"own\"]")),
+            E::Layout(format!("`[layout.at]` key `{key}` is not a layer index"))
+        );
+    }
+    assert_eq!(
+        refused("\"5\" = [\"own\"]"),
+        E::Layout("`[layout.at]` names layer 5, but the model has 5 layers".into())
+    );
+    assert_eq!(
+        refused("\"2\" = []\n\"4\" = [\"own\"]"),
+        E::Layout("`[layout.at]` gives layer 2 no blocks".into())
+    );
+    assert_eq!(
+        refused("\"2\" = [\"nope\"]"),
+        E::Layout("no block template `nope`".into())
+    );
+    // 2026-10-18: A block only an at-entry would use is unused without that entry.
+    assert_eq!(
+        instantiate(&with_at(""), &[], &s, &table),
+        Err(E::Layout("block template `own` is never used".into()))
     );
 }

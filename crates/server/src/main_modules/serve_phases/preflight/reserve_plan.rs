@@ -91,10 +91,7 @@ impl ReservePlan {
             Some(v) if self.rollback == SsmRollbackMode::Replay => {
                 ssm_reserve::ssm_replay_ring_bytes(
                     pool.layers,
-                    ssm_reserve::ssm_replay_row_bytes(
-                        self.config.ssm_qkvz_size(),
-                        self.config.linear_num_value_heads,
-                    ),
+                    ssm_reserve::ssm_replay_row_bytes_for(&self.config),
                     // 2026-10-02: Widened by a prompt-lookup copy tier, as the pool widens it.
                     ssm_reserve::tier_rows(self.num_drafts + 1, ssm_reserve::copy_tier()),
                     v,

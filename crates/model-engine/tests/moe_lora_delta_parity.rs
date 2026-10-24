@@ -174,7 +174,10 @@ fn route_of(pairs: &[(u16, LoraPair)], gpu: &dyn GpuBackend) -> Result<MoeExpert
 fn moe_lora_delta_parity() -> Result<()> {
     let (backend, st) = setup()?;
     let gpu: &dyn GpuBackend = &backend;
-    let kernels = LoraKernels::new(gpu)?;
+    let kernels = LoraKernels::new(
+        gpu,
+        metrale_model_layers::layers::ops::OpsLevers::declared().lora,
+    )?;
     let mut rng = Rng(SEED);
 
     // 2026-09-25: Token t routes to experts t % E and (t + 1) % E; rows are

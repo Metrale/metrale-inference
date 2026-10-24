@@ -8,8 +8,15 @@
 //! the parent module's log target.
 
 use super::PagedKvCache;
+use metrale_kv_codec::{KvCodecId, spec};
 
 impl PagedKvCache {
+    /// 2026-10-18: True when both sides of a layer hold plain BF16 values, the only kind these
+    /// probes decode.
+    fn stores_bf16((k, v): (KvCodecId, KvCodecId)) -> bool {
+        spec(k).stores_bf16() && spec(v).stores_bf16()
+    }
+
     /// 2026-09-25: Sum, sum of squares and sum of absolute values of a
     /// little-endian BF16 buffer, for the two fingerprint diagnostics below.
     /// A BF16 value is the top 16 bits of an f32.
@@ -47,7 +54,7 @@ impl PagedKvCache {
             ("suffix", &blocks[boundary..]),
         ];
         for (li, layer) in self.layers.iter().enumerate() {
-            if layer.dtype != super::KvCacheDtype::Bf16 {
+            if !Self::stores_bf16(layer.dtype.pair()) {
                 if li == 0 {
                     tracing::warn!(
                         target: "metrale_cache::kv_cache::paged_impl",
@@ -106,7 +113,7 @@ impl PagedKvCache {
     ) {
         gpu.synchronize(stream).ok();
         let layer = &self.layers[layer_idx];
-        if layer.dtype != super::KvCacheDtype::Bf16 {
+        if !Self::stores_bf16(layer.dtype.pair()) {
             return;
         }
         // 2026-09-25: A BF16 layer is symmetric, so the K stride is also the V

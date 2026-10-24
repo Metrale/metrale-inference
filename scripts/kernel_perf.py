@@ -7,6 +7,8 @@
     python3 scripts/kernel_perf.py --check    # exit 1 if the committed block is stale or a
                                               # curated input no longer matches the tree
     python3 scripts/kernel_perf.py --json     # the joined inventory as JSON, for tooling
+    python3 scripts/kernel_perf.py --json --partial  # {kernels, problems}: never refuses;
+                                              # unclassified kernels have component null
 
 Inputs: kernels/** and crates/** (derived: entry points, targets, call sites), and three
 curated files under docs/kernel-perf/: taxonomy.toml (families, components, rules),
@@ -41,7 +43,16 @@ def _load(path: Path) -> dict:
         return tomllib.load(f)
 
 
-def build(root: Path) -> model.Model:
+def rooflines(root: Path) -> dict[str, dict]:
+    """hardware -> the [roofline] table of kernels/<hw>/common/KERNEL_FAMILIES.toml (SSOT for
+    the energy-floor constants), for every hardware directory that has one."""
+    out = {}
+    for f in sorted((root / "kernels").glob("*/common/KERNEL_FAMILIES.toml")):
+        out[f.parent.parent.name] = _load(f).get("roofline", {})
+    return out
+
+
+def build(root: Path, partial: bool = False) -> model.Model:
     inv = inventory.build(root)
     crates = {
         os.path.relpath(os.path.join(dp, f), root)
@@ -54,6 +65,8 @@ def build(root: Path) -> model.Model:
         _load(root / DATA / "tradeoffs.toml"),
         _load(root / DATA / "measurements.toml"),
         crates,
+        rooflines(root),
+        partial=partial,
     )
 
 
@@ -92,8 +105,19 @@ def main(argv: list[str]) -> int:
     mode = ap.add_mutually_exclusive_group()
     mode.add_argument("--check", action="store_true", help="fail if KERNEL-PERF.md is stale")
     mode.add_argument("--json", action="store_true", help="print the joined inventory as JSON")
+    ap.add_argument("--partial", action="store_true",
+                    help="with --json: never refuse; print {kernels, problems}, unclassified kernels with component null")
     args = ap.parse_args(argv)
+    if args.partial and not args.json:
+        ap.error("--partial needs --json")
     root = args.root.resolve()
+    if args.partial:
+        m = build(root, partial=True)
+        problems = [{"kind": "unclassified", "kernel": k} for k in m.unclassified]
+        problems += [{"kind": "inconsistency", "text": p} for p in m.problems]
+        json.dump({"kernels": as_json(m), "problems": problems}, sys.stdout, indent=1)
+        print()
+        return 0
     try:
         m = build(root)
     except model.ModelError as e:

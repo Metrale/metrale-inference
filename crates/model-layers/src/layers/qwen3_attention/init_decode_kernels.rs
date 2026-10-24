@@ -15,8 +15,8 @@
 //!   `try_target_kernel` (pinned by `init.rs`'s `fused_kv_probe_guard` test).
 
 use anyhow::Result;
-use metrale_cache::kv_cache::KvCacheDtype;
 use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
+use metrale_kv_codec::{KernelName, ResolvedKvKernels};
 
 // 2026-09-26: `gate` is called by path, never through a `let`-bound function
 // pointer: a call through a pointer does not pass the caller's location to a
@@ -36,7 +36,7 @@ pub(super) struct DecodeKernels {
     pub(super) innerq_apply_q_k: KernelHandle,
     pub(super) innerq_apply_k_k: KernelHandle,
     pub(super) paged_decode_k: KernelHandle,
-    pub(super) paged_decode_512_k: KernelHandle,
+    pub(super) paged_decode_512_k: Option<KernelHandle>,
     pub(super) paged_decode_mla_k: KernelHandle,
     pub(super) mla_paged_decode_k: KernelHandle,
     pub(super) mla_paged_decode_fp8_k: KernelHandle,
@@ -67,14 +67,15 @@ pub(super) struct DecodeKernels {
 
 impl DecodeKernels {
     /// 2026-09-26: Looks up every field's kernel, in field order. The first
-    /// failed required lookup returns its error and issues no later lookup.
+    /// failed required lookup returns its error and issues no later lookup. 2026-10-18: The KV
+    /// codec's decode, head_dim-512 and split-K kernels are the ones `kv_names` (the codec
+    /// kernel table) names; a kernel the pair has no row for is `None`, never another pair's.
     pub(super) fn resolve(
         gpu: &dyn GpuBackend,
-        kv_dtype: KvCacheDtype,
         probes: &ArchProbes,
-        decode_mod: &'static str,
-        decode_fn: &'static str,
+        kv_names: &ResolvedKvKernels<KernelName>,
     ) -> Result<Self> {
+        let hard = |name: KernelName| gpu.kernel(name.module, name.func);
         Ok(Self {
             // 2026-09-25: `try_target_kernel`: the `fused_k_norm_rope_cache`
             // module is built only from `kernels/gb10/common`, which the hopper
@@ -120,43 +121,14 @@ impl DecodeKernels {
                 "tq_plus_innerq_apply",
                 "tq_plus_innerq_apply_k",
             ),
-            paged_decode_k: gpu.kernel(decode_mod, decode_fn)?,
-            // 2026-09-25: The head_dim > 256 decode arm. Every reader in
-            // `decode/run_paged_decode.rs` requires
-            // `head_dim > 256 && paged_decode_512_k.0 != 0`, and it is looked up
-            // only when `probes.wide_head_dim` is set.
-            paged_decode_512_k: match kv_dtype {
-                KvCacheDtype::Bf16 => gate(
-                    probes.wide_head_dim,
-                    gpu,
-                    "paged_decode_attn_512",
-                    "paged_decode_attn",
-                ),
-                KvCacheDtype::Turbo4 => gate(
-                    probes.wide_head_dim,
-                    gpu,
-                    "paged_decode_turbo4_512",
-                    "paged_decode_attn_turbo4",
-                ),
-                KvCacheDtype::Turbo8 => gate(
-                    probes.wide_head_dim,
-                    gpu,
-                    "paged_decode_turbo8_512",
-                    "paged_decode_attn_turbo8",
-                ),
-                KvCacheDtype::Turbo3 | KvCacheDtype::Turbo2 => gate(
-                    probes.wide_head_dim,
-                    gpu,
-                    "paged_decode_turbo4_512",
-                    "paged_decode_attn_turbo4",
-                ),
-                _ => gate(
-                    probes.wide_head_dim,
-                    gpu,
-                    "paged_decode_attn_fp8_512",
-                    "paged_decode_attn_fp8",
-                ),
-            },
+            paged_decode_k: hard(kv_names.decode)?,
+            // 2026-09-25: The head_dim > 256 decode arm, looked up only when
+            // `probes.wide_head_dim` is set. 2026-10-18: Only the pair's own build: Turbo3 and
+            // Turbo2 used to load turbo4's, and NVFP4 and the asymmetric pairs fp8's, which no
+            // reader of theirs launched. Readers: `Qwen3AttentionLayer::decode_kernel_for`.
+            paged_decode_512_k: kv_names
+                .decode_512
+                .and_then(|name| present(gate(probes.wide_head_dim, gpu, name.module, name.func))),
             paged_decode_mla_k: gate(probes.mla, gpu, "paged_decode_mla", "paged_decode_attn"),
             // 2026-09-25: MLA paged decode over the compressed KV cache, whose
             // row is `kv_lora_rank + rope` wide; looked up only for MLA models.
@@ -225,42 +197,10 @@ impl DecodeKernels {
                 "dense_gemm_splitk_reduce",
             ),
             dense_gemm_tc_k: super::super::try_kernel(gpu, "gemm_tc", "dense_gemm_tc"),
-            paged_decode_splitk_k: match kv_dtype {
-                KvCacheDtype::Nvfp4 => {
-                    Some(gpu.kernel("paged_decode_nvfp4", "paged_decode_attn_splitk_nvfp4")?)
-                }
-                KvCacheDtype::Turbo3
-                | KvCacheDtype::Turbo4
-                | KvCacheDtype::Turbo8
-                | KvCacheDtype::Bf16KTurbo3V
-                | KvCacheDtype::Bf16KTurbo4V
-                | KvCacheDtype::Bf16KTurbo2V
-                | KvCacheDtype::Fp8KTurbo3V
-                | KvCacheDtype::Fp8KTurbo4V
-                | KvCacheDtype::Fp8KTurbo2V
-                | KvCacheDtype::Turbo4KTurbo3V
-                | KvCacheDtype::Turbo4KTurbo8V
-                | KvCacheDtype::Turbo3KTurbo8V => None,
-                _ => Some(gpu.kernel("paged_decode_fp8", "paged_decode_attn_splitk_fp8")?),
-            },
-            paged_decode_reduce_k: match kv_dtype {
-                KvCacheDtype::Nvfp4 => {
-                    Some(gpu.kernel("paged_decode_nvfp4", "paged_decode_attn_reduce_nvfp4")?)
-                }
-                KvCacheDtype::Turbo3
-                | KvCacheDtype::Turbo4
-                | KvCacheDtype::Turbo8
-                | KvCacheDtype::Bf16KTurbo3V
-                | KvCacheDtype::Bf16KTurbo4V
-                | KvCacheDtype::Bf16KTurbo2V
-                | KvCacheDtype::Fp8KTurbo3V
-                | KvCacheDtype::Fp8KTurbo4V
-                | KvCacheDtype::Fp8KTurbo2V
-                | KvCacheDtype::Turbo4KTurbo3V
-                | KvCacheDtype::Turbo4KTurbo8V
-                | KvCacheDtype::Turbo3KTurbo8V => None,
-                _ => Some(gpu.kernel("paged_decode_fp8", "paged_decode_attn_reduce_fp8")?),
-            },
+            // 2026-10-18: A hard lookup when the codec pair has a split-K pair (FP8, NVFP4).
+            // BF16 and Turbo2 used to load FP8's through a `_` arm; no reader of theirs did.
+            paged_decode_splitk_k: kv_names.splitk.map(|(s, _)| hard(s)).transpose()?,
+            paged_decode_reduce_k: kv_names.splitk.map(|(_, r)| hard(r)).transpose()?,
             // 2026-09-25: The GQA-packed non-split twins, from
             // `kernels/gb10/common/paged_decode_attn_{bf16,fp8}_gqa.cu`. A target
             // without them gets `None` and decode keeps the unpacked kernel.

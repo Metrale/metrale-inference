@@ -38,7 +38,12 @@ fn unreadable_dirty_state_aborts_provenance_capture() {
     // 2026-09-26: HEAD stays readable but `git status` cannot parse this index,
     // so the failure is the dirty-state read, not the earlier sha lookup.
     std::fs::write(root.join(".git/index"), "not a git index").unwrap();
-    let error = capture_provenance_at(&root).expect_err("unknown dirt is not clean");
+    let levers = BenchLevers::resolve(&metrale_io_host_mem::MapEnv::new(std::iter::empty::<(
+        &str,
+        &str,
+    )>()))
+    .expect("an empty environment resolves");
+    let error = capture_provenance_at(&root, &levers).expect_err("unknown dirt is not clean");
     assert_eq!(
         format!("{error:#}"),
         format!(

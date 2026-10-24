@@ -37,6 +37,9 @@ use std::sync::Arc;
 use anyhow::{Context, Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
+use metrale_model_layers::layers::ops::ResidentMat;
+
+use crate::fp8_block_v41::Fp8BlockDirect;
 
 /// 2026-09-25: Bytes of one Q2_K super-block, which is one engram row.
 pub const ENGRAM_ROW_BYTES: usize = 84;
@@ -233,8 +236,10 @@ impl EngramHasher {
 /// 2026-09-25: One engram layer's resident weights on the device.
 pub struct EngramLayerWeights {
     pub layer: usize,
-    /// 2026-09-25: `[dim * (hc + 1), cols * head_dim]` bf16.
-    pub wkv: DevicePtr,
+    /// 2026-09-25: `[dim * (hc + 1), cols * head_dim]`.
+    /// 2026-10-19: In the checkpoint's precision: bf16 (GGUF) or E4M3 with E8M0 tile scales
+    /// (safetensors), whose `qdq` rounds the rows to E4M3 blocks before the projection.
+    pub wkv: ResidentMat,
     /// 2026-09-25: `[hc, dim]` f32, the elementwise product `q_weight * k_weight`.
     pub qk: DevicePtr,
     /// 2026-09-25: This layer's row workspace (`add_layer` allocates it): the raw
@@ -267,6 +272,9 @@ pub struct EngramV41 {
     gemv_q2k_k: KernelHandle,
     gate_k: KernelHandle,
     dequant_k: KernelHandle,
+    act_quant_k: KernelHandle,
+    /// 2026-10-19: The projection off an E4M3 `wkv`, decoded in the kernel.
+    fp8: Fp8BlockDirect,
     layers: Vec<EngramLayerWeights>,
     /// 2026-09-25: `[max_tokens * cols * head_dim]` bf16.
     rows: DevicePtr,
@@ -303,6 +311,8 @@ impl EngramV41 {
             gemv_q2k_k: gpu.kernel(GATE_MODULE, "engram_v41_wkv_q2k_gemv")?,
             gate_k: gpu.kernel(GATE_MODULE, "engram_v41_gate")?,
             dequant_k: gpu.kernel(DEQUANT_MODULE, "dequant_q2_k_to_bf16")?,
+            act_quant_k: gpu.kernel("attn_v41", "attn_v41_act_quant_fp8")?,
+            fp8: Fp8BlockDirect::new(gpu)?,
             layers: Vec::new(),
             rows: gpu.alloc(n_rows * head_dim * 2)?,
             raw: gpu.alloc(n_rows * ENGRAM_ROW_BYTES)?,
@@ -384,14 +394,15 @@ impl EngramV41 {
             .launch(stream)
     }
 
-    /// 2026-09-25: Fill the row input from bf16 rows (as bits); the GPU oracle
-    /// test uses it.
+    /// 2026-09-25: Fill the row input from bf16 rows (as bits), enqueued on `stream`
+    /// (2026-10-19: the safetensors checkpoint's decoded FP8 rows; the GPU oracle test).
     pub fn rows_from_bf16(
         &self,
         gpu: &dyn GpuBackend,
         layer: Option<usize>,
         rows_bf16: &[u16],
         n_rows: usize,
+        stream: u64,
     ) -> Result<()> {
         ensure!(
             n_rows <= self.max_tokens * self.cols,
@@ -403,7 +414,7 @@ impl EngramV41 {
             rows_bf16.len()
         );
         let bytes: Vec<u8> = rows_bf16.iter().flat_map(|v| v.to_le_bytes()).collect();
-        gpu.copy_h2d(&bytes, self.row_bufs(layer)?.1)
+        gpu.copy_h2d_async(&bytes, self.row_bufs(layer)?.1, stream)
     }
 
     /// 2026-09-25: The shared workspace's dequantised rows (`[n_rows, head_dim]`
@@ -440,7 +451,13 @@ impl EngramV41 {
 
     pub fn free(self, gpu: &dyn GpuBackend) -> Result<()> {
         for l in &self.layers {
-            gpu.free(l.wkv)?;
+            match l.wkv {
+                ResidentMat::Fp8Block { w, scale, .. } => {
+                    gpu.free(w)?;
+                    gpu.free(scale)?;
+                }
+                ResidentMat::Bf16(p) | ResidentMat::Q2K(p) | ResidentMat::Q3K(p) => gpu.free(p)?,
+            }
             gpu.free(l.qk)?;
             gpu.free(l.raw)?;
             gpu.free(l.rows)?;

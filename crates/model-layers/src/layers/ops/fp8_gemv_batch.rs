@@ -34,25 +34,37 @@ pub fn fp8_gemv_rowscale_batch8_rt2(
     k: u32,
     stream: u64,
 ) -> Result<()> {
-    ensure!(
-        (1..=8).contains(&m),
-        "fp8_gemv_rowscale_batch8_rt2: m={m} outside 1..=8 (kernel MAX_M)"
-    );
-    ensure!(
-        k.is_multiple_of(16),
-        "fp8_gemv_rowscale_batch8_rt2: K={k} not a multiple of 16"
-    );
-    KernelLaunch::new(gpu, kernel)
-        .grid([div_ceil(n, 8), 1, 1])
-        .block([256, 1, 1])
-        .arg_ptr(input)
-        .arg_ptr(weight.weight)
-        .arg_ptr(weight.row_scale)
-        .arg_ptr(output)
-        .arg_u32(m)
-        .arg_u32(n)
-        .arg_u32(k)
-        .launch(stream)
+    fp8_gemv_rowscale_batch8_rt2_ldc(gpu, kernel, input, weight, output, m, n, k, n, stream)
+}
+
+/// 2026-10-09: [`fp8_gemv_rowscale_batch8_rt2`] writing `output` `[M, ldc]` BF16, the first
+/// `n` columns of each row; `ldc = n` is that launcher. Per output the arithmetic does not
+/// depend on `ldc`, so a column window of a wider output (a vocab-parallel head's shard) gets
+/// the bits the whole projection writes there. Refuses `ldc < n`.
+#[allow(clippy::too_many_arguments)]
+pub fn fp8_gemv_rowscale_batch8_rt2_ldc(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    input: DevicePtr,
+    weight: &Fp8DenseWeight,
+    output: DevicePtr,
+    m: u32,
+    n: u32,
+    k: u32,
+    ldc: u32,
+    stream: u64,
+) -> Result<()> {
+    rowscale_rt2_launch(
+        "fp8_gemv_rowscale_batch8_rt2",
+        8,
+        gpu,
+        kernel,
+        input,
+        weight,
+        output,
+        [m, n, k, ldc],
+        stream,
+    )
 }
 
 /// 2026-09-25: The 16-row instantiation of the same kernel template
@@ -71,14 +83,57 @@ pub fn fp8_gemv_rowscale_batch16_rt2(
     k: u32,
     stream: u64,
 ) -> Result<()> {
+    fp8_gemv_rowscale_batch16_rt2_ldc(gpu, kernel, input, weight, output, m, n, k, n, stream)
+}
+
+/// 2026-10-09: [`fp8_gemv_rowscale_batch16_rt2`] with an output row pitch, as
+/// [`fp8_gemv_rowscale_batch8_rt2_ldc`].
+#[allow(clippy::too_many_arguments)]
+pub fn fp8_gemv_rowscale_batch16_rt2_ldc(
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    input: DevicePtr,
+    weight: &Fp8DenseWeight,
+    output: DevicePtr,
+    m: u32,
+    n: u32,
+    k: u32,
+    ldc: u32,
+    stream: u64,
+) -> Result<()> {
+    rowscale_rt2_launch(
+        "fp8_gemv_rowscale_batch16_rt2",
+        16,
+        gpu,
+        kernel,
+        input,
+        weight,
+        output,
+        [m, n, k, ldc],
+        stream,
+    )
+}
+
+/// 2026-10-09: Launch body of the two `fp8_gemv_rowscale_batch*_rt2` entries; they differ
+/// only in the kernel's MAX_M.
+#[allow(clippy::too_many_arguments)]
+fn rowscale_rt2_launch(
+    name: &str,
+    max_m: u32,
+    gpu: &dyn GpuBackend,
+    kernel: KernelHandle,
+    input: DevicePtr,
+    weight: &Fp8DenseWeight,
+    output: DevicePtr,
+    [m, n, k, ldc]: [u32; 4],
+    stream: u64,
+) -> Result<()> {
     ensure!(
-        (1..=16).contains(&m),
-        "fp8_gemv_rowscale_batch16_rt2: m={m} outside 1..=16 (kernel MAX_M)"
+        (1..=max_m).contains(&m),
+        "{name}: m={m} outside 1..={max_m} (kernel MAX_M)"
     );
-    ensure!(
-        k.is_multiple_of(16),
-        "fp8_gemv_rowscale_batch16_rt2: K={k} not a multiple of 16"
-    );
+    ensure!(k.is_multiple_of(16), "{name}: K={k} not a multiple of 16");
+    ensure!(ldc >= n, "{name}: ldc={ldc} < N={n}");
     KernelLaunch::new(gpu, kernel)
         .grid([div_ceil(n, 8), 1, 1])
         .block([256, 1, 1])
@@ -89,14 +144,18 @@ pub fn fp8_gemv_rowscale_batch16_rt2(
         .arg_u32(m)
         .arg_u32(n)
         .arg_u32(k)
+        .arg_u32(ldc)
         .launch(stream)
 }
 
 /// 2026-09-25: FP8-weight GEMV for two rows in one pass over the weight:
-/// `input` `[2, K]` BF16, `output` `[2, N]` BF16, scaled by
-/// `weight.row_scale`. Not bit-identical to two `dense_gemv_fp8w` launches:
+/// `input` `[2, K]` BF16, `output` `[2, ldc]` BF16 (the first `n` columns of each row),
+/// scaled by `weight.row_scale`. Not bit-identical to two `dense_gemv_fp8w` launches:
 /// the kernel adds four products to the accumulator at once, where
-/// `dense_gemv_fp8w` adds each product separately.
+/// `dense_gemv_fp8w` adds each product separately. 2026-10-09: `ldc` (`>= n`; `n` is the
+/// dense layout) moves only the second row's store, so a column window of a wider output
+/// gets the bits the whole projection writes there.
+#[allow(clippy::too_many_arguments)]
 pub fn dense_gemv_fp8w_batch2(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
@@ -105,8 +164,10 @@ pub fn dense_gemv_fp8w_batch2(
     output: DevicePtr,
     n: u32,
     k: u32,
+    ldc: u32,
     stream: u64,
 ) -> Result<()> {
+    ensure!(ldc >= n, "dense_gemv_fp8w_batch2: ldc={ldc} < N={n}");
     KernelLaunch::new(gpu, kernel)
         .grid([div_ceil(n, 4), 1, 1])
         .block([256, 1, 1])
@@ -116,6 +177,7 @@ pub fn dense_gemv_fp8w_batch2(
         .arg_ptr(output)
         .arg_u32(n)
         .arg_u32(k)
+        .arg_u32(ldc)
         .launch(stream)
 }
 

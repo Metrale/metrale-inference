@@ -28,6 +28,7 @@ pub(super) fn configure_model(
 ) -> Result<(ModelConfig, String)> {
     metrale_telemetry::progress::phase(2, "config");
     let (mut config, config_json) = serve_phases::load_model_config(model_dir)?;
+    serve_phases::load_embedding_prompts(model_dir, &mut config)?;
 
     // 2026-09-26: A sibling `hf_quant_config.json` fills `quantization_config`
     // when config.json has none; its top level is read as the quantization
@@ -97,6 +98,7 @@ fn lm_head_flags(
 
 pub(super) fn resolve_media_policies(
     args: &cli::ServeArgs,
+    levers: &serve_phases::LoadLevers,
     model_dir: &Path,
     config: &mut ModelConfig,
 ) -> Result<(
@@ -107,7 +109,7 @@ pub(super) fn resolve_media_policies(
     // 2026-09-26: The vision area bound is resolved once and installed on the
     // config before `build_model`, which builds the vision encoder; the
     // encoder sizes its patch buffers from it (`derive_max_patches`).
-    let vision_max_pixels = resolve_vision_max_pixels(args, model_dir)?;
+    let vision_max_pixels = resolve_vision_max_pixels(levers.vision_max_pixels, model_dir);
     if let Some(v) = config.vision.as_mut() {
         v.max_pixels = vision_max_pixels;
     }
@@ -115,12 +117,12 @@ pub(super) fn resolve_media_policies(
         Some(px) => {
             tracing::info!(target: "met::main_modules::serve_load", "Vision area bound: {} px ({})",
                 px,
-                if args.vision_max_pixels > 0 {
-                    "--vision-max-pixels"
+                if levers.vision_max_pixels.is_some() {
+                    "--vision-max-pixels / METRALE_VISION_MAX_PIXELS"
                 } else {
                     // 2026-09-26: Names no file: `read_preprocessor_max_pixels`
                     // logs the file and key it read.
-                    "checkpoint processor config / METRALE_VISION_MAX_PIXELS"
+                    "checkpoint processor config"
                 }
             )
         }
@@ -218,9 +220,9 @@ pub(super) fn select_kernel_target(
     args: &cli::ServeArgs,
     config: &ModelConfig,
     model_dir: &Path,
-) -> Result<metrale_kernels::TargetPtxSet> {
+) -> Result<metrale_kernel_set::TargetPtxSet> {
     metrale_telemetry::progress::phase(3, "gpu init");
-    // 2026-09-26: Target resolution rules are in `metrale_kernels::resolve`:
+    // 2026-09-26: Target resolution rules are in `metrale_kernel_set::resolve`:
     // exact `hidden_size` before wildcards, a collision broken by each
     // target's `match_names` against `model_refs`, an unbroken tie an error,
     // and `--kernel-target` pins the target.
@@ -233,29 +235,31 @@ pub(super) fn select_kernel_target(
     .into_iter()
     .flatten()
     .collect();
-    let ptx_set = metrale_kernels::ptx_for_config(
-        &config.model_type,
-        config.hidden_size,
-        &model_refs,
-        args.kernel_target.as_deref(),
-    )
-    .map_err(|e| anyhow::anyhow!("{e}"))?
-    .with_context(|| {
-        format!(
-            "No compiled kernel target matches model_type '{}' / hidden_size={}. \
-             Available targets: {:?}",
-            config.model_type,
+    let ptx_set = crate::embedded::kernels()
+        .ptx_for_config(
+            &config.model_type,
             config.hidden_size,
-            metrale_kernels::available_targets()
-                .iter()
-                .map(|t| &t.target.model)
-                .collect::<Vec<_>>(),
+            &model_refs,
+            args.kernel_target.as_deref(),
         )
-    })?;
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+        .with_context(|| {
+            format!(
+                "No compiled kernel target matches model_type '{}' / hidden_size={}. \
+             Available targets: {:?}",
+                config.model_type,
+                config.hidden_size,
+                crate::embedded::kernels()
+                    .available_targets()
+                    .iter()
+                    .map(|t| &t.target.model)
+                    .collect::<Vec<_>>(),
+            )
+        })?;
     // 2026-09-26: kimi_k3 MXFP4 weights need the exact mxfp4 target: for several
     // quant variants of one target, `ptx_for_config` returns the first.
     let ptx_set = if config.model_type == "kimi_k3" && canonicalize_model_quant(config) == "mxfp4" {
-        metrale_kernels::ptx_for_exact_target(ptx_set.target.model, "mxfp4")
+        crate::embedded::kernels().ptx_for_exact_target(ptx_set.target.model, "mxfp4")
             .context("K3 MXFP4 requires its compiled mxfp4 target; rebuild with METRALE_TARGET_QUANT=mxfp4 or *")?
     } else {
         ptx_set
@@ -264,7 +268,7 @@ pub(super) fn select_kernel_target(
 }
 
 pub(super) fn check_kernel_target(
-    ptx_set: &metrale_kernels::TargetPtxSet,
+    ptx_set: &metrale_kernel_set::TargetPtxSet,
     config: &mut ModelConfig,
 ) -> Result<()> {
     // 2026-09-26: Record the resolved target for the dashboard's kernel table.
@@ -323,7 +327,12 @@ pub(super) fn check_kernel_target(
 /// policy serves at declared FP8 weights (nvidia/Qwen3.6-35B-A3B-NVFP4 under `declared`) counts
 /// as FP8 here: its W8A16 projections take the tile order the FP8 MoE validated, and its NVFP4
 /// experts are row-invariant on the grouped decode either way.
-pub(super) fn publish_row_tiers(args: &cli::ServeArgs, config: &ModelConfig) {
+/// 2026-10-17: The two levers come from the resolved settings (ROTI).
+pub(super) fn publish_row_tiers(
+    args: &cli::ServeArgs,
+    config: &ModelConfig,
+    settings: &metrale_settings::InferenceServerSettings,
+) {
     use metrale_model_layers::layers::{RowTiers, publish_row_tiers, resolve_row_tiers};
     if metrale_model_layers::layers::any_fixed() {
         publish_row_tiers(RowTiers::Canonical);
@@ -349,8 +358,8 @@ pub(super) fn publish_row_tiers(args: &cli::ServeArgs, config: &ModelConfig) {
     });
     publish_row_tiers(resolve_row_tiers(
         args.no_canonical_tiers,
-        std::env::var_os("METRALE_ROW_EXACT_TIERS").is_some(),
-        std::env::var_os("METRALE_CANONICAL_TIERS").is_some(),
+        settings.kernels.row_exact_tiers,
+        settings.kernels.canonical_tiers,
         config.num_experts > 0 && (canonicalize_model_quant(config) == "fp8" || fp8_projections),
     ));
 }
@@ -402,10 +411,10 @@ pub(super) fn publish_moe_expert_act(config: &ModelConfig) {
 }
 
 pub(super) fn resolve_behavior(
-    ptx_set: &metrale_kernels::TargetPtxSet,
+    ptx_set: &metrale_kernel_set::TargetPtxSet,
     args: &cli::ServeArgs,
     default_kwargs: &DefaultChatTemplateKwargs,
-) -> metrale_kernels::ModelBehavior {
+) -> metrale_kernel_set::ModelBehavior {
     let mut b = ptx_set.behavior.clone();
     if let Some(cli_budget) = args.max_thinking_budget {
         b.max_thinking_budget = cli_budget;
@@ -424,24 +433,46 @@ pub(super) fn resolve_behavior(
     b
 }
 
+/// 2026-10-08: The chat-template source the flags select: `--chat-template FILE`, else
+/// `--disable-template-overrides`, else the override directory. clap refuses the two
+/// flags together.
+pub(super) fn template_source(args: &cli::ServeArgs) -> crate::tokenizer::TemplateSource<'_> {
+    use crate::tokenizer::TemplateSource;
+    match (
+        &args.chat_surface.chat_template,
+        args.disable_template_overrides,
+    ) {
+        (Some(path), _) => TemplateSource::File(path),
+        (None, true) => TemplateSource::Checkpoint,
+        (None, false) => TemplateSource::OverrideDir,
+    }
+}
+
 pub(super) fn load_tokenizer(
     args: &cli::ServeArgs,
     config: &ModelConfig,
     model_dir: &Path,
     eos_tokens: &[u32],
+    settings: &metrale_settings::InferenceServerSettings,
 ) -> Result<(ChatTokenizer, bool)> {
     metrale_telemetry::progress::phase(8, "tokenizer");
     // 2026-09-26: `supports_thinking` comes from `ModelCapabilities`.
     let caps = config.capabilities();
     let supports_thinking = caps.supports_thinking;
+    let heap_trim =
+        crate::tokenizer::HeapTrimPolicy::process_heap(args.chat_surface.tokenizer_trim_min_tokens)
+            .map_err(|e| anyhow::anyhow!("--tokenizer-trim-min-tokens: {e}"))?;
     let tokenizer = ChatTokenizer::from_model_dir(
         model_dir,
         eos_tokens[0],
         supports_thinking,
         &config.model_type,
         Some(std::path::Path::new(".")),
-        args.disable_template_overrides,
-    )?;
+        template_source(args),
+        heap_trim,
+        crate::tokenizer::ToolJsonStyle::from_settings(settings),
+    )?
+    .with_segment_memo(args.chat_surface.tokenizer_memo_mb << 20);
     Ok((tokenizer, supports_thinking))
 }
 
@@ -460,3 +491,7 @@ pub(super) fn parse_default_kwargs(args: &cli::ServeArgs) -> Result<DefaultChatT
 #[cfg(test)]
 #[path = "model_setup_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "template_source_tests.rs"]
+mod template_source_tests;

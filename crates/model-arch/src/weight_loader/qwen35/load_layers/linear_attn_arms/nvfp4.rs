@@ -22,6 +22,7 @@ pub(crate) fn build_linear_attention_nvfp4(
     input_norm: DenseWeight,
     post_attn_norm: DenseWeight,
     ffn: FfnComponent,
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Box<dyn TransformerLayer>> {
     // 2026-09-25: Each projection is sliced to this rank's heads while BF16, then quantized
     // to NVFP4. At TP=1 the `shard_gdn_*` slicers return their source pointer.
@@ -165,6 +166,7 @@ pub(crate) fn build_linear_attention_nvfp4(
         Some(out_proj_nvfp4_t),
         config,
         gpu,
+        lc,
     )?;
     // 2026-09-25: Under `metrale_hip` neither the FP8 pre-dequant nor the FP8 casts are
     // installed (kernels/strix-hip has no `fp8_gemm_n128`), so prefill uses the NVFP4
@@ -186,10 +188,7 @@ pub(crate) fn build_linear_attention_nvfp4(
     // 2026-09-25: `METRALE_GDN_BF16_WEIGHTS=1` also installs this rank's BF16 `out_proj`
     // (from `load_ssm_qwen35`) as `out_proj_dense`, whose prefill arm comes before the FP8
     // and NVFP4 arms (`qwen3_ssm/trait_prefill_helper.rs`).
-    if matches!(
-        std::env::var("METRALE_GDN_BF16_WEIGHTS").ok().as_deref(),
-        Some("1")
-    ) {
+    if crate::weight_loader::shared_levers::gdn_bf16_weights(lc.settings) {
         layer.out_proj_dense = Some(out_proj_local);
         tracing::info!(
             "SSM[{lp}] METRALE_GDN_BF16_WEIGHTS: out_proj routed through BF16 dense_gemm (overrides FP8/NVFP4)"

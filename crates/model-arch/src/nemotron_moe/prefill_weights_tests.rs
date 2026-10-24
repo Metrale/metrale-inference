@@ -66,7 +66,7 @@ fn the_shared_expert_keeps_bf16_mma_by_default() {
     let gpu = MockGpuBackend::new();
     let config = config();
     let mut l = layer(&gpu, &config);
-    l.prepare_prefill_weights(&gpu, &config, false);
+    l.prepare_prefill_weights(&gpu, &config, false, false);
     assert!(l.shared_up_t.is_none() && l.shared_down_t.is_none());
 }
 
@@ -76,6 +76,6 @@ fn the_opt_in_builds_the_e4m3_copies() {
     let gpu = MockGpuBackend::new();
     let config = config();
     let mut l = layer(&gpu, &config);
-    l.prepare_prefill_weights(&gpu, &config, true);
+    l.prepare_prefill_weights(&gpu, &config, true, false);
     assert!(l.shared_up_t.is_some() && l.shared_down_t.is_some());
 }

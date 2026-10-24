@@ -85,8 +85,8 @@ impl ProjKernels {
         gpu: &dyn GpuBackend,
         config: &metrale_config::ModelConfig,
         probes: &ArchProbes,
-        reshape_mod: &'static str,
-        reshape_fn: &'static str,
+        kv_write: metrale_kv_codec::KernelName,
+        levers: &crate::layers::ops::ModelLevers,
     ) -> Result<Self> {
         Ok(Self {
             sigmoid_gate_head_broadcast_k: super::super::try_kernel(
@@ -200,7 +200,7 @@ impl ProjKernels {
                 "w8a16_gemm_m16",
                 "w8a16_gemm_m16_strided",
             ),
-            m16_tc: crate::layers::dense_ffn::m16_tc::m16_tc_levers().attn,
+            m16_tc: crate::layers::dense_ffn::m16_tc::M16TcLevers::of(levers).attn,
             w8a16_gemv_ncol2_k: super::super::try_target_kernel(
                 gpu,
                 "w8a16_gemv_ncol",
@@ -221,8 +221,7 @@ impl ProjKernels {
                 "w8a16_gemv_ncol",
                 "w8a16_gemv_batch16_ncol4_strided",
             ),
-            attn_ncol: super::attn_ncol_gemv::ncol_gemv_enabled()
-                .then(super::attn_ncol_gemv::ncol_gemv_width),
+            attn_ncol: super::attn_ncol_gemv::ncol_gemv_enabled().then_some(levers.attn.ncol_width),
             w8a16_gemm_k: super::super::try_kernel(gpu, "w8a16_gemm", "w8a16_gemm"),
             w8a16_gemm_pipelined_k: super::super::try_kernel(
                 gpu,
@@ -233,7 +232,7 @@ impl ProjKernels {
             // (`METRALE_FP8_ATTN_M32=1`), or (2026-09-27) under
             // `RowTiers::Canonical`. Every reader checks for a nonzero handle
             // before it uses it.
-            w8a16_gemm_pipelined_m32_k: if crate::layers::ops::ModelLevers::get().fp8_attn_m32
+            w8a16_gemm_pipelined_m32_k: if levers.fp8_attn_m32
                 || crate::layers::row_tiers() == crate::layers::RowTiers::Canonical
             {
                 super::super::try_target_kernel(
@@ -245,7 +244,7 @@ impl ProjKernels {
                 KernelHandle(0)
             },
             // 2026-09-26: The 64-row twin, for 33..=64 rows, under the same lever.
-            w8a16_gemm_pipelined_m64_k: if crate::layers::ops::ModelLevers::get().fp8_attn_m32
+            w8a16_gemm_pipelined_m64_k: if levers.fp8_attn_m32
                 || crate::layers::row_tiers() == crate::layers::RowTiers::Canonical
             {
                 super::super::try_target_kernel(
@@ -285,7 +284,7 @@ impl ProjKernels {
                 "rope_forward_yarn_interleaved_inv",
             ),
             rope_proportional_k: super::super::try_kernel(gpu, "rope", "rope_forward_proportional"),
-            reshape_cache_k: gpu.kernel(reshape_mod, reshape_fn)?,
+            reshape_cache_k: gpu.kernel(kv_write.module, kv_write.func)?,
         })
     }
 }

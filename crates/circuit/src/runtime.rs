@@ -14,7 +14,9 @@
 //!   re-plans an arm the policy selected; it never adds a setting.
 //! - Route ids are unique and never a rule's id.
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 

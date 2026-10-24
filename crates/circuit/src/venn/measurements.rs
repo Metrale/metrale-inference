@@ -7,7 +7,9 @@
 //! Owner: metrale-circuit (venn).
 //! Invariants: a key names at most one row; a duplicate key is a load error.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use serde::Deserialize;
 
@@ -52,4 +54,46 @@ pub fn parse_measurements(text: &str) -> Result<Measurements, String> {
         }
     }
     Ok(out)
+}
+
+/// 2026-10-23: One `[[m]]` row with every field a reader outside the circuit uses (the knowledge
+/// graph, metrale-kg-derive), so measurements.toml keeps one Rust reader. Fields the generator
+/// adds later (the energy group) land in `extra` by name, unparsed.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct MeasurementRow {
+    pub kernel: String,
+    pub regime: String,
+    pub file: String,
+    pub hardware: String,
+    pub model: String,
+    pub time_us: f64,
+    pub bytes: f64,
+    pub flops: f64,
+    pub bound: String,
+    pub floor_us: f64,
+    pub pct_of_floor: f64,
+    pub source: String,
+    pub notes: String,
+    /// 2026-10-23: Every other field (`energy_*`, `sm_mhz`, ...), as written.
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, toml::Value>,
+}
+
+#[derive(Deserialize)]
+struct FullFile {
+    m: Vec<MeasurementRow>,
+}
+
+/// 2026-10-23: Every row in file order, with the same duplicate-key refusal as
+/// [`parse_measurements`].
+pub fn parse_measurement_rows(text: &str) -> Result<Vec<MeasurementRow>, String> {
+    let file: FullFile = toml::from_str(text).map_err(|e| format!("measurements.toml: {e}"))?;
+    let mut seen = alloc::collections::BTreeSet::new();
+    for r in &file.m {
+        let key = format!("{} @ {}", r.kernel, r.regime);
+        if !seen.insert(key.clone()) {
+            return Err(format!("measurements.toml: `{key}` names two rows"));
+        }
+    }
+    Ok(file.m)
 }

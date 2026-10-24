@@ -195,7 +195,7 @@ Deferred, interfaces pinned: **P2** `ExpertLoraRoute` `a/b_table [max_loras×E]`
 | grouped expert BGMV | F1-P2 | new `.cu` in `common/` | grouped analogue of `apply_lora_bgmv`, `grid.z=expert`, reads `expert_offsets` + `seq_slot` |
 | fused grouped-delta epilogue | F1-P3 | fold into NVFP4/b12x grouped GEMM | folds BF16 delta into grouped-GEMM output stage |
 
-Build notes (per `moe-kernel-build`): a new `common/*.cu` compiles into every target (dedups to ~1 nvcc call), module name = file stem `token_overlay`, no `KERNEL.toml` edit; all entry points `extern "C" __global__`, SPDX line 1, `(unsigned long long)id*h` indexing to avoid 32-bit overflow at large vocab×h. `METRALE_KERNEL_SET_HASH` forces the `metrale-kernels` recrate (no stale PTX). Human builds in docker `metrale-inference-gb10:b12x-ready`: `METRALE_TARGET_MODEL='*' cargo build -p metrale-server --release --bin met --no-default-features --features cuda`. Pure-Rust type-check: `METRALE_SKIP_BUILD=1 cargo check -p metrale-core -p metrale-model-layers`.
+Build notes (per `moe-kernel-build`): a new `common/*.cu` compiles into every target (dedups to ~1 nvcc call), module name = file stem `token_overlay`, no `KERNEL.toml` edit; all entry points `extern "C" __global__`, SPDX line 1, `(unsigned long long)id*h` indexing to avoid 32-bit overflow at large vocab×h. `METRALE_KERNEL_SET_HASH` forces the `metrale-kernels` recrate (no stale PTX). Human builds in docker `metrale-inference-gb10:b12x-ready`: `METRALE_TARGET_MODEL='*' cargo build -p met --release --bin met --no-default-features --features cuda`. Pure-Rust type-check: `METRALE_SKIP_BUILD=1 cargo check -p metrale-core -p metrale-model-layers`.
 
 ---
 

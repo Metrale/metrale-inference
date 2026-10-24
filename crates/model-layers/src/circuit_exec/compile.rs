@@ -86,6 +86,7 @@ pub(crate) struct Cx<'a> {
     pub layers: &'a [CircuitLayer],
     pub head: &'a HeadBinding,
     pub draft: Option<&'a CircuitLayer>,
+    pub ops: crate::layers::ops::OpsLevers,
     table: Option<&'a metrale_circuit::RowTable>,
     ptrs: &'a [Option<DevicePtr>],
     strides: &'a [Option<u64>],
@@ -379,6 +380,8 @@ pub struct Inputs<'a> {
     pub layers: &'a [CircuitLayer],
     pub head: &'a HeadBinding,
     pub draft: Option<&'a CircuitLayer>,
+    /// 2026-10-17: The launcher levers the emitters run under (`ModelLevers::ops`).
+    pub ops: crate::layers::ops::OpsLevers,
 }
 
 /// 2026-09-28: Compile `plan` with its buffers placed by `buffers` at `workspace`.
@@ -421,6 +424,7 @@ pub fn compile(
             layers: inp.layers,
             head: inp.head,
             draft: inp.draft,
+            ops: inp.ops,
             table: plan.table.as_ref(),
             ptrs: &ptrs,
             strides: &strides,

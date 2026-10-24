@@ -224,11 +224,6 @@ pub(super) fn build_msg_entries(
             continue;
         }
 
-        // 2026-09-26: `METRALE_STRIP_REASONING_HISTORY` set to `1` or `true`
-        // drops the reasoning of every earlier turn.
-        let strip_reasoning = std::env::var("METRALE_STRIP_REASONING_HISTORY")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
         // 2026-09-26: `developer` becomes `system` unless
         // `preserve_developer_role`, so the cwd-hint scan, the cwd injection,
         // the vacuous-system check and the template all see it as `system`.
@@ -242,7 +237,7 @@ pub(super) fn build_msg_entries(
             tool_calls: tool_calls_json,
             tool_call_id: m.tool_call_id.clone(),
             media: m.media_kinds(),
-            reasoning_content: if m.role == Role::Assistant && !strip_reasoning {
+            reasoning_content: if m.role == Role::Assistant && !levers.strip_reasoning_history {
                 m.reasoning
                     .as_ref()
                     .map(|r| r.text.trim().to_string())
@@ -256,10 +251,10 @@ pub(super) fn build_msg_entries(
 
     // 2026-09-26: Duplicate-error masking: older copies of a repeated
     // error-shaped tool result are replaced by a short marker; the newest
-    // keeps its text and hints. Off with `METRALE_NO_ERROR_DEDUP=1`. It runs
+    // keeps its text and hints. Off with `ChatLevers::error_dedup` off. It runs
     // before the vacuous-system removal below because the recorded indices
     // refer to `messages` before that shift.
-    if tools_active && !error_dedup_disabled() {
+    if tools_active && levers.error_dedup {
         for (idx, replacement) in duplicate_error_masks(&tool_result_originals) {
             messages[idx].content = replacement;
         }
@@ -419,11 +414,6 @@ fn is_vacuous_system_content(content: &str) -> bool {
                 .all(|c| c.is_ascii_alphabetic() || c == ' ' || c == '_' || c == '-');
     }
     false
-}
-
-/// 2026-09-26: `METRALE_NO_ERROR_DEDUP=1` turns off duplicate-error masking.
-fn error_dedup_disabled() -> bool {
-    std::env::var("METRALE_NO_ERROR_DEDUP").as_deref() == Ok("1")
 }
 
 /// 2026-09-26: Duplicate-error masking.

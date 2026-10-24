@@ -12,6 +12,8 @@
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
 use super::{MoeV41, MoeV41Cfg, route_from_logits};
+use crate::deepseek_v41_layer::levers::tests::at_defaults;
+use crate::fp8_block_v41::Fp8StageSize;
 
 fn backend() -> metrale_gpu_runtime::cuda_backend::MetraleCudaBackend {
     let set = metrale_kernels::ptx_for_exact_target("deepseek-v4-flash", "nvfp4")
@@ -45,8 +47,9 @@ fn device_route_select_matches_the_host_chain_bitwise() {
         route_scale: 2.5,
         swiglu_limit: 10.0,
         max_tokens: 4,
+        fp8_stage: Fp8StageSize::NONE,
     };
-    let moe = MoeV41::new(g, cfg.clone()).unwrap();
+    let moe = MoeV41::new(g, cfg.clone(), at_defaults()).unwrap();
     let mut st = 0x5EED_2026u64;
     let bias: Vec<f32> = (0..NR).map(|_| lcg(&mut st)).collect();
     let bias_dev = MoeV41::upload_bias(g, &bias).unwrap();

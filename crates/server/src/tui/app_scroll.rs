@@ -32,6 +32,7 @@ impl App {
             },
             // 2026-09-26: Lists move their selection, as their arrow keys do, so wheel and cursor stay in step.
             Section::Library => self.lib.move_selection(rows as isize),
+            #[cfg(feature = "bench")]
             Section::Benchmarks => {
                 let n = metrale_bench::registry::all().len();
                 if n > 0 {
@@ -40,6 +41,8 @@ impl App {
                     self.bench.select(next as usize);
                 }
             }
+            #[cfg(not(feature = "bench"))]
+            Section::Benchmarks => {}
             Section::Terminal => match self.term_sub {
                 // 2026-09-26: The Ops pane's own offset, counted up from the newest output line.
                 TermSub::Ops => {

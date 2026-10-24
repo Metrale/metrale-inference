@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-18: The formats each linear module of deepseek-ai/DeepSeek-V4.1-Flash-1017 runs at
+# under the declared tier: the checkpoint's own quantization (config.json `quantization_config`:
+# `quant_method = fp8`, `weight_block_size = [32, 32]`, `scale_fmt = ue8m0`, `expert_dtype =
+# fp4`, `activation_scheme = dynamic`), module by module as the shard headers store them.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/precision.rs).
+# Invariants:
+# - First match wins; the last entry is the catch-all.
+# - Routed experts: E2M1 weights with one E8M0 scale per 32 along K (MXFP4, I8-packed in the
+#   checkpoint), on FP8 activations quantized per 32 (the reference `linear` gives both FP4 and
+#   FP8 weights an FP8 activation, one scale per 32 activations).
+# - FP8 E4M3 with one E8M0 scale per 32x32 block: the attention projections `wq_a`, `wq_b`,
+#   `wkv`, `wo_a`, `wo_b`, the indexer's `wq_b`, the shared experts and Engram `wkv`.
+# - BF16: the compressor's `wkv`/`wgate` (the reference promotes both to FP32), the indexer's
+#   `wk` and `weights_proj`, the router and the head. Norms, the attention sink and the
+#   hyper-connection parameters are not `Linear`s; the circuit marks the weight-reading mixes
+#   `unquantized` (the checkpoint stores them FP32, counted here at BF16).
+
+schema = 1
+checkpoint = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
+tier = "declared"
+
+[[linear]]
+match = "*.ffn.experts.*"
+weight = "mxfp4/g32"
+activation = "fp8/g32"
+
+[[linear]]
+match = "*.ffn.shared_experts.*"
+weight = "fp8/block32x32"
+activation = "fp8/g32"
+
+[[linear]]
+match = "*.attn.indexer.wq_b"
+weight = "fp8/block32x32"
+activation = "fp8/g32"
+
+[[linear]]
+match = "*.attn.wq_a"
+weight = "fp8/block32x32"
+activation = "fp8/g32"
+
+[[linear]]
+match = "*.attn.wq_b"
+weight = "fp8/block32x32"
+activation = "fp8/g32"
+
+[[linear]]
+match = "*.attn.wkv"
+weight = "fp8/block32x32"
+activation = "fp8/g32"
+
+[[linear]]
+match = "*.attn.wo_a"
+weight = "fp8/block32x32"
+activation = "fp8/g32"
+
+[[linear]]
+match = "*.attn.wo_b"
+weight = "fp8/block32x32"
+activation = "fp8/g32"
+
+[[linear]]
+match = "*.engram.wkv"
+weight = "fp8/block32x32"
+activation = "fp8/g32"
+
+[[linear]]
+match = "*"
+weight = "bf16"
+activation = "bf16"

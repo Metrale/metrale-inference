@@ -109,6 +109,17 @@ pub struct Qwen3AttentionLayer {
     /// 2026-09-25: Gemma-4 `post_feedforward_layernorm_1` (dense FFN output norm).
     pub(crate) post_dense_ffn_norm: Option<DenseWeight>,
     pub(super) kv_dtype: KvCacheDtype,
+    /// 2026-10-18: `kv_dtype`'s codec pair, resolved once at construction; the KV executors read
+    /// its codecs' specs.
+    pub(super) kv_pair: metrale_kv_codec::KvPair,
+    /// 2026-10-18: The device codebooks and prefill kernel of a `Trellis`-family cache, built
+    /// once at construction; `None` for every other family.
+    pub(super) trellis: Option<super::trellis_kv::TrellisKv>,
+    /// 2026-10-17: `kernels.cutlass_nvfp4_gemm` at construction: the load-time FP8 prefill
+    /// passes (`transpose_fp8_for_prefill_selected`, `predequant_for_prefill`) are skipped under it.
+    pub(super) cutlass_nvfp4_gemm: bool,
+    /// 2026-10-17: `ModelLevers::attn` at construction, read by every attention path.
+    pub(super) levers: super::AttnLevers,
     pub(super) sparse_v_threshold: f32,
     // 2026-09-25: Quantized q/k/v/o weights for decode; `None` uses the dense
     // `attn` weight.
@@ -206,7 +217,7 @@ pub struct Qwen3AttentionLayer {
     /// GEMVs.
     pub(super) w8a16_gemm_m16_k: KernelHandle,
     pub(super) w8a16_gemm_m16_strided_k: KernelHandle,
-    /// 2026-09-25: The resolved `attn_m16_tc` setting (`m16_tc_levers().attn`:
+    /// 2026-09-25: The resolved `attn_m16_tc` setting (`M16TcLevers::of(..).attn`:
     /// the target's `[defaults]` row, overridden by `METRALE_ATTN_M16_TC`, else
     /// by `METRALE_M16_TC`). It covers the Q/K/V and o_proj arms only; the dense
     /// FFN reads `ffn_m16_tc`. Set at construction, so the route cannot change
@@ -262,7 +273,9 @@ pub struct Qwen3AttentionLayer {
     pub(super) innerq_apply_q_k: KernelHandle,
     pub(super) innerq_apply_k_k: KernelHandle,
     pub(super) paged_decode_k: KernelHandle,
-    pub(super) paged_decode_512_k: KernelHandle,
+    /// 2026-10-18: The head_dim-512 decode build of the layer's codec pair, from the codec
+    /// kernel table; `None` when the pair has none or the model's heads are not wider than 256.
+    pub(super) paged_decode_512_k: Option<KernelHandle>,
     pub(super) paged_decode_mla_k: KernelHandle,
     pub(super) mla_paged_decode_k: KernelHandle,
     pub(super) mla_paged_decode_fp8_k: KernelHandle,

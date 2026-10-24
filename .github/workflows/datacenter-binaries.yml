@@ -41,7 +41,7 @@ on:
         type: string
         default: "*"
   # Filtered, unlike kernel-compile.yml, precisely BECAUSE this is advisory:
-  # a full release link of metrale-server is far more expensive than that job's
+  # a full release link of met is far more expensive than that job's
   # `cargo build -p metrale-kernels`, and nothing outside these trees can change
   # what the datacentre binary contains.
   pull_request:
@@ -224,8 +224,8 @@ jobs:
           # objects are optional, and the CUTLASS NVFP4 wrappers are gated on
           # SM120/SM121 support so they compile to nothing for sm_90a and
           # sm_100a alike. Same choice as docker/{hopper,b200}/Dockerfile.
-          cargo build --release -p metrale-server --bin met \
-            --no-default-features --features cuda,nccl
+          cargo build --release -p met --bin met \
+            --no-default-features --features cuda,nccl,bench
 
       - name: Confirm real PTX went into the binary
         run: |
@@ -243,7 +243,7 @@ jobs:
             echo "::error::every generated target_ptx.rs is build.rs's SKIP STUB — nvcc was never invoked."
             exit 1
           fi
-          ptx=$(find target -name '*.ptx' | wc -l)
+          ptx=$(find target \( -name '*.ptx' -o -name '*.fatbin' \) | wc -l)
           echo "compiled $ptx PTX module(s) for ${{ matrix.arch }} across $real real target(s)"
           if [ "$ptx" -lt 50 ]; then
             echo "::error::only $ptx PTX modules — the build resolved too few targets"
@@ -298,7 +298,7 @@ jobs:
             echo "target_model:   ${{ needs.plan.outputs.model }}"
             echo "target_quant:   nvfp4"
             echo "host_target:    x86_64-unknown-linux-gnu"
-            echo "cargo_features: --no-default-features --features cuda,nccl"
+            echo "cargo_features: --no-default-features --features cuda,nccl,bench"
             echo "container:      nvidia/cuda:13.0.2-devel-ubuntu24.04"
             echo "nvcc:           ${{ steps.toolchain.outputs.nvcc }}"
             echo "libnccl-dev:    ${{ steps.toolchain.outputs.nccl }} (link time; the host needs libnccl2 >= 2.28 at run time)"

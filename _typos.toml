@@ -108,7 +108,7 @@ parame = "parame"
 paramet = "paramet"
 para = "para"
 param = "param"
-# `ratatui` — the Rust TUI crate (`ratatui = "0.29"` in metrale-server), named in
+# `ratatui` — the Rust TUI crate (`ratatui = "0.29"` in met), named in
 # the campaign notes as "the ratatui TUI". Not a typo of "ratatouille".
 ratatui = "ratatui"
 # `oints` — the tail of "endpoints", left dangling by a real degeneration and
@@ -160,6 +160,9 @@ byt = "byt"
 # `let pn = format!(...)`, `let (dts, shs, ..) = p.meta(&sn)?`). Not `on`/`ssh`.
 pn = "pn"
 shs = "shs"
+# 2026-10-17: `CLER` — the CLosed ERrors at crate edges decoupling principle, named in
+# AGENTS.md and docs/principles/decoupling.md beside SSOT, PCND and SBIO. Not `CLEAR`.
+CLER = "CLER"
 
 [default.extend-identifiers]
 # `PNGs` — the plural of PNG, in the vision-fixture provisioning commentary.
@@ -193,10 +196,6 @@ extend-exclude = [
     # Local dev/benchmark scripts (not shipped); abbreviated local var names
     # like `ND` (numdrift path) read as typos but aren't user-facing.
     "bench/",
-    # Vendored llama.cpp/ggml CUDA MMQ sources (MIT). Upstream identifiers
-    # (`n_leafs`, `GGML_OP_CPY`, `ggml_arange`, ...) read as typos but are
-    # canonical; we don't ship typo fixes upstream from here, like `vendor/`.
-    "kernels/gb10/qwen3.6-27b/nvfp4/q4k_vendor/",
     # mdBook 0.4.40's book.js (MPL-2.0), kept verbatim but for one marked change so it can
     # be re-taken when the pin moves: upstream's `controllMenu` and friends stay as they are.
     "book/theme/book.js",

@@ -19,10 +19,10 @@ use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
 /// every M. Measured 2026-08-19 with `batchm_bench` at M=8: +17-26% GB/s on
 /// the verify shapes.
 ///
-/// `METRALE_NO_BATCH8_RT=1` (exactly `"1"`) selects `w4a16_gemv_batch8`, as
-/// does a target without `rt2`.
-pub(crate) fn batch8_kernel(gpu: &dyn GpuBackend) -> KernelHandle {
-    if std::env::var("METRALE_NO_BATCH8_RT").as_deref() != Ok("1") {
+/// `rt` off (`OpsLevers::batch8_rt`: `METRALE_NO_BATCH8_RT` switched on)
+/// selects `w4a16_gemv_batch8`, as does a target without `rt2`.
+pub(crate) fn batch8_kernel(gpu: &dyn GpuBackend, rt: bool) -> KernelHandle {
+    if rt {
         let h = try_kernel(gpu, "w4a16_gemv", "w4a16_gemv_batch8_rt2");
         if h.0 != 0 {
             return h;

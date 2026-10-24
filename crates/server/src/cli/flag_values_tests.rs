@@ -29,6 +29,9 @@ const ENUMERATED: &[&str] = &[
     "tool-grammar",
     "expert-quantization",
     "weight-quantization",
+    "dense-quantization",
+    "moe-expert-layout",
+    "indexer-cache-dtype",
 ];
 
 /// 2026-09-26: Flags a value needs beside it to validate: `--ssm-h-dtype f16`
@@ -36,6 +39,8 @@ const ENUMERATED: &[&str] = &[
 fn companions(flag: &str) -> &'static [&'static str] {
     match flag {
         "ssm-h-dtype" => &["--gdn-fused-norm"],
+        // 2026-10-09: `tp` validates only beside TP ranks and no EP.
+        "moe-expert-layout" => &["--tp-size", "3", "--world-size", "3"],
         _ => &[],
     }
 }
@@ -111,6 +116,7 @@ fn kv_high_precision_layers_accepts_exactly_the_documented_forms() {
     assert_eq!(p("all"), Ok(K::All));
     assert_eq!(p("0"), Ok(K::Count(0)));
     assert_eq!(p("6"), Ok(K::Count(6)));
+    assert_eq!(p("None"), Ok(K::None));
     assert_eq!(p("  AuTo "), Ok(K::Auto));
     assert!(p("atuo").is_err());
     assert!(p("-1").is_err());
@@ -125,8 +131,15 @@ fn kv_high_precision_layers_resolves_against_the_attention_layer_count() {
     assert_eq!(K::Auto.resolve(48), AUTO_KV_HIGH_PRECISION_LAYERS);
     assert_eq!(K::Count(6).resolve(48), 6);
     // 2026-09-26: `0` stays 0, so `serve_phases::kv_cache` can defer to
-    // `auto_high_precision_layers`.
+    // the codec table's auto boundary (`KvPair::auto_boundary`).
     assert_eq!(K::Count(0).resolve(48), 0);
+    // 2026-10-19: `none` is zero too, but declared: only the default `0` defers.
+    assert_eq!(K::None.resolve(48), 0);
+    let deferring: Vec<K> = [K::All, K::Auto, K::None, K::Count(0), K::Count(1)]
+        .into_iter()
+        .filter(|k| k.defers_to_codec())
+        .collect();
+    assert_eq!(deferring, [K::Count(0)]);
 }
 
 /// 2026-09-26: The error text names the accepted forms.
@@ -159,4 +172,54 @@ fn a_tristate_is_exactly_auto_on_off() {
             "--tool-grammar {bad:?}"
         );
     }
+}
+
+/// 2026-10-08: `--kv-cache-dtype fp8_e4m3` is stored as `fp8`, so every consumer of the
+/// flag (validation, the MODEL.toml default comparison, the KV config) sees the
+/// canonical name; every other value is stored as written.
+#[test]
+fn fp8_e4m3_is_stored_as_fp8_and_other_values_pass_through() {
+    let parse = |v: &str| {
+        crate::cli::ServeArgs::try_parse_from(["serve", "--kv-cache-dtype", v])
+            .expect("parses")
+            .kv_cache_dtype
+    };
+    assert_eq!(parse("fp8_e4m3").as_deref(), Some("fp8"));
+    for v in ["fp8", "bf16", "nvfp4", "turbo4k_turbo3v", "bogus"] {
+        assert_eq!(parse(v).as_deref(), Some(v));
+    }
+    assert_eq!(
+        "fp8"
+            .parse::<metrale_cache::kv_cache::KvCacheDtype>()
+            .map(|d| d == metrale_cache::kv_cache::KvCacheDtype::Fp8)
+            .ok(),
+        Some(true),
+        "the canonical name parses to the FP8 (E4M3) cache format"
+    );
+}
+
+/// 2026-10-09: `--moe-expert-layout tp` is refused beside expert parallelism and without TP
+/// ranks, naming the flag; `ep` passes the same topologies.
+#[test]
+fn tp_expert_layout_off_its_topology_is_refused() {
+    let check = |layout: &str, extra: &[&str]| -> Result<(), String> {
+        let mut argv: Vec<String> = ["met", "serve", "dummy/model", "--model-name", "dummy"]
+            .map(String::from)
+            .to_vec();
+        argv.extend(["--moe-expert-layout", layout].map(String::from));
+        argv.extend(extra.iter().map(|s| s.to_string()));
+        argv.extend(["--activation-quantization", "adaptive"].map(String::from));
+        let cli = crate::cli::Cli::try_parse_from(argv).map_err(|e| e.to_string())?;
+        let crate::cli::Command::Serve(args) = cli.command else {
+            unreachable!("this test parses a serve command");
+        };
+        validate_serve_args(&args)
+    };
+    let with_ep = ["--tp-size", "3", "--ep-size", "3", "--world-size", "3"];
+    for extra in [&with_ep[..], &[][..]] {
+        let err = check("tp", extra).expect_err("tp off its topology was accepted");
+        assert!(err.contains("--moe-expert-layout"), "{err}");
+        assert!(check("ep", extra).is_ok(), "ep refused at {extra:?}");
+    }
+    assert!(check("tp", &["--tp-size", "3", "--world-size", "3"]).is_ok());
 }

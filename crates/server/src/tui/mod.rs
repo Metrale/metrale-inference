@@ -36,10 +36,15 @@ mod app_nav;
 pub mod app_quit;
 pub mod app_scroll;
 mod app_types;
+#[cfg(feature = "bench")]
 pub mod bench_host;
+#[cfg(feature = "bench")]
 pub mod bench_keys;
+#[cfg(feature = "bench")]
 pub mod bench_preflight;
+#[cfg(feature = "bench")]
 pub mod bench_state;
+#[cfg(feature = "bench")]
 pub mod bench_variants;
 pub mod commands;
 pub mod download_state;
@@ -93,8 +98,10 @@ pub struct RunHandles {
 /// and the callers ignore the error.
 pub fn start(
     args: crate::cli::ServeArgs,
+    report_target: Result<report::Target, &'static str>,
     progress_rx: std::sync::mpsc::Receiver<capture_layer::ProgressEvent>,
     host: std::sync::Arc<crate::main_modules::model_host::ModelHost>,
+    bench_levers: std::sync::Arc<metrale_host_probe::levers::BenchLevers>,
 ) -> std::sync::mpsc::Sender<RunHandles> {
     let (levers_tx, levers_rx) = std::sync::mpsc::channel::<RunHandles>();
     let runtime = tokio::runtime::Handle::current();
@@ -106,32 +113,16 @@ pub fn start(
     match std::thread::Builder::new()
         .name("metrale-tui".into())
         .spawn(move || {
-            let port = args.port;
-            let model = args
-                .model_name
-                .clone()
-                .or_else(|| args.model.clone())
-                .unwrap_or_default();
-            let cache_dir = args.cache_dir.clone();
+            #[cfg(feature = "bench")]
+            let bench = bench_host::Wiring::from_args(&args);
             let mut app = app::App::new(args);
-            // 2026-09-26: The serve matrix boots checkpoints through this
-            // process; without an installed host it refuses to load with
-            // `serve_matrix::host::NO_HOST`.
-            metrale_bench::benchmarks::serve_matrix::host::install(std::sync::Arc::new(
-                bench_host::TuiServeHost::new(host.clone(), cache_dir),
-            ));
+            app.help.target = report_target;
+            #[cfg(feature = "bench")]
+            bench.attach(&mut app, &host, runtime.clone(), bench_levers);
+            #[cfg(not(feature = "bench"))]
+            let _ = bench_levers;
             app.host = Some(host);
-            app.chat.set_runtime(runtime.clone());
-            // 2026-09-26: Benchmarks target this server. When
-            // `ArtifactStore::discover` fails (no usable `METRALE_HOME` or
-            // `HOME`) the dashboard still starts, with a warning.
-            match metrale_bench::ArtifactStore::discover() {
-                Ok(store) => app.bench.attach(
-                    metrale_bench::BenchmarkExecutor::new(runtime, store),
-                    metrale_bench::TargetEndpoint::local(port, model),
-                ),
-                Err(e) => tracing::warn!("benchmarks unavailable: {e:#}"),
-            }
+            app.chat.set_runtime(runtime);
             events::run(app, progress_rx, levers_rx);
         }) {
         Ok(handle) => {
@@ -170,14 +161,11 @@ pub fn stop_and_join(timeout: std::time::Duration) {
 /// 2026-09-26: True when the TUI must not start and `main.rs` installs the
 /// plain fmt subscriber.
 ///
-/// True for `--no-tui`, `METRALE_NO_TUI=1`, stdout or stdin not a terminal,
+/// True for `no_tui_flag` (`--no-tui` or `METRALE_NO_TUI`, resolved by the caller), stdout or stdin not a terminal,
 /// or `TERM` unset or `dumb`. `serve` additionally starts the TUI only on
 /// rank 0.
 pub fn plain_mode(no_tui_flag: bool) -> bool {
     if no_tui_flag {
-        return true;
-    }
-    if std::env::var("METRALE_NO_TUI").as_deref() == Ok("1") {
         return true;
     }
     if !std::io::stdout().is_terminal() || !std::io::stdin().is_terminal() {

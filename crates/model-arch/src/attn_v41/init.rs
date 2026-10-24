@@ -10,7 +10,12 @@
 use anyhow::{Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
-use super::{AttnV41, AttnV41Cfg, GEMM_MODULE, Kernels, MODULE, upload_f32};
+use super::kv_codec::declared;
+use super::{
+    AttnTp, AttnV41, AttnV41Cfg, Fp8BlockStage, GEMM_MODULE, KV_MODULE, Kernels, MODULE, TpReduce,
+    V41Rows, upload_f32,
+};
+use crate::deepseek_v41_layer::levers::Ds41Levers;
 use crate::deepseek_v41_ref::attn::freqs_cis;
 use crate::deepseek_v41_ref::compress::yarn_freqs_cis;
 use metrale_model_layers::layers::ops::{
@@ -18,7 +23,7 @@ use metrale_model_layers::layers::ops::{
 };
 
 impl AttnV41 {
-    pub fn new(gpu: &dyn GpuBackend, cfg: AttnV41Cfg) -> Result<Self> {
+    pub fn new(gpu: &dyn GpuBackend, cfg: AttnV41Cfg, levers: Ds41Levers) -> Result<Self> {
         ensure!(
             cfg.rope_dim.is_multiple_of(2) && cfg.rope_dim / 2 <= 256,
             "rope_dim {} not supported",
@@ -32,6 +37,25 @@ impl AttnV41 {
             cfg.head_dim.is_multiple_of(32) && cfg.index_hd.is_multiple_of(32),
             "head dims must be multiples of the 32-block"
         );
+        // 2026-10-19: The reading kernels implement the declared codecs and no others.
+        ensure!(
+            cfg.kv == declared()?,
+            "attn_v41: cache codecs {:?} have no reading kernels; only the declared ones do",
+            cfg.kv
+        );
+        let rows = V41Rows::resolve(&cfg.kv, cfg.head_dim, cfg.index_hd)?;
+        ensure!(
+            cfg.tp_world >= 1,
+            "attention over a tensor-parallel world of 0 ranks"
+        );
+        let tp = if cfg.tp_world > 1 {
+            Some(AttnTp {
+                reduce: TpReduce::new(gpu, cfg.tp_world, cfg.max_tokens, cfg.dim)?,
+                gemm_f32out: gpu.kernel(GEMM_MODULE, "dense_gemm_bf16_f32out")?,
+            })
+        } else {
+            None
+        };
         let k = Kernels {
             gemm: gpu.kernel(GEMM_MODULE, "dense_gemm_bf16")?,
             gemv: gpu.kernel("gemv", "dense_gemv_bf16")?,
@@ -45,17 +69,18 @@ impl AttnV41 {
             rmsnorm_bf16: gpu.kernel(MODULE, "attn_v41_rmsnorm_bf16")?,
             rmsnorm_f32: gpu.kernel(MODULE, "attn_v41_rmsnorm_f32")?,
             rope: gpu.kernel(MODULE, "attn_v41_rope")?,
-            act_quant: gpu.kernel(MODULE, "attn_v41_act_quant_fp8")?,
+            kv_pack_fp8: gpu.kernel(KV_MODULE, "attn_v41_kv_pack_fp8")?,
+            kv_pack_fp4: gpu.kernel(KV_MODULE, "attn_v41_kv_pack_fp4")?,
             fp4_quant: gpu.kernel(MODULE, "attn_v41_fp4_quant")?,
             gemm_f32: gpu.kernel(MODULE, "attn_v41_gemm_f32")?,
             gemv_f32_staged: gpu.kernel(MODULE, "attn_v41_gemv_f32_staged")?,
             pool: gpu.kernel(MODULE, "attn_v41_pool")?,
-            index_score: gpu.kernel(MODULE, "attn_v41_index_score")?,
-            sparse_attn: gpu.kernel(MODULE, "attn_v41_sparse_attn")?,
+            index_score_packed: gpu.kernel(KV_MODULE, "attn_v41_index_score_packed")?,
+            sparse_attn_packed: gpu.kernel(KV_MODULE, "attn_v41_sparse_attn_packed")?,
             slice_cols: gpu.kernel(MODULE, "attn_v41_slice_cols")?,
             scatter_cols: gpu.kernel(MODULE, "attn_v41_scatter_cols")?,
             scale_bf16: gpu.kernel(MODULE, "attn_v41_scale_bf16")?,
-            ring_put: gpu.kernel(MODULE, "attn_v41_ring_put")?,
+            ring_put_row: gpu.kernel(KV_MODULE, "attn_v41_ring_put_row")?,
         };
         let plain = freqs_cis(cfg.rope_dim, cfg.max_seq, cfg.rope_theta);
         let yarn = yarn_freqs_cis(
@@ -84,6 +109,9 @@ impl AttnV41 {
             .max(cfg.groups * cfg.o_rank)
             .max(nh * hd);
         Ok(AttnV41 {
+            tp,
+            fp8: Fp8BlockStage::new(gpu, cfg.fp8_stage)?,
+            sparse_split: levers.sparse_split,
             a_q8: alloc(
                 kquant_q8_1_rows_bytes(8, kmax as u32)
                     .max(kquant_mmq_act_bytes(m as u32, kmax as u32)),
@@ -93,6 +121,7 @@ impl AttnV41 {
             q: alloc(m * nh * hd * 2)?,
             kv_raw: alloc(m * hd * 2)?,
             kv: alloc(m * hd * 2)?,
+            kv_pack: alloc(m * rows.window.bytes)?,
             o: alloc(m * nh * hd * 2)?,
             o_rot: alloc(m * nh * hd * 2)?,
             og: alloc(m * cfg.groups * cfg.o_rank * 2)?,
@@ -120,6 +149,7 @@ impl AttnV41 {
             decode_idx: None,
             decode_idx_win: None,
             cfg,
+            rows,
             k,
             fc_plain,
             fc_yarn,
@@ -133,6 +163,10 @@ impl AttnV41 {
     }
 
     pub fn free(self, gpu: &dyn GpuBackend) -> Result<()> {
+        self.fp8.free(gpu)?;
+        if let Some(tp) = self.tp {
+            tp.reduce.free(gpu)?;
+        }
         for p in [
             self.fc_plain,
             self.fc_yarn,
@@ -141,6 +175,7 @@ impl AttnV41 {
             self.q,
             self.kv_raw,
             self.kv,
+            self.kv_pack,
             self.o,
             self.o_rot,
             self.og,

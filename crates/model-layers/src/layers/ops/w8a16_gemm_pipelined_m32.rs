@@ -87,10 +87,12 @@ pub fn w8a16_pipelined_prefers_m32(m: u32, k: u32, m32_kernel: KernelHandle) -> 
 ///
 /// Grid: (ceil(N/32), ceil(M/32), 1)  Block: (256, 1, 1); 2026-09-27: at
 /// 1..=16 rows with K <= [`W8A16_M16_MAX_K`], (ceil(N / 8), 1, 1).
+/// 2026-10-17: `tc_rows` is [`super::W8a16Plan::tc_rows`]: off, the tile runs.
 #[allow(clippy::too_many_arguments)]
 pub fn w8a16_gemm_pipelined_m32_strided(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
+    tc_rows: bool,
     input: DevicePtr,
     weight: DevicePtr,
     block_scale: DevicePtr,
@@ -122,19 +124,21 @@ pub fn w8a16_gemm_pipelined_m32_strided(
          16B-aligned (cp.async A tile)"
     );
     // 2026-09-28: The row-tile kernel under the canonical tiers (`w8a16_tc_rows.rs`).
-    if super::w8a16_tc_rows_launch(
-        gpu,
-        input,
-        weight,
-        block_scale,
-        output,
-        m,
-        n,
-        k,
-        a_row_stride,
-        c_row_stride,
-        stream,
-    )? {
+    if tc_rows
+        && super::w8a16_tc_rows_launch(
+            gpu,
+            input,
+            weight,
+            block_scale,
+            output,
+            m,
+            n,
+            k,
+            a_row_stride,
+            c_row_stride,
+            stream,
+        )?
+    {
         return Ok(());
     }
     // 2026-09-27: 1..=16 rows (K <= 5120) run the kernel's skinny body.
@@ -173,6 +177,7 @@ pub fn w8a16_gemm_pipelined_m32_strided(
 pub fn w8a16_gemm_pipelined_m32(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
+    tc_rows: bool,
     input: DevicePtr,
     weight: DevicePtr,
     block_scale: DevicePtr,
@@ -185,6 +190,7 @@ pub fn w8a16_gemm_pipelined_m32(
     w8a16_gemm_pipelined_m32_strided(
         gpu,
         kernel,
+        tc_rows,
         input,
         weight,
         block_scale,
@@ -222,6 +228,7 @@ pub fn w8a16_pipelined_prefers_m64(m: u32, k: u32, m64_kernel: KernelHandle) -> 
 pub fn w8a16_gemm_pipelined_m64_strided(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
+    tc_rows: bool,
     input: DevicePtr,
     weight: DevicePtr,
     block_scale: DevicePtr,
@@ -243,19 +250,21 @@ pub fn w8a16_gemm_pipelined_m64_strided(
         "w8a16_gemm_pipelined_m64: row pitches (a={a_row_stride}, c={c_row_stride}) must \
          cover k={k} / n={n}, and a must keep rows 16B-aligned"
     );
-    if super::w8a16_tc_rows_launch(
-        gpu,
-        input,
-        weight,
-        block_scale,
-        output,
-        m,
-        n,
-        k,
-        a_row_stride,
-        c_row_stride,
-        stream,
-    )? {
+    if tc_rows
+        && super::w8a16_tc_rows_launch(
+            gpu,
+            input,
+            weight,
+            block_scale,
+            output,
+            m,
+            n,
+            k,
+            a_row_stride,
+            c_row_stride,
+            stream,
+        )?
+    {
         return Ok(());
     }
     KernelLaunch::new(gpu, kernel)
@@ -283,6 +292,7 @@ pub fn w8a16_gemm_pipelined_m64_strided(
 pub fn w8a16_gemm_pipelined_m64(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
+    tc_rows: bool,
     input: DevicePtr,
     weight: DevicePtr,
     block_scale: DevicePtr,
@@ -295,6 +305,7 @@ pub fn w8a16_gemm_pipelined_m64(
     w8a16_gemm_pipelined_m64_strided(
         gpu,
         kernel,
+        tc_rows,
         input,
         weight,
         block_scale,
@@ -313,13 +324,14 @@ pub fn w8a16_gemm_pipelined_m64(
 /// (2026-09-26) [`w8a16_pipelined_prefers_m64`]'s 64-tile twin on `m64_kernel`,
 /// else the 128-tile `w8a16_gemm_pipelined` on `full_kernel`. The GDN
 /// `in_proj_qkvz` / `out_proj` batched-verify arms (`trait_decode_batched.rs`)
-/// call it.
+/// call it. 2026-10-17: under `plan` (`ModelLevers::ops.w8a16`).
 #[allow(clippy::too_many_arguments)]
 pub fn w8a16_gemm_pipelined_by_m(
     gpu: &dyn GpuBackend,
     full_kernel: KernelHandle,
     m32_kernel: KernelHandle,
     m64_kernel: KernelHandle,
+    plan: super::W8a16Plan,
     input: DevicePtr,
     weight: DevicePtr,
     block_scale: DevicePtr,
@@ -333,6 +345,7 @@ pub fn w8a16_gemm_pipelined_by_m(
         w8a16_gemm_pipelined_m32(
             gpu,
             m32_kernel,
+            plan.tc_rows,
             input,
             weight,
             block_scale,
@@ -346,6 +359,7 @@ pub fn w8a16_gemm_pipelined_by_m(
         w8a16_gemm_pipelined_m64(
             gpu,
             m64_kernel,
+            plan.tc_rows,
             input,
             weight,
             block_scale,
@@ -359,6 +373,7 @@ pub fn w8a16_gemm_pipelined_by_m(
         super::w8a16_gemm_pipelined(
             gpu,
             full_kernel,
+            plan.pipe128,
             input,
             weight,
             block_scale,

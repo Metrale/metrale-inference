@@ -89,20 +89,19 @@ pub struct SchedIo {
 }
 
 impl SchedIo {
-    /// 2026-09-25: The serving routers: the system clock, telemetry opened
-    /// from the environment, the tokio inbox and, when `spill` is given,
-    /// the spill store.
+    /// 2026-09-25: The serving routers: the system clock, `tel` (2026-10-17: built by the
+    /// caller from the run's settings), the tokio inbox and, when `spill` is given, the spill
+    /// store.
     pub fn serving(
         dev: Box<DynDevice>,
-        telemetry: &'static metrale_telemetry::Telemetry,
-        snapshot: std::sync::Arc<metrale_speculative::snapshot::SnapshotCell>,
+        tel: SysTelemetry,
         req: std::sync::Arc<dyn RequestIo>,
         spill: Option<Box<dyn SpillIo>>,
     ) -> Self {
         Self {
             dev,
             clock: Box::new(SystemClock),
-            tel: std::sync::Arc::new(SysTelemetry::from_env(telemetry, snapshot)),
+            tel: std::sync::Arc::new(tel),
             req,
             spill,
         }
@@ -128,7 +127,9 @@ impl SchedIo {
             tel: std::sync::Arc::new(SysTelemetry::quiet(std::sync::Arc::new(
                 metrale_speculative::snapshot::SnapshotCell::default(),
             ))),
-            req: std::sync::Arc::new(TokioRequestIo::closed()),
+            req: std::sync::Arc::new(TokioRequestIo::closed(std::time::Duration::from_millis(
+                crate::scheduler::run_io::STREAM_SEND_DEADLINE_MS,
+            ))),
             spill: None,
         }
     }

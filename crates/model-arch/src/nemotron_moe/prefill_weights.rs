@@ -66,11 +66,14 @@ impl NemotronMoeLayer {
     /// `moe_latent_size == 0`. `shared_e4m3` (`--nemotron-shared-expert-e4m3`) builds the
     /// shared expert's transposed copies, which the E4M3 tile GEMM reads; without it the
     /// shared expert runs the BF16-MMA `w4a16_gemm` on the checkpoint's NVFP4 weights.
+    /// `shared_fp8_prefill` (`METRALE_SHARED_FP8_PREFILL`, set at any value) asks for the
+    /// shared expert's pre-dequantized FP8 copies.
     pub fn prepare_prefill_weights(
         &mut self,
         gpu: &dyn GpuBackend,
         config: &ModelConfig,
         shared_e4m3: bool,
+        shared_fp8_prefill: bool,
     ) {
         let h = config.hidden_size;
         let inter = self.moe_inter;
@@ -103,7 +106,7 @@ impl NemotronMoeLayer {
         }
 
         // 2026-09-29: The shared expert's copies, in every layer shape: with
-        // `METRALE_SHARED_FP8_PREFILL` set (any value) and
+        // `shared_fp8_prefill` and
         // `fp8_gemm_t_m128_mfast` resolved, pre-dequantized FP8 copies; otherwise,
         // or if either failed, transposed NVFP4 copies, and only under `shared_e4m3`:
         // the tile GEMM that reads them casts activations and dequantized weights to
@@ -113,7 +116,7 @@ impl NemotronMoeLayer {
         // none is built.
         let native_shared =
             self.weights.shared_up_fp8.is_some() || self.weights.shared_down_fp8.is_some();
-        let fp8_prefill = !native_shared && std::env::var("METRALE_SHARED_FP8_PREFILL").is_ok();
+        let fp8_prefill = !native_shared && shared_fp8_prefill;
         if fp8_prefill
             && self.fp8_gemm_m128_k.0 != 0
             && let Ok(pdq_k) = gpu.kernel("w4a16", "predequant_nvfp4_to_fp8")

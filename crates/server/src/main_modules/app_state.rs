@@ -29,13 +29,25 @@ pub fn resolve_adapter_slot(adapter_names: &[String], adapter: Option<&str>) -> 
     }
 }
 
+/// 2026-10-24: The embedding model's serving facts, read once at load: the job channel to the
+/// scheduler, the model's embedding semantics (role prompts, limits) and its vector width.
+pub struct EmbedEndpoint {
+    pub tx: mpsc::Sender<crate::scheduler::EmbedJob>,
+    pub spec: metrale_config::embedding::EmbeddingSpec,
+    pub bos_token_id: u32,
+    pub dim: usize,
+}
+
 pub struct AppState {
     /// 2026-09-28: The model's forward (`--forward`) and its decode plan digest, as
     /// `GET /forward` reports them.
-    pub forward: metrale_bench::gate::record_serve::LiveForward,
+    pub forward: metrale_serve_identity::wire::LiveForward,
     /// 2026-10-01: The built model's KV pool and slots and the serve's memory budget, as
     /// `GET /memory` reports them with the readings it takes per request.
     pub memory: crate::main_modules::memory_probe::MemoryFacts,
+    /// 2026-10-17: Every Runtime lever for this load, resolved once before it began
+    /// (`serve_settings::resolve`), with where each value came from.
+    pub settings: std::sync::Arc<metrale_settings::InferenceServerSettings>,
     pub tokenizer: ChatTokenizer,
     pub model_name: String,
     /// 2026-09-26: The first `--lora-adapter`'s name, if any. No handler reads
@@ -51,6 +63,9 @@ pub struct AppState {
     pub active_adapter: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     pub max_seq_len: usize,
     pub request_tx: mpsc::Sender<InferenceRequest>,
+    /// 2026-10-24: What `/v1/embeddings` serves, for a model whose capabilities say it does not
+    /// generate; `None` for a generative model (the route answers 501, `EmbedNotSupported`).
+    pub embedding: Option<EmbedEndpoint>,
     /// 2026-09-26: LoRA control channel to the scheduler: a `LoraCommand` and
     /// its ack. `None` when no `--lora-adapter` pool is loaded.
     pub rotation_tx: Option<mpsc::Sender<crate::scheduler::LoraRotation>>,
@@ -62,6 +77,9 @@ pub struct AppState {
     /// 2026-09-26: Whether and how `image_url` parts with an http(s) URL are
     /// fetched; off unless `--vision-allow-remote-images`.
     pub remote_image_policy: crate::api::chat::remote_image::RemoteImagePolicy,
+    /// 2026-10-08: `--limit-images-per-prompt` / `--limit-videos-per-prompt`
+    /// (`api/chat/media_limits.rs`).
+    pub media_limits: crate::api::chat::media_limits::MediaLimits,
     /// 2026-09-26: ffmpeg subprocess policy for video parts; off unless
     /// `--video-allow-ffmpeg`.
     pub video_ffmpeg: metrale_model_layers::video_decode_ffmpeg::FfmpegPolicy,
@@ -96,7 +114,7 @@ pub struct AppState {
     /// tools active.
     pub tool_max_tokens: usize,
     /// 2026-09-26: MODEL.toml sampling presets, per request category.
-    pub sampling_presets: metrale_kernels::SamplingPresets,
+    pub sampling_presets: metrale_kernel_set::SamplingPresets,
     /// 2026-09-26: The tool-call opener's token id (`<tool_call>`, or
     /// `<minimax:tool_call>` for `minimax_xml`) when it encodes to one token.
     /// Biased by repeat count when tools are active (`api/chat/sampling_setup.rs`).
@@ -111,10 +129,13 @@ pub struct AppState {
     /// 2026-09-26: MODEL.toml `[behavior]`, embedded at build time, with
     /// `--max-thinking-budget`, `--tool-grammar` and the `preserve_thinking`
     /// server kwarg applied over it (`serve_load.rs`).
-    pub behavior: metrale_kernels::ModelBehavior,
+    pub behavior: metrale_kernel_set::ModelBehavior,
     /// 2026-09-26: `--disable-thinking`: `resolve_thinking` turns thinking off
     /// whatever the request or MODEL.toml asks (`api/chat/thinking.rs`).
     pub disable_thinking: bool,
+    /// 2026-10-08: `--uncapped-thinking`: `resolve_thinking` and the template-opened
+    /// block arm no budget of the server's own (`api/chat/thinking.rs`).
+    pub uncapped_thinking: bool,
     /// 2026-09-26: The thinking directive from `--default-chat-template-kwargs`,
     /// used when the request gives no explicit one (`api/chat/prepare.rs`).
     pub default_thinking: crate::ir::ThinkingDirective,
@@ -168,6 +189,17 @@ pub fn deadline_from(secs: f32, now: std::time::Instant) -> Option<std::time::In
 }
 
 impl AppState {
+    /// 2026-10-14: The reasoning field of this model's chat responses: its
+    /// reasoning format's (`ReasoningParser::reasoning_wire`), and
+    /// `reasoning_content` for a model without a reasoning parser.
+    pub fn reasoning_wire(&self) -> reasoning_parser::ReasoningWire {
+        self.reasoning_parser
+            .as_deref()
+            .map_or(reasoning_parser::ReasoningWire::ReasoningContent, |p| {
+                p.reasoning_wire()
+            })
+    }
+
     /// 2026-09-26: The absolute deadline for one request: `override_secs` (the
     /// request's `timeout`) when given, else `--request-timeout`.
     pub fn request_deadline(&self, override_secs: Option<f32>) -> Option<std::time::Instant> {
@@ -346,7 +378,7 @@ impl AppState {
     }
 }
 
-pub type ModelBehavior = metrale_kernels::ModelBehavior;
+pub type ModelBehavior = metrale_kernel_set::ModelBehavior;
 
 #[cfg(test)]
 mod tests {

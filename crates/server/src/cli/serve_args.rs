@@ -127,16 +127,15 @@ pub struct ServeArgs {
     #[arg(long, default_value_t = 16)]
     pub block_size: usize,
 
-    /// KV cache dtype (fp8, bf16, or nvfp4).
+    /// KV cache dtype (fp8, also spelled fp8_e4m3; bf16; or nvfp4).
     /// Precedence (highest wins): this flag → MODEL.toml
     /// `[behavior].default_kv_dtype` → fp8 (`DEFAULT_KV_CACHE_DTYPE`). An
     /// explicitly passed value always wins, including `fp8` itself.
     ///
-    /// The `turbo2`/`turbo3`/`turbo4`/`turbo8` variants (and the asymmetric
-    /// `*k_*v` pairs built from them) are experimental: they are not built for
-    /// every kernel target, and a target that lacks them fails the kv-cache kernel
-    /// preflight at startup.
-    #[arg(long)]
+    /// The `turbo*` variants (turbo2/3/4/8, turbo1/2/3_tcq, turbo4_n128, and the
+    /// `*k_*v` pairs) are experimental: not built for every kernel target, a target
+    /// that lacks them fails the kv-cache kernel preflight at startup.
+    #[arg(long, value_parser = super::flag_values::canonical_kv_cache_dtype)]
     pub kv_cache_dtype: Option<String>,
 
     /// Storage dtype for the GDN decode h-state: `f32` (default), `f16`, or
@@ -166,9 +165,11 @@ pub struct ServeArgs {
     ///
     /// `snapshot`: every verify writes per-token h/conv state snapshots and a
     /// partial accept restores from them. `replay` allocates no per-token h
-    /// snapshots and reserves a verify-window input ring instead, but the replay
-    /// itself is not implemented: a replay serve boots, and every speculative
-    /// verify step on a model with SSM layers returns an error.
+    /// snapshots and reserves a verify-window input ring instead: a verify
+    /// checkpoints the state and records each row's recurrent inputs, and the
+    /// commit replays the accepted rows. Implemented for GLM-5.3's KDA layers;
+    /// on any other model with SSM layers a replay serve boots, and every
+    /// speculative verify step returns an error.
     /// The default is explicit and published on every serve.
     #[arg(long, default_value = "snapshot")]
     pub ssm_rollback_mode: String,
@@ -403,9 +404,9 @@ pub struct ServeArgs {
 
     /// Boundary attention layers to keep at BF16 KV cache precision (first N + last N);
     /// the other layers use --kv-cache-dtype.
-    /// Accepts: number, "auto" (=2, recommended), "max"/"all" (all BF16).
+    /// Accepts: number, "auto" (=2, recommended), "max"/"all" (all BF16), "none".
     /// Default: 0, no BF16 boundary layers, except that a turbo KV dtype gets an
-    /// automatic count.
+    /// automatic count; "none" declares zero and also skips that automatic count.
     #[arg(long, default_value = "0")]
     pub kv_high_precision_layers: String,
 
@@ -445,10 +446,10 @@ impl ServeArgs {
     /// the kernel crates. Errors for the lever under `declared`; `validate_serve_args`
     /// refuses that command line first.
     pub fn weight_quant_tier(&self) -> anyhow::Result<metrale_config::WeightQuantTier> {
-        metrale_config::WeightQuantTier::new(
+        Ok(metrale_config::WeightQuantTier::new(
             self.weight_quantization.0,
             metrale_config::W4a4Downcast::from_flags(self.w4a4_downcast, self.w4a4_downcast_wide),
-        )
+        )?)
     }
 
     /// 2026-09-30: The γ this DFlash serve runs (`resolve_dflash_gamma` of the flag and the

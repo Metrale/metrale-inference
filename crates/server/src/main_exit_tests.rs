@@ -10,7 +10,8 @@
 //! Owner: server.
 //! Invariants: none beyond the types.
 
-const MAIN_RS: &str = include_str!("main.rs");
+// 2026-10-24: `serve_main.rs` holds what was `main`'s body; the binary's `main` only calls it.
+const MAIN_RS: &str = include_str!("serve_main.rs");
 
 /// 2026-09-26: `main` reads the fault latch. Both exits contain the read, so
 /// this passes while either one does; the count test below catches one exit

@@ -286,46 +286,6 @@ extern "C" __global__ void w4a16_gemm_t(
     }
 }
 
-// 2026-09-25: B_bf16 [N, K] = dequant(B) for the [N, K/2] layout; one thread per packed
-// byte, writing its two values.
-
-extern "C" __global__ void w4a16_dequant(
-    const unsigned char* __restrict__ B_packed,
-    const unsigned char* __restrict__ B_scale,
-    const float scale2,
-    __nv_bfloat16* __restrict__ B_bf16,
-    unsigned int K,
-    unsigned int N
-) {
-    unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned int total_bytes = N * (K / 2);
-    if (idx >= total_bytes) return;
-
-    unsigned int n = idx / (K / 2);
-    unsigned int k_pair = idx % (K / 2);
-    unsigned int k0 = k_pair * 2;
-    unsigned int k1 = k0 + 1;
-
-    unsigned char packed = B_packed[idx];
-    unsigned int nib0 = packed & 0xF;
-    unsigned int nib1 = packed >> 4;
-
-    unsigned int num_groups = K / GROUP_SIZE;
-    unsigned int scale_group = k0 / GROUP_SIZE;
-
-    unsigned char s_byte = B_scale[(unsigned long long)n * num_groups + scale_group];
-
-    __nv_fp8_e4m3 fp8;
-    *(unsigned char*)&fp8 = s_byte;
-    float s = (float)fp8 * scale2;
-
-    float v0 = E2M1_LUT[nib0] * s;
-    float v1 = E2M1_LUT[nib1] * s;
-
-    B_bf16[n * K + k0] = __float2bfloat16(v0);
-    if (k1 < K) B_bf16[n * K + k1] = __float2bfloat16(v1);
-}
-
 // 2026-09-29: The N tile of each entry point above whose grid covers N in tiles. Launchers
 // size grid.x from it (`GpuBackend::kernel_n_tile`), so each value must be the constant
 // that entry multiplies `blockIdx.x` by.

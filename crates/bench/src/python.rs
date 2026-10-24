@@ -61,10 +61,14 @@ pub async fn run(program: &Path, args: &[&str], cwd: Option<&Path>) -> Result<Ou
 /// 2026-09-26: Locate a Python at least `min_major.min_minor`: `python3`,
 /// then `python`.
 ///
-/// `METRALE_PYTHON`, when set, is the only candidate: the box may keep the
-/// usable interpreter off PATH.
-pub async fn find_python(min_major: u32, min_minor: u32) -> Result<PathBuf> {
-    let candidates: Vec<PathBuf> = match std::env::var_os("METRALE_PYTHON") {
+/// `explicit` (the resolved `METRALE_PYTHON`), when set, is the only candidate:
+/// the box may keep the usable interpreter off PATH.
+pub async fn find_python(
+    explicit: Option<&str>,
+    min_major: u32,
+    min_minor: u32,
+) -> Result<PathBuf> {
+    let candidates: Vec<PathBuf> = match explicit {
         Some(p) => vec![PathBuf::from(p)],
         None => vec![PathBuf::from("python3"), PathBuf::from("python")],
     };

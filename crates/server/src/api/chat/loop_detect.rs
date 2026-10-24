@@ -23,13 +23,13 @@ pub(super) struct LoopDetectOut {
     pub(super) tool_call_repeat_count: usize,
 }
 
-/// 2026-09-26: `METRALE_LOOP_NO_SUPPRESS=1`: verdicts are still detected,
-/// logged and counted, but never set `suppress_tool_call`.
-fn loop_suppress_disabled() -> bool {
-    std::env::var("METRALE_LOOP_NO_SUPPRESS").as_deref() == Ok("1")
-}
-
-pub(super) fn check_loops(messages: &[Message], tools_active: bool) -> LoopDetectOut {
+/// 2026-10-17: With `suppress` off (`ChatLevers::loop_suppress`), verdicts are still
+/// detected, logged and counted, but never set `suppress_tool_call`.
+pub(super) fn check_loops(
+    messages: &[Message],
+    tools_active: bool,
+    suppress: bool,
+) -> LoopDetectOut {
     let mut suppress_tool_call = false;
     let mut tool_call_repeat_count: usize = 0;
 
@@ -117,7 +117,12 @@ pub(super) fn check_loops(messages: &[Message], tools_active: bool) -> LoopDetec
     let exact_failing_run = crate::loop_detector::detect_exact_failing_repeat(&call_outcomes);
 
     // 2026-09-26: Spinning: the latest 5 or more assistant turns (counting
-    // stops at 8) are text-only and under 500 bytes each.
+    // stops at 8) are text-only and under 500 bytes each. 2026-10-19: Length
+    // alone suppressed healthy sessions — 5 short acks ("Done.") ratcheted
+    // `recent_short` (the suppressed `<tool_call>` forces another short text turn),
+    // and `ccx-tp3` saw 13 consecutive firings in one minute. The short run
+    // must also be loop-like: the same `Signature`/jaccard channels
+    // `detect` uses must score the run at or above `MODERATE_SIMILARITY`.
     let mut recent_short: usize = 0;
     for m in messages.iter().rev() {
         if m.role != Role::Assistant {
@@ -141,7 +146,7 @@ pub(super) fn check_loops(messages: &[Message], tools_active: bool) -> LoopDetec
             break;
         }
     }
-    let spinning = recent_short >= 5;
+    let spinning = recent_short >= 5 && short_run_is_loop_like(messages, recent_short);
 
     match &verdict {
         crate::loop_detector::LoopState::Suppress {
@@ -184,7 +189,7 @@ pub(super) fn check_loops(messages: &[Message], tools_active: bool) -> LoopDetec
                     "Loop detector → SUPPRESS: hard-mask <tool_call> for one turn"
                 );
             }
-            suppress_tool_call = !failing_repeat && !progressing && !loop_suppress_disabled();
+            suppress_tool_call = !failing_repeat && !progressing && suppress;
             tool_call_repeat_count = *run_length;
             crate::metrics::LOOP_DETECTOR_VERDICTS
                 .with_label_values(&["suppress", channel.name(), if spinning { "1" } else { "0" }])
@@ -238,11 +243,41 @@ pub(super) fn check_loops(messages: &[Message], tools_active: bool) -> LoopDetec
             recent_short,
             "Spinning detection fired — suppressing <tool_call>"
         );
-        suppress_tool_call = !loop_suppress_disabled();
+        suppress_tool_call = suppress;
     }
 
     LoopDetectOut {
         suppress_tool_call,
         tool_call_repeat_count,
     }
+}
+
+#[cfg(test)]
+#[path = "loop_detect_tests.rs"]
+mod tests;
+
+/// 2026-10-19: True when the newest `run` assistant turns are loop-like: the
+/// shortest of them carries at least `MIN_CHANNEL_TOKENS` text tokens (shorter
+/// acks cannot be compared and must not suppress) and each adjacent pair in
+/// the run scores at or above `MODERATE_SIMILARITY` under the same tokenizer
+/// and threshold as `detect` — one notion of "repeating", with no channel
+/// floor because short acks never reach shingle size.
+fn short_run_is_loop_like(messages: &[Message], run: usize) -> bool {
+    let mut texts = messages
+        .iter()
+        .rev()
+        .filter(|m| m.role == Role::Assistant)
+        .take(run)
+        .map(|m| m.text());
+    let mut prev = match texts.next() {
+        Some(t) => t,
+        None => return false,
+    };
+    for text in texts {
+        if !crate::loop_detector::Signature::raw_texts_similar(&prev, &text) {
+            return false;
+        }
+        prev = text;
+    }
+    true
 }

@@ -29,7 +29,7 @@ pub fn start_chunked_prefill(
     prefill_stream: u64,
     prefill_event: u64,
     grammar_engine: &mut Option<GrammarEngine>,
-    spontaneous_think_budget: u32,
+    spontaneous_think_budget: Option<u32>,
     // 2026-09-25: When true, do the per-request setup and the EP broadcast
     // but not the chunk-0 prefill, and return `InProgress` at offset 0 for
     // a batched prefill step. `start_new_requests` passes true only for
@@ -298,14 +298,20 @@ pub fn start_chunked_prefill(
             image_pixels.is_empty(),
             "vision must be excluded from co-dispatch"
         );
+        // 2026-10-09: On a multi-rank serve a deferred chunk 0 sends nothing here: the
+        // batched step announces it (`EP_CMD_PREFILL_SPANS`), and the worker would run a
+        // `EP_CMD_PREFILL_CHUNK` at once. On one GPU every send below is a no-op.
         if let Err(e) = (|| -> Result<()> {
-            model.ep_broadcast_cmd_for_seq(seq.slot_idx as u32, 0xFFFFFFF0)?;
+            if model.is_ep() {
+                return Ok(());
+            }
+            model.ep_broadcast_cmd_for_seq(seq.slot_idx as u32, metrale_model_layers::ep_wire::EP_CMD_PREFILL_CHUNK)?;
             model.ep_broadcast_cmd(chunk_len as u32)?;
             model.ep_broadcast_cmd(0)?;
             model.ep_broadcast_cmd(prompt_tokens.len() as u32)?;
             model.ep_broadcast_tokens(&prompt_tokens)?;
             // 2026-09-25: The worker makes the matching call in its
-            // `0xFFFFFFF0` handler, so it runs here too.
+            // `EP_CMD_PREFILL_CHUNK` handler, so it runs here too.
             model.ep_sync_vision_embeds(&prompt_tokens)?;
             Ok(())
         })() {
@@ -368,7 +374,7 @@ pub fn start_chunked_prefill(
             model.stream_wait_event(prefill_stream, prefill_event)?;
         }
 
-        model.ep_broadcast_cmd_for_seq(seq.slot_idx as u32, 0xFFFFFFF0)?;
+        model.ep_broadcast_cmd_for_seq(seq.slot_idx as u32, metrale_model_layers::ep_wire::EP_CMD_PREFILL_CHUNK)?;
         model.ep_broadcast_cmd(chunk_len as u32)?;
         model.ep_broadcast_cmd(0)?;
         model.ep_broadcast_cmd(prompt_tokens.len() as u32)?;
@@ -382,7 +388,7 @@ pub fn start_chunked_prefill(
         }
         // 2026-09-25: After the slice base is set, which selects this
         // request's rows; the worker makes the matching call in its
-        // `0xFFFFFFF0` handler.
+        // `EP_CMD_PREFILL_CHUNK` handler.
         model.ep_sync_vision_embeds(&prompt_tokens)?;
         let _pt0 = sched.io.clock.now();
         let chunk_res = model.prefill_chunk(
@@ -424,7 +430,7 @@ pub fn start_chunked_prefill(
                     "prefill_a_step: free_sequence (after prefill error): {free_err:#}"
                 );
             }
-            if let Err(bcast_err) = model.ep_broadcast_cmd_for_seq(seq.slot_idx as u32, 0xFFFFFFF1)
+            if let Err(bcast_err) = model.ep_broadcast_cmd_for_seq(seq.slot_idx as u32, metrale_model_layers::ep_wire::EP_CMD_ALLOC_SLOT)
             {
                 tracing::error!(
                     "prefill_a_step: ep_broadcast (after prefill error): {bcast_err:#}"

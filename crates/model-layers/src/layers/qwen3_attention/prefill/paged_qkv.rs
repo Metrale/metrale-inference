@@ -49,7 +49,7 @@ impl Qwen3AttentionLayer {
             && self.quantize_nvfp4_k.0 != 0
             && self.q_weight.as_ref().and_then(|w| w.as_nvfp4()).is_some()
             && ctx.buffers.fp8_act_bytes() >= (n as usize) * (h as usize)
-            && std::env::var("METRALE_ATTN_W4A4").is_ok();
+            && ctx.settings.kernels.attn_w4a4;
         let a4 = if w4a4 {
             let a4 = ctx.buffers.fp8_act();
             let a4_sf = a4.offset((n as usize) * (h as usize) / 2);
@@ -82,7 +82,7 @@ impl Qwen3AttentionLayer {
         // 2026-09-25: `METRALE_OP_DUMP`: the last token's q_proj row, all
         // `q_proj_dim` values (Q and gate interleaved on a gated layer).
         super::super::op_dump::dump_bf16(
-            ctx.gpu,
+            ctx,
             qg_out,
             (num_tokens - 1) * q_proj_dim * bf16,
             q_proj_dim,
@@ -104,7 +104,7 @@ impl Qwen3AttentionLayer {
             stream,
         )?;
         super::super::op_dump::dump_bf16(
-            ctx.gpu,
+            ctx,
             k_contiguous,
             (num_tokens - 1) * kv_dim * bf16,
             kv_dim,
@@ -126,7 +126,7 @@ impl Qwen3AttentionLayer {
             stream,
         )?;
         super::super::op_dump::dump_bf16(
-            ctx.gpu,
+            ctx,
             v_contiguous,
             (num_tokens - 1) * kv_dim * bf16,
             kv_dim,
@@ -241,6 +241,7 @@ impl Qwen3AttentionLayer {
             ops::fp8_gemm_t_blockscaled(
                 ctx.gpu,
                 self.fp8_gemm_t_blockscaled_k,
+                ctx.levers.ops.fp8_blockscaled(),
                 a_fp8_buf,
                 a_scale_buf,
                 fp8w.weight,
@@ -259,6 +260,7 @@ impl Qwen3AttentionLayer {
             ops::w8a16_gemm_n128_m128(
                 ctx.gpu,
                 self.w8a16_gemm_t_m128_k,
+                ctx.levers.ops.gemm_shape_log,
                 normed,
                 fp8t.weight_t,
                 fp8t.scale_t,
@@ -312,6 +314,7 @@ impl Qwen3AttentionLayer {
                 ops::fp8_gemm_n128(
                     ctx.gpu,
                     self.fp8_gemm_k,
+                    ctx.levers.ops.fp8_ldmab,
                     normed,
                     fp8p,
                     out,
@@ -323,17 +326,7 @@ impl Qwen3AttentionLayer {
             }
         } else if let Some(nvfp4_t) = nvfp4_t {
             if n > 128 {
-                self.w4a16_gemm_m128_dispatch(
-                    ctx.gpu,
-                    ctx.dispatch,
-                    normed,
-                    nvfp4_t,
-                    out,
-                    n,
-                    out_dim,
-                    h,
-                    stream,
-                )?;
+                self.w4a16_gemm_m128_dispatch(ctx, normed, nvfp4_t, out, n, out_dim, h, stream)?;
             } else {
                 ops::w4a16_gemm_n128(
                     ctx.gpu,
@@ -450,7 +443,7 @@ impl Qwen3AttentionLayer {
                     )?;
                 } else if seq_slot.0 != 0
                     && let Some(route) = route
-                    && crate::lora::prefill_bgmv_forced()
+                    && crate::lora::prefill_bgmv_forced(ctx.settings)
                 {
                     // 2026-09-25: Opt-in (`METRALE_LORA_PREFILL_BGMV=1`), with a slot
                     // buffer and a route: the per-row bgmv.

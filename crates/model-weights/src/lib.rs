@@ -2,6 +2,7 @@
 
 //! Metrale Engine: weight store and loaders (safetensors, fast weights, RDMA weight/LoRA tiers, preflight).
 
+mod declared;
 #[cfg(unix)]
 pub mod fast_weights;
 pub mod kimi_k3_host;

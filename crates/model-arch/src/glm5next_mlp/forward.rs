@@ -12,7 +12,6 @@
 
 use anyhow::{Result, bail};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
-use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
 use super::forward_prefill_gemm;
 use super::weights::Glm5NextMoeWeights;
@@ -20,11 +19,43 @@ use super::{Glm5NextMlpConfig, Glm5NextMlpKernels};
 
 mod dense;
 mod launch;
+mod levers;
 mod moe_experts;
+mod pieces;
+pub mod plan_moe;
+mod route;
+mod router;
+mod shared_fork;
+mod sweep_entries;
+mod topk_combine;
+mod w4a4;
+mod w4a4_dense;
+mod w4a4_dense_grouped;
+mod w4a4_grouped;
+mod w4a4_grouped_gu;
+mod w4a4_grouped_nc;
+mod w4a4_grouped_raster;
+mod w4a4_slots;
 mod workspace;
 
-pub use dense::forward_dense;
-use launch::{gemm, swiglu};
+pub use dense::{DenseScratch, forward_dense, forward_dense_site};
+use launch::swiglu;
+pub(crate) use sweep_entries::gate_up_sweeps;
+pub use levers::MlpLevers;
+pub(crate) use levers::count;
+pub(crate) use pieces::check_pieces;
+pub use route::{ExpertRoute, expert_route, grouped_row_floor};
+pub use shared_fork::SHARED_FORK_MAX_ROWS;
+pub use w4a4_dense::forward_dense_w4a4;
+pub use w4a4_dense_grouped::DenseGroupedTables;
+pub use w4a4_grouped::{
+    smem_bytes as w4a4_grouped_smem_bytes, takes_grouped as w4a4_takes_grouped,
+    tile_index as w4a4_grouped_tile_index,
+};
+pub use w4a4_grouped_gu::{W4a4GuCall, check_at_load as check_gu_fused_at_load, launch_w4a4_gu};
+pub use w4a4_grouped_nc::check_at_load as check_nc_at_load;
+pub use w4a4_grouped_raster::{GroupedEntry, RasterGroups, check_at_load as check_raster_at_load};
+pub use w4a4_slots::{CUDA_MAX_GRID_Y, W4a4SlotsCall, launch_w4a4_slots, slot_pieces};
 pub use workspace::{mlp_ws_bytes, mlp_ws_total_bytes};
 
 const ACT_BLOCK: u32 = 256;
@@ -77,30 +108,38 @@ pub struct Glm5NextMlpWorkspace {
     /// 2026-09-25: `[rows, top_k]` I32: a slot's row in the expert-sorted output, read by
     /// `glm5next_moe_combine_indexed`.
     token_to_perm: DevicePtr,
+    /// 2026-10-08: W4A4 activation scratch (`w4a4_scratch_dims`): `[w4a4_rows, k / 2]` E2M1
+    /// codes, `[w4a4_rows, k / 16]` E4M3 scales and `[w4a4_rows]` F32 global scales, in the
+    /// layout `w4a4_quant_rows_static` writes.
+    w4a4_aq: DevicePtr,
+    w4a4_as: DevicePtr,
+    w4a4_ag: DevicePtr,
+    /// 2026-10-10: `[num_experts + 1]` I32: the first 32- or 64-slot tile of each expert in the
+    /// grouped W4A4 GEMM (`w4a4_grouped_tiles`), the last entry the tile count.
+    w4a4_tile_off: DevicePtr,
+    /// 2026-10-08: Rows, and the widest K, the W4A4 scratch holds.
+    w4a4_rows: usize,
+    w4a4_k: usize,
     max_inter: usize,
     /// 2026-09-25: Widest row group this scratch serves, at least 1.
     max_rows: usize,
     /// 2026-09-25: `max_rows * top_k`, the routed-slot count the grouped-path buffers hold.
     max_total_expanded: usize,
-}
-
-/// 2026-09-25: Whether the text layers share one MLP workspace: yes unless
-/// `METRALE_GLM_MLP_WS_SHARED=0`. Read once.
-pub fn mlp_ws_shared() -> bool {
-    static S: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *S.get_or_init(|| {
-        let shared = std::env::var("METRALE_GLM_MLP_WS_SHARED").as_deref() != Ok("0");
-        if !shared {
-            tracing::warn!(
-                "GLM MLP workspace: PER-LAYER (METRALE_GLM_MLP_WS_SHARED=0) — the pre-P2 \
-                 allocation, one scratch per layer"
-            );
-        }
-        shared
-    })
+    /// 2026-10-11: The shared expert's side stream and scratch (`METRALE_GLM_SHARED_FORK`).
+    shared_fork: Option<shared_fork::SharedFork>,
 }
 
 impl Glm5NextMlpWorkspace {
+    /// 2026-10-11: The gate, up and activated buffers of a dense pass (`forward_dense`).
+    pub(super) fn dense_scratch(&self) -> DenseScratch {
+        DenseScratch {
+            gate: self.a_gate,
+            up: self.a_up,
+            act: self.a_act,
+            max_inter: self.max_inter,
+            max_rows: self.max_rows,
+        }
+    }
     /// 2026-09-25: Widest row group this scratch serves.
     pub(super) fn max_rows(&self) -> usize {
         self.max_rows
@@ -109,7 +148,9 @@ impl Glm5NextMlpWorkspace {
     pub(super) fn max_total_expanded(&self) -> usize {
         self.max_total_expanded
     }
-    pub(super) fn ids(&self) -> DevicePtr {
+    /// 2026-10-22: `[rows, top_k]` I32: the router top-k's global expert ids, which every later
+    /// launch of the site only reads. Crate-visible for the layer dump (`MoeIds`).
+    pub(crate) fn ids(&self) -> DevicePtr {
         self.ids
     }
     pub(super) fn a_gate(&self) -> DevicePtr {
@@ -138,37 +179,13 @@ impl Glm5NextMlpWorkspace {
     }
 }
 
-/// 2026-09-25: `METRALE_NO_GLM_MOE_ROW_BATCH=1` turns the row-batched routed path off; each row
-/// then runs its own expert launches. Read once.
-fn row_batch_disabled() -> bool {
-    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| std::env::var("METRALE_NO_GLM_MOE_ROW_BATCH").as_deref() == Ok("1"))
-}
-
-/// 2026-09-25: Widest sub-group of the row-batched routed path: `METRALE_GLM_MOE_ROW_BATCH_MAX`,
-/// default `MOE_ROW_BATCH_MAX_ROWS`, clamped to `1..=MOE_ROW_BATCH_MAX_ROWS`. Read once.
-pub fn row_batch_max() -> usize {
-    static M: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *M.get_or_init(|| {
-        let m = std::env::var("METRALE_GLM_MOE_ROW_BATCH_MAX")
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(MOE_ROW_BATCH_MAX_ROWS)
-            .clamp(1, MOE_ROW_BATCH_MAX_ROWS);
-        if m != MOE_ROW_BATCH_MAX_ROWS {
-            tracing::warn!(
-                "GLM MoE row-batch width capped at {m} (default {MOE_ROW_BATCH_MAX_ROWS})"
-            );
-        }
-        m
-    })
-}
-
 /// 2026-09-25: Widest compiled `w4a16_gemv_sw_moe_batchm_mR` tier: the
-/// `METRALE_MOE_BATCHM_ENTRY(2..=8)` instances in `kernels/gb10/common/w4a16_gemv.cu`, held at
+/// `METRALE_MOE_BATCHM_ENTRY(2..=16)` instances in `kernels/gb10/common/w4a16_gemv.cu`, held at
 /// index `R - 2` of `Glm5NextMlpKernels::w4a16_gemv_sw_moe_batchm`. `forward_moe` splits a wider
-/// row group into sub-groups no wider than this.
-pub const MOE_ROW_BATCH_MAX_ROWS: usize = 8;
+/// row group into sub-groups no wider than this. 2026-10-09: 16 (was 8), so a 16-row decode
+/// group reads each union expert once instead of once per 8-row half;
+/// `METRALE_GLM_MOE_ROW_BATCH_MAX=8` restores the halves.
+pub const MOE_ROW_BATCH_MAX_ROWS: usize = 16;
 
 /// 2026-09-25: Split `rows` into consecutive `(start, width)` sub-groups of at most `cap`, as
 /// even as the count allows. There is no width-1 tier; at `cap = MOE_ROW_BATCH_MAX_ROWS` no
@@ -192,7 +209,8 @@ fn moe_row_groups(rows: usize, cap: usize) -> Vec<(usize, usize)> {
 
 /// 2026-09-25: Most ids `glm5next_moe_row_union` resolves: it runs as one block of
 /// `rows * top_k` threads, and `forward_moe` does not take the row-batched path above this.
-pub const MOE_ROW_UNION_MAX_IDS: usize = 64;
+/// 2026-10-09: 128 (was 64): `MOE_ROW_BATCH_MAX_ROWS` rows at GLM-5.3's top-8.
+pub const MOE_ROW_UNION_MAX_IDS: usize = 128;
 
 /// 2026-09-25: Log once per row count (counts from 15 up share one bit) whether the routed
 /// experts took the row-batched path.
@@ -212,7 +230,7 @@ fn announce_row_batch(batched: bool, rows: usize) {
 
 /// 2026-09-25: Log once per row count (counts from 31 up share one bit) whether a row group
 /// wider than `MOE_ROW_BATCH_MAX_ROWS` took the grouped GEMM; narrower groups log nothing.
-fn announce_grouped_prefill(on: bool, rows: usize) {
+fn announce_grouped_prefill(on: bool, rows: usize, t: super::forward_prefill_gemm::GemmTile) {
     use std::sync::atomic::{AtomicU32, Ordering};
     static SEEN: AtomicU32 = AtomicU32::new(0);
     if rows <= MOE_ROW_BATCH_MAX_ROWS {
@@ -223,7 +241,6 @@ fn announce_grouped_prefill(on: bool, rows: usize) {
         return;
     }
     if on {
-        let t = super::forward_prefill_gemm::gemm_tile();
         tracing::info!(
             "GLM MoE prefill: grouped tensor-core W4A16 GEMM, {rows} rows in ONE launch \
              per projection, tile `{}` (M_TILE {}, N_TILE {}, {} threads) \
@@ -240,14 +257,6 @@ fn announce_grouped_prefill(on: bool, rows: usize) {
              {MOE_ROW_BATCH_MAX_ROWS}-row sweeps"
         );
     }
-}
-
-/// 2026-09-25: `METRALE_GLM_MOE_HOST_DISPATCH=1` forces the host-dispatch expert loop (ids read
-/// back to the host, one GEMV per local expert) and turns off every device-dispatched routed
-/// path. Read once.
-fn host_dispatch_forced() -> bool {
-    static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *F.get_or_init(|| std::env::var("METRALE_GLM_MOE_HOST_DISPATCH").as_deref() == Ok("1"))
 }
 
 /// 2026-09-25: Log, once per process, whether the per-row expert path is device-dispatched
@@ -268,7 +277,7 @@ fn announce_dispatch(grouped: bool) {
 ///
 /// The routed experts take one of three paths:
 /// - the grouped GEMM (`forward_prefill_gemm`), for `rows > MOE_ROW_BATCH_MAX_ROWS` and
-///   `rows >= prefill_gemm_min_rows()`;
+///   `rows >= MlpLevers::prefill_gemm_min_rows`;
 /// - the row-batched union GEMV over the sub-groups of `moe_row_groups`, for `rows >= 2`;
 /// - per row otherwise, device-dispatched (`w4a16_gemv_sw_moe`) or host-dispatched.
 ///
@@ -285,6 +294,31 @@ pub fn forward_moe(
     out: DevicePtr,
     rows: usize,
     ws: &Glm5NextMlpWorkspace,
+    // 2026-10-09: True while a CUDA graph is captured: the grouped GEMM then sizes its grid
+    // from the worst case instead of reading the expert histogram back to the host.
+    capturing: bool,
+    stream: u64,
+) -> Result<()> {
+    forward_moe_pieces(gpu, k, cfg, w, x, out, rows, &[rows], ws, capturing, stream)
+}
+
+/// 2026-10-09: [`forward_moe`] with `row_pieces` splitting the `rows` rows into consecutive
+/// pieces: the router and the shared expert, whose arithmetic depends on the row count, run
+/// once per piece as a `forward_moe` of that piece's row count runs them (`pieces.rs`); the
+/// top-k, the routed experts and the combine run once over all rows. The multi-sequence
+/// prefill passes one piece per sequence; `forward_moe` passes `[rows]`.
+#[allow(clippy::too_many_arguments)]
+pub fn forward_moe_pieces(
+    gpu: &dyn GpuBackend,
+    k: &Glm5NextMlpKernels,
+    cfg: &Glm5NextMlpConfig,
+    w: &Glm5NextMoeWeights,
+    x: DevicePtr,
+    out: DevicePtr,
+    rows: usize,
+    row_pieces: &[usize],
+    ws: &Glm5NextMlpWorkspace,
+    capturing: bool,
     stream: u64,
 ) -> Result<()> {
     if rows == 0 || rows > ws.max_rows {
@@ -301,83 +335,59 @@ pub fn forward_moe(
             cfg.num_experts
         );
     }
+    pieces::check_pieces(rows, row_pieces)?;
 
     use crate::glm5next_layer::profile;
 
-    let groups = moe_row_groups(rows, row_batch_max());
-    let grouped_prefill = rows > MOE_ROW_BATCH_MAX_ROWS
-        && rows >= forward_prefill_gemm::prefill_gemm_min_rows()
-        && forward_prefill_gemm::prefill_gemm_enabled()
-        && !host_dispatch_forced()
-        && !profile::trace_on()
-        && k.moe_sort_by_expert.0 != 0
-        && k.moe_grouped_gemm.0 != 0
-        && k.combine_indexed.0 != 0
-        && rows * cfg.top_k <= ws.max_total_expanded();
-    let batched = !grouped_prefill
-        && rows >= 2
-        && !host_dispatch_forced()
-        && !row_batch_disabled()
-        && !profile::trace_on()
-        && k.moe_row_union.0 != 0
-        && groups.iter().all(|&(_, w)| {
-            w >= 2
-                && w * cfg.top_k <= MOE_ROW_UNION_MAX_IDS
-                && k.w4a16_gemv_sw_moe_batchm[w - 2].0 != 0
-        });
-    announce_row_batch(batched, rows);
-    announce_grouped_prefill(grouped_prefill, rows);
-
-    let t = profile::start();
-    if rows > metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize
-        && crate::glm5next_layer::cublas_wide_proj()
-    {
-        metrale_model_layers::layers::ops::cublas_bf16_proj_dense_f32_out(
-            x,
-            w.router,
-            ws.logits,
-            rows as u32,
-            cfg.num_experts as u32,
-            cfg.hidden as u32,
-            stream,
-        )?;
-    } else {
-        for r in 0..rows {
-            gemm(
-                gpu,
-                k.gemm_f32,
-                k.gemv_f32,
-                KernelHandle(0),
-                x.offset(r * cfg.hidden * 2),
-                w.router,
-                ws.logits.offset(r * cfg.num_experts * 4),
-                1,
-                cfg.num_experts,
-                cfg.hidden,
-                stream,
-            )?;
-        }
+    let groups = moe_row_groups(rows, k.levers.mlp.row_batch_max);
+    // 2026-10-08: The precision plan picks W4A4 or the W4A16 paths below for this row count.
+    // 2026-10-09: The path comes from `route::expert_route`, which the prefill grouping reads too.
+    let path = route::expert_route(k, cfg, w, ws, rows);
+    let w4a4 = match path {
+        route::ExpertRoute::W4a4 => Some(w.act_scales.ok_or_else(|| {
+            anyhow::anyhow!("GLM MoE: the plan runs W4A4 at {rows} rows but no scales were bound")
+        })?),
+        _ => None,
+    };
+    let grouped_prefill = path == route::ExpertRoute::Grouped;
+    // 2026-10-10: A W4A4 launch wider than the slot GEMV serves runs the grouped W4A4 GEMM,
+    // which leaves `expert_out` in expert-sorted order as the grouped W4A16 GEMM does.
+    let grouped_w4a4 = w4a4.is_some() && w4a4_grouped::takes_grouped(rows);
+    let sorted_out = grouped_prefill || grouped_w4a4;
+    let batched = path == route::ExpertRoute::RowBatched;
+    if w4a4.is_none() {
+        announce_row_batch(batched, rows);
+        announce_grouped_prefill(grouped_prefill, rows, k.levers.mlp.gemm_tile);
     }
-    // 2026-09-25: One top-k launch for all rows: `glm5next_router_topk` handles row `blockIdx.x`.
-    KernelLaunch::new(gpu, k.router)
-        .grid([rows as u32, 1, 1])
-        .block([ACT_BLOCK, 1, 1])
-        .arg_ptr(ws.logits)
-        .arg_ptr(w.router_bias)
-        .arg_ptr(ws.ids)
-        .arg_ptr(ws.wts)
-        .arg_u32(cfg.num_experts as u32)
-        .arg_u32(cfg.top_k as u32)
-        .arg_u32(1)
-        .arg_f32(cfg.routed_scale)
-        .arg_u32(u32::from(cfg.renormalize))
-        .arg_u32(u32::from(cfg.router_bf16_ladder))
-        .launch(stream)?;
+
+    // 2026-10-11: Under `METRALE_GLM_SHARED_FORK` the shared expert starts here on its side
+    // stream (it reads only `x`) and joins before the combine.
+    let fork = ws.shared_fork.as_ref().filter(|f| f.takes(rows));
+    let dense_site = crate::glm5next_dense_seg::DenseSite::Legacy;
+    if let Some(f) = fork {
+        f.fork(gpu, stream, |side, scratch| {
+            pieces::shared_expert(gpu, k, cfg, w, x, ws, scratch, row_pieces, dense_site, side)
+        })?;
+    }
+
+    let t = k.levers.profile.start();
+    pieces::router_logits(gpu, k, cfg, w, x, ws, row_pieces, stream)?;
+    // 2026-09-25: One top-k launch for all rows, one block per row (`topk_combine`).
+    topk_combine::router_topk(gpu, k, cfg, w, ws, rows, stream)?;
     profile::end(profile::MOE_ROUTER, t, gpu, stream);
 
     // 2026-09-25: Zero every routed output first: an expert this rank does not own writes
-    // nothing, and its slots must add zero to the sum.
-    gpu.memset_async(ws.expert_out, 0, rows * cfg.top_k * cfg.hidden * 2, stream)?;
+    // nothing, and its slots must add zero to the sum. 2026-10-10: Not before the grouped W4A4
+    // GEMM when this rank holds every expert: its down launch writes every sorted row.
+    // 2026-10-10: Nor before the one-row own-slots sweep, which zeroes the rows it computes
+    // nothing for (`w4a4::writes_every_expert_row`).
+    // 2026-10-21: Nor when the routed SwiGLU zeroes it (`w4a4::zeroes_in_swiglu`).
+    let own_rows = w4a4.is_some()
+        && (w4a4::writes_every_expert_row(k, cfg, rows) || w4a4::zeroes_in_swiglu(k, cfg, rows));
+    if w4a4_grouped::zeroes_expert_out(grouped_w4a4, cfg) && !own_rows {
+        let bytes = w4a4::expert_out_bytes(cfg, rows);
+        gpu.memset_async(ws.expert_out, 0, bytes, stream)?;
+    }
 
     let site = moe_experts::MoeSite {
         gpu,
@@ -389,13 +399,19 @@ pub fn forward_moe(
         ws,
         stream,
     };
-    moe_experts::per_row_experts(&site, batched, grouped_prefill)?;
+    if let Some(scales) = w4a4 {
+        w4a4::w4a4_experts(&site, scales)?;
+    } else {
+        moe_experts::per_row_experts(&site, batched, grouped_prefill)?;
+    }
 
     if grouped_prefill {
         // 2026-09-25: Leaves the routed outputs in expert-sorted order; the combine below reads
         // them through `token_to_perm`.
-        let t = profile::start();
-        forward_prefill_gemm::forward_moe_grouped_prefill(gpu, k, cfg, w, x, rows, ws, stream)?;
+        let t = k.levers.profile.start();
+        forward_prefill_gemm::forward_moe_grouped_prefill(
+            gpu, k, cfg, w, x, rows, ws, !capturing, stream,
+        )?;
         profile::end(profile::MOE_EXPERTS, t, gpu, stream);
     }
 
@@ -403,51 +419,30 @@ pub fn forward_moe(
         moe_experts::row_batched_experts(&site, &groups)?;
     }
 
-    let t = profile::start();
-    forward_dense(
-        gpu,
-        k,
-        cfg,
-        &w.shared,
-        cfg.local_shared_intermediate,
-        x,
-        ws.shared_out,
-        rows,
-        ws,
-        stream,
-    )?;
+    let t = k.levers.profile.start();
+    match fork {
+        Some(f) => f.join(gpu, stream)?,
+        None => pieces::shared_expert(
+            gpu,
+            k,
+            cfg,
+            w,
+            x,
+            ws,
+            ws.dense_scratch(),
+            row_pieces,
+            dense_site,
+            stream,
+        )?,
+    }
 
     // 2026-09-25: The shared expert joins the routed sum in the combine, before the caller's
     // all-reduce, so one collective reduces both partial sums.
     profile::end(profile::MOE_SHARED, t, gpu, stream);
-    let t = profile::start();
-    // 2026-09-25: One combine launch for all rows (row = `blockIdx.x`). After the grouped GEMM
-    // the routed rows are in expert-sorted order, so that path uses
-    // `glm5next_moe_combine_indexed`, which finds each slot's row through `token_to_perm`.
-    if grouped_prefill {
-        KernelLaunch::new(gpu, k.combine_indexed)
-            .grid([rows as u32, 1, 1])
-            .block([ACT_BLOCK, 1, 1])
-            .arg_ptr(ws.expert_out)
-            .arg_ptr(ws.token_to_perm)
-            .arg_ptr(ws.wts)
-            .arg_ptr(ws.shared_out)
-            .arg_ptr(out)
-            .arg_u32(cfg.hidden as u32)
-            .arg_u32(cfg.top_k as u32)
-            .launch(stream)?;
-    } else {
-        KernelLaunch::new(gpu, k.combine)
-            .grid([rows as u32, 1, 1])
-            .block([ACT_BLOCK, 1, 1])
-            .arg_ptr(ws.expert_out)
-            .arg_ptr(ws.wts)
-            .arg_ptr(ws.shared_out)
-            .arg_ptr(out)
-            .arg_u32(cfg.hidden as u32)
-            .arg_u32(cfg.top_k as u32)
-            .launch(stream)?;
-    }
+    let t = k.levers.profile.start();
+    // 2026-09-25: One combine launch for all rows (row = `blockIdx.x`), reading the routed rows
+    // in expert-sorted order after the grouped GEMM (`topk_combine`).
+    topk_combine::combine(gpu, k, cfg, ws, out, rows, sorted_out, stream)?;
     profile::end(profile::MOE_COMBINE, t, gpu, stream);
     Ok(())
 }

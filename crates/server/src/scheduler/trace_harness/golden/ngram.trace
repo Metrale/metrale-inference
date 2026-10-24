@@ -16,7 +16,7 @@ ep_broadcast_cmd(0xf)
 ep_broadcast_tokens(n=15)
 ep_sync_vision_embeds(n=15)
 prefill(n=15, s1@0:len=15, stream=0)
-copy_logits_to_host(row=0, off=0, bytes=128)
+argmax_on_device(row=0, stream=0) -> 8
 ep_broadcast_cmd_for_seq(seq=0, cmd=0x8)
 decode(token=8, s1@0:len=16, stream=0)
 argmax_on_device(row=0, stream=0) -> 2

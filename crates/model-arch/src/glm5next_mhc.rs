@@ -7,8 +7,8 @@
 //! Invariants:
 //! - Every kernel resolves from `GLM5NEXT_MHC_MODULE`, none from DeepSeek-V4's
 //!   `hyper_connection` module.
-//! - `glm_hc_pre` refuses more tokens than `mhc_mix_max_tokens()`, the bound the loader sizes
-//!   each site's `mix` scratch from.
+//! - `glm_hc_pre` refuses more tokens than the site's `mix_tokens`, the bound the loader sized
+//!   the site's `mix` scratch from.
 
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
@@ -33,20 +33,85 @@ pub struct Glm5NextMhcKernels {
     /// computes the FP32 kernel's result on the widened weights. Optional (`try_kernel`, 0 when
     /// absent); `glm_hc_pre` uses it when the site's `hc_fn_bf16` is set and the handle is not 0.
     pub hc_mix_bf16: KernelHandle,
+    /// 2026-10-09: `glm5next_hc_mix_bf16_rows`: `hc_mix_bf16` with one block per (token,
+    /// [`HC_MIX_ROWS`] mixing rows), each mix's bits unchanged; `glm_hc_pre` takes it from
+    /// [`HC_MIX_ROWS_MIN_TOKENS`] tokens. Optional (`try_kernel`, 0 when absent).
+    pub hc_mix_bf16_rows: KernelHandle,
     /// 2026-09-25: `glm5next_hc_finish`: from the mixes, `post`, `comb` (Sinkhorn) and the
     /// collapsed row `y`.
     pub hc_finish: KernelHandle,
+    /// 2026-10-09: `glm5next_hc_pre_norm` (module [`GLM5NEXT_MHC_FUSED_MODULE`]): `hc_mix_bf16`,
+    /// `hc_finish` and the following `rms_norm_vanilla` in one launch, bit for bit; launched by
+    /// `glm5next_mhc_fused::glm_hc_pre_norm`. Optional (`try_kernel`, 0 when absent).
+    pub hc_pre_norm: KernelHandle,
+    /// 2026-10-09: `glm5next_hc_pre_norm_rows`: `hc_pre_norm` with `hc_mix_bf16_rows`'s grid.
+    /// Optional (`try_kernel`, 0 when absent).
+    pub hc_pre_norm_rows: KernelHandle,
+    /// 2026-10-11: `glm5next_hc_pre_norm_pf64`: `hc_pre_norm` with every per-thread load in
+    /// flight at once, same bits, at `hc_mult * H == 64 * 256` (GLM-5.3); taken under
+    /// `METRALE_GLM_MHC_PRE_PREFETCH=1` (`glm5next_mhc_fused::pre_norm_kernel`). Optional
+    /// (`try_kernel`, 0 when absent).
+    pub hc_pre_norm_pf: KernelHandle,
+    /// 2026-10-11: `glm5next_hc_pre_norm_sk64`: `hc_pre_norm` with the mix split along k over 64
+    /// blocks per token, at `hc_mult * H == 64 * 256` (GLM-5.3); taken under
+    /// `METRALE_GLM_MHC_PRE_SPLITK=1`. Reorders the mix sums (accuracy class RO). Optional
+    /// (`try_kernel`, 0 when absent).
+    pub hc_pre_norm_sk: KernelHandle,
+    /// 2026-10-12: `glm5next_hc_pre_norm_tok4` (module [`GLM5NEXT_MHC_TOK_MODULE`]):
+    /// `hc_pre_norm` with four tokens and every mix row per block, same bits, for wide prefill
+    /// sub-chunks; taken under `METRALE_GLM_MHC_PRE_TOK=1` (`glm5next_mhc_tok`). Optional
+    /// (`try_kernel`, 0 when absent).
+    pub hc_pre_norm_tok: KernelHandle,
+    /// 2026-10-15: `glm5next_hc_pre_norm_tile4` (`glm5next_mhc_tile`): tok4's bits; optional.
+    pub hc_pre_norm_tile: KernelHandle,
+    /// 2026-10-21: `glm5next_hc_pre_norm_c1` (`glm5next_mhc_c1`): `hc_pre_norm`'s bits with the
+    /// last block's tail shortened, for decode steps; optional.
+    pub hc_pre_norm_c1: KernelHandle,
     pub hc_post: KernelHandle,
+    /// 2026-10-10: `glm5next_hc_post_rank_sum` (module [`GLM5NEXT_HC_POST_SUM_MODULE`]): the
+    /// one-shot all-reduce's sum fused into `hc_post`, same bits. Optional (`try_kernel`, 0 when
+    /// absent); taken under `METRALE_GLM_AR_FUSED_POST=1`.
+    pub hc_post_rank_sum: KernelHandle,
+    /// 2026-10-15: Its 16-byte-access twin, same bits (`glm5next_hc_post_vec`; 0 when absent).
+    pub hc_post_rank_sum_vec8: KernelHandle,
+    /// 2026-10-10: `glm5next_hc_post_pre_norm`: one token's post-mix (with the one-shot sum in
+    /// front) and the next site's pre-norm in one launch, same bits; taken by the decode under
+    /// `METRALE_GLM_MHC_POST_FOLD=1`. Optional (`try_kernel`, 0 when absent).
+    pub hc_post_pre_norm: KernelHandle,
+    /// 2026-10-14: `glm5next_hc_post_pre_norm_tok4` (module [`GLM5NEXT_MHC_TOK_MODULE`]): a
+    /// prefill piece's `hc_post_rank_sum` and the next site's `hc_pre_norm_tok` in one launch,
+    /// same bits; taken by SP-mHC under `METRALE_GLM_MHC_POST_PRE_FUSED=1`
+    /// (`glm5next_mhc_post_pre_tok`). Optional (`try_kernel`, 0 when absent).
+    pub hc_post_pre_norm_tok: KernelHandle,
     pub hc_head: KernelHandle,
+    /// 2026-10-17: The mHC launch levers, resolved once at startup (`GlmLevers::mhc`).
+    pub levers: crate::glm5next_mhc_levers::MhcLevers,
 }
 
 /// 2026-09-25: The kernel module every GLM mHC kernel resolves from.
 pub const GLM5NEXT_MHC_MODULE: &str = "glm5next_mhc";
 
+/// 2026-10-09: The kernel module of the fused pre-mix + norm (`glm5next_mhc_fused.cu`).
+pub const GLM5NEXT_MHC_FUSED_MODULE: &str = "glm5next_mhc_fused";
+/// 2026-10-12: The token-tiled pre-norm kernels (`glm5next_mhc_tok.cu`).
+pub const GLM5NEXT_MHC_TOK_MODULE: &str = "glm5next_mhc_tok";
+/// 2026-10-15: The cp.async-ring pre-norm kernels (`glm5next_mhc_tile.cu`).
+pub const GLM5NEXT_MHC_TILE_MODULE: &str = "glm5next_mhc_tile";
+
+/// 2026-10-10: The kernel module of the folded post-mix + pre-norm (`glm5next_mhc_post_fold.cu`).
+pub const GLM5NEXT_MHC_POST_FOLD_MODULE: &str = "glm5next_mhc_post_fold";
+
+/// 2026-10-10: The kernel module of the fused all-reduce sum + post-mix (`glm5next_hc_post_sum.cu`).
+pub const GLM5NEXT_HC_POST_SUM_MODULE: &str = "glm5next_hc_post_sum";
+
 impl Glm5NextMhcKernels {
     /// 2026-09-25: Resolve the kernels. A missing one is an error, except `hc_mix_bf16`, which is
     /// 0 when absent.
-    pub fn resolve(gpu: &dyn GpuBackend) -> Result<Self> {
+    /// 2026-10-17: `levers` rides along for the launchers.
+    pub fn resolve(
+        gpu: &dyn GpuBackend,
+        levers: crate::glm5next_mhc_levers::MhcLevers,
+    ) -> Result<Self> {
         Ok(Self {
             hc_expand: gpu.kernel(GLM5NEXT_MHC_MODULE, "glm5next_hc_expand")?,
             hc_pre: gpu.kernel(GLM5NEXT_MHC_MODULE, "glm5next_hc_pre")?,
@@ -56,9 +121,66 @@ impl Glm5NextMhcKernels {
                 GLM5NEXT_MHC_MODULE,
                 "glm5next_hc_mix_bf16",
             ),
+            hc_mix_bf16_rows: metrale_model_layers::layers::try_kernel(
+                gpu,
+                GLM5NEXT_MHC_MODULE,
+                "glm5next_hc_mix_bf16_rows",
+            ),
             hc_finish: gpu.kernel(GLM5NEXT_MHC_MODULE, "glm5next_hc_finish")?,
+            hc_pre_norm: metrale_model_layers::layers::try_kernel(
+                gpu,
+                GLM5NEXT_MHC_FUSED_MODULE,
+                "glm5next_hc_pre_norm",
+            ),
+            hc_pre_norm_rows: metrale_model_layers::layers::try_kernel(
+                gpu,
+                GLM5NEXT_MHC_FUSED_MODULE,
+                "glm5next_hc_pre_norm_rows",
+            ),
+            hc_pre_norm_pf: metrale_model_layers::layers::try_kernel(
+                gpu,
+                GLM5NEXT_MHC_FUSED_MODULE,
+                "glm5next_hc_pre_norm_pf64",
+            ),
+            hc_pre_norm_sk: metrale_model_layers::layers::try_kernel(
+                gpu,
+                GLM5NEXT_MHC_FUSED_MODULE,
+                "glm5next_hc_pre_norm_sk64",
+            ),
+            hc_pre_norm_tok: metrale_model_layers::layers::try_kernel(
+                gpu,
+                GLM5NEXT_MHC_TOK_MODULE,
+                "glm5next_hc_pre_norm_tok4",
+            ),
+            hc_pre_norm_tile: metrale_model_layers::layers::try_kernel(
+                gpu,
+                GLM5NEXT_MHC_TILE_MODULE,
+                crate::glm5next_mhc_tile::HC_PRE_TILE_KERNEL,
+            ),
+            hc_pre_norm_c1: metrale_model_layers::layers::try_kernel(
+                gpu,
+                crate::glm5next_mhc_c1::HC_PRE_C1_MODULE,
+                crate::glm5next_mhc_c1::HC_PRE_C1_KERNEL,
+            ),
             hc_post: gpu.kernel(GLM5NEXT_MHC_MODULE, "glm5next_hc_post")?,
+            hc_post_pre_norm: metrale_model_layers::layers::try_kernel(
+                gpu,
+                GLM5NEXT_MHC_POST_FOLD_MODULE,
+                "glm5next_hc_post_pre_norm",
+            ),
+            hc_post_rank_sum: metrale_model_layers::layers::try_kernel(
+                gpu,
+                GLM5NEXT_HC_POST_SUM_MODULE,
+                "glm5next_hc_post_rank_sum",
+            ),
+            hc_post_rank_sum_vec8: crate::glm5next_hc_post_vec::resolve(gpu),
+            hc_post_pre_norm_tok: metrale_model_layers::layers::try_kernel(
+                gpu,
+                GLM5NEXT_MHC_TOK_MODULE,
+                "glm5next_hc_post_pre_norm_tok4",
+            ),
             hc_head: gpu.kernel(GLM5NEXT_MHC_MODULE, "glm5next_hc_head")?,
+            levers,
         })
     }
 }
@@ -120,35 +242,41 @@ pub struct Glm5NextMhcSiteWeights {
     pub hc_scale: DevicePtr,
     /// 2026-09-25: `[mix_hc]` FP32.
     pub hc_base: DevicePtr,
-    /// 2026-09-25: `[mhc_mix_max_tokens(), mix_hc]` FP32 scratch that `hc_mix` writes and
+    /// 2026-09-25: `[mix_tokens, mix_hc]` FP32 scratch that `hc_mix` writes and
     /// `hc_finish` reads; the loader allocates one per site.
     pub mix: DevicePtr,
+    /// 2026-10-09: `[mix_tokens]` u32, zeroed at allocation: the per-token arrival
+    /// counters of `glm5next_hc_pre_norm`, whose last block for a token zeroes its counter
+    /// again. One per site, like `mix`.
+    pub done: DevicePtr,
+    /// 2026-10-17: Token rows of `mix` and `done`, [`mhc_mix_max_tokens`] of the prefill width
+    /// the loader allocated them for; every launcher refuses more tokens.
+    pub mix_tokens: usize,
 }
 
-/// 2026-09-25: The lower bound of `mhc_mix_max_tokens()`.
+/// 2026-10-09: `#define GLM_HC_MIX_ROWS` in `glm5next_mhc.cu`: mixing rows per block of
+/// `glm5next_hc_mix_bf16_rows`.
+pub const HC_MIX_ROWS: usize = 8;
+
+/// 2026-10-09: Fewest tokens `glm_hc_pre` sends to `glm5next_hc_mix_bf16_rows`: 32 tokens give
+/// 96 blocks at GLM-5.3's 24 mixing rows, two per GB10 SM. Below it the per-row kernel's
+/// T x 24 blocks keep the SMs busier. Not yet measured; the C16 bench times both.
+pub const HC_MIX_ROWS_MIN_TOKENS: usize = 32;
+
+/// 2026-09-25: The lower bound of [`mhc_mix_max_tokens`].
 pub const MHC_MIX_MAX_TOKENS: usize = 256;
 
-/// 2026-09-25: Token bound of each site's `mix` scratch, `max(prefill_rows(), MHC_MIX_MAX_TOKENS)`,
-/// read once. The loader allocates the scratch from it and `glm_hc_pre` refuses more tokens
-/// than it, so the allocation and the check read one value.
-pub fn mhc_mix_max_tokens() -> usize {
-    static T: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *T.get_or_init(|| {
-        let t = crate::glm5next_layer::prefill_rows().max(MHC_MIX_MAX_TOKENS);
-        if t != MHC_MIX_MAX_TOKENS {
-            tracing::warn!(
-                "GLM mHC `mix` scratch widened to {t} tokens (floor {MHC_MIX_MAX_TOKENS}) to \
-                 match METRALE_GLM_PREFILL_ROWS"
-            );
-        }
-        t
-    })
+/// 2026-09-25: Token bound of each site's `mix` scratch, `max(prefill_rows, MHC_MIX_MAX_TOKENS)`.
+/// 2026-10-17: The loader allocates the scratch from it and stores it as the site's
+/// `mix_tokens`, which `glm_hc_pre` checks, so the allocation and the check read one value.
+pub fn mhc_mix_max_tokens(prefill_rows: usize) -> usize {
+    prefill_rows.max(MHC_MIX_MAX_TOKENS)
 }
 
 /// 2026-09-25: Collapse each token's `hc_mult` FP32 streams to one BF16 row in `y_out`, and write
 /// this site's `post` and `comb`, by launching `hc_mix` (or `hc_mix_bf16`) then `hc_finish`.
 /// `streams` is read, not written, so `glm_hc_post` can take it as its residual. Errors when
-/// `num_tokens` exceeds `mhc_mix_max_tokens()`.
+/// `num_tokens` exceeds the site's `mix_tokens`.
 #[allow(clippy::too_many_arguments)]
 pub fn glm_hc_pre(
     gpu: &dyn GpuBackend,
@@ -167,7 +295,7 @@ pub fn glm_hc_pre(
     stream: u64,
 ) -> Result<()> {
     let mix_hc = (2 + hc_mult) * hc_mult;
-    let mix_cap = mhc_mix_max_tokens();
+    let mix_cap = w.mix_tokens;
     if num_tokens as usize > mix_cap {
         anyhow::bail!(
             "glm_hc_pre: {num_tokens} tokens exceeds the {mix_cap}-token `mix` scratch \
@@ -182,8 +310,22 @@ pub fn glm_hc_pre(
     } else {
         kernels.hc_mix
     };
+    // 2026-10-09: From `HC_MIX_ROWS_MIN_TOKENS` tokens, one block per (token, `HC_MIX_ROWS`
+    // rows) reads each token's streams once per group instead of once per row; each mix keeps
+    // its bits. Fewer tokens keep one block per (token, row) for the parallelism.
+    let (mix_kernel, mix_grid_y) = if w.hc_fn_bf16
+        && kernels.hc_mix_bf16_rows.0 != 0
+        && num_tokens as usize >= HC_MIX_ROWS_MIN_TOKENS
+    {
+        (
+            kernels.hc_mix_bf16_rows,
+            mix_hc.div_ceil(HC_MIX_ROWS as u32),
+        )
+    } else {
+        (mix_kernel, mix_hc)
+    };
     KernelLaunch::new(gpu, mix_kernel)
-        .grid([num_tokens, mix_hc, 1])
+        .grid([num_tokens, mix_grid_y, 1])
         .block([256, 1, 1])
         .arg_ptr(streams)
         .arg_ptr(w.hc_fn)
@@ -244,7 +386,7 @@ pub fn glm_hc_post(
 /// 2026-09-25: Blocks along grid y for `hc_finish`'s collapse and for `hc_post`: `ceil(H / 256)`,
 /// at least 1, where 256 is the block width both launch at. Each output element is computed on
 /// its own, so the block count does not change the result.
-const fn collapse_blocks(hidden_size: u32) -> u32 {
+pub(crate) const fn collapse_blocks(hidden_size: u32) -> u32 {
     if hidden_size < 256 {
         1
     } else {
@@ -259,44 +401,5 @@ pub fn mix_hc(hc_mult: usize) -> usize {
 }
 
 #[cfg(test)]
-mod mhc_shape_tests {
-    use super::*;
-
-    /// 2026-09-25: `mix_hc` is the pre, post and comb row counts added, for `hc_mult` 1 to 8.
-    #[test]
-    fn mix_hc_splits_into_pre_post_and_comb() {
-        for hc in 1usize..=8 {
-            assert_eq!(mix_hc(hc), hc + hc + hc * hc, "pre + post + comb rows");
-        }
-        assert_eq!(mix_hc(2), 8);
-    }
-
-    /// 2026-09-25: `GLM_HC_MAX_MIX` in `glm5next_mhc.cu` is 24, which is `mix_hc(4)`; `hc_mult` 5
-    /// would exceed it.
-    #[test]
-    fn the_kernels_mix_bound_is_hc_mult_four() {
-        assert_eq!(mix_hc(4), 24, "GLM_HC_MAX_MIX in glm5next_mhc.cu");
-        assert!(mix_hc(5) > 24, "hc_mult 5 would exceed the kernel's bound");
-    }
-
-    /// 2026-09-25: Without `METRALE_GLM_PREFILL_ROWS`, `prefill_rows()` is `PREFILL_ROWS` (16), so
-    /// the bound is the 256-token floor.
-    #[test]
-    fn the_mix_bound_never_goes_below_the_shipped_floor() {
-        assert_eq!(mhc_mix_max_tokens(), MHC_MIX_MAX_TOKENS);
-        assert!(mhc_mix_max_tokens() >= MHC_MIX_MAX_TOKENS);
-    }
-
-    /// 2026-09-25: Total `mix` scratch over 90 sites (45 text layers, 2 sites each) at
-    /// `hc_mult` 4, the config fixture's values.
-    #[test]
-    fn the_mix_scratch_costs_megabytes_not_gigabytes() {
-        let total = |tokens: usize| tokens * mix_hc(4) * 4 * 90;
-        assert_eq!(
-            total(256),
-            2_211_840,
-            "2.2 MB for the whole model at the floor"
-        );
-        assert_eq!(total(1024), 8_847_360, "8.8 MB at a 1024-row sub-chunk");
-    }
-}
+#[path = "glm5next_mhc_tests.rs"]
+pub(crate) mod mhc_shape_tests;

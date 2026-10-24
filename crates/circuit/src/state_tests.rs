@@ -181,4 +181,47 @@ fn recurrent_states_follow_the_engine_model_type() {
     assert_eq!(crate::recurrent_states("gemma4", &dims).unwrap(), None);
     // 2026-09-30: A dim the declaration reads and the caller does not give is an error.
     assert!(crate::recurrent_states("nemotron_h", &dims).is_err());
+    // 2026-10-09: GLM-5's KDA layers hold the pool state; the sparse-attention layers' indexer
+    // pool tail (also `recurrent`) is not a recurrent layer kind's, so it is not the pool's.
+    let mut glm = dims.clone();
+    glm.insert("conv_kernel".into(), 4);
+    let s = crate::recurrent_states("glm5_next", &glm).unwrap().unwrap();
+    let ids: Vec<&str> = s.iter().map(|d| d.id.as_str()).collect();
+    assert_eq!(ids, ["kda.h", "kda.conv"]);
+    assert_eq!(s[1].elements, (16 * 128 * 2 + 32 * 128) * 4);
+}
+
+/// 2026-10-18: A KV state in a codec pair takes its side's bytes from that codec's spec: the K
+/// state the K codec's, the V state the V codec's; a symmetric pair matches the old fixed
+/// widths; a state that is neither side holds a symmetric pair and refuses an asymmetric one.
+#[test]
+fn a_kv_pair_sizes_each_side_from_its_codec() {
+    let pair = |s: &str| StateDtype::Kv(crate::kv::parse_kv(s).expect("a pair"));
+    let kv = |local: &str| {
+        decl(
+            local,
+            StateKind::PagedKv,
+            StateFormat::Keyed("kv".into()),
+            2048,
+        )
+    };
+    let (k, v, latent) = (kv("k"), kv("v"), kv("latent"));
+    // 2026-10-18: bf16 K 2 B/value; turbo3 V 3 bits/value + 1 E4M3 byte per 16 values.
+    assert_eq!(k.unit_bytes(pair("bf16k_turbo3v")), Ok(4096));
+    assert_eq!(v.unit_bytes(pair("bf16k_turbo3v")), Ok(768 + 128));
+    for (fixed, s) in [(StateDtype::Bf16, "bf16"), (StateDtype::Fp8, "fp8")] {
+        for d in [&k, &v, &latent] {
+            assert_eq!(
+                d.unit_bytes(pair(s)),
+                d.unit_bytes(fixed),
+                "{s} {}",
+                d.local
+            );
+        }
+    }
+    assert_eq!(latent.unit_bytes(pair("turbo4")), Ok(1024 + 128));
+    assert!(matches!(
+        latent.unit_bytes(pair("bf16k_turbo3v")),
+        Err(StateError::Inputs(_))
+    ));
 }

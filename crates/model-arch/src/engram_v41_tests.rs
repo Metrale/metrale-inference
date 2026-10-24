@@ -17,8 +17,9 @@ use std::sync::Arc;
 
 use super::*;
 use crate::deepseek_v41_ref::engram::{
-    EngramTables, NgramHashState, embed_rows, regen_bf16_matrix, regen_bf16_qk, regen_table,
+    EngramTables, NgramHashState, regen_bf16_matrix, regen_bf16_qk, regen_table,
 };
+use crate::deepseek_v41_ref::mat::gather_rows;
 use crate::deepseek_v41_ref::testutil::*;
 use crate::deepseek_v41_ref::{Golden, fixed_int};
 
@@ -181,7 +182,7 @@ fn gpu_engram_matches_the_golden_within_bf16() {
             g,
             EngramLayerWeights {
                 layer: lid,
-                wkv,
+                wkv: ResidentMat::Bf16(wkv),
                 qk,
                 raw: DevicePtr(0),
                 rows: DevicePtr(0),
@@ -201,9 +202,10 @@ fn gpu_engram_matches_the_golden_within_bf16() {
                 .iter()
                 .map(|&v| v as i64)
                 .collect();
-            let emb = embed_rows(&table, hd, &ids);
+            let emb = gather_rows(&table, hd, &ids);
             let rows: Vec<u16> = emb.iter().map(|&v| bf16_bits(v)).collect();
-            eng.rows_from_bf16(g, Some(lid), &rows, len * cols).unwrap();
+            eng.rows_from_bf16(g, Some(lid), &rows, len * cols, stream)
+                .unwrap();
             let xin = f.g.tensor(&r, &format!("L{lid}.engram_in"));
             assert_eq!(xin.stride, 1, "engram_in must be stored at full resolution");
             let x: Vec<f32> = xin.data.iter().map(|&v| v as f32).collect();

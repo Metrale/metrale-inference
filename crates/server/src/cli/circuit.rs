@@ -130,6 +130,24 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
             };
             return super::circuit_precision::run(*p);
         }
+        CircuitAction::Headroom(_) => {
+            let CircuitAction::Headroom(h) = args.action else {
+                unreachable!("matched above")
+            };
+            return super::circuit_headroom::run(*h);
+        }
+        CircuitAction::Whatif(_) => {
+            let CircuitAction::Whatif(w) = args.action else {
+                unreachable!("matched above")
+            };
+            return super::circuit_whatif::run(*w);
+        }
+        CircuitAction::Rules(_) => {
+            let CircuitAction::Rules(r) = args.action else {
+                unreachable!("matched above")
+            };
+            return super::circuit_rules::run(*r);
+        }
     };
     let inst = instance(&plan_args.recipe)?;
     let rows = rows_of(&inst, &plan_args)?;
@@ -150,7 +168,10 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
         | CircuitAction::Venn(_)
         | CircuitAction::Plan(_)
         | CircuitAction::Memory(_)
-        | CircuitAction::Precision(_) => {
+        | CircuitAction::Precision(_)
+        | CircuitAction::Headroom(_)
+        | CircuitAction::Whatif(_)
+        | CircuitAction::Rules(_) => {
             unreachable!("returned above")
         }
         CircuitAction::Display(d) => {
@@ -219,12 +240,20 @@ pub(crate) fn dispatch(args: CircuitArgs) -> Result<()> {
 /// the compute unit of each group (`metrale_circuit::venn::compute`) as this binary declares it.
 const FAMILIES: [(&str, &str); 1] = [(
     "gb10",
-    include_str!("../../../../kernels/gb10/common/KERNEL_FAMILIES.toml"),
+    include_str!(concat!(
+        env!("METRALE_KERNEL_TREE_ROOT"),
+        "/kernels/gb10/common/KERNEL_FAMILIES.toml"
+    )),
 )];
 
 /// 2026-10-02: The kernel families of the instance's hardware (the first `target` segment).
 pub(crate) fn families_for(inst: &Instance) -> Result<metrale_circuit::venn::Families> {
-    let hw = inst.target.split('/').next().unwrap_or_default();
+    families_of_class(inst.target.split('/').next().unwrap_or_default())
+}
+
+/// 2026-10-22: The kernel families embedded for hardware class `hw` (the blueprint export's
+/// kernel math).
+pub(crate) fn families_of_class(hw: &str) -> Result<metrale_circuit::venn::Families> {
     let text = FAMILIES
         .iter()
         .find(|(h, _)| *h == hw)

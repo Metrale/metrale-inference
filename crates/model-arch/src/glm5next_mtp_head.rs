@@ -9,6 +9,8 @@
 //!
 //! ```text
 //! x = eh_proj( concat( enorm(embed[token]), hnorm(target_hidden) ) )   [1, 2H] -> [1, H]
+//!     target_hidden: hc_mean(streams), or under `METRALE_MTP_TARGET_POSTNORM=1` its target
+//!     final norm, model.norm(hc_mean(streams)), the row vLLM's GLM MTP layer is fed
 //! x = layers.{num_hidden_layers}(x)      DSA + routed MoE, plain residual (no mHC)
 //! logits = lm_head( shared_head.norm(x) )              the target's own head
 //! draft  = argmax(logits)
@@ -33,8 +35,45 @@ use metrale_model_layers::layers::ops;
 use metrale_model_layers::speculative::{DraftProposer, ProposerState};
 use metrale_model_layers::weight_map::DenseWeight;
 
+mod batch;
+mod batch_check;
+mod batch_graph;
+mod catchup;
+mod context_cap;
+mod ctx_rows;
+mod draft_io;
+mod draft_lp;
+mod graph;
+mod head_sweep;
+pub(crate) mod head_xchg;
+mod hidden_half;
 mod init;
+pub(crate) mod kv_pool;
+mod levers;
 mod proposer;
+mod rows;
+mod state_pool;
+
+/// 2026-10-11: The batched propose's row limit.
+pub use batch::PROPOSE_BATCH_MAX;
+/// 2026-10-13: The drafter's context cap (`METRALE_GLM_MTP_CONTEXT_CAP`, `context_cap`).
+pub use context_cap::{drafter_dsa_config, drafter_max_context};
+/// 2026-10-11: The drafter graph's per-state bytes, for the per-sequence reserve.
+pub use graph::state_bytes as graph_state_bytes;
+/// 2026-10-21: The screened draft head (`head_sweep`).
+pub use head_sweep::DraftScreen;
+/// 2026-10-11: Bytes of the draft head's exchange buffer, one per sequence state.
+pub use head_xchg::BUFFER_BYTES as HEAD_XCHG_BUFFER_BYTES;
+/// 2026-10-11: The host exchange, the oracle of the device kernels (`glm53_mtp_xchg_gate`).
+pub use head_xchg::{
+    MAX_RANKS as HEAD_XCHG_MAX_RANKS, pack as head_xchg_pack, pack_lp as head_xchg_pack_lp,
+    pick as head_xchg_pick, pick_lp as head_xchg_pick_lp, xchg_bytes as head_xchg_bytes,
+    xchg_lp_bytes as head_xchg_lp_bytes,
+};
+/// 2026-10-11: Bytes of one sequence's drafter KV region, for the per-sequence reserve.
+pub use kv_pool::drafter_kv_bytes_per_seq;
+/// 2026-10-17: The drafter's levers, resolved once from the startup settings.
+pub use levers::{MtpLevers, MtpSkip};
 
 /// 2026-09-25: Per-sequence drafter state: the block's own indexer cache and KV block table.
 pub struct Glm5NextMtpProposerState {
@@ -51,11 +90,19 @@ pub struct Glm5NextMtpProposerState {
     x: DevicePtr,
     logits: DevicePtr,
     arg: DevicePtr,
-    /// 2026-09-25: 8 BF16 lanes for the vocab-sharded head's cross-rank pick: each rank's
-    /// max logit, then three base-256 digits of each rank's token id.
+    /// 2026-09-25: BF16 lanes for the vocab-sharded head's cross-rank pick: each rank's
+    /// max logit, then three base-256 digits of each rank's token id (2026-10-11:
+    /// `head_xchg`, sized for its `MAX_RANKS`).
     head_xchg: DevicePtr,
     /// 2026-09-25: Set by `free_state`, which is a no-op once it is set.
     released: bool,
+    /// 2026-10-11: This state's region of the drafter KV pool (`kv_pool`); `block_table` is
+    /// its run of blocks. `None` when the pool had no free region: the state drafts nothing
+    /// rather than sharing another sequence's rows.
+    kv_region: Option<usize>,
+    /// 2026-10-11: The drafter graph's metadata and graph (`METRALE_GLM_MTP_GRAPH`); `None`
+    /// runs every draft eagerly.
+    graph: Option<graph::DrafterGraph>,
 }
 
 impl ProposerState for Glm5NextMtpProposerState {
@@ -72,8 +119,15 @@ pub struct Glm5NextMtpHead {
     embed_tokens: DenseWeight,
     lm_head: DenseWeight,
     /// 2026-09-25: A one-layer pool of the drafter's own, so its entries can be trimmed
-    /// independently of the target's.
+    /// independently of the target's. 2026-10-11: One region per live state (`kv_regions`).
     kv_cache: Mutex<PagedKvCache>,
+    kv_regions: kv_pool::DrafterKvRegions,
+    /// 2026-10-14: Freed states kept for reuse (`METRALE_GLM_MTP_STATE_POOL`).
+    state_pool: state_pool::StatePool,
+    /// 2026-10-17: `speculative.glm_mtp_state_pool` at construction: freed states go to `state_pool`.
+    state_pool_on: bool,
+    /// 2026-10-17: The drafter levers, resolved at construction.
+    levers: MtpLevers,
     rms_norm_k: KernelHandle,
     gemv_k: KernelHandle,
     argmax_k: KernelHandle,
@@ -81,9 +135,13 @@ pub struct Glm5NextMtpHead {
     vocab: usize,
     max_seq_len: usize,
     /// 2026-09-25: Vocab shard of the shared `lm_head` this rank sweeps:
-    /// `[head_v0, head_v0 + head_n)`. `head_n == vocab` on a single rank or when `vocab_size`
-    /// does not divide by `tp_world_size`.
+    /// `[head_v0, head_v0 + head_n)`. `head_n == vocab` (and `head_v0 == 0`) unless
+    /// `init::draft_head_shard` splits the vocab across the `head_world` ranks.
+    head_world: usize,
     head_rank: usize,
+    /// 2026-10-11: This rank's `eh_proj` output rows `(r0, n)` under `METRALE_GLM_MTP_EH_TP`
+    /// (`init::eh_shard`); `None` computes them all.
+    eh_shard: Option<(usize, usize)>,
     head_v0: usize,
     head_n: usize,
     /// 2026-09-25: FP8 E4M3 copy of this rank's vocab shard of `lm_head`, for drafting only.
@@ -93,12 +151,36 @@ pub struct Glm5NextMtpHead {
     /// Measured 2026-08-29 (nsys): 2.66 ms -> ~1.33 ms per draft sweep.
     head_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
     gemv_fp8w_k: KernelHandle,
+    /// 2026-10-24: NVFP4 copy of the same shard under `--glm-draft-head nvfp4` (R1), which the
+    /// one-row sweep takes over `head_fp8` (`head_sweep::pick_one_row_head`); `None` otherwise.
+    head_nvfp4: Option<metrale_model_layers::weight_map::QuantizedWeight>,
+    gemv_sw_k: KernelHandle,
+    /// 2026-10-21: The screened draft head (`head_sweep`), `METRALE_GLM_MTP_SCREEN_HEAD=1`.
+    screen: Option<head_sweep::DraftScreen>,
+    /// 2026-10-11: The batched propose (`METRALE_GLM_MTP_PROPOSE_BATCH`); `None` proposes per
+    /// sequence.
+    batch: Option<batch::ProposeBatch>,
+    /// 2026-10-11: `(glm5next_mtp_xchg_pack, glm5next_mtp_xchg_pick)` when
+    /// `METRALE_GLM_MTP_XCHG_DEVICE=1` and the build has them: the vocab-sharded head's exchange
+    /// on the device (`exchange_on_device`). `None` keeps the host exchange.
+    xchg_k: Option<(KernelHandle, KernelHandle)>,
+    /// 2026-10-11: The context rows' pass scratch (`ctx_rows`); `None` runs them one at a time.
+    ctx_rows: Option<Mutex<ctx_rows::CtxRowsScratch>>,
+    /// 2026-10-11: The draft log-probability kernels (`draft_lp`).
+    lp_k: draft_lp::LpKernels,
+    /// 2026-10-11: The target's own final norm (`model.language_model.norm.weight`, BF16
+    /// `[hidden]`, the pointer its `final_norm_apply` reads), applied to target-hidden rows
+    /// under `ModelLevers::mtp_target_postnorm` (`hidden_half`).
+    target_final_norm: DevicePtr,
 }
 
 /// 2026-09-25: Rows the GLM drafter can ever be asked for: the served context, clamped to
 /// the rows its DSA indexer cache reserves. `max_dsa_context` is `max_context` (the serve's
 /// `--max-seq-len`) rounded down to whole `index_kpool` pools, so the cap follows the config.
-fn drafter_context_rows(max_seq_len: usize, cfg: &crate::glm5next_dsa::Glm5NextDsaConfig) -> usize {
+pub(crate) fn drafter_context_rows(
+    max_seq_len: usize,
+    cfg: &crate::glm5next_dsa::Glm5NextDsaConfig,
+) -> usize {
     max_seq_len.min(crate::glm5next_dsa::state::max_dsa_context(cfg))
 }
 
@@ -112,8 +194,24 @@ impl Glm5NextMtpHead {
         n: usize,
         stream: u64,
     ) -> Result<()> {
+        self.norm_rows(gpu, x, w, out, n, 1, stream)
+    }
+
+    /// 2026-10-11: [`Self::norm`] over `rows` contiguous rows of `n` (one block per row; each
+    /// row's result is the one-row launch's).
+    #[allow(clippy::too_many_arguments)]
+    fn norm_rows(
+        &self,
+        gpu: &dyn GpuBackend,
+        x: DevicePtr,
+        w: DevicePtr,
+        out: DevicePtr,
+        n: usize,
+        rows: usize,
+        stream: u64,
+    ) -> Result<()> {
         KernelLaunch::new(gpu, self.rms_norm_k)
-            .grid([1, 1, 1])
+            .grid([rows as u32, 1, 1])
             .block([(n.min(1024)) as u32, 1, 1])
             .arg_ptr(x)
             .arg_ptr(w)
@@ -123,36 +221,34 @@ impl Glm5NextMtpHead {
             .launch(stream)
     }
 
-    /// 2026-09-25: One draft token. Advances `seq_len` by one.
-    fn forward_one(
+    /// 2026-09-25: `x = eh_proj(concat)`. 2026-10-11: under `METRALE_GLM_MTP_EH_TP` with a
+    /// communicator, this rank computes its output rows into a zeroed `x` and one all-reduce of
+    /// the row assembles them; each row is the same GEMV over the same input either way (a block
+    /// computes four rows independently), so `x` keeps its bits.
+    fn eh_proj(
         &self,
-        token: u32,
-        hidden_in: DevicePtr,
-        position: usize,
-        st: &mut Glm5NextMtpProposerState,
+        gpu: &dyn GpuBackend,
+        st: &Glm5NextMtpProposerState,
         ctx: &ForwardContext,
         stream: u64,
-    ) -> Result<u32> {
-        let gpu = ctx.gpu;
+    ) -> Result<()> {
         let h = self.hidden;
-        if position >= self.max_seq_len {
-            bail!(
-                "GLM MTP drafter: position {position} is past the {} it was sized for",
-                self.max_seq_len
-            );
+        if let (Some(comm), Some((r0, n))) = (ctx.comm, self.eh_shard) {
+            gpu.memset_async(st.x, 0, h * 2, stream)?;
+            ops::dense_gemv(
+                gpu,
+                self.gemv_k,
+                st.concat,
+                &DenseWeight {
+                    weight: self.module.eh_proj.weight.offset(r0 * 2 * h * 2),
+                },
+                st.x.offset(r0 * 2),
+                n as u32,
+                (2 * h) as u32,
+                stream,
+            )?;
+            return comm.all_reduce_async(st.x.0, h * 2, stream);
         }
-        // 2026-09-25: The embedding row is read by pointer: `embed_tokens` is `[vocab, hidden]`
-        // BF16 and a row is contiguous, so there is nothing to gather.
-        let embed_row = self.embed_tokens.weight.offset(token as usize * h * 2);
-        self.norm(gpu, embed_row, self.module.enorm, st.concat, h, stream)?;
-        self.norm(
-            gpu,
-            hidden_in,
-            self.module.hnorm,
-            st.concat.offset(h * 2),
-            h,
-            stream,
-        )?;
         ops::dense_gemv(
             gpu,
             self.gemv_k,
@@ -162,10 +258,50 @@ impl Glm5NextMtpHead {
             h as u32,
             (2 * h) as u32,
             stream,
-        )?;
+        )
+    }
+
+    /// 2026-10-11: `(n, v0, sharded)`: the vocab rows this rank's draft head sweeps. Sharded
+    /// only with a communicator and a vocab split across ranks; otherwise the sweep covers the
+    /// whole vocab.
+    fn head_range(&self, ctx: &ForwardContext) -> (usize, usize, bool) {
+        let sharded = ctx.comm.is_some() && self.head_n != self.vocab;
+        if sharded {
+            (self.head_n, self.head_v0, true)
+        } else {
+            (self.vocab, 0, false)
+        }
+    }
+
+    /// 2026-10-11: One draft's device work, from the embedding row `embed_src` and the target
+    /// hidden `hidden_in` to the argmax in `st.arg`: the input norms and `eh_proj`, the block
+    /// (advancing `seq_len`), `shared_head.norm`, the head sweep and the argmax. Eager, or the
+    /// body of the drafter graph (`graph.rs`).
+    // 2026-10-11: `track_caller`, so the feed levers' first-application log names the caller
+    // (the eager draft or the drafter graph's capture), not this body.
+    #[track_caller]
+    fn forward_body(
+        &self,
+        // 2026-10-11: The token's embedding row; `None` zeroes the embedding half (pair key 0
+        // under `METRALE_MTP_ZERO_POS0`, `hidden_half::zeroes_embedding`).
+        embed_src: Option<DevicePtr>,
+        hidden_in: DevicePtr,
+        // 2026-10-11: `hidden_in` is a target row (the first draft), not the drafter's own
+        // chain output (`hidden_half`).
+        target_row: bool,
+        st: &mut Glm5NextMtpProposerState,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        let gpu = ctx.gpu;
+        let h = self.hidden;
+        self.embed_half(gpu, embed_src, st.concat, stream)?;
+        // 2026-10-11: `st.x` is free until `eh_proj` writes it, so it stages the target norm.
+        self.hidden_half(ctx, hidden_in, target_row, st.x, st.concat, stream)?;
+        self.eh_proj(gpu, st, ctx, stream)?;
 
         // 2026-09-25: The block writes its output back over `st.x` (plain residual, in place).
-        if skip_block() {
+        if self.levers.skip_block() {
             st.seq_len += 1;
         } else {
             let mut kv = self.kv_cache.lock();
@@ -182,232 +318,167 @@ impl Glm5NextMtpHead {
             drop(kv);
             st.seq_len += 1;
         }
-
-        // 2026-09-25: Timing arm `METRALE_GLM_MTP_SKIP=head`: the head is skipped and the
-        // draft is token 0, so `propose` times the block alone. `=block` skips the block instead.
-        if skip_head() {
-            return Ok(0);
+        if self.levers.skip_head() {
+            return Ok(());
         }
         // 2026-09-25: `shared_head.norm`, then the target's own `lm_head`: the MTP layer carries
         // no head of its own.
         self.norm(gpu, st.x, self.module.final_norm, st.x, h, stream)?;
-        // 2026-09-25: Sharded only with a communicator and a vocab split across ranks;
-        // otherwise the sweep covers the whole vocab.
-        let sharded = ctx.comm.is_some() && self.head_n != self.vocab;
-        let (w, n, v0) = if sharded {
-            (
-                DenseWeight {
-                    weight: self.lm_head.weight.offset(self.head_v0 * h * 2),
-                },
-                self.head_n,
-                self.head_v0,
-            )
-        } else {
-            (self.lm_head, self.vocab, 0)
-        };
-        // 2026-09-25: The FP8 copy covers only `[head_v0, head_v0 + head_n)`, so it serves the
-        // sharded sweep alone; an unsharded sweep reads the BF16 head.
-        match self.head_fp8.filter(|_| sharded && n == self.head_n) {
-            Some(q) => ops::dense_gemv_fp8w(
+        let (v0, lp) = self.head_sweep_one(gpu, st, ctx, stream)?;
+        if let (Some(k), Some(comm)) = (self.device_xchg(ctx), ctx.comm) {
+            self.exchange_rows(
                 gpu,
-                self.gemv_fp8w_k,
-                st.x,
-                &q,
+                comm,
+                k,
+                st.arg,
                 st.logits,
-                n as u32,
-                h as u32,
+                0,
+                st.head_xchg,
+                1,
+                lp,
+                v0,
                 stream,
-            )?,
-            None => ops::dense_gemv(
-                gpu,
-                self.gemv_k,
-                st.x,
-                &w,
-                st.logits,
-                n as u32,
-                h as u32,
-                stream,
-            )?,
+            )?;
         }
-        ops::argmax_bf16(gpu, self.argmax_k, st.logits, st.arg, n as u32, stream)?;
-        let mut out = [0u8; 4];
-        gpu.synchronize(stream)?;
-        gpu.copy_d2h(st.arg, &mut out)?;
-        let local = u32::from_le_bytes(out) as usize;
-        let Some(comm) = ctx.comm.filter(|_| sharded) else {
-            return Ok((v0 + local) as u32);
-        };
-        // 2026-09-25: Exchange (max, argmax) in 8 BF16 lanes: `[val_r0, val_r1, then 3 base-256
-        // digits of each rank's global index]`. Each rank writes only its own lanes and leaves
-        // the others zero, so a SUM all-reduce delivers both ranks' values untouched (`x + 0.0`
-        // is exact).
-        //
-        // The all-reduce sums its bytes as BF16 elements (`NcclDataType::Bfloat16`), so an f32
-        // packed here would be summed as two BF16 halves. A token id needs 18 bits and BF16
-        // holds integers exactly only through 256, hence the digits; the logit lane is already
-        // BF16, so it round-trips bit for bit.
-        let mut lb = [0u8; 2];
-        gpu.copy_d2h(st.logits.offset(local * 2), &mut lb)?;
-        let g = v0 + local;
-        let bf = |x: f32| ((x.to_bits() >> 16) as u16).to_le_bytes();
-        let mut pack = [0u8; 16];
-        pack[self.head_rank * 2..][..2].copy_from_slice(&lb);
-        for d in 0..3 {
-            let digit = ((g >> (8 * d)) & 0xFF) as f32;
-            pack[4 + (self.head_rank * 3 + d) * 2..][..2].copy_from_slice(&bf(digit));
-        }
-        gpu.copy_h2d(&pack, st.head_xchg)?;
-        comm.all_reduce_async(st.head_xchg.0, 16, stream)?;
-        gpu.synchronize(stream)?;
-        gpu.copy_d2h(st.head_xchg, &mut pack)?;
-        let lane = |i: usize| {
-            f32::from_bits(
-                (u16::from_le_bytes(pack[i * 2..][..2].try_into().unwrap()) as u32) << 16,
-            )
-        };
-        // 2026-09-25: `>=` makes the lower rank win a tie, identically on both ranks, so the
-        // two ranks' drafter KV streams cannot diverge on a tie.
-        let win = if lane(0) >= lane(1) { 0 } else { 1 };
-        let idx = (0..3).fold(0usize, |a, d| {
-            a + ((lane(2 + win * 3 + d) as usize) << (8 * d))
-        });
-        Ok(idx as u32)
+        Ok(())
     }
 
-    /// 2026-09-25: Append `tokens.len() - 1` drafter context rows: row `r` is pair key
-    /// `row_base + r` = `(embed(tokens[r + 1]), hiddens row r)`. Used for both the whole-prompt
-    /// prefill and the catch-up feed; the only difference between them is `row_base`.
-    ///
-    /// The row space is dense: a row's KV slot, indexer row and RoPE position are all
-    /// `seq_len` (see `Glm5NextDsaLayer::write_kv_row`), so every pair key from 0 up is
-    /// written and slot == key.
-    ///
-    /// Unless `METRALE_GLM_MTP_PREFILL_FULL=1`, a context row runs only `input_norm` and the
-    /// DSA cache writes (`drafter_write_kv_row`): no MoE, no attention, no `lm_head`, because
-    /// its block output is discarded.
+    /// 2026-10-11: The device exchange's kernels when this propose runs it: the lever and kernels
+    /// (`xchg_k`) and a sharded head with a communicator.
+    fn device_xchg(&self, ctx: &ForwardContext) -> Option<(KernelHandle, KernelHandle)> {
+        let (_, _, sharded) = self.head_range(ctx);
+        self.xchg_k.filter(|_| sharded && ctx.comm.is_some())
+    }
+
+    /// 2026-10-11: The `(max, argmax)` exchange of the host tail (`head_xchg::pack` / `pick`) on
+    /// the device, for `rows` rows: pack each row's lanes from `arg[r]` and its logit (row `r`
+    /// of `logits` starts `r * logits_row_bytes` in), all-reduce every row's lanes at once, and
+    /// leave each winning global id in `arg[r]`. No host step, so it runs inside the drafter
+    /// graph and the ranks meet at its all-reduce straight from their own head sweeps. Row `r`'s
+    /// lanes are `xchg + r * xchg_bytes(world)`, so the rows are one contiguous all-reduce.
+    /// 2026-10-11: With `lp` (row `r`'s shard log-probability at `lp + 4r`, from
+    /// `argmax_bf16_batch_lp`) the lanes also carry each rank's shard log-sum-exp
+    /// (`head_xchg::pack_lp`, `xchg_lp_bytes` per row) and the winner's whole-vocab
+    /// log-probability replaces it at `lp + 4r`.
     #[allow(clippy::too_many_arguments)]
-    fn rows_impl(
+    fn exchange_rows(
         &self,
-        tokens: &[u32],
-        hiddens: DevicePtr,
-        row_base: usize,
-        state: &mut dyn ProposerState,
+        gpu: &dyn GpuBackend,
+        comm: &dyn metrale_comm::CommBackend,
+        (pack_k, pick_k): (KernelHandle, KernelHandle),
+        arg: DevicePtr,
+        logits: DevicePtr,
+        logits_row_bytes: usize,
+        xchg: DevicePtr,
+        rows: usize,
+        lp: Option<DevicePtr>,
+        v0: usize,
+        stream: u64,
+    ) -> Result<()> {
+        let world = self.head_world as u32;
+        let xb = match lp {
+            Some(_) => head_xchg::xchg_lp_bytes(self.head_world),
+            None => head_xchg::xchg_bytes(self.head_world),
+        };
+        for r in 0..rows {
+            let launch = match lp {
+                Some(lp) => KernelLaunch::new(gpu, self.lp_k.pack_lp)
+                    .arg_ptr(arg.offset(r * 4))
+                    .arg_ptr(logits.offset(r * logits_row_bytes))
+                    .arg_ptr(lp.offset(r * 4)),
+                None => KernelLaunch::new(gpu, pack_k)
+                    .arg_ptr(arg.offset(r * 4))
+                    .arg_ptr(logits.offset(r * logits_row_bytes)),
+            };
+            launch
+                .grid([1, 1, 1])
+                .block([32, 1, 1])
+                .arg_ptr(xchg.offset(r * xb))
+                .arg_u32(world)
+                .arg_u32(self.head_rank as u32)
+                .arg_u32(v0 as u32)
+                .launch(stream)?;
+        }
+        comm.all_reduce_async(xchg.0, rows * xb, stream)?;
+        for r in 0..rows {
+            let launch = KernelLaunch::new(
+                gpu,
+                if lp.is_some() {
+                    self.lp_k.pick_lp
+                } else {
+                    pick_k
+                },
+            )
+            .grid([1, 1, 1])
+            .block([32, 1, 1])
+            .arg_ptr(xchg.offset(r * xb))
+            .arg_u32(world)
+            .arg_ptr(arg.offset(r * 4));
+            match lp {
+                Some(lp) => launch.arg_ptr(lp.offset(r * 4)).launch(stream)?,
+                None => launch.launch(stream)?,
+            }
+        }
+        Ok(())
+    }
+
+    /// 2026-09-25: One draft token. Advances `seq_len` by one. 2026-10-11: With its top-1
+    /// log-probability under the confidence stop (`draft_lp`), NaN otherwise.
+    #[allow(clippy::too_many_arguments)]
+    fn forward_one(
+        &self,
+        token: u32,
+        hidden_in: DevicePtr,
+        // 2026-10-11: The first draft of this propose (it reads the target's hidden row).
+        first: bool,
+        position: usize,
+        st: &mut Glm5NextMtpProposerState,
         ctx: &ForwardContext,
         stream: u64,
-    ) -> Result<usize> {
-        let st = match state
-            .as_any_mut()
-            .downcast_mut::<Glm5NextMtpProposerState>()
-        {
-            Some(s) => s,
-            None => return Ok(0),
-        };
-        // 2026-09-25: Rows must append exactly at the drafter's current length, or the dense
-        // row space grows a hole and every later RoPE position is wrong.
-        if st.seq_len != row_base || tokens.len() < 2 {
-            return Ok(0);
-        }
-        let h = self.hidden;
-        let rows = tokens.len() - 1;
-        if row_base + rows > self.max_seq_len {
-            return Ok(0);
-        }
-        let gpu = ctx.gpu;
-        let dbg = metrale_model_layers::speculative::mtp_refeed_debug();
-        let prefill_full = std::env::var("METRALE_GLM_MTP_PREFILL_FULL")
-            .ok()
-            .as_deref()
-            == Some("1");
-        let mut kv = self.kv_cache.lock();
-        let Glm5NextMtpProposerState {
-            dsa,
-            seq_len,
-            block_table,
-            concat,
-            x,
-            ..
-        } = st;
-        for r in 0..rows {
-            let embed_row = self
-                .embed_tokens
-                .weight
-                .offset(tokens[r + 1] as usize * h * 2);
-            self.norm(gpu, embed_row, self.module.enorm, *concat, h, stream)?;
-            self.norm(
-                gpu,
-                hiddens.offset(r * h * 2),
-                self.module.hnorm,
-                concat.offset(h * 2),
-                h,
-                stream,
-            )?;
-            ops::dense_gemv(
-                gpu,
-                self.gemv_k,
-                *concat,
-                &self.module.eh_proj,
-                *x,
-                h as u32,
-                (2 * h) as u32,
-                stream,
-            )?;
-            let dsa_state: &mut dyn LayerState = dsa;
-            // 2026-09-25: Diagnostic arm `METRALE_GLM_MTP_PREFILL_FULL=1`: build the row through
-            // the full block path a propose uses (`decode_one_for_drafter`) instead of the
-            // cache-only write.
-            if prefill_full {
-                self.module.layer.decode_one_for_drafter(
-                    *x,
-                    dsa_state,
-                    &mut kv,
-                    *seq_len,
-                    block_table,
-                    ctx,
-                    stream,
-                )?;
-            } else {
-                self.module.layer.drafter_write_kv_row(
-                    *x,
-                    dsa_state,
-                    &mut kv,
-                    *seq_len,
-                    block_table,
-                    ctx,
-                    stream,
-                )?;
-            }
-            if dbg {
-                let fp = metrale_model_layers::speculative::hidden_fingerprint(
-                    gpu,
-                    hiddens.offset(r * h * 2),
-                    h,
-                );
-                tracing::info!(
-                    "GLM_MTP_DBG ctx row slot={} key={} tok={} fp_hidden={fp:016x}",
-                    *seq_len,
-                    row_base + r,
-                    tokens[r + 1],
-                );
-            }
-            *seq_len += 1;
-        }
-        Ok(rows)
+    ) -> Result<(u32, f32)> {
+        self.draft_on_device(token, hidden_in, first, position, st, ctx, stream)?;
+        self.read_draft(st, ctx, stream)
     }
-}
 
-/// 2026-09-25: `METRALE_GLM_MTP_SKIP=head`: stop the drafter after the block, before
-/// `shared_head.norm`, the `lm_head` gemv, the argmax and the D2H. A timing arm; read once
-/// per process.
-fn skip_head() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_GLM_MTP_SKIP").ok().as_deref() == Some("head"))
-}
-
-/// 2026-09-25: `METRALE_GLM_MTP_SKIP=block`: skip the MTP block itself and run only the
-/// head. A timing arm; read once per process.
-fn skip_block() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_GLM_MTP_SKIP").ok().as_deref() == Some("block"))
+    /// 2026-10-11: The device work of one draft (`forward_one` without its readback): the
+    /// global id is left in `st.arg` when [`Self::draft_stays_on_device`] holds.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn draft_on_device(
+        &self,
+        token: u32,
+        hidden_in: DevicePtr,
+        first: bool,
+        position: usize,
+        st: &mut Glm5NextMtpProposerState,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        let h = self.hidden;
+        // 2026-10-13: The drafter's row, not the target's position (`context_cap::propose_start`).
+        if st.seq_len >= self.max_seq_len {
+            bail!(
+                "GLM MTP drafter: row {} is past its {} rows",
+                st.seq_len,
+                self.max_seq_len
+            );
+        }
+        // 2026-09-25: The embedding row is read by pointer: `embed_tokens` is `[vocab, hidden]`
+        // BF16 and a row is contiguous, so there is nothing to gather.
+        let embed_row = self.embed_tokens.weight.offset(token as usize * h * 2);
+        // 2026-10-11: `METRALE_GLM_MTP_GRAPH`: the same launches, replayed from a graph
+        // (`graph.rs`); the readback and exchange below stay eager.
+        // 2026-10-11: This draft's pair key is `position - 1` (its hidden is position - 1's).
+        let zero = position
+            .checked_sub(1)
+            .is_some_and(|key| hidden_half::zeroes_embedding(ctx.levers.mtp_zero_pos0, key));
+        let embed = (!zero).then_some(embed_row);
+        match embed {
+            Some(e) if graph::eligible(self, st, first) => {
+                self.forward_graphed(e, hidden_in, st, ctx, stream)
+            }
+            _ => self.forward_body(embed, hidden_in, first, st, ctx, stream),
+        }
+    }
 }
 
 #[cfg(test)]

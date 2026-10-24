@@ -71,7 +71,7 @@ fn the_ready_line_is_emitted_after_a_successful_bind_with_the_real_address() {
     let port = free_port();
     let (result, lines) = logged(|| {
         let rt = current_thread_rt();
-        rt.block_on(bind_and_announce(&ModelHost::empty(), "127.0.0.1", port))
+        rt.block_on(bind_and_announce(&ModelHost::empty(), "127.0.0.1", port, true))
     });
     assert!(result.is_ok(), "the bind succeeds: {result:?}");
     // 2026-09-26: No model is loaded, so the line is the live-only variant.
@@ -92,7 +92,7 @@ fn a_failed_bind_never_announces_readiness() {
     let port = taken.local_addr().expect("addr").port();
     let (result, lines) = logged(|| {
         let rt = current_thread_rt();
-        rt.block_on(bind_and_announce(&ModelHost::empty(), "127.0.0.1", port))
+        rt.block_on(bind_and_announce(&ModelHost::empty(), "127.0.0.1", port, true))
     });
     assert!(result.is_err(), "the bind must fail: port is held");
     assert!(
@@ -129,5 +129,48 @@ fn a_wildcard_bind_is_rendered_as_an_address_a_user_can_paste() {
     assert_eq!(
         ready_line("::1", 8000, Some("m")),
         "Server live and ready at [::1]:8000 running m"
+    );
+}
+
+fn body_limit(env: &[(&str, &str)]) -> anyhow::Result<usize> {
+    super::max_body_bytes(&crate::lever_equivalence::settings_from(env)?)
+}
+
+/// 2026-10-17: [`super::max_body_bytes`] against the router's former inline read
+/// (`parse::<usize>().ok()`, else 32 MiB).
+#[test]
+fn the_body_limit_matches_the_old_reader_except_the_recorded_changes() {
+    use std::borrow::Cow;
+
+    use crate::lever_equivalence::{Old, Out, Row, assert_old_readers_hold, num};
+
+    let rows: Vec<Row<usize>> = vec![(
+        "METRALE_MAX_BODY_BYTES",
+        Old::NumUint(super::DEFAULT_MAX_BODY_BYTES as u64),
+        |&b| num(b),
+    )];
+    // 2026-10-17: The settings crate's integer grammar: trimmed, and a value that is not a
+    // non-negative integer stops the boot instead of silently keeping 32 MiB.
+    let changes: &[(&str, &str, Out)] = &[
+        ("uint", "true", Out::Err),
+        ("uint", "TRUE", Out::Err),
+        ("uint", "yes", Out::Err),
+        ("uint", "false", Out::Err),
+        ("uint", "off", Out::Err),
+        ("uint", "no", Out::Err),
+        ("uint", "", Out::Err),
+        ("uint", " 1 ", Out::N(Cow::Borrowed("1"))),
+        ("uint", "garbage", Out::Err),
+        ("uint", "-1", Out::Err),
+    ];
+    assert_old_readers_hold(&rows, body_limit, changes);
+}
+
+#[test]
+fn an_unset_body_limit_is_32_mib() {
+    assert_eq!(body_limit(&[]).expect("resolves"), 32 * 1024 * 1024);
+    assert_eq!(
+        body_limit(&[("METRALE_MAX_BODY_BYTES", "1048576")]).expect("resolves"),
+        1_048_576
     );
 }

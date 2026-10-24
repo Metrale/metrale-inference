@@ -360,6 +360,8 @@ mod tables;
 pub(crate) use tables::{Bf16SharedExpert, ExpertPtrTable, Fp8ExpertPtrTable};
 
 mod dump;
+mod levers;
+pub use levers::MoeLevers;
 mod forward;
 mod lora;
 mod lora_gateup;

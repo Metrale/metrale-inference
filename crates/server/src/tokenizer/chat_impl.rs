@@ -13,6 +13,7 @@ use tokenizers::Tokenizer;
 #[path = "chat_impl/vision_pads.rs"]
 mod vision_pads;
 
+use super::chat_render::ThinkingVars;
 use super::{
     ChatEncoding, ChatTokenizer, StreamingDecoder, autoclose_assistant_think,
     normalize_tool_call_arguments, remap_developer_role, resolve_think_control,
@@ -45,7 +46,9 @@ impl ChatTokenizer {
         supports_thinking: bool,
         model_type: &str,
         repo_root: Option<&Path>,
-        disable_template_overrides: bool,
+        source: super::TemplateSource<'_>,
+        heap_trim: super::HeapTrimPolicy,
+        tool_json_style: super::ToolJsonStyle,
     ) -> Result<Self> {
         let official_k3 = super::kimi_k3::uses_xtml(model_dir, model_type)?;
         let tokenizer_path = model_dir.join("tokenizer.json");
@@ -56,13 +59,18 @@ impl ChatTokenizer {
             .map_err(|e| anyhow::anyhow!("Failed to disable tokenizer truncation: {e}"))?;
 
         // 2026-09-26: Template source, first match wins: an official Kimi K3 checkpoint gets
-        // no chat template; then `jinja-templates/{model_type}.jinja` when the file exists and
-        // `--disable-template-overrides` is off; then the model's own template
-        // (`load_config_template`); then the ChatML default.
-        let override_tmpl = if disable_template_overrides {
-            None
-        } else {
-            super::jinja_helpers::load_override_template(model_type, repo_root)
+        // no chat template; then the `--chat-template` file, or
+        // `jinja-templates/{model_type}.jinja` when the file exists and
+        // `--disable-template-overrides` is off (`TemplateSource`); then the model's own
+        // template (`load_config_template`); then the ChatML default.
+        let override_tmpl = match source {
+            super::TemplateSource::OverrideDir => {
+                super::jinja_helpers::load_override_template(model_type, repo_root)
+            }
+            super::TemplateSource::Checkpoint => None,
+            super::TemplateSource::File(path) => {
+                Some(super::jinja_helpers::load_template_file(path)?)
+            }
         };
         let (chat_template, checkpoint_template) = if official_k3 {
             tracing::warn!("Official Kimi K3: raw completions only; XTML chat is unavailable");
@@ -79,19 +87,29 @@ impl ChatTokenizer {
             )
         };
 
-        let jinja_env = super::jinja_helpers::build_jinja_env(&chat_template)?;
+        let jinja_env =
+            super::jinja_helpers::build_jinja_env_with(&chat_template, tool_json_style)?;
 
         // 2026-09-26: A variant template that fails to compile is dropped without a log line.
-        let openai_jinja_env = super::jinja_helpers::load_openai_template(model_type, repo_root)
-            .and_then(|tmpl| {
-                tracing::info!("Loaded OpenAI-variant Jinja template for {model_type}");
-                super::jinja_helpers::build_jinja_env(&tmpl).ok()
-            });
+        // 2026-10-08: A `--chat-template` file serves the OpenAI apply paths too.
+        let openai_template = match source {
+            super::TemplateSource::File(_) => None,
+            super::TemplateSource::OverrideDir | super::TemplateSource::Checkpoint => {
+                super::jinja_helpers::load_openai_template(model_type, repo_root)
+            }
+        };
+        let openai_jinja_env = openai_template.and_then(|tmpl| {
+            tracing::info!("Loaded OpenAI-variant Jinja template for {model_type}");
+            super::jinja_helpers::build_jinja_env_with(&tmpl, tool_json_style).ok()
+        });
         let chat_encoding = if official_k3 {
             ChatEncoding::KimiK3XtmlUnsupported
-        } else if model_type == "deepseek_v4" || model_type == "deepseek_v41" {
+        } else if model_type == "deepseek_v4" {
             tracing::info!("Using checkpoint-native DeepSeek-V4 message encoding");
             ChatEncoding::DeepseekV4
+        } else if model_type == "deepseek_v41" {
+            tracing::info!("Using checkpoint-native DeepSeek-V4.1 message encoding");
+            ChatEncoding::DeepseekV41
         } else {
             ChatEncoding::Jinja
         };
@@ -114,7 +132,16 @@ impl ChatTokenizer {
             chat_template,
             jinja_env,
             openai_jinja_env,
+            heap_trim,
+            segment_memo: super::SegmentMemo::new(0),
         })
+    }
+
+    /// 2026-10-22: Memoize the text pieces of long encodes in at most `budget_bytes`
+    /// (`segment_memo.rs`); 0 keeps every encode whole.
+    pub fn with_segment_memo(mut self, budget_bytes: usize) -> Self {
+        self.segment_memo = super::SegmentMemo::new(budget_bytes);
+        self
     }
 
     pub(crate) fn uses_native_qwen_tool_template(&self) -> bool {
@@ -126,12 +153,12 @@ impl ChatTokenizer {
         &self.tokenizer
     }
 
+    /// 2026-10-17: The token ids of `text`, no special tokens added. When the policy's
+    /// threshold is reached, the heap is trimmed after the `Encoding` is dropped (`heap_trim`).
     pub fn encode(&self, text: &str) -> Result<Vec<u32>> {
-        let encoding = self
-            .tokenizer
-            .encode(text, false)
-            .map_err(|e| anyhow::anyhow!("Tokenizer encode error: {e}"))?;
-        Ok(encoding.get_ids().to_vec())
+        let ids = self.segment_memo.encode(&self.tokenizer, text)?;
+        self.heap_trim.after_encode(ids.len());
+        Ok(ids)
     }
 
     pub fn decode(&self, ids: &[u32]) -> Result<String> {
@@ -189,7 +216,7 @@ impl ChatTokenizer {
     }
 
     /// 2026-09-26: `apply_chat_template_jinja_with_effort` with no reasoning effort and
-    /// `preserve_thinking` unset.
+    /// `preserve_thinking` and `thinking` unset.
     pub fn apply_chat_template_jinja(
         &self,
         messages: &[serde_json::Value],
@@ -203,7 +230,7 @@ impl ChatTokenizer {
             enable_thinking,
             disable_tool_steering,
             None,
-            None,
+            ThinkingVars::default(),
         )
     }
 
@@ -214,16 +241,25 @@ impl ChatTokenizer {
         enable_thinking: bool,
         disable_tool_steering: bool,
         reasoning_effort: Option<&str>,
-        preserve_thinking: Option<bool>,
+        thinking_vars: ThinkingVars,
     ) -> Result<Vec<u32>> {
         super::kimi_k3::require_chat_support(self.chat_encoding)?;
-        if self.chat_encoding == ChatEncoding::DeepseekV4 {
-            let rendered = super::deepseek_v4::encode_messages(
+        let native = match self.chat_encoding {
+            ChatEncoding::DeepseekV4 => Some(super::deepseek_v4::encode_messages(
                 messages,
                 tools,
                 enable_thinking,
                 reasoning_effort,
-            )?;
+            )?),
+            ChatEncoding::DeepseekV41 => Some(super::deepseek_v41::encode_messages(
+                messages,
+                tools,
+                enable_thinking,
+                reasoning_effort,
+            )?),
+            ChatEncoding::Jinja | ChatEncoding::KimiK3XtmlUnsupported => None,
+        };
+        if let Some(rendered) = native {
             return self.encode(&rendered);
         }
 
@@ -235,7 +271,8 @@ impl ChatTokenizer {
                 enable_thinking,
                 disable_tool_steering,
                 reasoning_effort,
-                preserve_thinking,
+                preserve_thinking: thinking_vars.preserve_thinking,
+                thinking: thinking_vars.thinking,
                 allow_continue_final: true,
             },
         )?;
@@ -253,7 +290,7 @@ impl ChatTokenizer {
     }
 
     /// 2026-09-26: `apply_chat_template_openai_with_effort` with no reasoning effort and
-    /// `preserve_thinking` unset.
+    /// `preserve_thinking` and `thinking` unset.
     pub fn apply_chat_template_openai(
         &self,
         messages: &[serde_json::Value],
@@ -267,7 +304,7 @@ impl ChatTokenizer {
             enable_thinking,
             disable_tool_steering,
             None,
-            None,
+            ThinkingVars::default(),
         )
     }
 
@@ -278,17 +315,17 @@ impl ChatTokenizer {
         enable_thinking: bool,
         disable_tool_steering: bool,
         reasoning_effort: Option<&str>,
-        preserve_thinking: Option<bool>,
+        thinking_vars: ThinkingVars,
     ) -> Result<Vec<u32>> {
         super::kimi_k3::require_chat_support(self.chat_encoding)?;
-        if self.chat_encoding == ChatEncoding::DeepseekV4 {
+        if self.uses_deepseek_v4_encoding() {
             return self.apply_chat_template_jinja_with_effort(
                 messages,
                 tools,
                 enable_thinking,
                 disable_tool_steering,
                 reasoning_effort,
-                preserve_thinking,
+                thinking_vars,
             );
         }
         if let Some(ref env) = self.openai_jinja_env {
@@ -300,7 +337,8 @@ impl ChatTokenizer {
                     enable_thinking,
                     disable_tool_steering,
                     reasoning_effort,
-                    preserve_thinking,
+                    preserve_thinking: thinking_vars.preserve_thinking,
+                    thinking: thinking_vars.thinking,
                     allow_continue_final: false,
                 },
             )
@@ -313,7 +351,7 @@ impl ChatTokenizer {
                 enable_thinking,
                 disable_tool_steering,
                 reasoning_effort,
-                preserve_thinking,
+                thinking_vars,
             )
         }
     }
@@ -357,8 +395,27 @@ impl ChatTokenizer {
         self.supports_thinking
     }
 
+    /// 2026-10-18: True for both checkpoint-native DeepSeek encoders (V4 and V4.1): they
+    /// always take the request's tools and the tool-call ids of the history.
     pub fn uses_deepseek_v4_encoding(&self) -> bool {
+        matches!(
+            self.chat_encoding,
+            ChatEncoding::DeepseekV4 | ChatEncoding::DeepseekV41
+        )
+    }
+
+    /// 2026-10-18: The V4 encoder renders `developer` itself; every other encoding,
+    /// V4.1 included (it rejects unknown roles), gets `developer` as `system`.
+    pub fn preserves_developer_role(&self) -> bool {
         self.chat_encoding == ChatEncoding::DeepseekV4
+    }
+
+    /// 2026-10-18: True when `chat_template_kwargs.thinking` is the encoder's thinking
+    /// switch (the V4.1 encoder's alias for `enable_thinking`) rather than a template
+    /// variable. The chat path then lowers it into the thinking directive, so the prompt
+    /// and the reasoning parser agree.
+    pub fn thinking_kwarg_is_directive(&self) -> bool {
+        self.chat_encoding == ChatEncoding::DeepseekV41
     }
 }
 

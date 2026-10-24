@@ -18,7 +18,7 @@ ep_broadcast_cmd(0x5)
 ep_broadcast_tokens(n=5)
 ep_sync_vision_embeds(n=5)
 prefill(n=5, s1@0:len=5, stream=0)
-copy_logits_to_host(row=0, off=0, bytes=128)
+argmax_on_device(row=0, stream=0) -> 10
 alloc_sequence() -> slot 1
 adapter_id_for(-1)
 acquire_adapter_slot(-1)
@@ -29,7 +29,7 @@ ep_broadcast_cmd(0x6)
 ep_broadcast_tokens(n=6)
 ep_sync_vision_embeds(n=6)
 prefill(n=6, s2@1:len=6, stream=0)
-copy_logits_to_host(row=0, off=0, bytes=128)
+argmax_on_device(row=0, stream=0) -> 20
 alloc_sequence() -> slot 2
 adapter_id_for(-1)
 acquire_adapter_slot(-1)
@@ -40,28 +40,18 @@ ep_broadcast_cmd(0x7)
 ep_broadcast_tokens(n=7)
 ep_sync_vision_embeds(n=7)
 prefill(n=7, s3@2:len=7, stream=0)
-copy_logits_to_host(row=0, off=0, bytes=128)
+argmax_on_device(row=0, stream=0) -> 30
 mtp_slot_draft_capacity(0)
 mtp_slot_draft_capacity(1)
 mtp_slot_draft_capacity(2)
 sync_secondary()
-ep_broadcast_cmd_for_seq(seq=0, cmd=0xa)
-decode(token=10, s1@0:len=6, stream=0)
-argmax_on_device(row=0, stream=0) -> 11
-save_hidden_for_mtp(0, stream=0)
-run_mtp_propose_multi(token=11, pos=6, n=3, s1@0:len=6, stream=0, mask=false) -> [12, 13, 14]
+can_batch_verify([2, 2, 2]) -> true
+decode_batch(tokens=[10, 20, 30], seqs=["s1@0:len=5", "s2@1:len=6", "s3@2:len=7"], stream=0)
+argmax_batch(row=0, n=3, stream=0) -> [11, 21, 31]
+stash_verify_hidden_rows([0, 1, 2], stream=0)
+run_mtp_propose_batched(tokens=[11, 21, 31], positions=[6, 7, 8], stash=[0, 1, 2], n=3, stream=0) -> [[12, 13, 14], [22, 24, 24], [32, 33, 34]]
 start_checkpoint_async(s1@0:len=6)
-ep_broadcast_cmd_for_seq(seq=1, cmd=0x14)
-decode(token=20, s2@1:len=7, stream=0)
-argmax_on_device(row=0, stream=0) -> 21
-save_hidden_for_mtp(0, stream=0)
-run_mtp_propose_multi(token=21, pos=7, n=3, s2@1:len=7, stream=0, mask=false) -> [22, 24, 24]
 start_checkpoint_async(s2@1:len=7)
-ep_broadcast_cmd_for_seq(seq=2, cmd=0x1e)
-decode(token=30, s3@2:len=8, stream=0)
-argmax_on_device(row=0, stream=0) -> 31
-save_hidden_for_mtp(0, stream=0)
-run_mtp_propose_multi(token=31, pos=8, n=3, s3@2:len=8, stream=0, mask=false) -> [32, 33, 34]
 start_checkpoint_async(s3@2:len=8)
 num_free_blocks() -> 997
 -- tick 2

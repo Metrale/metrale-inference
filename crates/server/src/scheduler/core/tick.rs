@@ -139,10 +139,20 @@ impl SchedulerCore {
                 sched.io.req.lora_ack(ack, res);
             }
         }
+        // 2026-10-24: Every `/v1/embeddings` job drained so far runs now, as one packed
+        // `embed_batch` (`embed_jobs`). A tick that ran one is not idle, as for a rotation.
+        let embeds = std::mem::take(&mut pending.embeds);
+        let embedded = !embeds.is_empty();
+        crate::scheduler::embed_jobs::run_embed_jobs(sched.io.dev.model(), embeds);
         // 2026-10-03: A tick that applied a rotation is not idle. Its ack can be what makes a
         // client close the inbox, and whether that close lands before the check below would
         // otherwise decide on which tick the loop stops; the next idle tick stops instead.
-        if !rotated && new_reqs.is_empty() && active.is_empty() && prefilling.is_empty() {
+        if !rotated
+            && !embedded
+            && new_reqs.is_empty()
+            && active.is_empty()
+            && prefilling.is_empty()
+        {
             // 2026-09-25: Idle tick: stop once the inbox has closed.
             pending.absorb(sched.io.req.recv(io::WaitPolicy::NoWait));
             if pending.closed {

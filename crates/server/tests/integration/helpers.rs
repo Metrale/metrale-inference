@@ -67,6 +67,7 @@ pub(super) fn setup_model(
         skip_activation_scales: false,
         skip_mtp: false,
         defer: None,
+        defer_charge: None,
     };
     use metrale_model_weights::weights::WeightLoader;
     let store = loader.load(model_dir, gpu.as_ref(), 1024 * 1024 * 1024)?;
@@ -87,6 +88,7 @@ pub(super) fn setup_model(
         layer_dtypes: vec![],
         layer_dims: vec![],
         cache_blocks_per_seq: None,
+        v_block_bytes: None,
     };
     let num_blocks =
         metrale_cache::kv_cache::PagedKvCache::compute_num_blocks(&kv_config, kv_budget)?;
@@ -126,6 +128,11 @@ pub(super) fn setup_model(
         None,
         None,
         None,
+        std::sync::Arc::new(metrale_settings::resolve(
+            &metrale_io_host_std::ProcessEnv,
+            &metrale_settings::sources::CliLayer::empty(),
+            &metrale_settings::sources::RecipeLayer::empty(),
+        )?),
     )?
     .model;
 
@@ -211,7 +218,9 @@ pub(super) fn chat_tokenizer(
         false,
         &config.model_type,
         None,
-        false,
+        metrale_server::tokenizer::TemplateSource::OverrideDir,
+        metrale_server::tokenizer::HeapTrimPolicy::off(),
+        metrale_server::tokenizer::ToolJsonStyle::Compact,
     )?;
     Ok(tokenizer)
 }

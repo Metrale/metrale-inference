@@ -47,7 +47,7 @@ fn nemotron_layout_routes_embedding_norm_and_tied_head() {
         loader.load_lm_head(&store, &config, &gpu).unwrap().weight,
         DevicePtr(11)
     );
-    assert!(loader.supports_tp());
+    assert_eq!(loader.tp_support(), metrale_config::TpSupport::Even);
     assert!(
         loader
             .load_mtp_weights(&store, &config, &gpu)

@@ -151,7 +151,7 @@ pub fn rollback_to_boundary(
     if model.decode_rollback_unsupported() {
         return RollbackOutcome::Fallback(RollbackFallback::LayerStateNotRewindable);
     }
-    if a.rollback_count >= metrale_kernels::ROLLBACK_RESTEER_CAP {
+    if a.rollback_count >= metrale_kernel_set::ROLLBACK_RESTEER_CAP {
         return RollbackOutcome::Fallback(RollbackFallback::CapReached);
     }
     let mask = match sched.masks.boundary.as_ref() {

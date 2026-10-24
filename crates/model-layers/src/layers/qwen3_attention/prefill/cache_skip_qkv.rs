@@ -80,7 +80,7 @@ impl Qwen3AttentionLayer {
         )?;
         prof_step!("q_proj", t0);
         super::super::op_dump::dump_bf16(
-            ctx.gpu,
+            ctx,
             qg_out,
             (num_tokens - 1) * q_proj_dim * bf16,
             q_proj_dim,
@@ -104,7 +104,7 @@ impl Qwen3AttentionLayer {
         )?;
         prof_step!("k_proj", t0);
         super::super::op_dump::dump_bf16(
-            ctx.gpu,
+            ctx,
             k_contiguous,
             (num_tokens - 1) * kv_dim * bf16,
             kv_dim,
@@ -128,7 +128,7 @@ impl Qwen3AttentionLayer {
         )?;
         prof_step!("v_proj", t0);
         super::super::op_dump::dump_bf16(
-            ctx.gpu,
+            ctx,
             v_contiguous,
             (num_tokens - 1) * kv_dim * bf16,
             kv_dim,
@@ -154,8 +154,8 @@ impl Qwen3AttentionLayer {
         stream: u64,
     ) -> Result<()> {
         // 2026-09-25: Q uses its transposed FP8 copy only with
-        // `METRALE_ATTN_PREFILL_Q_T=1`; K and V use theirs whenever present.
-        let use_q_t = std::env::var("METRALE_ATTN_PREFILL_Q_T").ok().as_deref() == Some("1");
+        // `scheduler.attn_prefill_q_t` (`METRALE_ATTN_PREFILL_Q_T`); K and V use theirs whenever present.
+        let use_q_t = ctx.settings.scheduler.attn_prefill_q_t;
         let (fp8w_t, weight_opt, fp8, nvfp4_t, dense, label) = match proj {
             SkipProj::Q => (
                 use_q_t.then_some(self.q_fp8w_t.as_ref()).flatten(),
@@ -189,8 +189,7 @@ impl Qwen3AttentionLayer {
             return r;
         }
 
-        let use_t_pipelined =
-            std::env::var("METRALE_ATTN_PREFILL_T_PIPE").ok().as_deref() == Some("1");
+        let use_t_pipelined = self.levers.prefill_t_pipe;
         if ctx.dispatch.cutlass_nvfp4_attn_qkv(label)
             && let Some(nvfp4_t) = nvfp4_t
         {
@@ -215,6 +214,7 @@ impl Qwen3AttentionLayer {
             ops::w8a16_gemm_t_pipelined(
                 ctx.gpu,
                 self.w8a16_gemm_t_pipelined_k,
+                ctx.levers.ops.gemm_shape_log,
                 normed,
                 fp8t.weight_t,
                 fp8t.scale_t,
@@ -230,6 +230,7 @@ impl Qwen3AttentionLayer {
             ops::w8a16_gemm_n128_m128(
                 ctx.gpu,
                 self.w8a16_gemm_t_m128_k,
+                ctx.levers.ops.gemm_shape_log,
                 normed,
                 fp8t.weight_t,
                 fp8t.scale_t,
@@ -259,6 +260,7 @@ impl Qwen3AttentionLayer {
             ops::w8a16_gemm_pipelined(
                 ctx.gpu,
                 self.w8a16_gemm_pipelined_k,
+                ctx.levers.ops.w8a16.pipe128,
                 normed,
                 fp8w.weight,
                 fp8w.row_scale,
@@ -314,17 +316,7 @@ impl Qwen3AttentionLayer {
             }
         } else if let Some(nvfp4_t) = nvfp4_t {
             if n > 128 {
-                self.w4a16_gemm_m128_dispatch(
-                    ctx.gpu,
-                    ctx.dispatch,
-                    normed,
-                    nvfp4_t,
-                    out,
-                    n,
-                    out_dim,
-                    h,
-                    stream,
-                )?;
+                self.w4a16_gemm_m128_dispatch(ctx, normed, nvfp4_t, out, n, out_dim, h, stream)?;
             } else {
                 ops::w4a16_gemm_n128(
                     ctx.gpu,

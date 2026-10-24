@@ -48,9 +48,9 @@ pub struct LongcatWeightLoader;
 const CARRY_TOKENS: usize = 8192;
 
 impl ModelWeightLoader for LongcatWeightLoader {
-    fn supports_tp(&self) -> bool {
+    fn tp_support(&self) -> metrale_config::TpSupport {
         // 2026-09-25: Nothing here shards the MLA weights or the shortcut carry.
-        false
+        metrale_config::TpSupport::Unsupported
     }
 
     fn load_layers(
@@ -59,6 +59,7 @@ impl ModelWeightLoader for LongcatWeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         layer_kv_dtypes: &[KvCacheDtype],
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
         anyhow::ensure!(
             config.num_hidden_layers.is_multiple_of(2),
@@ -97,16 +98,12 @@ impl ModelWeightLoader for LongcatWeightLoader {
 
         // 2026-09-25: `METRALE_NVFP4_MLA` set to 0/false/no/off keeps the MLA
         // projections in BF16, the same lever the Mistral MLA loader reads.
-        let disable_nvfp4_mla = std::env::var("METRALE_NVFP4_MLA")
-            .map(|v| {
-                let v = v.trim().to_ascii_lowercase();
-                matches!(v.as_str(), "0" | "false" | "no" | "off")
-            })
-            .unwrap_or(false);
+        let disable_nvfp4_mla =
+            crate::weight_loader::shared_levers::nvfp4_mla_disabled(lc.settings);
         if disable_nvfp4_mla {
             tracing::info!("LongCat: METRALE_NVFP4_MLA=0 — MLA projections stay BF16");
         }
-        if super::longcat::ffn::bf16_dense_ffn() {
+        if lc.settings.kernels.longcat_bf16_ffn {
             tracing::info!(
                 "LongCat: METRALE_LONGCAT_BF16_FFN=1 — per-sublayer dense FFN stays BF16"
             );
@@ -115,6 +112,7 @@ impl ModelWeightLoader for LongcatWeightLoader {
         let quantize_k = gpu.kernel("quantize_nvfp4", "quantize_bf16_to_nvfp4")?;
         let stream = gpu.default_stream();
         let mut yarn_shared = DevicePtr::NULL;
+        let absorb = crate::mla_absorb::AbsorbThreads::from_settings(lc.settings);
         let mut layers: Vec<Box<dyn TransformerLayer>> =
             Vec::with_capacity(config.num_hidden_layers);
 
@@ -218,7 +216,7 @@ impl ModelWeightLoader for LongcatWeightLoader {
                     stream,
                 )?);
                 phase_per_head::build_per_head_views(&mut c)?;
-                phase_qk_absorbed::build_w_qk_absorbed(&mut c)?;
+                phase_qk_absorbed::build_w_qk_absorbed(&mut c, absorb)?;
                 phase_block_diag::build_block_diagonals(&mut c)?;
                 let o_nvfp4 = quantize_to_nvfp4(
                     &wo,
@@ -317,17 +315,14 @@ impl ModelWeightLoader for LongcatWeightLoader {
                 };
 
                 // 2026-09-25: This sublayer's dense SwiGLU FFN.
-                let ffn = build_dense_ffn(store, &format!("{lp}.mlps.{s}"), config, gpu)?;
+                let ffn = build_dense_ffn(store, &format!("{lp}.mlps.{s}"), config, gpu, lc)?;
                 let input_norm = dense(store, &format!("{lp}.input_layernorm.{s}.weight"))?;
                 let post_norm = dense(store, &format!("{lp}.post_attention_layernorm.{s}.weight"))?;
-                let kv_dtype = layer_kv_dtypes
-                    .get(global_idx)
-                    .copied()
-                    .unwrap_or(KvCacheDtype::Bf16);
+                let kv_dtype = metrale_kv_codec::layer_entry(layer_kv_dtypes, global_idx)?;
 
                 let mut layer = Qwen3AttentionLayer::new_ungated(
                     input_norm, attn, post_norm, ffn, global_idx, None, None, None, gpu, kv_dtype,
-                    0, config,
+                    0, config, lc,
                 )?;
                 layer.set_mla_weights(mla);
                 // 2026-09-25: Padding widened the head; the scale stays
@@ -340,7 +335,13 @@ impl ModelWeightLoader for LongcatWeightLoader {
                 if s == 0 {
                     // 2026-09-25: Sublayer 0 owns the block's shortcut MoE; its
                     // output is stored and added at the end of sublayer 1.
-                    let moe = build_shortcut_moe(store, &lp, config, gpu)?;
+                    let moe = build_shortcut_moe(
+                        store,
+                        &lp,
+                        config,
+                        gpu,
+                        lc.settings.kernels.longcat_fp8_experts,
+                    )?;
                     layer.set_shortcut_moe(moe, carry, CARRY_TOKENS);
                 } else {
                     layer.set_shortcut_carry_in(carry, CARRY_TOKENS);
@@ -375,8 +376,9 @@ impl ModelWeightLoader for LongcatWeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         max_tokens: usize,
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Option<metrale_model_layers::layers::ngram_embed::NgramEmbedding>> {
-        ngram::build(store, config, gpu, max_tokens)
+        ngram::build(store, config, gpu, max_tokens, lc.settings)
     }
 
     fn load_final_norm(
@@ -424,3 +426,7 @@ impl ModelWeightLoader for LongcatWeightLoader {
 
 mod ffn;
 use ffn::{build_dense_ffn, build_shortcut_moe};
+
+#[cfg(all(test, feature = "cuda"))]
+#[path = "levers_tests.rs"]
+mod levers_tests;

@@ -38,6 +38,9 @@
 //! * `dsa_expand_selection` writes -1 over the whole index row before it stores any index,
 //!   so every slot is written.
 
+mod pool_keys_bf16;
+pub use pool_keys_bf16::{DSA_SCORES_HEADS_BF16_MODULE, DSA_SCORES_MMA_PAGED_MODULE};
+
 use anyhow::{Result, bail};
 use metrale_config::ModelConfig;
 use metrale_gpu_runtime::gpu::{GpuBackend, KernelHandle};
@@ -46,8 +49,14 @@ pub mod attend;
 pub mod aux_state;
 pub mod binding;
 pub mod build;
+pub mod fp8_rows;
+pub mod fp8_twin;
 pub mod layer;
+pub mod levers;
+pub mod paged;
+pub mod plan;
 pub mod select;
+pub mod sp_select;
 pub mod state;
 pub mod tp;
 
@@ -96,6 +105,180 @@ pub struct Glm5NextDsaKernels {
     pub topk_to_mask: KernelHandle,
     /// 2026-09-25: Oracle only; no code under `src/` launches it. See [`MASKED_ATTN_MAX_KEYS`].
     pub mla_masked_attn: KernelHandle,
+    /// 2026-10-09: The one-launch-per-stage store and selection over the decode rows of
+    /// several sequences (`dsa_indexer_rows.cu`); all `KernelHandle(0)` on a target without
+    /// them.
+    pub rows: DsaRowsKernels,
+    /// 2026-10-16: The FP8 indexer cache's store and readers (`fp8_rows`); all
+    /// `KernelHandle(0)` on a target without them.
+    pub fp8: fp8_rows::DsaFp8Kernels,
+}
+
+/// 2026-10-09: Module of the rows kernels: `dsa_indexer_rows.cu`, named by its file stem.
+pub const DSA_ROWS_MODULE: &str = "dsa_indexer_rows";
+
+/// 2026-10-09: The entries of `dsa_indexer_rows.cu`, resolved with `try_kernel`.
+#[derive(Clone, Copy, Debug)]
+pub struct DsaRowsKernels {
+    pub store: KernelHandle,
+    pub write_geom: KernelHandle,
+    pub pool_scores: KernelHandle,
+    pub topk_pools: KernelHandle,
+    pub expand_selection: KernelHandle,
+    /// 2026-10-10: `dsa_index_scores_tiled`: `dsa_index_scores`'s bits for many query rows (a
+    /// prefill sub-chunk) in query x pool tiles (`select::scores_tiled`). Not part of
+    /// [`Self::ready`].
+    pub scores_tiled: KernelHandle,
+    /// 2026-10-12: `dsa_index_scores_mma`: the same scores on BF16 tensor cores (another
+    /// precision) for many query rows (`select::scores_mma`). Not part of [`Self::ready`].
+    pub scores_mma: KernelHandle,
+    /// 2026-10-12: `dsa_topk_pools_radix`: `dsa_topk_pools`'s selection, the same pools in the
+    /// same order, by radix select (`select::topk_radix`). Not part of [`Self::ready`].
+    pub topk_radix: KernelHandle,
+    /// 2026-10-21: `dsa_index_scores_warp`: `dsa_index_scores`'s bytes, one warp per (pool,
+    /// row) (`select::scores_warp_grid_x`). Not part of [`Self::ready`].
+    pub scores_warp: KernelHandle,
+    /// 2026-10-21: `dsa_index_scores_warp_paged` and `dsa_pool_keys_store_rows`: the persisted
+    /// pool keys of `IndexerRowFormat::Bf16Pooled` (`paged::pooled_block_bytes`). Not part of
+    /// [`Self::ready`]; [`Self::pool_keys_ready`].
+    pub scores_warp_paged: KernelHandle,
+    pub pool_keys_store: KernelHandle,
+    /// 2026-10-14: `dsa_index_scores_pipe.cu`'s `dsa_pool_prep_bf16` and
+    /// `dsa_index_scores_mma_pipe`: [`Self::scores_mma`]'s bytes from per-pool BF16 keys and
+    /// visibility, the key tiles streamed (`select::scores_pipe`). Not part of [`Self::ready`].
+    pub pool_prep: KernelHandle,
+    pub scores_pipe: KernelHandle,
+    /// 2026-10-15: `dsa_sel_fold.cu`'s `dsa_sel_fold` and `dsa_expand_selection_folded`: the
+    /// SP-split selection's selected-pools payload (`sp_select::run`, `SP_SELECT_SEL`). Not
+    /// part of [`Self::ready`].
+    pub sel_fold: KernelHandle,
+    pub expand_folded: KernelHandle,
+    /// 2026-10-17: `dsa_index_scores_pipe.cu`'s `dsa_select_fused_pipe`: [`Self::scores_pipe`]'s
+    /// scores, the radix top-k and the fold in one kernel (`select::select_fused`). Not part of
+    /// [`Self::ready`].
+    pub select_fused: KernelHandle,
+    /// 2026-10-21: `dsa_index_scores_heads_paged`: [`Self::scores_warp_paged`]'s bytes, one
+    /// lane per index head, one block per SM (`select::scores::heads_for`). Not part of
+    /// [`Self::ready`].
+    pub scores_heads_paged: KernelHandle,
+    /// 2026-10-22: `dsa_scores_heads_window.cu`'s `dsa_index_scores_heads_window`:
+    /// [`Self::scores_heads_paged`]'s bytes and launch with a straight-line pool step
+    /// (`select::scores::heads_kernel`). `KernelHandle(0)` whenever `scores_heads_paged` is.
+    pub scores_heads_window: KernelHandle,
+    /// 2026-10-23: `METRALE_GLM_DSA_POOL_KEYS_BF16` ([`Self::with_bf16_pool_keys`]): the
+    /// persisted keys are BF16, [`Self::pool_keys_store`], [`Self::scores_heads_paged`] and
+    /// [`Self::scores_heads_window`] are their BF16-key instances (both
+    /// `dsa_index_scores_mma_paged_bf16` under `METRALE_GLM_DSA_DECODE_SCORES_MMA`), and nothing
+    /// may score them with [`Self::scores_warp_paged`] (an FP32 reader).
+    pub pool_keys_bf16: bool,
+    /// 2026-10-23: `dsa_index_scores_mma_paged_bf16`, resolved with [`Self::pool_keys_bf16`]
+    /// (`KernelHandle(0)` otherwise): the BF16 persisted keys on tensor cores, which
+    /// `METRALE_GLM_DSA_DECODE_SCORES_MMA` (or the paired A/B's `dsa_mma` arm) launches as both
+    /// lane-per-head handles.
+    pub scores_mma_paged: KernelHandle,
+    /// 2026-10-21: `dsa_topk_mc.cu`'s `dsa_topk_mc_pass` and `dsa_topk_mc_collect`:
+    /// [`Self::topk_radix`]'s selection over several CTAs per row (`select::topk_mc`). Not part
+    /// of [`Self::ready`].
+    pub topk_mc_pass: KernelHandle,
+    pub topk_mc_collect: KernelHandle,
+    /// 2026-10-21: The device's SM count, resolved once with the handles: the grid of
+    /// [`Self::scores_heads_paged`] (one block per SM). 0 when the query failed, and then
+    /// `scores_heads_paged` is `KernelHandle(0)` too.
+    pub sm_count: u32,
+}
+
+/// 2026-10-21: Module of the warp-per-pool scores and the persisted pool keys:
+/// `dsa_scores_warp.cu`.
+pub const DSA_SCORES_WARP_MODULE: &str = "dsa_scores_warp";
+
+/// 2026-10-22: Module of the lane-per-head scores' straight-line walk:
+/// `dsa_scores_heads_window.cu`.
+pub const DSA_SCORES_HEADS_WINDOW_MODULE: &str = "dsa_scores_heads_window";
+
+/// 2026-10-14: Module of the streamed tensor-core scores: `dsa_index_scores_pipe.cu`.
+pub const DSA_SCORES_PIPE_MODULE: &str = "dsa_index_scores_pipe";
+
+/// 2026-10-21: Module of the multi-CTA radix top-k: `dsa_topk_mc.cu`.
+pub const DSA_TOPK_MC_MODULE: &str = "dsa_topk_mc";
+
+/// 2026-10-15: Module of the SP-split selection's payload fold: `dsa_sel_fold.cu`.
+pub const DSA_SEL_FOLD_MODULE: &str = "dsa_sel_fold";
+
+impl DsaRowsKernels {
+    pub fn resolve(gpu: &dyn GpuBackend) -> Self {
+        let k = |name: &str| metrale_model_layers::layers::try_kernel(gpu, DSA_ROWS_MODULE, name);
+        let pipe = |name: &str| {
+            metrale_model_layers::layers::try_kernel(gpu, DSA_SCORES_PIPE_MODULE, name)
+        };
+        let fold =
+            |name: &str| metrale_model_layers::layers::try_kernel(gpu, DSA_SEL_FOLD_MODULE, name);
+        let warp = |name: &str| {
+            metrale_model_layers::layers::try_kernel(gpu, DSA_SCORES_WARP_MODULE, name)
+        };
+        let sm_count = gpu.sm_count().unwrap_or(0);
+        let e = |entry| plan::try_entry(gpu, entry);
+        let heads = if sm_count == 0 {
+            KernelHandle(0)
+        } else {
+            e(plan::entry::SCORES_HEADS_PAGED)
+        };
+        let heads_window = if heads.0 == 0 {
+            KernelHandle(0)
+        } else {
+            e(plan::entry::SCORES_HEADS_WINDOW)
+        };
+        Self {
+            store: k("dsa_indexer_store_rows"),
+            write_geom: k("dsa_write_geom_rows"),
+            pool_scores: k("dsa_pool_scores_rows"),
+            topk_pools: k("dsa_topk_pools_rows"),
+            expand_selection: e(plan::entry::EXPAND_ROWS),
+            scores_tiled: k("dsa_index_scores_tiled"),
+            scores_mma: k("dsa_index_scores_mma"),
+            topk_radix: k("dsa_topk_pools_radix"),
+            scores_warp: warp("dsa_index_scores_warp"),
+            scores_warp_paged: warp("dsa_index_scores_warp_paged"),
+            pool_keys_store: e(plan::entry::POOL_KEYS),
+            pool_prep: pipe("dsa_pool_prep_bf16"),
+            scores_pipe: pipe("dsa_index_scores_mma_pipe"),
+            sel_fold: fold("dsa_sel_fold"),
+            expand_folded: fold("dsa_expand_selection_folded"),
+            select_fused: pipe("dsa_select_fused_pipe"),
+            scores_heads_paged: heads,
+            scores_heads_window: heads_window,
+            pool_keys_bf16: false,
+            scores_mma_paged: KernelHandle(0),
+            topk_mc_pass: e(plan::entry::TOPK_MC_PASS),
+            topk_mc_collect: e(plan::entry::TOPK_MC_COLLECT),
+            sm_count,
+        }
+    }
+
+    /// 2026-10-21: Whether the persisted pool keys' store, scores and the geometry expansion
+    /// they select through resolved.
+    pub fn pool_keys_ready(&self) -> bool {
+        [
+            self.scores_warp_paged,
+            self.pool_keys_store,
+            self.expand_selection,
+            self.topk_radix,
+        ]
+        .iter()
+        .all(|k| k.0 != 0)
+    }
+
+    /// 2026-10-09: Whether every entry resolved.
+    pub fn ready(&self) -> bool {
+        [
+            self.store,
+            self.write_geom,
+            self.pool_scores,
+            self.topk_pools,
+            self.expand_selection,
+        ]
+        .iter()
+        .all(|k| k.0 != 0)
+    }
 }
 
 /// 2026-09-25: The most keys `dsa_mla_masked_attn` takes: it stages the `[S]` f32 score row
@@ -115,16 +298,24 @@ impl Glm5NextDsaKernels {
             index_scores: gpu.kernel(DSA_MODULE, "dsa_index_scores")?,
             topk_pools: gpu.kernel(DSA_MODULE, "dsa_topk_pools")?,
             expand_selection: gpu.kernel(DSA_MODULE, "dsa_expand_selection")?,
-            k_norm: gpu.kernel(LAYERNORM_MODULE, "nllb_layernorm_bf16")?,
-            write_geom: metrale_model_layers::layers::try_kernel(gpu, DSA_MODULE, "dsa_write_geom"),
-            indexer_store: metrale_model_layers::layers::try_kernel(
-                gpu,
-                DSA_MODULE,
-                "dsa_indexer_store",
-            ),
+            k_norm: gpu.kernel(plan::entry::K_NORM.0, plan::entry::K_NORM.1)?,
+            write_geom: plan::try_entry(gpu, plan::entry::WRITE_GEOM),
+            indexer_store: plan::try_entry(gpu, plan::entry::STORE),
             topk_to_mask: gpu.kernel(DSA_MODULE, "dsa_topk_to_mask")?,
             mla_masked_attn: gpu.kernel(DSA_MODULE, "dsa_mla_masked_attn")?,
+            rows: DsaRowsKernels::resolve(gpu),
+            fp8: fp8_rows::DsaFp8Kernels::resolve(gpu),
         })
+    }
+
+    /// 2026-10-16: The single-row indexer store for a state's row format: the FP8 twin for a
+    /// state that guards a ring, else `indexer_store`.
+    pub fn store_for(&self, fp8: bool) -> KernelHandle {
+        if fp8 {
+            self.fp8.store
+        } else {
+            self.indexer_store
+        }
     }
 }
 

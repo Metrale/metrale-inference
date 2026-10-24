@@ -15,7 +15,6 @@
 
 use super::super::decode_w8a8_proj::SsmDecodeProj;
 use super::super::*;
-use super::ssm_batched::ssm_tc_proj_min_n;
 
 /// 2026-09-25: The GEMV/GEMM handles this step's row count selects, resolved
 /// once (`batched_proj_tier`) and passed to both projections, which run at the
@@ -35,7 +34,7 @@ pub(super) struct BatchedProjTier {
 }
 
 impl Qwen3SsmLayer {
-    pub(super) fn batched_proj_tier(&self, n: usize) -> BatchedProjTier {
+    pub(super) fn batched_proj_tier(&self, n: usize, ssm_gemv_batch4: bool) -> BatchedProjTier {
         let w8a16_pipe = self.w8a16_gemm_pipelined_k.0 != 0;
         // 2026-09-25: `w8a16_gemv_batch4` serves up to 4 rows,
         // `w8a16_gemv_batch16` up to 16; the wrapper and handle are chosen
@@ -45,9 +44,7 @@ impl Qwen3SsmLayer {
         } else {
             (ops::w8a16_gemv_batch16, self.w8a16_gemv_batch16_k)
         };
-        let use_batch4 = gemv_batch_k.0 != 0
-            && n <= 16
-            && crate::layers::ops::ModelLevers::get().ssm_gemv_batch4;
+        let use_batch4 = gemv_batch_k.0 != 0 && n <= 16 && ssm_gemv_batch4;
         // 2026-09-25: NVFP4: the narrowest loaded `w4a16_batchm` tier covering
         // `n`, else `w4a16_gemv_batch16`.
         let narrow = self.w4a16_batchm.kernel(n as u32);
@@ -142,6 +139,7 @@ impl Qwen3SsmLayer {
                 ops::w8a16_gemm_pipelined(
                     ctx.gpu,
                     self.w8a16_gemm_pipelined_k,
+                    ctx.levers.ops.w8a16.pipe128,
                     normed_base,
                     fp8.weight,
                     fp8.row_scale,
@@ -166,10 +164,10 @@ impl Qwen3SsmLayer {
                 )?;
             }
         } else if let Some(ref nvfp4) = self.qkvz_nvfp4 {
-            match (ssm_tc_proj_min_n(), self.qkvz_nvfp4_t.as_ref()) {
+            match (ctx.levers.ssm.tc_proj_min_n, self.qkvz_nvfp4_t.as_ref()) {
                 (Some(min_n), Some(nvfp4_t)) if n >= min_n => {
                     // 2026-09-25: Tile GEMM on the transposed twin. `ms_proj_gemm`
-                    // takes the 128-row M-tile when `ssm_m128_min_m` admits `n`
+                    // takes the 128-row M-tile when `levers.m128_min_m` admits `n`
                     // and ceil(N/128) CTAs cover the SMs.
                     self.ms_proj_gemm(
                         ctx.gpu,
@@ -196,6 +194,7 @@ impl Qwen3SsmLayer {
                     ops::w4a4_proj::nvfp4_proj_small_m(
                         ctx.gpu,
                         fp4_gemv_batch_k,
+                        ctx.levers.ops.w4a16_tc,
                         normed_base,
                         nvfp4,
                         deinterleaved,
@@ -298,6 +297,7 @@ impl Qwen3SsmLayer {
                 ops::w8a16_gemm_pipelined(
                     ctx.gpu,
                     self.w8a16_gemm_pipelined_k,
+                    ctx.levers.ops.w8a16.pipe128,
                     normed_out_base,
                     fp8.weight,
                     fp8.row_scale,
@@ -332,7 +332,7 @@ impl Qwen3SsmLayer {
                 stream,
             )?;
         } else if self.qkvz_nvfp4.is_some() {
-            match (ssm_tc_proj_min_n(), self.out_proj_nvfp4_t.as_ref()) {
+            match (ctx.levers.ssm.tc_proj_min_n, self.out_proj_nvfp4_t.as_ref()) {
                 (Some(min_n), Some(nvfp4_t)) if n >= min_n => {
                     // 2026-09-25: Tile GEMM on the transposed twin, as in the
                     // QKVZ arm.
@@ -359,6 +359,7 @@ impl Qwen3SsmLayer {
                     ops::w4a4_proj::nvfp4_proj_small_m(
                         ctx.gpu,
                         fp4_gemv_batch_k,
+                        ctx.levers.ops.w4a16_tc,
                         normed_out_base,
                         &self.ssm.out_proj,
                         ssm_out_base,

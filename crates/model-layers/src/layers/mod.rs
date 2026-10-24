@@ -183,8 +183,14 @@ pub fn k64_n64_wins(m: u32, n: u32) -> bool {
 mod moe_grouped_decode;
 pub use moe_grouped_decode::*;
 
+mod dense_quantization;
+mod dsa_quantization;
 mod expert_quantization;
 mod moe_expert_tables;
+pub use dense_quantization::{
+    DenseQuantization, dense_quantization, set_dense_quantization_from_cli,
+};
+pub use dsa_quantization::{DsaQuantization, dsa_quantization, set_dsa_quantization_from_cli};
 pub use expert_quantization::{
     ExpertQuantization, expert_quantization, set_expert_quantization_from_cli,
 };
@@ -209,6 +215,8 @@ pub use kernel_probe::{try_kernel, try_target_kernel};
 
 mod w8a8_layer;
 pub use w8a8_layer::{W8a8Ctx, W8a8Ffn, W8a8Mixer};
+mod fp8_row_head;
+pub use fp8_row_head::{Fp8RowHeadKernels, HeadWindow, fp8_row_head};
 
 /// 2026-09-25: A layer's FFN: MoE, dense, or none.
 #[allow(clippy::large_enum_variant)]
@@ -340,11 +348,11 @@ impl FfnComponent {
 
     /// 2026-09-28: Row edge of a dense FFN's narrow decode arms (`DenseFfnLayer::narrow_rows`:
     /// its W4A4 edge under the weight-quantization tier, capped at 32, else the W4A16 edge).
-    /// MoE and none answer the W4A16 edge; `can_forward_km` is false for them anyway.
-    pub fn narrow_rows(&self) -> u32 {
+    /// MoE and none answer the W4A16 edge of `tc`; `can_forward_km` is false for them anyway.
+    pub fn narrow_rows(&self, tc: ops::W4a16TcPlan) -> u32 {
         match self {
             Self::Dense(d) => d.narrow_rows(),
-            _ => ops::gemv_tc::narrow_gemv_max_rows().min(ops::w4a4_proj::W4A4_MAX_M),
+            _ => tc.narrow_max_rows().min(ops::w4a4_proj::W4A4_MAX_M),
         }
     }
 

@@ -1,0 +1,37 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-kg-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: `metrale-kg`, the kernel knowledge graph: the metrale Latlas pack behind the Latlas CLI and 5-tool MCP server."
+
+[package.metadata.metrale]
+role = "bin"
+
+# 2026-10-23: The one place a host is chosen for the knowledge graph. Never depends on met or
+# metrale-bench, and nothing depends on it (xtask depgraph ISOLATED_BINS; delegated decision
+# 2026-10-23).
+[[bin]]
+name = "metrale-kg"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true, features = ["std"] }
+clap = { workspace = true, features = ["std", "derive", "help", "usage", "error-context"] }
+# 2026-10-23: Latlas (K1): the CLI and MCP server library, the core, its error and the native
+# hosts; this binary picks the metrale pack and its host once (NDIC).
+latlas-cli = { workspace = true }
+latlas-core = { workspace = true }
+latlas-error = { workspace = true }
+latlas-host-native = { workspace = true }
+# 2026-10-23: The Metrale registry, for the CLER mapping of Latlas codes at this edge.
+metrale-error = { workspace = true }
+metrale-io-host-kg = { workspace = true }
+metrale-latlas-pack = { workspace = true }
+serde_json = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["rt", "macros"] }
+
+[lints]
+workspace = true

@@ -44,7 +44,7 @@ impl SsmStatePool {
     /// the MTP dummy at index `mtp_slots`. The scheduler's speculative branches in
     /// `lane_decode.rs` require every active slot to be covered (`spec_slots_covered`).
     #[inline]
-    fn mtp_slot(&self, slot: usize) -> usize {
+    pub(super) fn mtp_slot(&self, slot: usize) -> usize {
         if slot < self.mtp_slots {
             slot
         } else {
@@ -70,6 +70,9 @@ impl SsmStatePool {
     }
 
     pub(super) fn release_slot(&self, idx: usize) {
+        // 2026-10-21: A free slot's bytes are its next owner's to overwrite, so it returns to
+        // the home layout without a copy, and graphs keyed by slot see only claimed slots swapped.
+        self.swaps.clear(idx);
         let mut free = self.free_slots.lock();
         debug_assert!(
             !free.contains(&idx),
@@ -116,8 +119,11 @@ impl SsmStatePool {
         Ok(())
     }
 
+    /// 2026-10-21: The slot's live h buffer: its home buffer, or its intermediate 0 while the
+    /// slot is swapped (`ssm_pool_swap.rs`).
     pub(super) fn h_state(&self, ssm_layer_idx: usize, slot: usize) -> DevicePtr {
-        self.h_state_pools[ssm_layer_idx].offset(slot * self.h_stored_bytes)
+        self.h_swapped_pair(ssm_layer_idx, slot)
+            .map_or_else(|| self.h_home(ssm_layer_idx, slot), |p| p.0)
     }
 
     /// 2026-09-25: This slot's FP32 prefill staging blob. `Some` only for an
@@ -128,8 +134,10 @@ impl SsmStatePool {
             .map(|p| p.offset(slot * self.h_bytes))
     }
 
+    /// 2026-10-21: The slot's live conv buffer, resolved like [`Self::h_state`].
     pub(super) fn conv_state(&self, ssm_layer_idx: usize, slot: usize) -> DevicePtr {
-        self.conv_state_pools[ssm_layer_idx].offset(slot * self.conv_bytes)
+        self.conv_swapped_pair(ssm_layer_idx, slot)
+            .map_or_else(|| self.conv_home(ssm_layer_idx, slot), |p| p.0)
     }
 
     /// 2026-09-25: Diagnostic: synchronise `stream`, then log at WARN the signed sum,
@@ -196,23 +204,19 @@ impl SsmStatePool {
         );
     }
 
-    /// 2026-09-25: Fixed address of H intermediate `token_idx` of `slot` (after the
-    /// MTP slot mapping). `token_idx` must be below that slot's `h_inter_counts`
-    /// entry; debug builds assert it.
+    /// 2026-09-25: Address of H intermediate `token_idx` of `slot` (after the MTP slot
+    /// mapping). `token_idx` must be below that slot's `h_inter_counts` entry; debug builds
+    /// assert it. 2026-10-21: intermediate 0 of a swapped slot is its home live buffer.
     pub(super) fn h_intermediate(
         &self,
         ssm_layer_idx: usize,
         slot: usize,
         token_idx: usize,
     ) -> DevicePtr {
-        let slot = self.mtp_slot(slot);
-        debug_assert!(
-            token_idx < self.h_inter_counts[slot],
-            "h_intermediate: token_idx {token_idx} >= slot {slot}'s tiered capacity {}",
-            self.h_inter_counts[slot],
-        );
-        self.h_intermediate_pools[ssm_layer_idx]
-            .offset((self.h_inter_offsets[slot] + token_idx) * self.h_stored_bytes)
+        match self.h_swapped_pair(ssm_layer_idx, slot) {
+            Some((_, inter0)) if token_idx == 0 => inter0,
+            _ => self.h_inter_home(ssm_layer_idx, slot, token_idx),
+        }
     }
 
     /// 2026-09-25: Number of H intermediates allocated for `slot` after the MTP
@@ -249,34 +253,66 @@ impl SsmStatePool {
         self.h_inter_counts[slot]
     }
 
-    /// 2026-09-25: Error under the replay rollback mode on a model with SSM layers:
-    /// that mode allocates no per-token H intermediates and has no replay device
-    /// path. Every `decode_verify*` entry in `trait_impl/mod.rs` calls it.
-    pub(crate) fn require_verify_rollback_supported(&self) -> Result<()> {
+    /// 2026-09-25: Error under the replay rollback mode on a model with SSM layers
+    /// unless `replay_wired`: that mode allocates no per-token H intermediates, so a
+    /// verify can roll back only when every pool-backed recurrent layer records and
+    /// replays (`LayerCapabilities::supports_ssm_replay`, which the model ORs into
+    /// `replay_wired`). Every `decode_verify*` entry in `trait_impl/impl_verify.rs`
+    /// calls it.
+    pub(crate) fn require_verify_rollback_supported(&self, replay_wired: bool) -> Result<()> {
         if self.rollback_mode == metrale_model_layers::ssm_reserve::SsmRollbackMode::Replay
             && self.num_ssm_layers > 0
+            && !replay_wired
         {
             bail!(
-                "--ssm-rollback-mode replay is an EXPERIMENTAL scaffold: the verify-window \
-                 input capture and checkpoint-replay reconstruction are not wired yet, so \
-                 speculative verify cannot run. The serve boots (reserve sizing shows the \
-                 replay capacity win) but --speculative traffic must use \
-                 --ssm-rollback-mode snapshot."
+                "--ssm-rollback-mode replay is EXPERIMENTAL and wired only for recurrent \
+                 layers that record and replay their verify inputs (GLM-5.3's KDA); this \
+                 model has a pool-backed recurrent layer without it, so speculative verify \
+                 cannot run. The serve boots (reserve sizing shows the replay capacity win) \
+                 but --speculative traffic must use --ssm-rollback-mode snapshot."
             );
         }
         Ok(())
     }
 
+    /// 2026-10-09: The conv intermediates a slot has: `num_intermediates` (the conv stride)
+    /// in snapshot mode, none under replay, which allocates no intermediate pools. Every loop
+    /// over a slot's conv intermediates is bounded by this, not by the stride.
+    pub(crate) fn conv_inter_count(&self) -> usize {
+        if self.conv_intermediate_pools.is_empty() {
+            0
+        } else {
+            self.num_intermediates
+        }
+    }
+
+    /// 2026-10-21: Address of conv intermediate `token_idx` of `slot`, resolved like
+    /// [`Self::h_intermediate`].
     pub(super) fn conv_intermediate(
         &self,
         ssm_layer_idx: usize,
         slot: usize,
         token_idx: usize,
     ) -> DevicePtr {
-        let ni = self.num_intermediates;
-        let slot = self.mtp_slot(slot);
-        self.conv_intermediate_pools[ssm_layer_idx]
-            .offset((slot * ni + token_idx) * self.conv_bytes)
+        match self.conv_swapped_pair(ssm_layer_idx, slot) {
+            Some((_, inter0)) if token_idx == 0 => inter0,
+            _ => self.conv_inter_home(ssm_layer_idx, slot, token_idx),
+        }
+    }
+
+    /// 2026-10-08: Slot `slot`'s replay record region in SSM layer `ssm_layer_idx`; `None`
+    /// in snapshot mode. A slot past `mtp_slots` shares the dummy's region, as its
+    /// checkpoint does.
+    pub(super) fn replay_ring(
+        &self,
+        ssm_layer_idx: usize,
+        slot: usize,
+    ) -> Option<metrale_model_layers::layer::SsmReplayRing> {
+        let base = *self.replay_input_rings.get(ssm_layer_idx)?;
+        Some(metrale_model_layers::layer::SsmReplayRing {
+            base: base.offset(self.mtp_slot(slot) * self.replay_slot_bytes),
+            bytes: self.replay_slot_bytes,
+        })
     }
 
     pub(super) fn h_checkpoint(&self, ssm_layer_idx: usize, slot: usize) -> DevicePtr {
@@ -288,21 +324,41 @@ impl SsmStatePool {
     }
 
     pub(super) fn reset_slot(&self, slot: usize, gpu: &dyn GpuBackend) -> Result<()> {
+        self.reset_slot_with(slot, |ptr, bytes| gpu.memset(ptr, 0, bytes))
+    }
+
+    /// 2026-10-14: [`Self::reset_slot`]'s bytes, enqueued on `stream` with no synchronise; the
+    /// caller synchronises `stream` before anything reads the slot.
+    pub(super) fn reset_slot_async(
+        &self,
+        slot: usize,
+        gpu: &dyn GpuBackend,
+        stream: u64,
+    ) -> Result<()> {
+        self.reset_slot_with(slot, |ptr, bytes| gpu.memset_async(ptr, 0, bytes, stream))
+    }
+
+    /// 2026-10-14: The one list of buffers a slot reset zeroes, each passed to `zero`.
+    fn reset_slot_with(
+        &self,
+        slot: usize,
+        mut zero: impl FnMut(DevicePtr, usize) -> Result<()>,
+    ) -> Result<()> {
         // 2026-09-25: A slot at or above `mtp_slots` has no MTP state of its own;
         // its MTP accessors resolve to the shared MTP dummy.
         let reset_mtp = self.has_mtp && slot < self.mtp_slots;
         for i in 0..self.num_ssm_layers {
-            gpu.memset(self.h_state(i, slot), 0, self.h_stored_bytes)?;
-            gpu.memset(self.conv_state(i, slot), 0, self.conv_bytes)?;
+            zero(self.h_state(i, slot), self.h_stored_bytes)?;
+            zero(self.conv_state(i, slot), self.conv_bytes)?;
             if reset_mtp {
                 for t in 0..self.h_inter_count(slot) {
-                    gpu.memset(self.h_intermediate(i, slot, t), 0, self.h_stored_bytes)?;
+                    zero(self.h_intermediate(i, slot, t), self.h_stored_bytes)?;
                 }
-                for t in 0..self.num_intermediates {
-                    gpu.memset(self.conv_intermediate(i, slot, t), 0, self.conv_bytes)?;
+                for t in 0..self.conv_inter_count() {
+                    zero(self.conv_intermediate(i, slot, t), self.conv_bytes)?;
                 }
-                gpu.memset(self.h_checkpoint(i, slot), 0, self.h_stored_bytes)?;
-                gpu.memset(self.conv_checkpoint(i, slot), 0, self.conv_bytes)?;
+                zero(self.h_checkpoint(i, slot), self.h_stored_bytes)?;
+                zero(self.conv_checkpoint(i, slot), self.conv_bytes)?;
             }
         }
         Ok(())
@@ -341,7 +397,7 @@ impl SsmStatePool {
                         stream,
                     )?;
                 }
-                for t in 0..self.num_intermediates {
+                for t in 0..self.conv_inter_count() {
                     gpu.copy_d2d_async(
                         self.conv_intermediate(i, from, t),
                         self.conv_intermediate(i, to, t),

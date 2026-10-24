@@ -51,16 +51,18 @@ pub(crate) fn lm_head_rows_arm(n: usize, tc_lm_head: bool, twin_ready: bool) -> 
     }
 }
 
-/// 2026-09-30: True when the tensor-core drafter path is on
-/// (`ops::dense_gemv_tc::mtp_tc_enabled`) and `gemv_tc::tc_kernel` resolves a
-/// `w4a16_gemv_tc8`/`tc16` entry for an `n`-row LM head of `v` rows over `h`.
+/// 2026-09-30: True when the tensor-core drafter path is on (`mtp_tc`,
+/// `OpsLevers::mtp_tc`) and `gemv_tc::tc_kernel` resolves a
+/// `w4a16_gemv_tc8`/`tc16` entry under `tc` for an `n`-row LM head of `v` rows over `h`.
 pub(crate) fn tc_lm_head(
     gpu: &dyn metrale_gpu_runtime::gpu::GpuBackend,
+    mtp_tc: bool,
+    tc: ops::W4a16TcPlan,
     n: usize,
     v: u32,
     h: u32,
 ) -> bool {
-    ops::dense_gemv_tc::mtp_tc_enabled() && ops::gemv_tc::tc_kernel(gpu, n as u32, v, h).is_some()
+    mtp_tc && ops::gemv_tc::tc_kernel(gpu, tc, n as u32, v, h).is_some()
 }
 
 impl MtpHead {
@@ -88,7 +90,16 @@ impl MtpHead {
                 let kh = self.w4a16_batchm.kernel(m as u32);
                 if kh.0 != 0 {
                     return ops::w4a16_gemv_batchm(
-                        gpu, kh, input, q, output, m as u32, n, k, stream,
+                        gpu,
+                        kh,
+                        self.w4a16_batchm.tc(),
+                        input,
+                        q,
+                        output,
+                        m as u32,
+                        n,
+                        k,
+                        stream,
                     );
                 }
                 for r in 0..m {
@@ -112,8 +123,7 @@ impl MtpHead {
     }
 
     /// 2026-09-25: n-row BF16 projection. The tensor-core GEMV
-    /// (`ops::dense_gemv_tc::try_dense_gemv_tc`, off when `METRALE_NO_MTP_TC`
-    /// is set non-empty) runs first. When it launches nothing,
+    /// (`ops::dense_gemv_tc::try_dense_gemv_tc`, off with `self.mtp_tc`) runs first. When it launches nothing,
     /// [`row_dispatch::drafter_row_kernel`] picks the batched GEMV, the
     /// pipelined tile GEMM or a per-row GEMV loop. Every arm reads `input` as
     /// `[m, k]` contiguous and writes m contiguous rows of n elements.
@@ -129,8 +139,18 @@ impl MtpHead {
         k: u32,
         stream: u64,
     ) -> Result<()> {
-        if ops::dense_gemv_tc::try_dense_gemv_tc(gpu, input, w, output, m as u32, n, k, n, stream)?
-        {
+        if ops::dense_gemv_tc::try_dense_gemv_tc(
+            gpu,
+            self.mtp_tc,
+            input,
+            w,
+            output,
+            m as u32,
+            n,
+            k,
+            n,
+            stream,
+        )? {
             return Ok(());
         }
         match row_dispatch::drafter_row_kernel(
@@ -138,8 +158,8 @@ impl MtpHead {
             n,
             k,
             self.dense_gemv_batchm_k.0 != 0,
-            row_dispatch::kv_gemv_pinned(),
-            row_dispatch::small_m_tier_off(),
+            self.levers.kv_gemv_pinned,
+            self.levers.small_m_tier_off,
         ) {
             row_dispatch::RowKernel::Batchm => ops::dense_gemv_batchm(
                 gpu,

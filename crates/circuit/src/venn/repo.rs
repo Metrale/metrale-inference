@@ -14,6 +14,8 @@
 //!   `config.json` (layer kinds, declared precision of every bound module); a disagreement is an
 //!   error, never a note.
 
+use crate::prelude::*;
+
 use super::discover::{KernelSources, drift, macro_files};
 use super::report::{Side, VennInputs};
 use super::{VennArgs, VennError, build, parse_families, parse_measurements, render};
@@ -21,12 +23,15 @@ use crate::instances::{Instance, PrecisionSpec, parse_instances};
 use crate::ir::LayerKind;
 use crate::{Loaded, Sources, includes_of, load};
 
-/// 2026-09-29: Read access to a repository, by repo-relative path.
+/// 2026-09-29: Read access to a repository, by repo-relative path (`/`-separated `&str`, never a
+/// host path). 2026-10-22: The port every circuit source arrives through; hosts implement it
+/// (`metrale_io_host_fs_repo::FsRepo` over a checkout) and fail with
+/// [`ErrorCode::CircuitSource`](metrale_error::ErrorCode::CircuitSource) `(rel, reason)`.
 pub trait Repo {
     /// 2026-09-29: The text of `rel`.
-    fn read(&self, rel: &str) -> Result<String, String>;
+    fn read(&self, rel: &str) -> metrale_error::Result<String>;
     /// 2026-09-29: Every file under the directory `rel`, recursively, repo-relative with `/`.
-    fn list(&self, rel: &str) -> Result<Vec<String>, String>;
+    fn list(&self, rel: &str) -> metrale_error::Result<Vec<String>>;
 }
 
 /// 2026-09-29: The instance `spec` names: a recipe id, or an arch that exactly one instance
@@ -79,15 +84,16 @@ pub fn checkpoint_id_of(dir: &str) -> Option<String> {
 
 pub(crate) fn load_instance(repo: &dyn Repo, inst: &Instance) -> Result<Loaded, VennError> {
     let io = |e: String| VennError::Load(format!("{}: {e}", inst.recipe));
+    let port = |e: metrale_error::Error| io(e.to_string());
     let circuit = repo
         .read(&format!("kernels/circuits/{}.toml", inst.arch))
-        .map_err(io)?;
+        .map_err(port)?;
     let names = includes_of(&circuit).map_err(|e| io(e.to_string()))?;
     let mut blocks = Vec::with_capacity(names.len());
     for n in names {
         let text = repo
             .read(&format!("kernels/circuits/blocks/{n}.toml"))
-            .map_err(io)?;
+            .map_err(port)?;
         blocks.push((n, text));
     }
     let precision = match &inst.precision {
@@ -96,10 +102,10 @@ pub(crate) fn load_instance(repo: &dyn Repo, inst: &Instance) -> Result<Loaded, 
             checkpoint_plan, ..
         } => format!("kernels/circuits/checkpoints/{checkpoint_plan}.toml"),
     };
-    let precision = repo.read(&precision).map_err(io)?;
+    let precision = repo.read(&precision).map_err(port)?;
     let rules = repo
         .read(&format!("kernels/{}/common/FUSIONS.toml", hardware(inst)?))
-        .map_err(io)?;
+        .map_err(port)?;
     let blocks: Vec<(&str, &str)> = blocks
         .iter()
         .map(|(n, t)| (n.as_str(), t.as_str()))
@@ -138,7 +144,8 @@ pub fn report_text(
     checkpoint: Option<(&str, Option<&str>)>,
 ) -> Result<String, VennError> {
     let io = |e: String| VennError::Load(e);
-    let all = parse_instances(&repo.read("kernels/circuits/INSTANCES.toml").map_err(io)?)
+    let port = |e: metrale_error::Error| io(e.to_string());
+    let all = parse_instances(&repo.read("kernels/circuits/INSTANCES.toml").map_err(port)?)
         .map_err(|e| io(e.to_string()))?;
     let target = resolve(&all, &args.target)?;
     let against = args
@@ -164,20 +171,20 @@ pub fn report_text(
     let fams = parse_families(
         &repo
             .read(&format!("kernels/{hw}/common/KERNEL_FAMILIES.toml"))
-            .map_err(io)?,
+            .map_err(port)?,
     )
     .map_err(|e| io(e.to_string()))?;
     let mut src = KernelSources {
         paths: repo
             .list("kernels")
-            .map_err(io)?
+            .map_err(port)?
             .into_iter()
-            .chain(repo.list("crates").map_err(io)?)
+            .chain(repo.list("crates").map_err(port)?)
             .collect(),
         ..KernelSources::default()
     };
     for f in macro_files(&fams) {
-        let text = repo.read(&f).map_err(io)?;
+        let text = repo.read(&f).map_err(port)?;
         src.texts.insert(f, text);
     }
     let problems = drift(&fams, &src);
@@ -187,7 +194,7 @@ pub fn report_text(
     let meas = parse_measurements(
         &repo
             .read("docs/kernel-perf/measurements.toml")
-            .map_err(io)?,
+            .map_err(port)?,
     )
     .map_err(io)?;
     let inputs = VennInputs {

@@ -7,6 +7,8 @@
 //! Owner: metrale-circuit.
 //! Invariants: the strip wraps at a multiple of 8 layers so the ruler stays aligned.
 
+use crate::prelude::*;
+
 use super::glyphs::Set;
 use super::{Document, Line, Style, clip};
 use crate::ir::{Circuit, LayerKind, OpKind};
@@ -26,6 +28,8 @@ fn kind_name(k: LayerKind) -> &'static str {
         LayerKind::FullAttention => "Attention",
         LayerKind::Mamba => "Mamba2",
         LayerKind::Moe => "MoE",
+        LayerKind::SparseAttention => "DSA",
+        LayerKind::SlidingAttention => "SWA",
     }
 }
 
@@ -90,7 +94,9 @@ pub(super) fn strip(
                 // 2026-09-29: A Mamba2 mixer draws as the recurrent-mixer glyph; a MoE-only
                 // layer has no mixer, so its mixer cell draws as its FFN.
                 LayerKind::LinearAttention | LayerKind::Mamba => (g.layer[0], Style::LayerGdn),
-                LayerKind::FullAttention => (g.layer[1], Style::LayerAttn),
+                LayerKind::FullAttention
+                | LayerKind::SparseAttention
+                | LayerKind::SlidingAttention => (g.layer[1], Style::LayerAttn),
                 LayerKind::Moe => (g.layer[3], Style::LayerMoe),
             };
             mixer.push(glyph.to_string(), style);

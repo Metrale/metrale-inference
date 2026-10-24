@@ -48,7 +48,7 @@ and published alongside it.
 - [metrale-model-engine](https://book.dev.metrale.ai/crates/metrale-model-engine.html)
 - [metrale-speculative](https://book.dev.metrale.ai/crates/metrale-speculative.html)
 - [metrale-bench](https://book.dev.metrale.ai/crates/metrale-bench.html)
-- [metrale-server](https://book.dev.metrale.ai/crates/metrale-server.html)
+- [met](https://book.dev.metrale.ai/crates/metrale-server.html)
 
 ## Part IV — Engineering Deep Dives
 

@@ -11,6 +11,7 @@ pub(crate) mod attention_arms;
 mod declared;
 mod expert_plan;
 mod fp8_attention_arms;
+mod levers;
 pub(crate) mod linear_attn_arms;
 mod linear_attn_route;
 mod load_cx;
@@ -23,7 +24,7 @@ use anyhow::{Context, Result};
 use metrale_cache::kv_cache::KvCacheDtype;
 use metrale_config::{LayerType, ModelConfig};
 use metrale_gpu_runtime::gpu::GpuBackend;
-use metrale_model_weights::weights::{WeightDtype, WeightStore};
+use metrale_model_weights::weights::WeightStore;
 
 use super::super::{ModelWeightLoader, QuantFormat, WeightFormat};
 use load_cx::{LayerIn, LoadCx};
@@ -34,25 +35,9 @@ use metrale_model_layers::weight_map::{
     Nvfp4MoeCopies, Nvfp4Variant, detect_nvfp4_variant, load_moe_qwen35, quantize_to_nvfp4,
 };
 use selectors::{
-    HoloFastMoeMode, holo_fast_moe_layer_selected, holo_fast_moe_mode, holo_moe_down_fp4,
-    holo_moe_gateup_fp4, is_holo_modelopt_mixed_precision, layer_dequant_selected,
+    HoloFastMoeMode, holo_fast_moe_layer_selected, holo_fast_moe_mode,
+    is_holo_modelopt_mixed_precision, layer_dequant_selected, proj_is_native_fp8,
 };
-
-/// 2026-09-25: True when `{prefix}.weight` is FP8E4M3 with a block scale: a
-/// `.weight_scale_inv`, or a 2D `.weight_scale`. A scalar `.weight_scale` (per-tensor FP8)
-/// returns false.
-fn proj_is_native_fp8(store: &WeightStore, prefix: &str) -> bool {
-    let is_fp8_weight = store
-        .get(&format!("{prefix}.weight"))
-        .map(|w| w.dtype == WeightDtype::FP8E4M3)
-        .unwrap_or(false);
-    let has_block_scale = store.contains(&format!("{prefix}.weight_scale_inv"))
-        || store
-            .get(&format!("{prefix}.weight_scale"))
-            .map(|s| s.shape.len() == 2)
-            .unwrap_or(false);
-    is_fp8_weight && has_block_scale
-}
 
 pub(super) fn load_layers(
     loader: &dyn ModelWeightLoader,
@@ -60,6 +45,7 @@ pub(super) fn load_layers(
     config: &ModelConfig,
     gpu: &dyn GpuBackend,
     layer_kv_dtypes: &[KvCacheDtype],
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Vec<Box<dyn TransformerLayer>>> {
     let layer_types = if config.layer_types.is_empty() {
         (0..config.num_hidden_layers)
@@ -95,6 +81,7 @@ pub(super) fn load_layers(
     };
     let stream = gpu.default_stream();
     let h = config.hidden_size;
+    let lv = levers::Qwen35LoadLevers::from_settings(lc.settings);
 
     let variant = detect_nvfp4_variant(store, config);
     let weight_format = WeightFormat::detect(store, config);
@@ -116,13 +103,12 @@ pub(super) fn load_layers(
     // copies (`skip_moe_prefill_copies`).
     let nvfp4_moe = config.num_experts > 0 && quant_format == QuantFormat::Nvfp4;
     let moe_qualifies = modelopt_mixed_precision || nvfp4_moe;
-    let low_memory_requested =
-        moe_qualifies && std::env::var("METRALE_HOLO_LOW_MEMORY_MOE").ok().as_deref() != Some("0");
+    let low_memory_requested = moe_qualifies && lv.low_memory_moe;
     // 2026-09-25: Unset selects `Full`. A set value goes through the parser, so a typo
     // warns and resolves no mode.
     let holo_fast_moe_mode = if low_memory_requested {
         if std::env::var_os("METRALE_HOLO_FAST_MOE_MODE").is_some() {
-            holo_fast_moe_mode()
+            holo_fast_moe_mode(lv.unified_moe_layout)
         } else {
             Some(HoloFastMoeMode::Full)
         }
@@ -133,19 +119,12 @@ pub(super) fn load_layers(
     let holo_fast_moe_spec = if low_memory_modelopt_moe {
         // 2026-09-25: Unset selects every layer: `0-99999` is an inclusive range
         // (`parse_layer_ranges`).
-        Some(
-            std::env::var("METRALE_HOLO_FAST_MOE_LAYERS").unwrap_or_else(|_| "0-99999".to_string()),
-        )
+        Some(lv.fast_moe_layers.clone())
     } else {
         None
     };
-    let native_modelopt_ssm = modelopt_mixed_precision
-        && std::env::var("METRALE_HOLO_NATIVE_FP8_SSM").ok().as_deref() == Some("1");
-    let native_modelopt_attn = modelopt_mixed_precision
-        && std::env::var("METRALE_HOLO_NATIVE_FP8_ATTN")
-            .ok()
-            .as_deref()
-            == Some("1");
+    let native_modelopt_ssm = modelopt_mixed_precision && lv.native_fp8_ssm;
+    let native_modelopt_attn = modelopt_mixed_precision && lv.native_fp8_attn;
     tracing::info!(
         "Weight format: {:?}, NVFP4 variant: {:?}, quant_format: {:?}",
         weight_format,
@@ -206,17 +185,13 @@ pub(super) fn load_layers(
         // fused. `METRALE_FORCE_NVFP4_ALL=1` implies it and also skips the native-FP8
         // attention arm, the FP8-dequant BF16 attention arm and the `Fp8Dequanted`
         // native-FP8 SSM arm.
-        let force_nvfp4_all = std::env::var("METRALE_FORCE_NVFP4_ALL").ok().as_deref() == Some("1");
+        let force_nvfp4_all = lv.force_nvfp4_all;
         // 2026-09-25: `METRALE_HOLO_FP4_PROJ_DECODE=1` sends the full-attention and SSM
         // projections to the NVFP4 builders while the MoE experts keep their native-FP8 path
         // (it does not set `force_nvfp4_moe`). It does not override
         // `METRALE_HOLO_NATIVE_FP8_SSM=1`.
-        let fp4_proj_decode = std::env::var("METRALE_HOLO_FP4_PROJ_DECODE")
-            .ok()
-            .as_deref()
-            == Some("1");
-        let force_nvfp4_env = force_nvfp4_all
-            || std::env::var("METRALE_FORCE_NVFP4_MOE").ok().as_deref() == Some("1");
+        let fp4_proj_decode = lv.fp4_proj_decode;
+        let force_nvfp4_env = force_nvfp4_all || lv.force_nvfp4_moe;
         // 2026-09-25: Routed experts in the fused layout (`mlp.experts.gate_up_proj`) take the
         // NVFP4 expert path even for an FP8 checkpoint: `load_moe_qwen35` slices the fused
         // tensors, and `load_moe_qwen35_fp8_experts` reads only per-expert tensors.
@@ -295,7 +270,9 @@ pub(super) fn load_layers(
         moe_layer.is_dflash_capture_layer = config.dflash_capture_layers.contains(&i);
         // 2026-10-02: The checkpoint's own NVFP4 experts under `declared`.
         declared.mark_nvfp4_experts(&mut moe_layer, &lp, i, variant, plan.fp8_experts)?;
-        if i == 0 && (holo_moe_gateup_fp4() || holo_moe_down_fp4()) && holo_fast_moe_mode.is_none()
+        if i == 0
+            && (lc.levers.holo_moe_gateup_fp4 || lc.levers.holo_moe_down_fp4)
+            && holo_fast_moe_mode.is_none()
         {
             tracing::warn!(
                 "METRALE_HOLO_MOE_GATEUP_FP4/_DOWN_FP4 set but METRALE_HOLO_FAST_MOE_MODE \
@@ -341,12 +318,7 @@ pub(super) fn load_layers(
         }
         // 2026-09-25: `METRALE_HOLO_MOE_GROUPED_CUTLASS=1` on a fast-MoE layer builds the swizzled
         // scale tables for the CUTLASS grouped NVFP4 gate_up (`build_cutlass_grouped_sfb`).
-        if fast_holo_moe_layer
-            && std::env::var("METRALE_HOLO_MOE_GROUPED_CUTLASS")
-                .ok()
-                .as_deref()
-                == Some("1")
-        {
+        if fast_holo_moe_layer && lv.grouped_cutlass {
             moe_layer.build_cutlass_grouped_sfb(gpu, config, stream)?;
         }
 
@@ -354,21 +326,11 @@ pub(super) fn load_layers(
         // experts to BF16 at load and installs them with `set_bf16_experts`.
         // `METRALE_FP8_DEQUANT_LAYERS` limits this and the attention dequant below to the
         // layers it lists (`layer_dequant_selected`).
-        let layer_sel = layer_dequant_selected(i);
-        let dequant_moe_to_bf16 = native_fp8
-            && std::env::var("METRALE_FP8_DEQUANT_MOE_TO_BF16")
-                .ok()
-                .as_deref()
-                == Some("1")
-            && layer_sel;
+        let layer_sel = layer_dequant_selected(lv.fp8_dequant_layers.as_deref(), i);
+        let dequant_moe_to_bf16 = native_fp8 && lv.fp8_dequant_moe_to_bf16 && layer_sel;
         // 2026-09-25: `METRALE_FP8_DEQUANT_ATTN_TO_BF16=1` (native FP8 only) selects the BF16
         // dense attention arm below.
-        let dequant_attn_to_bf16 = native_fp8
-            && std::env::var("METRALE_FP8_DEQUANT_ATTN_TO_BF16")
-                .ok()
-                .as_deref()
-                == Some("1")
-            && layer_sel;
+        let dequant_attn_to_bf16 = native_fp8 && lv.fp8_dequant_attn_to_bf16 && layer_sel;
 
         if dequant_moe_to_bf16 {
             moe_experts::install_bf16_dequant_experts(&cx, &lp, i, &mut moe_layer);
@@ -383,7 +345,7 @@ pub(super) fn load_layers(
 
         // 2026-10-04: Every load-time reader of the row-major NVFP4 experts ran above: repack them
         // in place for the lean tensor-core decode when the layer qualifies (byte-identical outputs).
-        if moe_layer.repack_nvfp4_experts_lean(gpu, config, stream)? && i == 0 {
+        if moe_layer.repack_nvfp4_experts_lean(gpu, config, stream, lc.levers)? && i == 0 {
             tracing::info!("NVFP4 experts repacked for the lean tensor-core decode");
         }
         let ffn = FfnComponent::Moe(moe_layer);
@@ -401,8 +363,9 @@ pub(super) fn load_layers(
                     post_attn_norm,
                     ffn,
                 };
-                let layer =
-                    fp8_attention_arms::build_bf16_dense_attention(&cx, &lp, i, attn_idx, parts)?;
+                let layer = fp8_attention_arms::build_bf16_dense_attention(
+                    &cx, &lp, i, attn_idx, parts, lc,
+                )?;
                 layers.push(Box::new(layer));
                 attn_idx += 1;
             }
@@ -421,8 +384,9 @@ pub(super) fn load_layers(
                     post_attn_norm,
                     ffn,
                 };
-                let layer =
-                    fp8_attention_arms::build_native_fp8_attention(&cx, &lp, i, attn_idx, parts)?;
+                let layer = fp8_attention_arms::build_native_fp8_attention(
+                    &cx, &lp, i, attn_idx, parts, lc,
+                )?;
                 layers.push(Box::new(layer));
                 attn_idx += 1;
             }
@@ -443,6 +407,7 @@ pub(super) fn load_layers(
                     input_norm,
                     post_attn_norm,
                     ffn,
+                    lc,
                 )?;
                 layers.push(layer);
                 attn_idx += 1;
@@ -465,6 +430,7 @@ pub(super) fn load_layers(
                     fp4_proj_decode,
                     declared_fp8_ssm,
                     parts,
+                    lc,
                 )?;
                 layers.push(layer);
             }

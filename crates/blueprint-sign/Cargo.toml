@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-blueprint-sign"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: blueprint signing from seed files: reads a key file, zeroizes the seeds, and signs a .kbp, a key certificate or a revocation list."
+
+[package.metadata.metrale]
+role = "host-std"
+
+[dependencies]
+metrale-blueprint = { workspace = true }
+metrale-blueprint-trust = { workspace = true }
+metrale-error = { workspace = true }
+# 2026-10-22: The Entropy port (recipient seed generation; the host supplies OsEntropy).
+metrale-abstract-io = { workspace = true }
+# 2026-10-22: The recipient key type the key files hold (SSOT).
+metrale-seal = { workspace = true }
+# 2026-10-22: The recipient public key file's `public` line (standard padded base64).
+base64 = { workspace = true, features = ["alloc"] }
+postcard = { workspace = true, features = ["alloc"] }
+serde = { workspace = true, features = ["std", "derive"] }
+zeroize = { workspace = true, features = ["alloc"] }
+
+[dev-dependencies]
+metrale-io-host-mem = { workspace = true }
+tempfile = { workspace = true, features = ["getrandom"] }
+
+[lints]
+workspace = true

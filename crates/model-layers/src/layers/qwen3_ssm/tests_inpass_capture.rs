@@ -49,6 +49,7 @@ fn run(
     let dispatch = crate::layers::ops::GemmDispatch::defaults();
     let derived = crate::layers::ops::DerivedWeights::new();
     let levers = crate::layers::ops::ModelLevers::defaults();
+    let settings = crate::lever_equivalence::defaults();
     let stats = crate::layers::ops::ModelStats::new();
     let counter = std::sync::atomic::AtomicUsize::new(0);
     let h_dsts: Vec<DevicePtr> = capture.iter().map(|&(_, d)| d).collect();
@@ -69,6 +70,7 @@ fn run(
         dispatch: &dispatch,
         derived: &derived,
         levers: &levers,
+        settings: &settings,
         stats: &stats,
         buffers,
         hc_row_offset: 0,
@@ -86,6 +88,7 @@ fn run(
         routed_lora_layers: None,
         midchunk_capture,
         moe_lora_route: crate::layer::MoeLoraRoute::Fold,
+        ab_levers: crate::layer::AbLevers::NONE,
     };
     let nk = config.linear_num_key_heads;
     let nv = config.linear_num_value_heads;

@@ -131,6 +131,7 @@ async fn gate(
         store.clone(),
         tx,
         Arc::new(AtomicBool::new(false)),
+        crate::levers::tests::unset(),
     );
     g.load(handle).await.expect("load");
     (g, store)

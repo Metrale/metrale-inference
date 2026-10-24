@@ -125,6 +125,8 @@ fn main() -> Result<()> {
         head_dim: HEAD_DIM,
         block_size: BLOCK_SIZE,
         model_fp: None,
+        // 2026-10-18: No KV paging peer is connected here, so nothing reads the codec salt.
+        kv_codec_salt: 0,
     };
     let mut hss = HighSpeedSwap::new(&ctx, cfg, model)?;
 

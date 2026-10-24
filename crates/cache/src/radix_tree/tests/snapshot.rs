@@ -13,7 +13,7 @@ use metrale_telemetry::prefix_cache::PrefixCache;
 
 use super::super::hash_token_prefix;
 use super::super::snapshot::SsmSnapshotIndex;
-use super::arm_legacy_partial_tail;
+use super::{arm_legacy_partial_tail, declared_tuning};
 
 #[test]
 fn test_insert_without_snapshot() {
@@ -340,7 +340,7 @@ fn test_hash_token_prefix_base_byte_identical() {
 
 #[test]
 fn test_snapshot_index_adapter_isolation() {
-    let mut idx = SsmSnapshotIndex::new();
+    let mut idx = SsmSnapshotIndex::new(declared_tuning());
     let tokens: Vec<u32> = (0..16).collect();
     const A: u64 = 0xAA;
     const B: u64 = 0xBB;

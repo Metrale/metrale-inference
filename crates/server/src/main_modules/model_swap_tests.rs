@@ -19,7 +19,9 @@ fn args(extra: &[&str]) -> cli::ServeArgs {
         | cli::Command::DumpServeOptions
         | cli::Command::SyncRecipes
         | cli::Command::Doctor
-        | cli::Command::Circuit(_) => {
+        | cli::Command::Circuit(_)
+        | cli::Command::Blueprint(_)
+        | cli::Command::Embed(_) => {
             unreachable!("parsed a serve command")
         }
     }

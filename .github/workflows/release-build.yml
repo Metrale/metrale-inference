@@ -184,14 +184,14 @@ jobs:
             .github/release-matrix.json)
           [ -z "$dupes" ] || { echo "::error::duplicate matrix ids: $dupes"; exit 1; }
 
-      - name: Validate every cargo feature exists in metrale-server
+      - name: Validate every cargo feature exists in met
         run: |
           set -euo pipefail
           # The most likely matrix error is a typo'd or removed feature name.
           # `cargo metadata` is the SSOT for what features actually exist.
           known=$(cargo metadata --no-deps --format-version 1 \
-            | jq -r '.packages[] | select(.name=="metrale-server") | .features | keys[]' | sort -u)
-          echo "metrale-server features: $(echo "$known" | tr '\n' ' ')"
+            | jq -r '.packages[] | select(.name=="met") | .features | keys[]' | sort -u)
+          echo "met features: $(echo "$known" | tr '\n' ' ')"
           bad=0
           while read -r feats; do
             for f in $(printf '%s' "$feats" | grep -oP '(?<=--features )[^ ]+' | tr ',' ' '); do
@@ -603,7 +603,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo build --release -p metrale-server --target ${{ matrix.target }} ${{ matrix.cargo_features }}
+          cargo build --release -p met --target ${{ matrix.target }} ${{ matrix.cargo_features }}
 
       # ── The matrix now TESTS, it does not only build ─────────────────────
       #
@@ -629,10 +629,10 @@ jobs:
           set -euo pipefail
           case "${{ matrix.test_mode }}" in
             run)
-              cargo test --release -p metrale-server --target ${{ matrix.target }} ${{ matrix.cargo_features }}
+              cargo test --release -p met -p metrale-server --target ${{ matrix.target }} ${{ matrix.cargo_features }}
               ;;
             no-run)
-              cargo test --release --no-run -p metrale-server --target ${{ matrix.target }} ${{ matrix.cargo_features }}
+              cargo test --release --no-run -p met -p metrale-server --target ${{ matrix.target }} ${{ matrix.cargo_features }}
               ;;
             skip)
               # ★ WHY A LEG IS SKIPPED, AND WHAT IT COSTS.
@@ -642,7 +642,7 @@ jobs:
               # Both macOS legs are here because `cargo test --no-run
               # --no-default-features --features metal` fails with
               #   error[E0433]: could not find `cuda_backend` in `metrale_gpu_runtime`
-              # metrale-server's test code references cuda-only items with no cfg
+              # met's test code references cuda-only items with no cfg
               # gate, so the metal configuration's tests have NEVER compiled.
               # `cargo build` never touched them, which is precisely the gap
               # this change exists to close — it found one immediately.
@@ -663,7 +663,7 @@ jobs:
           # `C:\Program Files\Git\usr\bin\link.exe` -- the coreutils `link`
           # -- instead of the MSVC linker. It fails with "extra operand" on the
           # first object file.
-          cargo build --release -p metrale-server --target ${{ matrix.target }} ${{ matrix.cargo_features }}
+          cargo build --release -p met --target ${{ matrix.target }} ${{ matrix.cargo_features }}
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # Same reasoning as the unix leg. pwsh for the same PATH reason: under
@@ -673,9 +673,9 @@ jobs:
         shell: pwsh
         run: |
           if ("${{ matrix.test_mode }}" -eq "run") {
-            cargo test --release -p metrale-server --target ${{ matrix.target }} ${{ matrix.cargo_features }}
+            cargo test --release -p met -p metrale-server --target ${{ matrix.target }} ${{ matrix.cargo_features }}
           } elseif ("${{ matrix.test_mode }}" -eq "no-run") {
-            cargo test --release --no-run -p metrale-server --target ${{ matrix.target }} ${{ matrix.cargo_features }}
+            cargo test --release --no-run -p met -p metrale-server --target ${{ matrix.target }} ${{ matrix.cargo_features }}
           } elseif ("${{ matrix.test_mode }}" -eq "skip") {
             Write-Output "::warning title=${{ matrix.id }}: tests not compiled::test_mode=skip. This leg builds but does not compile its tests."
           } else {

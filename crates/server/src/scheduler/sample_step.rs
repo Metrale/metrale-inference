@@ -281,7 +281,8 @@ pub fn sample_token_with_grammar(
 /// to the suppressed ids. Otherwise the token is picked by
 /// [`sample_token_with_grammar`] and the matcher is advanced past it (see
 /// `first_token_policy::first_token_with`). Penalties are
-/// neutral: there is no output history yet.
+/// neutral: there is no output history yet. 2026-10-14: `eos_tokens` are
+/// masked only while `policy` holds an EOS at token 0.
 pub fn sample_first_token(
     model: &dyn Model,
     logits: DevicePtr,
@@ -289,13 +290,13 @@ pub fn sample_first_token(
     top_k: u32,
     top_p: f32,
     min_p: f32,
-    suppress_ids: &[u32],
+    eos_tokens: &[u32],
     grammar_state: Option<&mut GrammarState>,
     policy: FirstTokenPolicy,
     levers: &crate::scheduler::logit_processors::SamplingLevers,
     dumps: &crate::scheduler::dumps::RunDumps,
 ) -> Result<u32> {
-    first_token_with(policy, suppress_ids, grammar_state, |ids, gs| {
+    first_token_with(policy, eos_tokens, grammar_state, |ids, gs| {
         let Some(gs) = gs else {
             return sample_token(
                 model,

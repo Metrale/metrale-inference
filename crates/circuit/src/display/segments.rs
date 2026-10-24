@@ -12,7 +12,9 @@
 //! - A segment's `enter` is the first edge its first node reads from outside it, and `exit` the
 //!   first output of its last node that is read outside it.
 
-use std::collections::BTreeSet;
+use crate::prelude::*;
+
+use alloc::collections::BTreeSet;
 
 use crate::fuser::{FusionPlan, section_of};
 use crate::ir::{Circuit, EdgeIdx, NodeIdx};

@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# 2026-10-18: A crate outside the workspace: no member owns it, so kv-codec-ban must not scan it.
+[package]
+name = "fork"
+version = "0.1.0"
+edition = "2024"

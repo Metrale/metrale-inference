@@ -40,28 +40,6 @@ void vision_gemm_bias(
     C[row * N + col] = f32_to_bf16(acc);
 }
 
-// 2026-09-25: C[M, N] = A[M, K] B[K, N] + bias[N], with vision_gemm_bias's thread mapping.
-
-extern "C" __global__
-void vision_gemm_bias_nn(
-    const __nv_bfloat16* __restrict__ A,
-    const __nv_bfloat16* __restrict__ B,
-    const __nv_bfloat16* __restrict__ bias,
-    __nv_bfloat16* __restrict__ C,
-    unsigned int M, unsigned int N, unsigned int K
-) {
-    unsigned int row = blockIdx.y * 32 + threadIdx.y;
-    unsigned int col = blockIdx.x * 32 + threadIdx.x;
-    if (row >= M || col >= N) return;
-
-    float acc = 0.0f;
-    for (unsigned int k = 0; k < K; ++k) {
-        acc += bf16_to_f32(A[row * K + k]) * bf16_to_f32(B[k * N + col]);
-    }
-    acc += bf16_to_f32(bias[col]);
-    C[row * N + col] = f32_to_bf16(acc);
-}
-
 // 2026-09-25: In-place LayerNorm per row, x = (x - mean) / sqrt(var + eps) * w + b. The second reduction stage leaves
 // lanes past the last warp holding stale partial sums, so it is correct only for 32 full warps; callers pass min(D, 1024).
 extern "C" __global__

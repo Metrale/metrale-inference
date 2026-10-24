@@ -11,6 +11,8 @@ from __future__ import annotations
 import os
 import re
 
+import kernel_perf_energy as energy
+
 REPO = "https://github.com/Metrale/metrale-inference"
 NOT_MEASURED = "not measured"
 REGISTER = "docs/kernel-perf/TRADEOFFS.md"
@@ -296,12 +298,12 @@ class Renderer:
         for r in sorted((r for r in self.m.rows if r.measures), key=lambda r: r.k.key):
             out += [f'<a id="m-{_slug(r.k.key)}"></a>', "",
                     f"### `{r.k.name}` — [{r.k.file}](../../{r.k.file}#L{r.k.line})", "",
-                    "| HW | Model | Regime | time µs | floor µs | bound | % of floor | Source · notes |",
-                    "|---|---|---|---|---|---|---|---|"]
+                    "| HW | Model | Regime | time µs | floor µs | bound | % of floor | mJ | W | % E-floor | Source · notes |",
+                    "|---|---|---|---|---|---|---|---|---|---|---|"]
             for x in sorted(r.measures, key=lambda x: (x["hardware"], x["model"], x["regime"])):
                 out.append("| " + " | ".join([
                     x["hardware"], _cell(x["model"]), _cell(x["regime"]), f"{x['time_us']:.2f}",
-                    f"{x['floor_us']:.2f}", x["bound"], f"{x['pct_of_floor']:.1f}%",
+                    f"{x['floor_us']:.2f}", x["bound"], f"{x['pct_of_floor']:.1f}%", *energy.cells(x),
                     _cell(_md(x["source"])) + (f" — {_cell(_md(x['notes']))}" if x["notes"] else ""),
                 ]) + " |")
             out.append("")

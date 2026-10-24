@@ -1,0 +1,272 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-17: One inline `example` array instead of 180 `[[example]]` tables, so this
+# manifest stays under the 500-line file cap. It must precede the first table header.
+# `autoexamples = false` below makes this list the only source of example targets.
+example = [
+    { name = "argmax_key_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "screen_head_gate", path = "examples/screen_head_gate/main.rs", required-features = ["cuda", "gpu-examples"] },
+    { name = "tq128_microtest", path = "examples/tq128_microtest/main.rs", required-features = ["cuda", "gpu-examples"] },
+    { name = "mtp_k2_verdict_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "early_launch_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "early_launch_nccl_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "host_wake_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "residual_add_rms_norm_exact_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "rms_norm_act_quant_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "bf16_batch_bitparity_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "dense_gemm_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "dense_gemv_bf16_tc_oracle", required-features = ["cuda", "gpu-examples"] },
+    { name = "dsa_indexer_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "fp8_gemm_blockscaled_pipe_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "fp8_gemm_twin_parity", required-features = ["cuda", "gpu-examples"] },
+    { name = "fp8_moe_grouped_decode_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "fp8_moe_grouped_tc_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "w8a16_tc_rows_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "w4a16_tc_rows_seg_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "dflash2_topk16_parity", required-features = ["cuda", "gpu-examples"] },
+    { name = "dflash_tp_parity", required-features = ["cuda", "gpu-examples"] },
+    { name = "dflash_tp_rank_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "dflash_aux_fp8_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "dflash_nvfp4_rows_check", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_w4a16_rows_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_w4a16_gemv_seg_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_w4a16_gemv_seg_rows_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_w4a16_gemv_pipe_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_swiglu_down_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dense_seg_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_kda_conv_one_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "kernel_energy_loop", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_batch_inv_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "fp8_moe_grouped_routing_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "fp8_moe_grouped_exact_routing_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "fp8gemm_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "gdn_batched_repro", required-features = ["cuda", "gpu-examples"] },
+    { name = "gdn_chunk_delta_h_gateb", required-features = ["cuda", "gpu-examples"] },
+    { name = "gdn_chunk_shapetest", required-features = ["cuda", "gpu-examples"] },
+    { name = "gdn_conv_kn_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "gdn_prefill_twins_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "gdn_recompute_wu_gateb", required-features = ["cuda", "gpu-examples"] },
+    { name = "gdn_split4_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "gdn_strided_norm_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "gdn_decode_strided_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "gdn_verify_fused_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "gdn_carry_conv_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "gdn_carry_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "exact_carry_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "exact_chain_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "exact_chain_f16_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "moe_gateup_silu_e4m3_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "moe_unpermute_blend_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "nvfp4_moe_grouped_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "gdn_woa_oracle", required-features = ["cuda", "gpu-examples"] },
+    { name = "gdn_wy4_batched_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "gdn_wy_f16_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "gdn_wy_verify_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "gdn_wy_resident_width_oracle", required-features = ["cuda", "gpu-examples"] },
+    { name = "gdn_wyn_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "gemv_fp4_vs_fp8_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_ffn_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_w4a4_fp8_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_moe_narrow_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm53_lmhead_fp8_shard_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm53_mtp_xchg_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_moe_wide_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_moe_prefill_w4a4_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_moe_epi_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_w4a16_wide_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_fp8_wide_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dequant_persist_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_kda_chunk16_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_kda_chunk64_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_kda_chunk64_conv_parity", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_kda_gate_in_prepare_parity", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dsa_scores_tiled_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dsa_scores_mma_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dsa_scores_pipe_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dsa_select_fused_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dsa_sp_select_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dsa_decode_select_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_mhc_slice_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_mhc_tile_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_expert_tp_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_prefill_spans_mlp_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_moe_grouped_prefill_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_moe_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_multi_seq_decode_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_c16_kernel_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_hc_fused_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_hc_pre_c1_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_kda_gates_rows_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dsa_proj_in_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dsa_proj_in_layer_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_moe_scale_dict_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_moe_scale_dict_prefill_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_batchm_few_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "pdl_capture_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "pdl_chain_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "pdl_chain_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_hc_post_sum_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "bf16_world2_sum_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_hc_post_vec_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_l2_warm_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_rowbatch_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_kda_conv_pack_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_c1_fuse_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_hc_post_fold_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_hc_post_pre_tok_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dsa_rows_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_kda_prefill_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dsa_paged_parity", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dsa_verify_once_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dsa_ceiling_scores_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dsa_topk_mc_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dsa_flat_pooled_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dsa_row_nosync_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_verify_spans_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "attn_prefill_fa128_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "attn_prefill_fp8_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "attn_prefill_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "kda_chunk_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "kda_conv_contract_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "kda_gate_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "kda_layer_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "kda_commit_swap_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "kda_commit_swap_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "kda_replay_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "kda_recurrent_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "kernel_probe", required-features = ["cuda", "gpu-examples"] },
+    { name = "lora_apply_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "metal_qwen35_inference", path = "examples/metal_qwen35_inference/main.rs", required-features = ["metal-example"] },
+    { name = "mhc_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "moe_blend_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "moe_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "moe_router_gemm_rt_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "moe_shared_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "moe_silu_down_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "moe_topk_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "moe_w8a8_e4m3_grouped_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "native_attn_decode_splitk_hopper_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "native_bf16_lm_head_m16_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "native_fp8_act_quant_hopper_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "native_fp8_attn_decode_batch_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "native_fp8_decode_proj_w8a8_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "native_fp8_ffn_batch16_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "native_fp8_ffn_down_gemv_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "native_fp8_ffn_gateup_fused_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "native_fp8_ffn_m16_tc_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "native_fp8_ffn_w8a8_microtest", required-features = ["cuda", "gpu-examples"], test = true },
+    { name = "native_fp8_gdn_proj_m32_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "native_fp8_gemv_hopper_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "native_fp8_oproj_batch_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "native_fp8_prefill_proj_w8a8_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "native_fp8_qkv_batch_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "native_gdn_chunk_prefill_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "native_gdn_prefill_remnants_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "native_ssm_ba_gates_hopper_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "q2_0_gemv_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "rope_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "w4a16_batch_bitparity_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "w4a16_gemv_tc_oracle", required-features = ["cuda", "gpu-examples"] },
+    { name = "w4a16_lmhead_716_repro", required-features = ["cuda", "gpu-examples"] },
+    { name = "w4a16_m17_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "w4a16_parity_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "w4a16_gemm_t_skinny_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "w4a16_qg_batch_bitparity_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "w4a4_gemv_nt_oracle", required-features = ["cuda", "gpu-examples"] },
+    { name = "w8a16_batch_bitparity_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "w8a16_gemm_pipe128_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "w8a8_decode_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "w8a16_gemv_batch4_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "w8a16_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "w8a16t_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dsa_hb_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dsa_prefill_pipe_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dsa_prefill_tc_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dsa_prefill_tc_nanor_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dsa_proj_tier_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dsa_hb_layer_parity", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dsa_hb_replay", required-features = ["cuda", "gpu-examples"] },
+    { name = "dsa_fp8_indexer_gpu", required-features = ["cuda", "gpu-examples"] },
+    # 2026-10-17: Formerly auto-discovered and ungated in model-arch; each imports the CUDA backend, so each is gated like the rest.
+    { name = "batchm_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "conv1d_strided_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "conv1d_tp_check", required-features = ["cuda", "gpu-examples"] },
+    { name = "dense_gemv_bf16_batchm_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "gdn_fla_vs_fi", required-features = ["cuda", "gpu-examples"] },
+    { name = "gdn_regresident_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_dsa_decode_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_hc_post_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_hc_split_gate", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_moe_grouped_tile_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "glm5next_moe_row_batch_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "int8_gemm_test", required-features = ["cuda", "gpu-examples"] },
+    { name = "moe_l2_reuse_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "rmsnorm_vanilla_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "verify_exact_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "w4a16_bf16_v2_bench", required-features = ["cuda", "gpu-examples"] },
+    { name = "w4a16_bf16_v2_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "w4a16_gemv_sw_microtest", required-features = ["cuda", "gpu-examples"] },
+    { name = "w8a16_gemv_numeric", required-features = ["cuda", "gpu-examples"] },
+    { name = "x435_ssm_attrib", required-features = ["cuda", "gpu-examples"] },
+    { name = "x435_ssm_cost", required-features = ["cuda", "gpu-examples"] },
+]
+
+[package]
+name = "metrale-gpu-examples"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Metrale Engine: GPU microtests, parity gates and benches for the model-arch kernels (dev-only; not a default member)."
+autoexamples = false
+autobins = false
+autotests = false
+autobenches = false
+
+[features]
+default = ["cuda"]
+cuda = ["metrale-model-arch/cuda", "dep:cudarc"]
+metal = ["metrale-model-arch/metal"]
+metal-example = ["metal", "dep:tokenizers", "dep:memmap2", "dep:safetensors"]
+gpu-examples = []
+
+[dependencies]
+metrale-cache = { workspace = true }
+metrale-comm = { workspace = true }
+metrale-config = { workspace = true }
+metrale-gpu-runtime = { workspace = true }
+metrale-kernels = { workspace = true }
+metrale-kv-tq128 = { workspace = true }
+metrale-target-defaults = { workspace = true }
+metrale-model-arch = { workspace = true }
+metrale-model-layers = { workspace = true }
+metrale-settings = { workspace = true }
+metrale-io-host-std = { workspace = true }
+metrale-kv-codec = { workspace = true }
+# 2026-10-22: The kernel_energy_loop harness: the power port, its NVML probes and host adapters,
+# the attribution core and the run order.
+metrale-abstract-io = { workspace = true }
+metrale-io-host-power = { workspace = true }
+metrale-power = { workspace = true }
+metrale-stats = { workspace = true }
+metrale-telemetry = { workspace = true }
+# 2026-10-21: The driver graph queries of `pdl_capture_gate` (edge types of a captured graph).
+cudarc = { workspace = true, features = ["std", "driver", "fallback-dynamic-loading", "cuda-version-from-build-system"], optional = true }
+anyhow = { workspace = true, features = ["std"] }
+half = { workspace = true, features = ["std"] }
+serde_json = { workspace = true, features = ["std", "preserve_order"] }
+tokenizers = { workspace = true, optional = true, features = ["onig"] }
+memmap2 = { workspace = true, optional = true }
+safetensors = { workspace = true, optional = true, features = ["std"] }
+
+[lints]
+workspace = true
+
+# 2026-10-23: `tool`, not `bin`: these examples are the vendor oracle for the device crates'
+# claims (bit-identity gates and microbenches that drive CUDA, cudarc and NCCL directly to check
+# what metrale-gpu-runtime and the kernels promise), so they name the vendor on purpose. The role
+# exempts the crate from vendor-ban and the depgraph VBOP rule only; env-ban and kv-codec-ban
+# still apply. No member may depend on it.
+[package.metadata.metrale]
+role = "tool"

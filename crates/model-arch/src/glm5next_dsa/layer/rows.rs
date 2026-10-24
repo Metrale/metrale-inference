@@ -7,6 +7,8 @@
 //! Owner: model-arch (GLM-5.3 DSA).
 //! Invariants:
 //! - `write_kv_row` writes no KV latent when the indexer cache is behind `seq_len`.
+//! - 2026-10-21: A `SlotUpload::StreamOrdered` row is refused under capture: its slot is a host
+//!   value the copy reads at enqueue, which a graph would freeze.
 
 use anyhow::{Result, bail};
 use metrale_cache::kv_cache::PagedKvCache;
@@ -14,41 +16,253 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use metrale_model_layers::layer::{ForwardContext, LayerState};
 
-use super::super::select::{DsaSelectInputs, select_tokens};
+use super::super::paged::{IndexerCache, IndexerRowsDev};
+use super::super::select::DsaSelectInputs;
 use super::super::state::Glm5NextDsaState;
-use super::{Glm5NextDsaLayer, gemm};
+use super::{Glm5NextDsaLayer, IndexerKernels, IndexerPlace, SlotUpload};
+
+/// 2026-10-21: Which rows `store_pool_keys` finishes: `n` rows at the device positions `pos`
+/// through the device block tables `bt` (`bt_stride` i32 apart per row, 0 for one sequence) of
+/// `rows`, or one host-placed row at absolute position `pos` of the host block table.
+pub(crate) enum PoolKeyRows<'a> {
+    Device {
+        rows: &'a IndexerRowsDev,
+        pos: DevicePtr,
+        bt: DevicePtr,
+        bt_stride: u32,
+        n: usize,
+    },
+    Host {
+        pos: usize,
+        block_table: &'a [u32],
+        kv_cache: &'a PagedKvCache,
+    },
+    /// 2026-10-21: `n` consecutive rows from absolute position `pos0` of a flat cache (`rows`
+    /// its buffers), placed by the host (the GEMMs wrote them).
+    Flat {
+        rows: &'a IndexerRowsDev,
+        pos0: usize,
+        n: usize,
+    },
+}
 
 impl Glm5NextDsaLayer {
+    /// 2026-10-21: Persists the key of every pool these rows complete
+    /// (`dsa_pool_keys_store_rows`), after the rows are in the cache; nothing for rows that
+    /// keep no pool keys (a flat cache outside the MTP drafter, FP8, or
+    /// `METRALE_GLM_DSA_POOL_KEYS=0`). 2026-10-23: `k` is the store kernel (the layer's
+    /// `rows.pool_keys_store`, or a plan's).
+    pub(crate) fn store_pool_keys(
+        &self,
+        gpu: &dyn GpuBackend,
+        k: KernelHandle,
+        which: PoolKeyRows<'_>,
+        stream: u64,
+    ) -> Result<()> {
+        let layout = match &which {
+            PoolKeyRows::Device { rows, .. } | PoolKeyRows::Flat { rows, .. }
+                if rows.pool_keys.0 == 0 =>
+            {
+                return Ok(());
+            }
+            PoolKeyRows::Device { .. } | PoolKeyRows::Flat { .. } => None,
+            PoolKeyRows::Host { pos, kv_cache, .. } => {
+                let layout = self.paged_layout(kv_cache)?;
+                let Some(kp) = layout.pool_keys_kp else {
+                    return Ok(());
+                };
+                // 2026-10-21: Only a row that completes a pool launches.
+                if (pos + 1) % kp != 0 {
+                    return Ok(());
+                }
+                Some(layout)
+            }
+        };
+        if k.0 == 0 {
+            bail!(
+                "DSA layer {}: the pooled indexer rows need dsa_pool_keys_store_rows",
+                self.layer_idx
+            );
+        }
+        let (d, kp) = (self.cfg.index_head_dim, self.cfg.index_kpool);
+        #[allow(clippy::too_many_arguments)]
+        let launch = |pos: DevicePtr,
+                      pos0: i32,
+                      kb: DevicePtr,
+                      gb: DevicePtr,
+                      pkb: DevicePtr,
+                      bt: DevicePtr,
+                      bt_stride: u32,
+                      n: usize,
+                      (bs, blk_elems, pk_blk): (u32, u32, u32)| {
+            KernelLaunch::new(gpu, k)
+                .grid([1, n as u32, 1])
+                .block([d.min(1024) as u32, 1, 1])
+                .arg_ptr(pos)
+                .arg_i32(pos0)
+                .arg_ptr(kb)
+                .arg_ptr(gb)
+                .arg_ptr(pkb)
+                .arg_ptr(self.weights.ape)
+                .arg_u32(d as u32)
+                .arg_u32(kp as u32)
+                .arg_ptr(bt)
+                .arg_u32(bt_stride)
+                .arg_u32(bs)
+                .arg_u32(blk_elems)
+                .arg_u32(pk_blk)
+                .launch(stream)
+        };
+        match (which, layout) {
+            (PoolKeyRows::Device { rows, pos, bt, bt_stride, n }, _) => launch(
+                pos,
+                0,
+                rows.k,
+                rows.gate,
+                rows.pool_keys,
+                bt,
+                bt_stride,
+                n,
+                (rows.block_size, rows.blk_elems, rows.pk_blk),
+            ),
+            // 2026-10-21: The kernel addresses the row's own block (bt NULL, the slot in it).
+            (PoolKeyRows::Host { pos, block_table, kv_cache }, Some(layout)) => {
+                let bs = layout.block_size;
+                let blk = *block_table.get(pos / bs).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "DSA layer {}: pool keys of row {pos}: block table has no logical block {}",
+                        self.layer_idx,
+                        pos / bs
+                    )
+                })? as usize;
+                let base = kv_cache
+                    .v_pool_ptr(self.attn_layer_idx)
+                    .offset(blk * layout.block_stride_bytes);
+                launch(
+                    DevicePtr::NULL,
+                    i32::try_from(pos % bs)?,
+                    base,
+                    base.offset(layout.gate_offset_bytes()),
+                    base.offset(layout.pool_keys_offset_bytes()),
+                    DevicePtr::NULL,
+                    0,
+                    1,
+                    (u32::try_from(bs)?, u32::try_from(layout.blk_elems())?, 0),
+                )
+            }
+            (PoolKeyRows::Host { .. }, None) => Ok(()),
+            // 2026-10-21: bt NULL over the flat buffers: x = pos0 + row, the key at row x / kp.
+            (PoolKeyRows::Flat { rows, pos0, n }, _) => launch(
+                DevicePtr::NULL,
+                i32::try_from(pos0)?,
+                rows.k,
+                rows.gate,
+                rows.pool_keys,
+                DevicePtr::NULL,
+                0,
+                n,
+                (0, 0, 0),
+            ),
+        }
+    }
+
     /// 2026-09-26: `indexer_forward`'s last step: places the projected `k_normed` and `gate`
-    /// at row `pos` (through `dsa_indexer_store` at `pos_dev` when given), marks the row
-    /// valid, and advances `state` by one row.
+    /// at row `pos` (through `dsa_indexer_store` for [`IndexerPlace::Device`]), marks the row
+    /// valid in a flat cache, and advances `state` by one row. 2026-10-23: `own` names the
+    /// placement kernels (the layer's, or a plan's).
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn store_indexer_row(
         &self,
         gpu: &dyn GpuBackend,
         state: &mut Glm5NextDsaState,
-        pos_dev: Option<DevicePtr>,
+        kv_cache: &PagedKvCache,
+        place: IndexerPlace<'_>,
         pos: usize,
-        d: usize,
+        // 2026-10-09: The staging row a device placement copies from: 0, or row `r` of the
+        // batched indexer projections (`indexer_project_rows`).
+        stage_row: usize,
+        own: IndexerKernels,
         stream: u64,
     ) -> Result<()> {
-        let w = &self.workspace;
-        match pos_dev {
+        let (w, d) = (&self.workspace, self.cfg.index_head_dim);
+        match place {
             // 2026-09-25: Placement and the validity mark both use the device-side position;
             // a memset at `valid.offset(pos)` would fix a host address in a captured graph.
-            Some(pd) => {
-                KernelLaunch::new(gpu, self.select_kernels.indexer_store)
+            IndexerPlace::Device { pos: pd, bt } => {
+                let rows = self.indexer_rows(state, kv_cache, bt)?;
+                if rows.fp8.is_some() {
+                    self.store_fp8_rows(gpu, &rows, stage_row, pd, bt, 0, 1, 1, stream)?;
+                    return state.advance(1);
+                }
+                if own.store.0 == 0 {
+                    bail!(
+                        "DSA layer {}: a device-placed indexer row needs dsa_indexer_store, \
+                         which this target lacks",
+                        self.layer_idx
+                    );
+                }
+                // 2026-10-09: A flat state's rows are its own buffers and `bt` is unused (the
+                // launch passes NULL, 0, 0); a paged state's go through `bt`.
+                KernelLaunch::new(gpu, own.store)
                     .grid([1, 1, 1])
                     .block([d.min(1024) as u32, 1, 1])
-                    .arg_ptr(w.stage_k)
-                    .arg_ptr(w.stage_gate)
+                    .arg_ptr(w.stage_k.offset(stage_row * d * 2))
+                    .arg_ptr(w.stage_gate.offset(stage_row * d * 2))
                     .arg_ptr(pd)
-                    .arg_ptr(state.k_normed)
-                    .arg_ptr(state.gate)
-                    .arg_ptr(state.valid)
+                    .arg_ptr(rows.k)
+                    .arg_ptr(rows.gate)
+                    .arg_ptr(rows.valid)
                     .arg_u32(d as u32)
+                    .arg_ptr(rows.bt)
+                    .arg_u32(rows.block_size)
+                    .arg_u32(rows.blk_elems)
                     .launch(stream)?;
+                self.store_pool_keys(
+                    gpu,
+                    own.pool_keys,
+                    PoolKeyRows::Device {
+                        rows: &rows,
+                        pos: pd,
+                        bt: rows.bt,
+                        bt_stride: 0,
+                        n: 1,
+                    },
+                    stream,
+                )?;
             }
-            None => gpu.memset_async(state.valid.offset(pos), 1, 1, stream)?,
+            // 2026-10-09: A paged cache has no validity bytes: every row below the length is
+            // valid.
+            IndexerPlace::Host { .. } if state.fp8_ring().is_some() => bail!(
+                "DSA layer {}: an FP8 indexer row needs a device placement",
+                self.layer_idx
+            ),
+            // 2026-10-21: The GEMMs wrote the row; its pool's key follows when it completes one.
+            IndexerPlace::Host { block_table } if state.cache() == IndexerCache::Paged => self
+                .store_pool_keys(
+                    gpu,
+                    own.pool_keys,
+                    PoolKeyRows::Host {
+                        pos,
+                        block_table,
+                        kv_cache,
+                    },
+                    stream,
+                )?,
+            IndexerPlace::Host { .. } => {
+                gpu.memset_async(state.valid.offset(pos), 1, 1, stream)?;
+                if let Some(rows) = state.flat_rows() {
+                    self.store_pool_keys(
+                        gpu,
+                        own.pool_keys,
+                        PoolKeyRows::Flat {
+                            rows: &rows,
+                            pos0: pos,
+                            n: 1,
+                        },
+                        stream,
+                    )?;
+                }
+            }
         }
         state.advance(1)
     }
@@ -66,7 +280,17 @@ impl Glm5NextDsaLayer {
         gpu: &dyn GpuBackend,
         k: usize,
         state: &Glm5NextDsaState,
+        rows: IndexerRowsDev,
         q_pos_host: &[i32],
+        // 2026-10-09: The selector query of all rows in groups of the batched FP32-out GEMV
+        // (`f32_proj_rows`, each row the M = 1 GEMV's bits) instead of one GEMV per row
+        // (`METRALE_GLM_DSA_INDEXER_ROWS`).
+        batched_query: bool,
+        // 2026-10-15: The tensor-parallel communicator and whether this is a prefill pass: a
+        // prefill pass may split its scores, top-k and expansion over the ranks
+        // (`METRALE_GLM_DSA_SP_SELECT`, `sp_select::run`); decode never does.
+        comm: Option<&dyn metrale_comm::CommBackend>,
+        is_prefill: bool,
         stream: u64,
     ) -> Result<()> {
         let w = &self.workspace;
@@ -79,7 +303,7 @@ impl Glm5NextDsaLayer {
         // different order from the M = 1 GEMV, so near-tied index scores can select other
         // pools; that is why it is opt-in. Decode and the speculative verify never reach this
         // function (`batch_select_enabled`).
-        if crate::glm5next_layer::dsa_batch_qidx() {
+        if self.levers.dsa_batch_qidx {
             metrale_model_layers::layers::ops::cublas_bf16_proj_dense_f32_out(
                 w.q_resid,
                 self.weights.wq_b,
@@ -89,13 +313,25 @@ impl Glm5NextDsaLayer {
                 self.cfg.q_lora_rank as u32,
                 stream,
             )?;
+        } else if batched_query {
+            self.f32_proj_rows(
+                gpu,
+                w.q_resid,
+                self.weights.wq_b,
+                w.q_idx_rows,
+                k,
+                idx_row,
+                self.cfg.q_lora_rank,
+                stream,
+            )?;
         } else {
             for row in 0..k {
-                gemm(
+                self.gemm(
                     gpu,
                     self.kernels.gemm_f32,
                     self.kernels.gemv_f32,
-                    // 2026-09-25: No FP32-out batched GEMV kernel exists.
+                    // 2026-09-25: M = 1 per row (2026-10-09: `batched_query` takes the batched
+                    // FP32-out GEMV above).
                     KernelHandle(0),
                     w.q_resid.offset(row * self.cfg.q_lora_rank * 2),
                     self.weights.wq_b,
@@ -108,11 +344,10 @@ impl Glm5NextDsaLayer {
             }
         }
         let q_pos_bytes: Vec<u8> = q_pos_host.iter().flat_map(|p| p.to_le_bytes()).collect();
-        gpu.copy_h2d(&q_pos_bytes, w.q_pos_rows)?;
+        // 2026-10-09: Stream-ordered, without a host sync; the selection below is on `stream`.
+        gpu.copy_h2d_async(&q_pos_bytes, w.q_pos_rows, stream)?;
         let inputs = DsaSelectInputs {
-            k_normed: state.k_normed,
-            gate: state.gate,
-            valid: state.valid,
+            rows,
             ape: self.weights.ape,
             q: w.q_idx_rows,
             weights: w.head_weights_rows,
@@ -123,17 +358,23 @@ impl Glm5NextDsaLayer {
             // (ceiling) launch at `q_rows > 1`.
             geom_dev: DevicePtr::NULL,
         };
-        let t = crate::glm5next_layer::profile::start();
+        let t = self.levers.profile.start();
         // 2026-09-25: The base of the `[max_rows, out_width]` output, not a row slice: the
-        // kernels index rows themselves, so rows 0..k land in their own slots.
-        select_tokens(
+        // kernels index rows themselves, so rows 0..k land in their own slots. 2026-10-11: In
+        // row sub-passes when the scratch holds fewer rows at this context
+        // (`select_scratch_rows`); each row's selection is the one-pass one. 2026-10-15: Or
+        // split over the ranks, each row's bytes unchanged (`sp_select::run`).
+        super::super::sp_select::run::select_with(
+            self.dsa_owned.sp_table.as_ref(),
+            self.dsa_owned.sp_payload,
             gpu,
             &self.select_kernels,
             &self.cfg,
             &geom,
             &inputs,
             &w.select,
-            super::super::select::DsaSelectLaunch::Exact,
+            comm,
+            is_prefill,
             stream,
         )?;
         crate::glm5next_layer::profile::end(
@@ -159,6 +400,7 @@ impl Glm5NextDsaLayer {
         kv_cache: &mut PagedKvCache,
         seq_len: usize,
         block_table: &mut Vec<u32>,
+        slot_upload: SlotUpload,
         ctx: &ForwardContext,
         stream: u64,
     ) -> Result<()> {
@@ -171,6 +413,10 @@ impl Glm5NextDsaLayer {
             })?;
         match st.len().cmp(&seq_len) {
             std::cmp::Ordering::Greater => st.rewind_to(seq_len)?,
+            // 2026-10-09: A paged cache's rows below `seq_len` are in the KV blocks.
+            std::cmp::Ordering::Less if st.cache() == IndexerCache::Paged => {
+                st.adopt_kv_rows(seq_len)?
+            }
             std::cmp::Ordering::Less => bail!(
                 "DSA layer {}: indexer cache holds {} rows but the drafter is at {seq_len} — \
                  rows are MISSING, not merely stale.",
@@ -180,7 +426,7 @@ impl Glm5NextDsaLayer {
             std::cmp::Ordering::Equal => {}
         }
         let w = &self.workspace;
-        gemm(
+        self.gemm(
             gpu,
             self.kernels.gemm,
             self.kernels.gemv,
@@ -204,7 +450,19 @@ impl Glm5NextDsaLayer {
             )
         })? as usize;
         let slot = (physical * block_size + seq_len % block_size) as i64;
-        gpu.copy_h2d(&slot.to_le_bytes(), w.slot)?;
+        match slot_upload {
+            SlotUpload::Blocking => gpu.copy_h2d(&slot.to_le_bytes(), w.slot)?,
+            SlotUpload::StreamOrdered => {
+                if gpu.stream_is_capturing(stream) {
+                    bail!(
+                        "DSA layer {}: a stream-ordered drafter row under capture would freeze \
+                         its KV slot",
+                        self.layer_idx
+                    );
+                }
+                gpu.copy_h2d_async(&slot.to_le_bytes(), w.slot, stream)?
+            }
+        }
         KernelLaunch::new(gpu, self.kernels.latent_write)
             .grid([1, 1, 1])
             .block([self.cfg.kv_lora_rank as u32, 1, 1])
@@ -216,6 +474,15 @@ impl Glm5NextDsaLayer {
             .arg_f32(self.rms_eps)
             .arg_f32(1.0 / self.kv_scale)
             .launch(stream)?;
-        self.indexer_forward(gpu, hidden, st, None, stream)
+        self.indexer_forward(
+            gpu,
+            hidden,
+            st,
+            kv_cache,
+            IndexerPlace::Host {
+                block_table: block_table.as_slice(),
+            },
+            stream,
+        )
     }
 }

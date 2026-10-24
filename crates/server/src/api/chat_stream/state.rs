@@ -15,6 +15,10 @@ pub(super) struct StreamState {
     /// 2026-09-26: Token ids of the current phase; cleared at the think-end token and when
     /// `<think>` re-opens.
     pub(super) all_toks: Vec<u32>,
+    /// 2026-10-09: Every token the stream received, kept only under
+    /// `ChatLevers::log_tool_raw` for the raw log at `Done`
+    /// (`chat_blocking_choice::log_raw_generation`).
+    pub(super) raw_toks: Option<Vec<u32>>,
     /// 2026-09-26: Bytes of `content_decoded` already emitted as reasoning or content.
     pub(super) emitted: usize,
     /// 2026-09-26: Stable decoded text of `all_toks` for the current phase, grown by
@@ -124,6 +128,9 @@ pub(super) struct StreamState {
     /// 2026-09-26: True once the think-end token has arrived, or from the start when the
     /// request did not enable thinking; a re-opened `<think>` clears it.
     pub(super) thinking_done: bool,
+    /// 2026-10-08: The held call and when something last went out for it
+    /// (`tool_dispatch::keepalive_due`).
+    pub(super) keepalive_last: Option<(usize, std::time::Instant)>,
     /// 2026-09-26: Stays empty: only the `ctx.tool_retry_enabled` branch writes it, and
     /// that flag is always `false`.
     pub(super) buffered_tool_chunks: std::collections::HashMap<usize, Vec<crate::ir::StreamDelta>>,
@@ -148,9 +155,11 @@ impl StreamState {
         enable_thinking: bool,
         cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
         tool_defs: Vec<tool_parser::ToolDefinition>,
+        levers: &crate::api::chat::levers::ChatLevers,
     ) -> Self {
         Self {
             all_toks: Vec::new(),
+            raw_toks: levers.log_tool_raw.then(Vec::new),
             emitted: 0,
             content_decoded: String::new(),
             detok_prefix_offset: 0,
@@ -189,11 +198,13 @@ impl StreamState {
             detector: if tools_active {
                 Some(tool_parser::StreamingToolDetector::new_with_tools(
                     tool_defs,
+                    levers.buffer_tool_args,
                 ))
             } else {
                 None
             },
             thinking_done: !enable_thinking,
+            keepalive_last: None,
             buffered_tool_chunks: HashMap::new(),
             pending_retry: None,
             pending_token_ids: Vec::new(),
@@ -218,7 +229,13 @@ mod stop_string_match_tests {
     #[test]
     fn note_stop_string_match_records_and_cancels() {
         let flag = Arc::new(AtomicBool::new(false));
-        let mut s = StreamState::new(false, false, flag.clone(), Vec::new());
+        let mut s = StreamState::new(
+            false,
+            false,
+            flag.clone(),
+            Vec::new(),
+            &crate::api::chat::levers::ChatLevers::OFF,
+        );
         assert!(!s.stop_string_matched, "fresh stream: no match yet");
         assert!(!flag.load(Ordering::Acquire));
         s.note_stop_string_match();

@@ -15,7 +15,3 @@ use = [
   "../gb10/kimi-k3/bf16/kda_decode.cu",
   "../gb10/kimi-k3/bf16/mla_decode.cu",
 ]
-
-# 2026-09-25: Entries of this directory that replace a same-stem entry of common/.
-[shadow]
-moe_w4a16_grouped_gemm = "uses gb10/deepseek-v4-flash/nvfp4/moe_w4a16_grouped_gemm.cu (the E8M0 ptrtable GEMM Kimi dispatches) over b300/common/moe_w4a16_grouped_gemm.cu; see kernels/FORKS.md"

@@ -89,63 +89,57 @@ pub(super) fn bootstrap_seq(
         // to the standalone decode below.
     }
 
+    // 2026-10-23: `METRALE_PAIRED_AB_TRAJ` (`forced_traj`): a replay feeds the recorded token.
+    let traj = match crate::scheduler::forced_traj_hooks::feed(sched.forced.as_ref(), a, false) {
+        Ok(t) => t,
+        Err(e) => {
+            crate::scheduler::lifecycle::fail_sequence(a, format!("forced trajectory: {e:#}"));
+            return;
+        }
+    };
     // 2026-09-25: Standalone decode. Under EP the token is broadcast to
     // the worker first (`ep_broadcast_cmd_for_seq`).
     if let Err(e) = model.ep_broadcast_cmd_for_seq(a.seq.slot_idx as u32, a.last_token) {
         tracing::error!(target: "met::scheduler::mtp_step", "EP broadcast bootstrap token: {e:#}");
-        a.finished = true;
+        crate::scheduler::lifecycle::fail_sequence(
+            a,
+            format!("EP broadcast bootstrap token: {e:#}"),
+        );
         return;
     }
     let logits = match model.decode(a.last_token, &mut a.seq, 0) {
         Ok(l) => l,
         Err(e) => {
             tracing::error!(target: "met::scheduler::mtp_step", "bootstrap decode error: {e:#}");
-            a.finished = true;
+            crate::scheduler::lifecycle::fail_sequence(a, format!("bootstrap decode error: {e:#}"));
             return;
         }
     };
-    // 2026-09-25: The sequence's penalties from `penalty_params_for`, the
-    // builder the non-MTP decode path also uses. Built before
-    // `grammar_state` is borrowed mutably below.
-    let penalties = crate::scheduler::sample_step::penalty_params_for(
-        a,
-        crate::scheduler::sample_step::PositionKind::Verify,
-        0.0,
-        None,
-        Vec::new(),
-        sched.watchdog.min_reasoning_floor,
-    );
-    // 2026-09-25: Penalty history scoped to the current tool-call
-    // segment (`penalty_history_scope`), as in the logits pipeline.
-    let history = crate::scheduler::sample_step::penalty_history_scope(
-        &a.output_tokens,
-        a.tool_call_end_token,
-    )
-    .to_vec();
-    // 2026-09-25: The sampler's min_p is `penalties.min_p`, copied from
-    // `a.min_p` (the request's min_p raised to MODEL.toml `min_p_floor`
-    // in `sampling_setup`). `METRALE_NO_MTP_MINP=1` passes 0.0 instead
-    // (`effective_min_p`).
-    let tok = match sample_token_with_grammar(
-        model,
-        logits,
-        a.temperature,
-        a.top_k,
-        a.top_p,
-        &[],
-        a.grammar_state.as_mut(),
-        &penalties,
-        &history,
-        &sched.levers.sampling(),
+    // 2026-10-21: The pick a verify position 0 would make, through the logits
+    // pipeline (`bootstrap_pick`): no grammar inside thinking, the forced
+    // `</think>`, the think and tool-call masks, the EOS hold, the penalties
+    // and the request's `logit_bias`, as on the decode path.
+    let tok = match crate::scheduler::verify_pipeline_helper::bootstrap_pick(
+        model, logits, 0, a, verify_ctx, None,
     ) {
         Ok(t) => t,
         Err(e) => {
             tracing::error!(target: "met::scheduler::mtp_step", "bootstrap sample error: {e:#}");
-            a.finished = true;
+            crate::scheduler::lifecycle::fail_sequence(a, format!("bootstrap sample error: {e:#}"));
             return;
         }
     };
 
+    let tok = match (traj, sched.forced.as_ref()) {
+        (Some(at), Some(f)) => match f.boot_pick(at, a.last_token, tok) {
+            Ok(t) => t,
+            Err(e) => {
+                crate::scheduler::lifecycle::fail_sequence(a, format!("forced trajectory: {e:#}"));
+                return;
+            }
+        },
+        _ => tok,
+    };
     let lp = if let Some(k) = a.top_logprobs {
         extract_single_logprobs(model, logits, tok, k)
     } else {
@@ -161,24 +155,32 @@ pub(super) fn bootstrap_seq(
     // re-probe window.
     crate::scheduler::adaptive_spec::tick_serial(a, sched);
 
-    // 2026-09-25: Drafter context for this token (the unified ctx
-    // commit when `dflash_unified_ctx`, else the serial append under
-    // `METRALE_DFLASH_SERIAL_APPEND`) is added here only when the propose
-    // below will not run, or on the step that resumes speculation after
-    // an adaptive suspension (`reprobe_resume`). `spec_allowed` mutates
+    // 2026-09-25: Drafter context for this token: the unified ctx commit when
+    // `dflash_unified_ctx` (always, see below), else the serial append under
+    // `METRALE_DFLASH_SERIAL_APPEND`, added here only when the propose below
+    // will not run, or on the step that resumes speculation after an
+    // adaptive suspension (`reprobe_resume`). `spec_allowed` mutates
     // re-probe state, so it is evaluated once here and its verdict is
     // reused for the propose gate.
     let was_suspended = crate::scheduler::adaptive_spec::is_suspended(a, sched);
     let will_propose = crate::scheduler::adaptive_spec::spec_allowed(a, sched);
     let reprobe_resume = was_suspended && will_propose;
-    if sched.levers.dflash_unified_ctx {
-        if !will_propose || reprobe_resume {
-            let base_pos = a.seq.seq_len.saturating_sub(1);
-            if let Err(e) = model.commit_ctx(&mut a.seq, 1, base_pos, 0) {
-                tracing::error!(target: "met::scheduler::mtp_step", "commit_ctx (mtp serial): {e:#}");
-            }
+    // 2026-10-10: On a DFlash serve the unified ctx row is committed here whether or not the
+    // propose runs. Leaving it to the propose's own decode-append dropped it whenever the serial
+    // decode steps before this bootstrap (a thinking span, the throughput gate's K=0 steps) had
+    // left `skip_next_decode_append` set by their commits: the propose consumed that stale flag
+    // and skipped the append, so the `</think>` row was missing from every thinking request's
+    // drafter context. The commit sets the flag itself, so the propose does not append twice,
+    // and it copies the same capture row (row 0 of the DFlash hidden save) at the same position.
+    if sched.levers.dflash_unified_ctx
+        && (dflash_verify_raw_argmax || !will_propose || reprobe_resume)
+    {
+        let base_pos = a.seq.seq_len.saturating_sub(1);
+        if let Err(e) = model.commit_ctx(&mut a.seq, 1, base_pos, 0) {
+            tracing::error!(target: "met::scheduler::mtp_step", "commit_ctx (mtp serial): {e:#}");
         }
-    } else if sched.levers.dflash_serial_append
+    } else if !sched.levers.dflash_unified_ctx
+        && sched.levers.dflash_serial_append
         && (!will_propose || reprobe_resume)
         && let Err(e) = model.dflash_serial_ctx_append(&mut a.seq)
     {
@@ -197,8 +199,14 @@ pub(super) fn bootstrap_seq(
     // draft can violate its own position's mask. One draft verifies on
     // the K=2 arm. Without a grammar the propose is sized to this step's
     // `ladder_nd`.
+    // 2026-10-10: On a single stream the adaptive draft count (`--dflash-adaptive-k`) sizes the
+    // propose too, at least one draft: this propose is the re-probe after a suspension.
+    let step_nd = sched
+        .dflash_rung
+        .adaptive_drafts(&a.spec_adapt.k, ladder_nd)
+        .map_or(ladder_nd, |k| k.max(1));
     let effective_num_drafts =
-        crate::scheduler::spec_step::effective_drafts_under_grammar(a, ladder_nd);
+        crate::scheduler::spec_step::effective_drafts_under_grammar(a, step_nd);
     // 2026-09-25: A sequence suspended by adaptive speculation does not
     // propose, so it stays on this bootstrap path until `spec_allowed`
     // re-probes.

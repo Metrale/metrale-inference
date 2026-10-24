@@ -10,10 +10,10 @@ Metrale Engine can build and run on Apple Silicon (M1/M2/M3/M4) under the
 
 ```sh
 # Default (Linux/CUDA): unchanged.
-cargo build -p metrale-server --bin met
+cargo build -p met --bin met
 
 # Apple Silicon: opt out of cuda, opt into metal.
-cargo build -p metrale-server --bin met --features metal --no-default-features
+cargo build -p met --bin met --features metal --no-default-features
 
 # Sanity check — the binary should link no libcuda / libnccl.
 otool -L target/debug/met | grep -i cuda    # → no output
@@ -93,8 +93,9 @@ Every kernel has an FP32 CPU-reference parity test
 
 The Metal contiguous cache supports the TurboQuant dtypes from the
 CUDA backend's `--kv-cache-dtype` family, selected per `LayerKvCache`
-via `MetalKvDtype` (the `metal_qwen35_inference` example exposes it as
-`METRALE_KV_DTYPE={bf16,turbo8,turbo4,turbo3,turbo2}`):
+via a KV codec pair that the codec crate's Metal kernel table serves (the
+`metal_qwen35_inference` example exposes it as
+`METRALE_KV_DTYPE={bf16,turbo8,turbo4,turbo3,turbo2,bf16k_turbo4v,bf16k_turbo3v,bf16k_turbo2v}`):
 
 | dtype  | storage                                   | vs bf16 |
 |--------|-------------------------------------------|---------|
@@ -116,8 +117,10 @@ Mechanics, mirroring the CUDA write path and decode bookends:
   gate**: positions with unnormalized softmax weight ≤ 1e-3 skip the
   V dequant + accumulation entirely (attention-gated value
   dequantization — the benefit grows with context length).
-- `Qwen35Kernels::resolve` hard-requires all turbo kernel handles, so
-  a turbo cache can never silently fall back to the bf16 kernels.
+- `Qwen35Kernels::resolve` hard-requires the kernels of every pair the
+  Metal table serves, and a pair the table does not serve (fp8, nvfp4) is
+  refused at `LayerKvCache::alloc`, so a turbo cache can never silently
+  fall back to the bf16 kernels.
 - Per-quant `KERNEL.toml` `[build]` flags and `[modules]` entries are
   MERGED onto the common KERNEL.toml's (common first, model additions
   appended/winning per key) — model targets inherit `-ffast-math` and
@@ -161,7 +164,7 @@ The tests skip gracefully if the model isn't at
 `.github/workflows/ci.yml::test-macos-metal` runs on `macos-14`
 on every PR:
 
-1. `cargo check -p metrale-server --features metal --no-default-features`.
+1. `cargo check -p met --features metal --no-default-features`.
 2. `cargo test -p metrale-gpu-runtime --features metal metal_backend`
    (every default-passing parity test).
 3. `otool -L target/debug/met` must list **no** `libcuda` or

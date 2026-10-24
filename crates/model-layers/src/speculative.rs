@@ -17,11 +17,33 @@ pub use ladder::{
     mtp_ladder_disabled, mtp_ladder_drafts, mtp_ladder_pinned, mtp_max_seqs, parse_mtp_k_ladder,
     resolve_mtp_max_seqs, set_mtp_k_ladder, set_mtp_max_seqs,
 };
+pub mod device_step;
+mod k2_wire;
+mod kgamma_wire;
 mod knobs;
+mod propose_batch_wire;
+mod verify_batch_wire;
+pub use k2_wire::{
+    DEVICE_DRAFT, EP_CMD_VERIFY_K2_FUSED, FLAG_K2_DEVICE_VERDICT, FLAG_K2_SCREEN_HEAD,
+    K2_DEVICE_VERDICT_WORDS, K2_FUSED_ENV, K2_VERDICT_WORDS, K2Flags, K2Verdict,
+    announce_block as k2_announce_block, announced_tokens as k2_announced_tokens,
+    check_k2_fused_wire, device_verdict_agrees, k2_device_verdict, k2_fused_requested,
+};
+pub use kgamma_wire::{EP_CMD_VERIFY_KGAMMA, KGAMMA_MAX_ROWS, kgamma_committed_len, kgamma_width};
 pub use knobs::{
-    EP_CMD_MTP_PROPOSE, hidden_fingerprint, mtp_accept_debug, mtp_catchup_enabled,
-    mtp_ep_propose_enabled, mtp_multi_seq_mode, mtp_refeed_accepted_enabled, mtp_refeed_debug,
-    mtp_refeed_shift, shadow_topk,
+    EP_CMD_DFLASH_PROPOSE, EP_CMD_MTP_PROPOSE, MTP_HIDDEN_FROM_STASH, hidden_fingerprint,
+    mtp_accept_debug, mtp_catchup_enabled, mtp_ep_batch_verify_enabled, mtp_ep_propose_enabled,
+    mtp_multi_seq_mode, mtp_refeed_accepted_enabled, mtp_refeed_debug, mtp_refeed_shift,
+    shadow_topk, shadow_topk_given,
+};
+pub use propose_batch_wire::{
+    EP_CMD_MTP_PROPOSE_BATCH, PROPOSE_BATCH_MAX_DRAFTS, PROPOSE_BATCH_MAX_SEQS,
+    ProposeBatchColumns, propose_batch_columns, propose_batch_header, propose_batch_payload,
+    propose_batch_shape,
+};
+pub use verify_batch_wire::{
+    EP_CMD_VERIFY_BATCH, VERIFY_BATCH_MAX_SEQS, verify_batch_failed_verdict, verify_batch_shape,
+    verify_batch_verdict,
 };
 
 use std::any::Any;
@@ -87,6 +109,35 @@ pub trait DraftProposer: Send + Sync {
     /// collectives.
     fn needs_comm(&self) -> bool {
         false
+    }
+
+    /// 2026-10-10: Whether this proposer's propose is one collective step the other ranks run
+    /// from [`EP_CMD_DFLASH_PROPOSE`] alone (the tensor-parallel DFlash drafter): the model
+    /// then sends that code, not [`EP_CMD_MTP_PROPOSE`] and its words, and the proposer itself
+    /// sends everything else the other ranks need. Implies [`Self::needs_comm`]. Default false.
+    fn collective_propose(&self) -> bool {
+        false
+    }
+
+    /// 2026-10-10: The non-root side of a [`Self::collective_propose`] propose on `state` (the
+    /// command's slot; `None` when this rank has no state there, which the proposer reports
+    /// to every rank inside its collectives): the same collectives as rank 0's, in the same
+    /// order, with its drafts discarded. Errors for a proposer without one.
+    fn propose_follower(
+        &self,
+        state: Option<&mut dyn ProposerState>,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<()> {
+        let _ = (state, ctx, stream);
+        anyhow::bail!("this proposer has no collective propose")
+    }
+
+    /// 2026-10-23: The drafter's block as `--forward circuit` binds it on a tensor-parallel
+    /// rank: its own plan sites (`CircuitBindings::install_plans`) from the rank's draft plan.
+    /// Default: `None`, a proposer that executes nothing from a plan.
+    fn circuit_block(&self) -> Option<&dyn crate::circuit_exec::CircuitBindings> {
+        None
     }
 
     /// 2026-09-25: Whether this proposer's context prefill uses the shared
@@ -241,6 +292,33 @@ pub trait DraftProposer: Send + Sync {
     ) -> Result<usize> {
         let _ = (prompt_tokens, hiddens, state, ctx, stream);
         Ok(0)
+    }
+
+    /// 2026-10-11: One draft from `last_token` and `target_hidden`, as `propose` with
+    /// `num_drafts = 1` and no grammar computes it, left on the device ([`Self::device_draft`])
+    /// and not read back, so the caller can queue the next verify without waiting for it.
+    /// `Ok(false)`, with nothing run, when this proposer cannot (the default); the caller then
+    /// proposes as usual.
+    #[allow(clippy::too_many_arguments)]
+    fn propose_device(
+        &self,
+        last_token: u32,
+        target_hidden: DevicePtr,
+        position: usize,
+        state: &mut dyn ProposerState,
+        ctx: &ForwardContext,
+        stream: u64,
+    ) -> Result<bool> {
+        let _ = (last_token, target_hidden, position, state, ctx, stream);
+        Ok(false)
+    }
+
+    /// 2026-10-11: The device cell (one u32) holding the draft of the last
+    /// [`Self::propose_device`] on `state`, valid until the state's next propose; `None` when the
+    /// proposer has none (the default).
+    fn device_draft(&self, state: &mut dyn ProposerState) -> Option<DevicePtr> {
+        let _ = state;
+        None
     }
 
     /// 2026-09-25: The draft token id the last `propose` with

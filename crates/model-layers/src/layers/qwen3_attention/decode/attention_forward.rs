@@ -238,19 +238,8 @@ impl Qwen3AttentionLayer {
             )?;
         } else {
             self.write_kv_cache(
-                ctx.gpu,
-                k_out,
-                v_out,
-                kv_cache,
-                meta.slot,
-                1,
-                nkv,
-                hd,
-                bs as u32,
-                kv_stride,
-                kv_stride,
-                stream,
-                ctx.graph_capture,
+                ctx.gpu, k_out, v_out, kv_cache, meta.slot, 1, nkv, hd, bs as u32, kv_stride,
+                kv_stride, stream, ctx,
             )?;
         }
 
@@ -264,7 +253,7 @@ impl Qwen3AttentionLayer {
         // 2026-09-25: InnerQ scale on Q before the WHT; the kernel returns at once when the device
         // flag `d_innerq_active` is 0. The runtime WHT(Q) is skipped when `TQ_PLUS_WEIGHT_ROTATION`
         // pre-rotated the weights at load.
-        let weight_pre_rotated = crate::layers::ops::ModelLevers::get().weight_pre_rotated;
+        let weight_pre_rotated = ctx.levers.weight_pre_rotated;
         if k_is_turbo && self.innerq_apply_q_k.0 != 0 && hd == 128 {
             use metrale_gpu_runtime::kernel_args::KernelLaunch;
             KernelLaunch::new(ctx.gpu, self.innerq_apply_q_k)

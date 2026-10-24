@@ -1,10 +1,10 @@
-# metrale-server
+# met
 
 **Path:** `crates/server/`
 **Role:** the `met` binary. OpenAI- and Anthropic-compatible HTTP server, request scheduler, tokenizer, tool parsing, streaming, rate limiter, TUI and CLI.
 **Key modules** (under `crates/server/src/`): `main.rs` and `main_modules/` (startup, router, model host and hot-swap), `cli.rs` and `cli/` (every subcommand's arguments), `api/`, `openai/`, `anthropic/`, `scheduler/`, `scheduling_policy.rs`, `tool_parser/`, `reasoning_parser/`, `tokenizer/`, `grammar/`, `rate_limiter.rs`, `refusal.rs`, `metrics.rs`, `conversation_store.rs`, `response_store.rs`, `session_manager.rs`, `model_resolver.rs`, `recipe/`, `tui/`. The n-gram proposer is `crates/speculative/src/ngram.rs`.
 
-Building `metrale-server` produces the `met` executable that the Docker images ship. The other crates are libraries (a few carry developer tools as extra bins); `metrale-server` ties them together.
+Building the `met` package (library name `metrale_server`) produces the `met` executable that the Docker images ship. The other crates are libraries (a few carry developer tools as extra bins); `met` ties them together.
 
 ## Subcommands
 

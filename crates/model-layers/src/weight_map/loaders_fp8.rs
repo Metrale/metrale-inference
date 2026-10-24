@@ -137,6 +137,17 @@ pub fn load_fp8_block_scaled_as_fp8weight(
     })
 }
 
+/// 2026-10-10: The NVFP4 per-tensor scale of a tensor whose largest magnitude is `global_max`:
+/// 6.0 is the E2M1 maximum and 448.0 the E4M3 maximum, so the largest weight maps to the largest
+/// code; an all-zero tensor gets 1.0.
+pub fn nvfp4_scale2(global_max: f32) -> f32 {
+    if global_max > 0.0 {
+        global_max / (6.0 * 448.0)
+    } else {
+        1.0
+    }
+}
+
 /// 2026-09-25: Quantize a BF16 dense `[n, k]` weight to NVFP4 on the GPU.
 ///
 /// Two kernels: `absmax_kernel` finds the global absolute max, then
@@ -192,12 +203,7 @@ pub fn quantize_to_nvfp4(
     T_D2H.fetch_add(t.elapsed().as_nanos() as u64, Ordering::Relaxed);
     let global_max = f32::from_le_bytes(max_bytes);
 
-    // 2026-09-25: 6.0 is the E2M1 maximum and 448.0 the E4M3 maximum.
-    let scale2 = if global_max > 0.0 {
-        global_max / (6.0 * 448.0)
-    } else {
-        1.0
-    };
+    let scale2 = nvfp4_scale2(global_max);
 
     // 2026-09-25: The first 5 calls on this backend log their absmax
     // (`OpCache::first_n` counts per backend).

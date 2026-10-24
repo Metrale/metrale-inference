@@ -246,7 +246,7 @@ impl ModelConfig {
             return true;
         }
         if self.model_type == "gemma4" && self.num_experts == 0 {
-            return std::env::var("METRALE_GEMMA4_LMHEAD_NVFP4").ok().as_deref() != Some("1");
+            return !crate::legacy_env::gemma4_lmhead_nvfp4();
         }
         false
     }

@@ -1,0 +1,6 @@
+# env-ban fixture: stale and malformed entries.
+
+crates/app/build.rs
+crates/app/src/clean.rs
+crates/app/src/gone.rs
+crates/app/src/lib.rs:4

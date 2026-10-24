@@ -54,7 +54,7 @@ pub struct SchedulerCore {
     grammar_engine: Option<GrammarEngine>,
     adaptive_sampling: bool,
     session_manager: crate::session_manager::SessionSsmManager,
-    spontaneous_think_budget: u32,
+    spontaneous_think_budget: Option<u32>,
     use_mtp: bool,
     chunked: bool,
     mtp_gate: Option<metrale_speculative::mtp_gate::MtpGate>,
@@ -86,6 +86,7 @@ impl SchedulerCore {
         cfg: config::SchedulerConfig,
     ) -> Self {
         let config::SchedulerConfig {
+            embed_rx,
             eos_tokens,
             max_batch_size,
             use_speculative,
@@ -118,6 +119,8 @@ impl SchedulerCore {
             dflash_rung,
             telemetry,
             pipeline_faults,
+            run_io,
+            forced,
         } = cfg;
         let spill: Option<Box<dyn io::SpillIo>> = if swap_space_gb > 0 {
             let max_bytes = swap_space_gb as u64 * 1024 * 1024 * 1024;
@@ -139,19 +142,30 @@ impl SchedulerCore {
         } else {
             None
         };
+        let tel = io::SysTelemetry::new(
+            telemetry,
+            snapshot,
+            crate::scheduler::mtp_timing::RunTiming::new(levers.mtp_timing),
+            crate::scheduler::dumps::RunDumps::open(&run_io),
+        );
+        let rung = metrale_speculative::adaptive_rung::AdaptiveRung::with_settings(&levers.drafter);
         let mut sched = crate::scheduler::sched_ctx::SchedCtx::new(
             vocab_masks,
             levers,
             io::SchedIo::serving(
                 dev,
-                telemetry,
-                snapshot,
-                io::TokioRequestIo::new(request_rx, rotation_rx),
+                tel,
+                io::TokioRequestIo::new(
+                    request_rx,
+                    rotation_rx,
+                    embed_rx,
+                    run_io.stream_send_deadline,
+                ),
                 spill,
             ),
             limits,
             watchdog,
-            metrale_speculative::adaptive_rung::AdaptiveRung::from_env(),
+            rung,
             dflash_rung,
         );
         sched
@@ -184,6 +198,18 @@ impl SchedulerCore {
                 sched.shared_lookup = Some(sl);
             }
         }
+        // 2026-10-23: The forced trajectory acts on single-sequence MTP steps only.
+        if let Some(mode) = forced {
+            tracing::info!(
+                "PAIRED_AB_TRAJ: {}",
+                match &mode {
+                    crate::scheduler::forced_traj::TrajMode::Record => "record".to_string(),
+                    crate::scheduler::forced_traj::TrajMode::Replay(t) =>
+                        format!("replay of {} recorded requests", t.reqs.len()),
+                }
+            );
+            sched.forced = Some(crate::scheduler::forced_traj::ForcedTraj::new(mode));
+        }
         let num_drafts = if use_mtp || use_self_speculative || use_ngram_speculative {
             num_drafts.max(1)
         } else {
@@ -195,7 +221,10 @@ impl SchedulerCore {
         // Armed whenever MTP is on, unless `--mtp-gate force` (or
         // `METRALE_MTP_GATE_FORCE`) disarms it.
         let mtp_gate = if use_mtp && !sched.levers.mtp_gate_force {
-            Some(metrale_speculative::mtp_gate::MtpGate::new(num_drafts))
+            Some(metrale_speculative::mtp_gate::MtpGate::with_settings(
+                num_drafts,
+                &sched.levers.drafter,
+            ))
         } else {
             if use_mtp && sched.levers.mtp_gate_force {
                 tracing::warn!(
@@ -252,7 +281,10 @@ impl SchedulerCore {
         }
 
         // 2026-09-25: The KV admission watermark; see the `admission` module docs.
-        let admit_watermark = admission::resolve_admit_watermark(sched.limits.max_seq_len);
+        let admit_watermark = admission::resolve_admit_watermark(
+            sched.limits.max_seq_len,
+            sched.levers.kv_admit_watermark,
+        );
 
         let pending = PendingQueue::new();
 
@@ -273,7 +305,11 @@ impl SchedulerCore {
         let prefilling: Vec<PrefillInProgress> = Vec::new();
         let swapped: Vec<SwappedSeq> = Vec::new();
         let preempted: Vec<PreemptedSeq> = Vec::new();
-        install_high_speed_swap(sched.io.dev.model(), high_speed_swap_cfg);
+        install_high_speed_swap(
+            sched.io.dev.model(),
+            high_speed_swap_cfg,
+            sched.levers.high_speed_swap_replace,
+        );
 
         Self {
             ctx: sched,

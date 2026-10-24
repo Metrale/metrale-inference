@@ -38,57 +38,6 @@ extern "C" __global__ void moe_permute_tokens(
 }
 
 // 2026-09-25: output[token] = sum over k of topk_weights[token, k] *
-// expert_output[token * topk + k]. It reads expert_output in slot order, not sorted
-// order: sorted_token_ids is not read. Slots at or past total_expanded are skipped.
-
-
-extern "C" __global__ void moe_unpermute_reduce(
-    const __nv_bfloat16* __restrict__ expert_output,
-    __nv_bfloat16* __restrict__ output,
-    const int* __restrict__ sorted_token_ids,
-    const float* __restrict__ topk_weights,
-    unsigned int hidden_size,
-    unsigned int num_tokens,
-    unsigned int topk,
-    unsigned int total_expanded
-) {
-
-    unsigned int token = blockIdx.x;
-    unsigned int col = threadIdx.x;
-
-    if (token >= num_tokens) return;
-
-    for (unsigned int c = col; c < hidden_size; c += blockDim.x) {
-        float acc = 0.0f;
-        for (unsigned int k = 0; k < topk; k++) {
-            unsigned int perm_row = token * topk + k;
-            if (perm_row < total_expanded) {
-                float w = topk_weights[token * topk + k];
-                float val = __bfloat162float(expert_output[perm_row * hidden_size + c]);
-                acc += w * val;
-            }
-        }
-        output[token * hidden_size + c] = __float2bfloat16(acc);
-    }
-}
-
-// 2026-09-25: expert_counts[topk_ids[slot]] += 1 for each of the num_tokens * topk slots.
-// The kernel only adds, so the caller zeroes expert_counts first.
-extern "C" __global__ void moe_count_experts(
-    const int* __restrict__ topk_ids,
-    int* __restrict__ expert_counts,
-    unsigned int num_tokens,
-    unsigned int topk
-) {
-    unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned int total = num_tokens * topk;
-    if (idx < total) {
-        int expert_id = topk_ids[idx];
-        atomicAdd(&expert_counts[expert_id], 1);
-    }
-}
-
-// 2026-09-25: output[token] = sum over k of topk_weights[token, k] *
 // expert_output[token_to_perm[token * topk + k]], with token_to_perm from
 // moe_sort_by_expert. One block per token; the threads stride over hidden_size.
 

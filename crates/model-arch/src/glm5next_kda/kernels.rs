@@ -4,8 +4,9 @@
 //!
 //! Owner: model-arch (GLM-5.3-Flash KDA).
 //! Invariants:
-//! - `resolve` fails if any entry point other than `dense_gemv_bf16_batchm` and
-//!   `kda_recurrent_decode_bf16_smem` is missing; those two resolve to handle 0 when absent.
+//! - `resolve` fails if any entry point other than `dense_gemv_bf16_batchm`,
+//!   `kda_recurrent_decode_bf16_smem` and (2026-10-09) `kda_recurrent_decode_bf16_smem_rows`
+//!   is missing; those resolve to handle 0 when absent.
 
 use super::*;
 
@@ -19,7 +20,16 @@ pub struct Glm5NextKdaKernels {
     /// weight, so a K-row `decode_k` reads each projection weight once. `0` on a target without
     /// it; [`ops::dense_mm_bf16`] then sends those rows to the tile GEMM.
     pub gemv_batchm: KernelHandle,
+    /// 2026-10-09: `dense_gemv_bf16_batchm_wide` (9..=16 rows, accumulators in registers);
+    /// `0` when absent (`glm5next_layer::wide_gemv`).
+    pub gemv_batchm_wide: KernelHandle,
+    /// 2026-10-21: The 2..=8-row batched GEMVs (`glm5next_layer::wide_gemv`); KDA takes BF16 out.
+    pub gemv_batchm_few: crate::glm5next_layer::wide_gemv::FewGemv,
     pub conv_decode: KernelHandle,
+    /// 2026-10-09: `causal_conv1d_update_l2norm_rows`: `conv_decode` for up to
+    /// [`KDA_ROWS_MAX`] rows of different sequences, each row's window and workspace row a kernel
+    /// argument. Resolved with `try_kernel`; `0` keeps one launch per row.
+    pub conv_decode_rows: KernelHandle,
     pub conv_prefill: KernelHandle,
     pub l2: KernelHandle,
     pub gate: KernelHandle,
@@ -29,11 +39,44 @@ pub struct Glm5NextKdaKernels {
     /// 2026-09-25: 1R+1W sibling of `recurrent`: the decayed state column stays in shared memory
     /// between the two passes. Resolved with `try_kernel`; `0` selects the 2R+2W kernel.
     pub recurrent_smem: KernelHandle,
+    /// 2026-10-09: `kda_recurrent_decode_bf16_smem_rows`: the 1R+1W step for up to
+    /// [`KDA_ROWS_MAX`] rows of different sequences in one launch, each row's state a kernel
+    /// argument. Resolved with `try_kernel`; `0` keeps one launch per row.
+    pub recurrent_smem_rows: KernelHandle,
+    /// 2026-10-09: `kda_recurrent_decode_bf16_rows_reg`: the rows step with the decayed column
+    /// in registers (head_dim [`KDA_REG_D`] only). Taken instead of `recurrent_smem_rows` under
+    /// `METRALE_GLM_KDA_ROWS_REG=1` until measured; `0` when absent.
+    pub recurrent_rows_reg: KernelHandle,
+    /// 2026-10-09: The one-launch-per-layer stateful step of several tokens of one sequence
+    /// (`seq_tokens.rs`); all `0` on a target without them.
+    pub seq: KdaSeqKernels,
     pub o_norm: KernelHandle,
     pub split_widen: KernelHandle,
     pub sigmoid: KernelHandle,
     pub fill: KernelHandle,
     pub pack: KernelHandle,
+    /// 2026-10-10: `kda_gates_w8a8_k128`: one token's f_b / g_b W8A8 projections with their
+    /// activation quantization, the gate and the beta sigmoid in one launch
+    /// (`METRALE_GLM_KDA_GATES_FUSED=1`, `gates_fused.rs`). `0` when absent.
+    pub gates_fused: KernelHandle,
+    /// 2026-10-21: `kda_gates_w8a8_k128_rows`: the same chain for 1..=8 tokens
+    /// (`METRALE_GLM_KDA_GATES_ROWS`, `gates_fused.rs`). `0` when absent.
+    pub gates_rows: KernelHandle,
+}
+
+/// 2026-10-23: `(module, entry)` of the kernels a planned KDA mixer launches (`plan.rs`), named
+/// once for `resolve` and the GLM plan emitter (`glm5next_plan::kda`).
+pub mod entry {
+    pub const PACK: (&str, &str) = ("kda_layer_ops", "kda_pack_qkv_bf16");
+    pub const CONV_ROW: (&str, &str) = ("causal_conv1d", "causal_conv1d_update_l2norm");
+    pub const CONV_TOKENS: (&str, &str) = ("kda_conv_tokens", "causal_conv1d_update_l2norm_tokens");
+    pub const CONV_WINDOW: (&str, &str) = ("kda_conv_tokens", "causal_conv1d_window_advance");
+    pub const CONV_WINDOW_TO: (&str, &str) = ("kda_conv_tokens", "causal_conv1d_window_advance_to");
+    pub const RECUR_REG: (&str, &str) = ("kda_recurrent", "kda_recurrent_decode_bf16_seq_reg");
+    pub const RECUR_SNAP: (&str, &str) =
+        ("kda_recurrent", "kda_recurrent_decode_bf16_seq_reg_snap");
+    pub const GATES_ROWS: (&str, &str) = ("kda_gates_w8a8", "kda_gates_w8a8_k128_rows");
+    pub const O_NORM: (&str, &str) = ("kda_layer_ops", "kda_o_norm_gated_bf16");
 }
 
 impl Glm5NextKdaKernels {
@@ -48,7 +91,18 @@ impl Glm5NextKdaKernels {
                 "dense_gemv_bf16_batchm",
                 "dense_gemv_bf16_batchm",
             ),
-            conv_decode: gpu.kernel("causal_conv1d", "causal_conv1d_update_l2norm")?,
+            gemv_batchm_wide: metrale_model_layers::layers::try_kernel(
+                gpu,
+                "dense_gemv_bf16_batchm",
+                "dense_gemv_bf16_batchm_wide",
+            ),
+            gemv_batchm_few: crate::glm5next_layer::wide_gemv::FewGemv::resolve(gpu),
+            conv_decode: gpu.kernel(entry::CONV_ROW.0, entry::CONV_ROW.1)?,
+            conv_decode_rows: metrale_model_layers::layers::try_kernel(
+                gpu,
+                "causal_conv1d",
+                "causal_conv1d_update_l2norm_rows",
+            ),
             conv_prefill: gpu.kernel("causal_conv1d", "causal_conv1d_update_prefill")?,
             l2: gpu.kernel("norm", "l2_norm_bf16")?,
             gate: gpu.kernel("kda_gate", "kda_gate_bf16")?,
@@ -60,11 +114,120 @@ impl Glm5NextKdaKernels {
                 "kda_recurrent",
                 "kda_recurrent_decode_bf16_smem",
             ),
-            o_norm: gpu.kernel("kda_layer_ops", "kda_o_norm_gated_bf16")?,
+            recurrent_smem_rows: metrale_model_layers::layers::try_kernel(
+                gpu,
+                "kda_recurrent",
+                "kda_recurrent_decode_bf16_smem_rows",
+            ),
+            recurrent_rows_reg: metrale_model_layers::layers::try_kernel(
+                gpu,
+                "kda_recurrent",
+                "kda_recurrent_decode_bf16_rows_reg",
+            ),
+            seq: KdaSeqKernels::resolve(gpu),
+            o_norm: gpu.kernel(entry::O_NORM.0, entry::O_NORM.1)?,
             split_widen: gpu.kernel("kda_layer_ops", "kda_split_widen")?,
             sigmoid: gpu.kernel("kda_layer_ops", "kda_sigmoid_bf16_f32")?,
             fill: gpu.kernel("kda_layer_ops", "kda_fill_f32")?,
-            pack: gpu.kernel("kda_layer_ops", "kda_pack_qkv_bf16")?,
+            pack: gpu.kernel(entry::PACK.0, entry::PACK.1)?,
+            gates_fused: metrale_model_layers::layers::try_kernel(
+                gpu,
+                "kda_gates_w8a8",
+                "kda_gates_w8a8_k128",
+            ),
+            gates_rows: metrale_model_layers::layers::try_kernel(
+                gpu,
+                entry::GATES_ROWS.0,
+                entry::GATES_ROWS.1,
+            ),
         })
+    }
+}
+
+/// 2026-10-09: `#define KDA_ROWS_MAX` in `kernels/gb10/common/kda_recurrent.cu`: the state
+/// arguments `kda_recurrent_decode_bf16_smem_rows` takes. Wider groups keep one launch per
+/// row.
+pub const KDA_ROWS_MAX: usize = 16;
+
+/// 2026-10-09: `#define KDA_REG_D` in `kda_recurrent.cu`: the head_dim
+/// `kda_recurrent_decode_bf16_rows_reg` is compiled for.
+pub const KDA_REG_D: usize = 128;
+
+/// 2026-10-09: `causal_conv1d_update_l2norm_tokens`, `causal_conv1d_window_advance` and
+/// `kda_recurrent_decode_bf16_seq_reg` (the first two in `kda_conv_tokens.cu`), resolved
+/// with `try_kernel`. 2026-10-10: and the 16-token chunked scan `kda_chunk16_prepare` /
+/// `kda_chunk16_scan` (`kda_chunk16.cu`, `chunk16.rs`).
+#[derive(Clone, Copy, Debug)]
+pub struct KdaSeqKernels {
+    pub conv_tokens: KernelHandle,
+    /// 2026-10-13: `causal_conv1d_update_l2norm_tokens_parts`: `conv_tokens` reading the three
+    /// projections and writing the pack's `qkv_proj` too (`conv_pack.rs`).
+    pub conv_tokens_parts: KernelHandle,
+    pub conv_window: KernelHandle,
+    /// 2026-10-21: `causal_conv1d_window_advance_to`: a copy of the window then
+    /// [`Self::conv_window`] on the copy, in one launch (`METRALE_GLM_KDA_CONV_SNAP_TO`,
+    /// `seq_tokens.rs`). `0` when absent: the copy and the advance run.
+    pub conv_window_to: KernelHandle,
+    /// 2026-10-23: `causal_conv1d_update_l2norm_tokens_snap` (`kda_conv_snap.cu`): a verify's
+    /// conv, intermediates and window advance in one launch (`METRALE_GLM_KDA_CONV_ONE`).
+    pub conv_snap: KernelHandle,
+    pub recurrent: KernelHandle,
+    /// 2026-10-11: `kda_recurrent_decode_bf16_seq_reg_snap`: `recurrent` that also stores the
+    /// state after each of the first rows (a verify's intermediates, `stateful_tokens_snap`).
+    pub recurrent_snap: KernelHandle,
+    pub chunk16_prepare: KernelHandle,
+    pub chunk16_scan: KernelHandle,
+    /// 2026-10-12: The 64-token tensor-core chunked scan: `kda_chunk64_prepare`
+    /// (`kda_chunk64_prepare.cu`) and `kda_chunk64_scan` (`kda_chunk64.cu`); `chunk64.rs`.
+    pub chunk64_prepare: KernelHandle,
+    pub chunk64_scan: KernelHandle,
+    /// 2026-10-14: `kda_chunk64_prepare_conv` (`kda_chunk64_prepare.cu`) and
+    /// `causal_conv1d_window_advance_parts` (`kda_conv_tokens.cu`): the 64-token scan with the
+    /// conv inside its prepare (`chunk64_conv.rs`).
+    pub chunk64_prepare_conv: KernelHandle,
+    pub conv_window_parts: KernelHandle,
+    /// 2026-10-14: `kda_chunk64_prepare_graw` and `kda_chunk64_prepare_conv_graw`
+    /// (`kda_chunk64_prepare.cu`): the two prepares with the forget gate inside (`gate_at.rs`).
+    pub chunk64_prepare_graw: KernelHandle,
+    pub chunk64_prepare_conv_graw: KernelHandle,
+}
+
+impl KdaSeqKernels {
+    pub fn resolve(gpu: &dyn GpuBackend) -> Self {
+        let k = metrale_model_layers::layers::try_kernel;
+        Self {
+            conv_tokens: k(gpu, entry::CONV_TOKENS.0, entry::CONV_TOKENS.1),
+            conv_tokens_parts: k(
+                gpu,
+                "kda_conv_tokens",
+                "causal_conv1d_update_l2norm_tokens_parts",
+            ),
+            conv_window: k(gpu, entry::CONV_WINDOW.0, entry::CONV_WINDOW.1),
+            conv_window_to: k(gpu, entry::CONV_WINDOW_TO.0, entry::CONV_WINDOW_TO.1),
+            conv_snap: k(
+                gpu,
+                "kda_conv_snap",
+                "causal_conv1d_update_l2norm_tokens_snap",
+            ),
+            recurrent: k(gpu, entry::RECUR_REG.0, entry::RECUR_REG.1),
+            recurrent_snap: k(gpu, entry::RECUR_SNAP.0, entry::RECUR_SNAP.1),
+            chunk16_prepare: k(gpu, "kda_chunk16", "kda_chunk16_prepare"),
+            chunk16_scan: k(gpu, "kda_chunk16", "kda_chunk16_scan"),
+            chunk64_prepare: k(gpu, "kda_chunk64_prepare", "kda_chunk64_prepare"),
+            chunk64_scan: k(gpu, "kda_chunk64", "kda_chunk64_scan"),
+            chunk64_prepare_conv: k(gpu, "kda_chunk64_prepare", "kda_chunk64_prepare_conv"),
+            conv_window_parts: k(gpu, "kda_conv_tokens", "causal_conv1d_window_advance_parts"),
+            chunk64_prepare_graw: k(gpu, "kda_chunk64_prepare", "kda_chunk64_prepare_graw"),
+            chunk64_prepare_conv_graw: k(
+                gpu,
+                "kda_chunk64_prepare",
+                "kda_chunk64_prepare_conv_graw",
+            ),
+        }
+    }
+
+    /// 2026-10-09: Whether all three resolved.
+    pub fn ready(&self) -> bool {
+        self.conv_tokens.0 != 0 && self.conv_window.0 != 0 && self.recurrent.0 != 0
     }
 }

@@ -24,6 +24,9 @@ use metrale_circuit::venn::Run;
 
 pub(crate) use super::circuit_hw_tree::FsTree;
 use super::circuit_venn::find_root;
+// 2026-10-22: `--format explain`, this module's only caller.
+#[path = "circuit_explain.rs"]
+mod circuit_explain;
 use super::{CircuitHwArgs, CircuitHwFormat, CircuitMode, CircuitPrecision};
 
 /// 2026-09-30: The devices of the roadmap matrix.
@@ -45,7 +48,7 @@ pub(crate) const MATRIX_CONFIGS: &str = "crates/circuit/tests/fixtures/checkpoin
 
 /// 2026-09-30: The models of the roadmap matrix. `recipe` where a golden recipe pins the formats
 /// (its gb10 cell is the golden plan); `declared` plans the checkpoint's own formats.
-pub(crate) const MATRIX_MODELS: [MatrixModel; 10] = [
+pub(crate) const MATRIX_MODELS: [MatrixModel; 12] = [
     MatrixModel {
         slug: "qwen3.8-27b-nvfp4",
         checkpoint: "unsloth/Qwen3.8-27B-NVFP4",
@@ -97,6 +100,20 @@ pub(crate) const MATRIX_MODELS: [MatrixModel; 10] = [
         slug: "llama-3.1-8b-instruct",
         checkpoint: "NousResearch/Meta-Llama-3.1-8B-Instruct",
         precision: CircuitPrecision::Declared,
+    },
+    // 2026-10-08: GLM-5.3-Flash (`glm5_next`) at its declared formats: NVFP4 W4A4 routed experts
+    // and dense MLP, BF16 attention, indexer, shared expert and head, FP8 latent cache.
+    MatrixModel {
+        slug: "glm-5.3-flash-nvfp4",
+        checkpoint: "nvidia/GLM-5.3-Flash-NVFP4",
+        precision: CircuitPrecision::Declared,
+    },
+    // 2026-10-22: The served recipe glm-5.3/glm-5.3-flash-nvfp4-tp3-512k, the checkpoint's first
+    // INSTANCES.toml entry: W4A16 KDA and shared expert, W8A8 DSA, declared W4A4 experts.
+    MatrixModel {
+        slug: "glm-5.3-flash-nvfp4-tp3",
+        checkpoint: "nvidia/GLM-5.3-Flash-NVFP4",
+        precision: CircuitPrecision::Recipe,
     },
 ];
 
@@ -246,7 +263,7 @@ pub(crate) fn report_text(
     })
 }
 
-fn write_or_check(root: &Path, rel: &str, text: &str, check: bool) -> Result<()> {
+pub(crate) fn write_or_check(root: &Path, rel: &str, text: &str, check: bool) -> Result<()> {
     let path = root.join(rel);
     if check {
         let on_disk = std::fs::read_to_string(&path)
@@ -366,7 +383,7 @@ pub(crate) fn run(a: CircuitHwArgs) -> Result<()> {
             }
             report_text(&tree, &reg, &texts, device, precision, command)?.text
         }
-        CircuitHwFormat::Plan => {
+        CircuitHwFormat::Plan | CircuitHwFormat::Explain => {
             let model = source(&tree).model(&ModelSpec {
                 checkpoint: &texts.id,
                 config_json: texts.config.as_deref(),
@@ -381,7 +398,11 @@ pub(crate) fn run(a: CircuitHwArgs) -> Result<()> {
                 (None, _) => bail!("--mode {} needs --rows", mode.name()),
             };
             let one = hardware::plan_one(&reg, device, &tree, &model, Run { mode, rows })?;
-            hardware::plan_text(&model.circuit, &one)
+            if a.format == CircuitHwFormat::Explain {
+                circuit_explain::explain_json(&model.circuit, &one)?
+            } else {
+                hardware::plan_text(&model.circuit, &one)
+            }
         }
     };
     match &a.out {
@@ -405,3 +426,7 @@ pub(crate) fn tree_here() -> Result<(FsTree, Registry, PathBuf)> {
 #[cfg(test)]
 #[path = "circuit_hw_tests.rs"]
 mod circuit_hw_tests;
+
+#[cfg(test)]
+#[path = "circuit_fidelity_tests.rs"]
+mod circuit_fidelity_tests;

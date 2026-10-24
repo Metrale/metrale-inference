@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# 2026-10-17: Pure crates whose library root lacks the four cast denies, as `crate`.
+# This list may only shrink: `cargo xtask lints` refuses a new offender, a grown count and a
+# stale entry, and asks for an entry to be tightened when its count falls.
+metrale-config
+metrale-core
+metrale-grammar
+metrale-sampling
+metrale-scheduler
+metrale-settings

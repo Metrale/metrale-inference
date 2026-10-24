@@ -12,60 +12,107 @@
 use anyhow::{Result, anyhow, bail};
 use metrale_circuit::{ArchShape, Instance, PrecisionSpec, Sources};
 
+/// 2026-10-17: A file under kernels/, read from metrale-kernel-root's root (handed over by
+/// build.rs), so the published crate embeds the same texts as a checkout.
+macro_rules! kernel_file {
+    ($path:literal) => {
+        include_str!(concat!(
+            env!("METRALE_KERNEL_TREE_ROOT"),
+            "/kernels/",
+            $path
+        ))
+    };
+}
+
 /// 2026-09-28: kernels/circuits/INSTANCES.toml as built.
-pub const INSTANCES: &str = include_str!("../../../../kernels/circuits/INSTANCES.toml");
+pub const INSTANCES: &str = kernel_file!("circuits/INSTANCES.toml");
 
 /// 2026-09-28: Every circuit an instance can name, by arch.
-pub const CIRCUITS: [(&str, &str); 3] = [
-    (
-        "qwen3_5",
-        include_str!("../../../../kernels/circuits/qwen3_5.toml"),
-    ),
-    (
-        "qwen3_6_moe",
-        include_str!("../../../../kernels/circuits/qwen3_6_moe.toml"),
-    ),
-    (
-        "nemotron_h",
-        include_str!("../../../../kernels/circuits/nemotron_h.toml"),
-    ),
+pub const CIRCUITS: [(&str, &str); 5] = [
+    ("qwen3_5", kernel_file!("circuits/qwen3_5.toml")),
+    ("qwen3_6_moe", kernel_file!("circuits/qwen3_6_moe.toml")),
+    ("nemotron_h", kernel_file!("circuits/nemotron_h.toml")),
+    // 2026-10-08: GLM-5 (not an executor target; `met circuit` plans and the Venn read it).
+    ("glm5_next", kernel_file!("circuits/glm5_next.toml")),
+    // 2026-10-18: DeepSeek-V4.1 (not an executor target; `met circuit` plans and the Venn read it).
+    ("deepseek_v41", kernel_file!("circuits/deepseek_v41.toml")),
 ];
 
 /// 2026-09-28: Every precision table an instance can name.
-pub const PRECISION: [(&str, &str); 3] = [
+pub const PRECISION: [(&str, &str); 6] = [
     (
         "qwen3.6-35b-a3b-fp8-bf16head",
-        include_str!("../../../../kernels/circuits/precision/qwen3.6-35b-a3b-fp8-bf16head.toml"),
+        kernel_file!("circuits/precision/qwen3.6-35b-a3b-fp8-bf16head.toml"),
     ),
     (
         "qwen3.6-35b-a3b-nvfp4-declared",
-        include_str!("../../../../kernels/circuits/precision/qwen3.6-35b-a3b-nvfp4-declared.toml"),
+        kernel_file!("circuits/precision/qwen3.6-35b-a3b-nvfp4-declared.toml"),
     ),
     (
         "nemotron-3.5-lightning-30b-a3b-nvfp4",
-        include_str!(
-            "../../../../kernels/circuits/precision/nemotron-3.5-lightning-30b-a3b-nvfp4.toml"
-        ),
+        kernel_file!("circuits/precision/nemotron-3.5-lightning-30b-a3b-nvfp4.toml"),
+    ),
+    (
+        "glm-5.3-flash-nvfp4",
+        kernel_file!("circuits/precision/glm-5.3-flash-nvfp4.toml"),
+    ),
+    // 2026-10-22: The served GLM recipe's formats (W4A16 KDA and shared expert, W8A8 DSA).
+    (
+        "glm-5.3-flash-nvfp4-tp3",
+        kernel_file!("circuits/precision/glm-5.3-flash-nvfp4-tp3.toml"),
+    ),
+    (
+        "deepseek-v4.1-flash-mxfp4",
+        kernel_file!("circuits/precision/deepseek-v4.1-flash-mxfp4.toml"),
     ),
 ];
 
 /// 2026-09-28: Every checkpoint plan fixture an instance can name.
 pub const CHECKPOINTS: [(&str, &str); 1] = [(
     "unsloth--Qwen3.8-27B-NVFP4",
-    include_str!("../../../../kernels/circuits/checkpoints/unsloth--Qwen3.8-27B-NVFP4.toml"),
+    kernel_file!("circuits/checkpoints/unsloth--Qwen3.8-27B-NVFP4.toml"),
 )];
 
 /// 2026-09-28: Every block library a circuit can include.
-pub const BLOCKS: [(&str, &str); 1] = [(
-    "qwen3_hybrid",
-    include_str!("../../../../kernels/circuits/blocks/qwen3_hybrid.toml"),
-)];
+pub const BLOCKS: [(&str, &str); 8] = [
+    (
+        "qwen3_hybrid",
+        kernel_file!("circuits/blocks/qwen3_hybrid.toml"),
+    ),
+    // 2026-10-08: The GLM-5 block libraries (kernels/circuits/glm5_next.toml includes them).
+    (
+        "glm5_next_kda",
+        kernel_file!("circuits/blocks/glm5_next_kda.toml"),
+    ),
+    (
+        "glm5_next_dsa",
+        kernel_file!("circuits/blocks/glm5_next_dsa.toml"),
+    ),
+    (
+        "glm5_next_ffn",
+        kernel_file!("circuits/blocks/glm5_next_ffn.toml"),
+    ),
+    // 2026-10-18: The DeepSeek-V4.1 block libraries (kernels/circuits/deepseek_v41.toml includes them).
+    (
+        "deepseek_v41_attn",
+        kernel_file!("circuits/blocks/deepseek_v41_attn.toml"),
+    ),
+    (
+        "deepseek_v41_csa",
+        kernel_file!("circuits/blocks/deepseek_v41_csa.toml"),
+    ),
+    (
+        "deepseek_v41_hca",
+        kernel_file!("circuits/blocks/deepseek_v41_hca.toml"),
+    ),
+    (
+        "deepseek_v41_ffn",
+        kernel_file!("circuits/blocks/deepseek_v41_ffn.toml"),
+    ),
+];
 
 /// 2026-09-28: FUSIONS.toml per hardware.
-pub const FUSIONS: [(&str, &str); 1] = [(
-    "gb10",
-    include_str!("../../../../kernels/gb10/common/FUSIONS.toml"),
-)];
+pub const FUSIONS: [(&str, &str); 1] = [("gb10", kernel_file!("gb10/common/FUSIONS.toml"))];
 
 /// 2026-09-28: The entry `key` of `table`; `what` names the table in the error.
 pub fn lookup<'a>(table: &[(&str, &'a str)], key: &str, what: &str) -> Result<&'a str> {
@@ -108,17 +155,31 @@ pub fn instance(recipe: &str) -> Result<Instance> {
 /// serve one checkpoint on one target; they must then agree on the circuit and the precision
 /// source, the only parts the executor takes from an instance (the policy, and 2026-09-30 a
 /// policy precision's tier and kernel capabilities, are read live: `CircuitExec::build`).
-pub fn instance_for(checkpoint: &str, target: &str) -> Result<Instance> {
+/// 2026-10-23: And that serves `ranks` tensor-parallel ranks: at one rank a recipe without a
+/// deployment, at N >= 2 a multi-device recipe (`[instance.parallel]`) with its deployment
+/// derived for N (`metrale_circuit::deploy::deployed`), refused with
+/// `ErrorCode::CircuitRanksRefused` where a part cannot split at N. A TP recipe and a one-GPU
+/// recipe of one checkpoint are two circuits; the TP recipe serves any N its parts admit.
+pub fn instance_for(checkpoint: &str, target: &str, ranks: u64) -> Result<Instance> {
+    find_instance(checkpoint, target, ranks)?.ok_or_else(|| {
+        anyhow!(
+            "no circuit instance serves checkpoint `{checkpoint}` on target `{target}` at \
+             {ranks} tensor-parallel rank(s) (kernels/circuits/INSTANCES.toml)"
+        )
+    })
+}
+
+/// 2026-10-23: [`instance_for`] with `None` where no instance serves `checkpoint` on `target`
+/// (an unset `--forward` then resolves to legacy); recipes that disagree are still an error.
+pub fn find_instance(checkpoint: &str, target: &str, ranks: u64) -> Result<Option<Instance>> {
     let all = metrale_circuit::parse_instances(INSTANCES)?;
     let hits: Vec<Instance> = all
         .into_iter()
         .filter(|i| i.checkpoint == checkpoint && i.target == target)
+        .filter(|i| i.parallel.is_some() == (ranks > 1))
         .collect();
     let Some(first) = hits.first() else {
-        bail!(
-            "no circuit instance serves checkpoint `{checkpoint}` on target `{target}` \
-             (kernels/circuits/INSTANCES.toml)"
-        );
+        return Ok(None);
     };
     if let Some(other) = hits
         .iter()
@@ -131,7 +192,32 @@ pub fn instance_for(checkpoint: &str, target: &str) -> Result<Instance> {
             other.recipe
         );
     }
-    Ok(first.clone())
+    if ranks == 1 {
+        return Ok(Some(first.clone()));
+    }
+    Ok(Some(metrale_circuit::deploy::deployed(
+        first,
+        sources(first)?,
+        ranks,
+    )?))
+}
+
+/// 2026-10-24: The circuit arch `config_json` maps to, and the checkpoint ids of the instances on
+/// `target` with that arch whose stated shape the loaded config matches (every dim, `vocab` up to
+/// the stated one, as [`served_shape`] admits), sorted and deduplicated: the model identity a
+/// serve loaded from a path (no checkpoint id argument) resolves its instance by. The same
+/// config-to-shape map and shape check the plan install runs ([`checkpoint_shape`]).
+pub fn checkpoints_matching(config_json: &str, target: &str) -> Result<(String, Vec<String>)> {
+    let mapped = metrale_circuit::map_checkpoint(config_json)?;
+    let mut ids: Vec<String> = metrale_circuit::parse_instances(INSTANCES)?
+        .into_iter()
+        .filter(|i| i.target == target && i.arch == mapped.arch)
+        .filter(|i| served_shape(&i.shape, &mapped.shape).is_ok())
+        .map(|i| i.checkpoint)
+        .collect();
+    ids.sort();
+    ids.dedup();
+    Ok((mapped.arch, ids))
 }
 
 /// 2026-09-30: `a` and `b` read the same precision table, or the same checkpoint plan with the
@@ -249,11 +335,49 @@ mod served_shape_tests {
 mod instance_for_tests {
     use super::*;
 
+    /// 2026-10-23: GLM-5.3 has a TP recipe and a one-GPU recipe with different precision tables:
+    /// one rank picks the one-GPU recipe; any N >= 2 the TP recipe's parts admit picks the TP
+    /// recipe with its deployment derived for N; an N a part cannot split at is refused naming
+    /// the part; a checkpoint with no multi-device recipe finds none at N >= 2.
+    #[test]
+    fn the_rank_count_picks_one_of_two_deployments_of_a_checkpoint() {
+        let (c, t) = ("nvidia/GLM-5.3-Flash-NVFP4", "gb10/glm-5.3-flash/nvfp4");
+        for n in [2, 3, 4] {
+            let tp = instance_for(c, t, n).unwrap();
+            assert_eq!(tp.recipe, "glm-5.3/glm-5.3-flash-nvfp4-tp3-512k");
+            let d = tp.parallel.unwrap();
+            assert_eq!(d.ranks, n);
+            assert!(
+                d.degree.values().all(|&k| k == n),
+                "every part over all {n} ranks"
+            );
+        }
+        assert_eq!(
+            instance_for(c, t, 1).unwrap().recipe,
+            "glm-5.3/glm-5.3-flash-nvfp4"
+        );
+        let e = find_instance(c, t, 5).unwrap_err();
+        let code = e.downcast_ref::<metrale_error::Error>().map(|x| x.code());
+        assert_eq!(
+            code,
+            Some(metrale_error::ErrorCode::CircuitRanksRefused),
+            "{e:#}"
+        );
+        assert!(format!("{e:#}").contains("part `vocab`"), "{e:#}");
+        let dense = ("unsloth/Qwen3.8-27B-NVFP4", "gb10/qwen3.8-27b/nvfp4");
+        assert!(find_instance(dense.0, dense.1, 2).unwrap().is_none());
+        let e = instance_for(dense.0, dense.1, 2).unwrap_err();
+        assert!(
+            format!("{e:#}").contains("at 2 tensor-parallel rank(s)"),
+            "{e:#}"
+        );
+    }
+
     /// 2026-09-30: The dense checkpoint has an instance per tier; the executor takes the tier
     /// from the process, so either serves it. Before `same_source` the pair was refused.
     #[test]
     fn two_tiers_of_one_checkpoint_plan_serve_one_checkpoint() {
-        let got = instance_for("unsloth/Qwen3.8-27B-NVFP4", "gb10/qwen3.8-27b/nvfp4").unwrap();
+        let got = instance_for("unsloth/Qwen3.8-27B-NVFP4", "gb10/qwen3.8-27b/nvfp4", 1).unwrap();
         assert_eq!(got.recipe, "qwen3.8/qwen3.8-27b-nvfp4-unsloth");
     }
 

@@ -16,7 +16,9 @@
 //!   manifest keep their points (re-resolved against this class's sources) and lose their
 //!   evidence, so a report on this class says "unmeasured", never "optimized".
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use super::HwError;
 use super::sources::ClassSources;
@@ -289,7 +291,7 @@ pub fn class_families(
         }
         out.legacy.extend(overlay.legacy);
     }
-    let manifest = std::mem::replace(&mut out.hardware, own);
+    let manifest = core::mem::replace(&mut out.hardware, own);
     let found = class_discovered(&out, &manifest, chain, sources);
     for f in &mut out.families {
         f.points = class_points(&f.points, chain, sources);

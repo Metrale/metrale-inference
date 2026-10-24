@@ -23,7 +23,8 @@ fn rdma_kv_round_trip() {
     let peer = std::env::var("METRALE_KV_PEER").expect("set METRALE_KV_PEER=host:port");
     let layout = GroupLayout::new(2, 4, 2, 16, 128, 2, 4096);
     let bytes = layout.group_bytes() as usize;
-    let mut be = RdmaKvBackend::connect(&peer, layout).expect("connect kv peer");
+    let links = crate::legacy_env::storage_links();
+    let mut be = RdmaKvBackend::connect(&peer, layout, &links).expect("connect kv peer");
     let keys = [
         GroupKey::new(0, 0, 0, KvKind::K),
         GroupKey::new(0, 3, 1, KvKind::V),
@@ -67,7 +68,8 @@ fn rdma_kv_bandwidth() {
     let peer = std::env::var("METRALE_KV_PEER").expect("set METRALE_KV_PEER=host:port");
     let layout = GroupLayout::new(16, 64, 8, 64, 128, 2, 4096);
     let gbytes = layout.group_bytes() as usize;
-    let mut be = RdmaKvBackend::connect(&peer, layout).expect("connect kv peer");
+    let links = crate::legacy_env::storage_links();
+    let mut be = RdmaKvBackend::connect(&peer, layout, &links).expect("connect kv peer");
     let ngroups =
         (layout.num_layers as u64) * 2 * (layout.num_blocks as u64) * (layout.num_kv_heads as u64);
     let total = ngroups * gbytes as u64;

@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-02: `METRALE_DEBUG_ALLOC_DIGEST=<path>`: after the build, write one line per live
-//! allocation on the ledger, `site<TAB>bytes<TAB>sha256`, sorted. Two boots' digests compare the
-//! device bytes of every allocation a load made (weights, copies, scales), independent of their
-//! addresses: the load-parity instrument of a loader change (LIFECYCLE-DESIGN.md section 5.4).
+//! allocation on the ledger, `site<TAB>bytes<TAB>sha256<TAB>label`, sorted. Two boots' digests
+//! compare the device bytes of every allocation a load made (weights, copies, scales),
+//! independent of their addresses: the load-parity instrument of a loader change
+//! (LIFECYCLE-DESIGN.md section 5.4).
+//! 2026-10-19: The label column is what [`GpuBackend::label_alloc`] named the allocation (tensor,
+//! resident and declared dtype), empty when its owner named nothing: the per-rank inventory.
 //!
 //! Owner: metrale-model-engine.
 //! Invariants:
@@ -21,8 +24,9 @@ use sha2::{Digest, Sha256};
 const CHUNK: usize = 64 << 20;
 
 /// 2026-10-02: Write the digest when `METRALE_DEBUG_ALLOC_DIGEST` names a path.
-pub(super) fn write_if_requested(gpu: &dyn GpuBackend) -> Result<()> {
-    let Some(path) = std::env::var_os("METRALE_DEBUG_ALLOC_DIGEST") else {
+/// 2026-10-17: `path` is the `telemetry.debug_alloc_digest` setting.
+pub(super) fn write_if_requested(gpu: &dyn GpuBackend, path: Option<&str>) -> Result<()> {
+    let Some(path) = path else {
         return Ok(());
     };
     let Some(allocs) = gpu.live_allocations() else {
@@ -42,18 +46,18 @@ pub(super) fn write_if_requested(gpu: &dyn GpuBackend) -> Result<()> {
             off += n;
         }
         let hex: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
-        lines.push(format!("{site}\t{bytes}\t{hex}"));
+        let label = gpu.alloc_label(ptr).unwrap_or_default();
+        lines.push(format!("{site}\t{bytes}\t{hex}\t{label}"));
     }
     lines.sort();
-    let mut f = std::fs::File::create(&path)
-        .with_context(|| format!("METRALE_DEBUG_ALLOC_DIGEST {}", path.to_string_lossy()))?;
+    let mut f = std::fs::File::create(path)
+        .with_context(|| format!("METRALE_DEBUG_ALLOC_DIGEST {path}"))?;
     for l in &lines {
         writeln!(f, "{l}")?;
     }
     tracing::info!(
-        "METRALE_DEBUG_ALLOC_DIGEST: {} allocations hashed into {}",
+        "METRALE_DEBUG_ALLOC_DIGEST: {} allocations hashed into {path}",
         lines.len(),
-        path.to_string_lossy()
     );
     Ok(())
 }

@@ -62,8 +62,8 @@ fn flagship() -> App {
 }
 
 /// 2026-09-26: A library of one model with a download job, so the per-row
-/// progress line is drawn. The repo id does not exist, because `start` launches
-/// a real download worker (`model_download::start`).
+/// progress line is drawn. The `app` fixture's starter is inert, so no download
+/// worker runs.
 fn downloading(done: u64, total: u64) -> App {
     const REPO: &str = "metrale-render-tests/no-such-model";
     let mut a = lib(Vec::new(), vec![local(REPO, false)]);

@@ -39,6 +39,7 @@ fn run_batch(native_fp8: bool, rows: u32) {
             down_proj_t: None,
         },
         &gpu,
+        crate::lever_equivalence::DefaultLoad::at_defaults().lc(),
     )
     .unwrap();
     // 2026-09-25: The mock returns one placeholder handle for every kernel name;
@@ -63,6 +64,7 @@ fn run_batch(native_fp8: bool, rows: u32) {
     let dispatch = GemmDispatch::defaults();
     let derived = DerivedWeights::new();
     let levers = ModelLevers::defaults();
+    let settings = crate::lever_equivalence::defaults();
     let stats = ModelStats::new();
     let ctx = ForwardContext {
         buffers: &buffers,
@@ -72,6 +74,7 @@ fn run_batch(native_fp8: bool, rows: u32) {
         dispatch: &dispatch,
         derived: &derived,
         levers: &levers,
+        settings: &settings,
         stats: &stats,
         attn_metadata: None,
         profile: false,
@@ -86,6 +89,7 @@ fn run_batch(native_fp8: bool, rows: u32) {
         routed_lora_layers: None,
         midchunk_capture: None,
         moe_lora_route: MoeLoraRoute::Fold,
+        ab_levers: crate::layer::AbLevers::NONE,
     };
     assert!(layer.can_forward_km(rows));
     let start = gpu.launch_count();

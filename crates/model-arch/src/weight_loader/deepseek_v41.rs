@@ -3,7 +3,13 @@
 
 //! 2026-09-25: DeepSeek-V4.1 loader: assembles
 //! [`DeepSeekV41Layer`](crate::deepseek_v41_layer::DeepSeekV41Layer)s from a
-//! GGUF checkpoint.
+//! GGUF checkpoint or, since 2026-10-19, the publisher's safetensors checkpoint.
+//!
+//! The safetensors path (`load_layers_hf`) is chosen when the checkpoint loader deferred the
+//! embedding, which the [`defer`] hook does for every safetensors tensor. It reads each
+//! tensor-parallel rank's part of every tensor itself, keeps the routed experts resident on the
+//! device, and charges the pre-flight through [`defer::charge`]. The rest of this description is
+//! the GGUF path.
 //!
 //! Attention, the compressor and indexer projections, the routers, the shared
 //! experts, the engram projections, the norms, the embedding and the head are
@@ -26,8 +32,16 @@
 //! Owner: model-arch weight loader.
 //! Invariants: none beyond the types.
 
+mod build;
+pub mod defer;
 mod engram_q2k;
+mod gguf_source;
+mod hf;
+mod hf_experts;
 pub mod load_layers;
+pub mod load_layers_hf;
+pub mod source;
+pub mod tp_cut;
 
 use anyhow::{Context, Result, ensure};
 use metrale_config::ModelConfig;
@@ -37,7 +51,6 @@ use metrale_model_weights::weights::{WeightDtype, WeightStore};
 use crate::weight_loader::ModelWeightLoader;
 use metrale_model_layers::layer::TransformerLayer;
 use metrale_model_layers::layers::ops::ResidentMat;
-use metrale_model_layers::layers::qwen3_attention::HcSiteWeights;
 use metrale_model_layers::weight_map::quant_helpers::dense_auto;
 use metrale_model_layers::weight_map::{DenseWeight, MtpWeights};
 
@@ -46,13 +59,6 @@ pub struct DeepSeekV41WeightLoader;
 pub(super) const DEFAULT_CANDIDATE_SOURCE: usize = 20;
 pub(super) const DEFAULT_CANDIDATE_TOPK_BLOCKS: usize = 2048;
 pub(super) const DEFAULT_CANDIDATE_BLOCK: usize = 8;
-
-pub(super) fn env_usize(key: &str, default: usize) -> usize {
-    std::env::var(key)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
-}
 
 pub fn bf16_ptr(store: &WeightStore, name: &str) -> Result<DevicePtr> {
     let t = store.get(name)?;
@@ -137,31 +143,42 @@ pub fn f32_ptr(
     upload_f32(gpu, &v)
 }
 
-pub(super) fn hc_site(
-    gpu: &dyn GpuBackend,
-    store: &WeightStore,
-    lp: &str,
-    site: &str,
-    c: &ModelConfig,
-) -> Result<HcSiteWeights> {
-    let hc = c.hc_mult;
-    let mix_hc = (2 + hc) * hc;
-    Ok(HcSiteWeights {
-        hc_fn: f32_ptr(
-            gpu,
-            store,
-            &format!("{lp}.hc_{site}_fn"),
-            mix_hc * hc * c.hidden_size,
-        )?,
-        hc_base: f32_ptr(gpu, store, &format!("{lp}.hc_{site}_base"), mix_hc)?,
-        hc_scale: f32_ptr(gpu, store, &format!("{lp}.hc_{site}_scale"), 3)?,
-        lowrank: None,
-    })
+/// 2026-10-19: Was `store` loaded from the safetensors checkpoint? Its loader defers every
+/// tensor, the embedding among them; the GGUF loader defers only the expert stacks.
+fn is_safetensors(store: &WeightStore) -> bool {
+    store.deferred(defer::WHOLE[0]).is_some()
 }
 
 impl ModelWeightLoader for DeepSeekV41WeightLoader {
-    fn supports_tp(&self) -> bool {
+    /// 2026-10-19: Every query head reads the one shared KV head; a rank keeps whole output
+    /// groups of heads (the GGUF path refuses more than one rank itself).
+    fn tp_support(&self) -> metrale_config::TpSupport {
+        metrale_config::TpSupport::SharedKvHead
+    }
+
+    /// 2026-10-19: The safetensors path keeps each rank's rows of every routed expert.
+    fn slices_experts_over_tp(&self) -> bool {
+        true
+    }
+
+    /// 2026-10-19: The vision tower is not ported.
+    fn binds_vision_encoder(&self) -> bool {
         false
+    }
+
+    /// 2026-10-19: Every safetensors tensor is read by this loader, each rank its part.
+    fn defer_predicate(
+        &self,
+        _config: &ModelConfig,
+    ) -> Option<metrale_model_weights::weights::DeferHook> {
+        Some(defer::defer_hook())
+    }
+
+    fn defer_charge(
+        &self,
+        config: &ModelConfig,
+    ) -> Option<metrale_model_weights::weights::DeferCharge> {
+        Some(defer::defer_charge(config))
     }
 
     fn load_layers(
@@ -170,8 +187,12 @@ impl ModelWeightLoader for DeepSeekV41WeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         layer_kv_dtypes: &[metrale_cache::kv_cache::KvCacheDtype],
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
-        load_layers::load_layers(store, config, gpu, layer_kv_dtypes)
+        match is_safetensors(store) {
+            true => load_layers_hf::load_layers(store, config, gpu, lc.settings),
+            false => load_layers::load_layers(store, config, gpu, layer_kv_dtypes, lc.settings),
+        }
     }
 
     fn load_embedding(
@@ -180,6 +201,11 @@ impl ModelWeightLoader for DeepSeekV41WeightLoader {
         _config: &ModelConfig,
         gpu: &dyn GpuBackend,
     ) -> Result<DenseWeight> {
+        if is_safetensors(store) {
+            return Ok(DenseWeight {
+                weight: hf::whole_bf16(gpu, store, defer::WHOLE[0])?,
+            });
+        }
         dense_auto(store, "model.embed_tokens.weight", gpu)
     }
 
@@ -189,6 +215,11 @@ impl ModelWeightLoader for DeepSeekV41WeightLoader {
         _config: &ModelConfig,
         gpu: &dyn GpuBackend,
     ) -> Result<DenseWeight> {
+        if is_safetensors(store) {
+            return Ok(DenseWeight {
+                weight: hf::whole_bf16(gpu, store, defer::WHOLE[2])?,
+            });
+        }
         dense_auto(store, "model.norm.weight", gpu)
     }
 
@@ -198,6 +229,11 @@ impl ModelWeightLoader for DeepSeekV41WeightLoader {
         _config: &ModelConfig,
         gpu: &dyn GpuBackend,
     ) -> Result<DenseWeight> {
+        if is_safetensors(store) {
+            return Ok(DenseWeight {
+                weight: hf::whole_bf16(gpu, store, defer::WHOLE[1])?,
+            });
+        }
         let t = store.get("lm_head.weight")?;
         if t.dtype == WeightDtype::Q6K {
             // 2026-09-25: A Q6_K head is returned as the raw blocks, unconverted.

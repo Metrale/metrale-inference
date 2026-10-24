@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-io-host-mem"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: deterministic in-memory hosts for the abstract-io ports."
+
+[package.metadata.metrale]
+role = "host-mem"
+
+[dependencies]
+metrale-abstract-io = { workspace = true }
+rand_chacha = { workspace = true }
+
+[lints]
+workspace = true

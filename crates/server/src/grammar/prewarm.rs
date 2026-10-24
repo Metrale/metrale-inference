@@ -10,8 +10,9 @@
 //! fill, or `completion_token_ids`, joins it. The walk itself runs on one
 //! thread: the engine builds its compiler with `max_threads = 1`.
 //!
-//! `METRALE_GRAMMAR_ASYNC_PREWARM=0` (or `false`, `off`, `no`) runs the
-//! prewarm inline instead, on the thread that builds the grammar state.
+//! `METRALE_GRAMMAR_ASYNC_PREWARM=0` (or `false`, `off`, `no`; resolved into
+//! `GrammarLevers::async_prewarm` at load) runs the prewarm inline instead, on
+//! the thread that builds the grammar state.
 //!
 //! Owner: server (grammar).
 //! Invariants:
@@ -50,16 +51,10 @@ pub(super) enum Prewarm {
 }
 
 impl Prewarm {
-    /// 2026-09-26: Start warming the `k` costliest masks of `compiled`, with
-    /// the process's overlap setting and no gate or hook. Returns at once
-    /// when overlap is on and the thread spawns; otherwise warms inline.
-    pub(super) fn start(compiled: &CompiledGrammar, k: usize) -> Self {
-        Self::start_with(compiled, k, None, overlap_enabled(), None)
-    }
-
-    /// 2026-09-26: [`Self::start`] with the overlap decision, gate and save
-    /// hook passed in, so a test can drive both paths without setting a
-    /// process-wide env var. `on_warm` runs after the masks are warm, except
+    /// 2026-09-26: Start warming the `k` costliest masks of `compiled`. Returns
+    /// at once when `overlap` (`GrammarLevers::async_prewarm`) is on and the
+    /// thread spawns; otherwise warms inline. `gate` holds the worker (the
+    /// ordering test only). `on_warm` runs after the masks are warm, except
     /// when the thread fails to spawn: that inline fallback drops it.
     pub(super) fn start_with(
         compiled: &CompiledGrammar,
@@ -138,25 +133,6 @@ impl Prewarm {
             Prewarm::Pending { finished, .. } => finished.load(Ordering::Acquire),
         }
     }
-}
-
-/// 2026-09-26: The overlap setting for the `GrammarState` constructors.
-/// See [`overlap_enabled`].
-pub(super) fn overlap_enabled_for_serve() -> bool {
-    overlap_enabled()
-}
-
-/// 2026-09-26: Whether the prewarm runs on its own thread. The env var is
-/// read on the first call and cached for the life of the process.
-fn overlap_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        overlap_from_env(
-            std::env::var("METRALE_GRAMMAR_ASYNC_PREWARM")
-                .ok()
-                .as_deref(),
-        )
-    })
 }
 
 /// 2026-09-26: `METRALE_GRAMMAR_ASYNC_PREWARM` value `0`, `false`, `off` or

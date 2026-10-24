@@ -1,0 +1,165 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-18: The DeepSeek-V4.1 (`deepseek_v41`) Engram residual (`engram`, before the
+# attention site of the layers that carry one) and the routed MoE site (`moe`, every layer).
+# Split out of kernels/circuits/deepseek_v41.toml to keep each file short; only that circuit
+# includes it.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/circuit_toml.rs).
+# Invariants:
+# - Engram: the host hashes each token's trailing n-grams into `engram_cols` row ids; the rows
+#   (FP8, one E8M0 scale per 32) are looked up, flattened and projected by `wkv` into one key per
+#   stream and one shared value; each stream adds the value times
+#   sigmoid(signed sqrt of its normalised dot with its key). The tables stay in host memory,
+#   so no device weight is counted for the lookup.
+# - MoE: router logits in FP32; scores sqrt(softplus(logit)); the top `top_k` chosen on
+#   score + bias, the chosen scores renormalised and scaled (`routed_scaling_factor`); one
+#   ungated shared expert, added unscaled. Every SwiGLU is clamped first (`swiglu_limit`).
+# - Declared precision (precision/deepseek-v4.1-flash-mxfp4.toml): routed experts MXFP4 (E2M1,
+#   one E8M0 scale per 32) on FP8 activations; the shared expert and Engram `wkv` FP8 (block
+#   32x32); the router BF16.
+
+schema = 1
+description = "DeepSeek-V4.1 Engram residual and routed MoE site under the hyper-connection"
+
+[block.engram]
+stream_in = "x"
+stream_out = "y"
+
+[[block.engram.node]]
+id = "lookup"
+op = "engram_lookup"
+out = [{ edge = "rows", format = "bf16", shape = "n x engram_cols*engram_head_dim" }]
+binding = ["{L}.engram.embed"]
+
+[[block.engram.node]]
+id = "kv"
+op = "linear"
+role = "engram_kv"
+in = ["rows"]
+out = [{ edge = "kv", format = "bf16", shape = "n x hc*hidden+hidden" }]
+binding = ["{L}.engram.wkv"]
+
+[[block.engram.node]]
+id = "gate"
+op = "engram_gate"
+in = ["x", "kv"]
+out = [{ edge = "y", format = "bf16", shape = "n x hc*hidden" }]
+binding = ["{L}.engram.q_weight", "{L}.engram.k_weight"]
+
+[block.moe]
+stream_in = "x"
+stream_out = "y"
+
+[[block.moe.node]]
+id = "mix"
+op = "linear"
+role = "hc_mix"
+in = ["x"]
+out = [{ edge = "mix", format = "f32", shape = "n x hc*hc+hc*2" }]
+binding = ["{L}.hc_ffn_fn"]
+unquantized = true
+
+[[block.moe.node]]
+id = "pre"
+op = "hc_pre"
+in = ["x", "mix"]
+out = [
+  { edge = "u", format = "bf16", shape = "n x hidden" },
+  { edge = "post", format = "f32", shape = "n x hc" },
+  { edge = "comb", format = "f32", shape = "n x hc*hc" },
+]
+binding = ["{L}.hc_ffn_scale", "{L}.hc_ffn_base"]
+
+[[block.moe.node]]
+id = "ffn_norm"
+op = "rms_norm"
+in = ["u"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.ffn_norm"]
+params = { weight_form = "plain" }
+
+[[block.moe.node]]
+id = "gate"
+op = "router"
+in = ["xn"]
+out = [{ edge = "logits", format = "f32", shape = "n x experts" }]
+binding = ["{L}.ffn.gate"]
+
+[[block.moe.node]]
+id = "top_k"
+op = "top_k"
+in = ["logits"]
+out = [
+  { edge = "topk_w", format = "f32", shape = "n x top_k" },
+  { edge = "topk_id", format = "i32", shape = "n x top_k" },
+]
+binding = ["{L}.ffn.gate.bias"]
+params = { top_k = "{top_k}", scoring = "sqrtsoftplus_bias", renormalize = "true" }
+
+[[block.moe.node]]
+id = "experts_gate_up"
+op = "expert_gate_up"
+in = ["xn", "topk_id"]
+out = [{ edge = "egu", format = "bf16", shape = "n*top_k x moe_inter*2" }]
+binding = ["{L}.ffn.experts.*.w1", "{L}.ffn.experts.*.w3"]
+
+[[block.moe.node]]
+id = "experts_clamp"
+op = "swiglu_clamp"
+in = ["egu"]
+out = [{ edge = "egc", format = "bf16", shape = "n*top_k x moe_inter*2" }]
+
+[[block.moe.node]]
+id = "experts_act"
+op = "silu_mul"
+in = ["egc"]
+out = [{ edge = "eact", format = "bf16", shape = "n*top_k x moe_inter" }]
+
+[[block.moe.node]]
+id = "experts_down"
+op = "expert_down"
+in = ["eact", "topk_id"]
+out = [{ edge = "edown", format = "bf16", shape = "n*top_k x hidden" }]
+binding = ["{L}.ffn.experts.*.w2"]
+
+[[block.moe.node]]
+id = "shared_gate_up"
+op = "linear"
+role = "shared_gate_up"
+in = ["xn"]
+out = [{ edge = "sgu", format = "bf16", shape = "n x shared_inter*2" }]
+binding = ["{L}.ffn.shared_experts.w1", "{L}.ffn.shared_experts.w3"]
+
+[[block.moe.node]]
+id = "shared_clamp"
+op = "swiglu_clamp"
+in = ["sgu"]
+out = [{ edge = "sgc", format = "bf16", shape = "n x shared_inter*2" }]
+
+[[block.moe.node]]
+id = "shared_act"
+op = "silu_mul"
+in = ["sgc"]
+out = [{ edge = "sact", format = "bf16", shape = "n x shared_inter" }]
+
+[[block.moe.node]]
+id = "shared_down"
+op = "linear"
+role = "shared_down"
+in = ["sact"]
+out = [{ edge = "sdown", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.ffn.shared_experts.w2"]
+
+[[block.moe.node]]
+id = "blend"
+op = "blend"
+in = ["edown", "topk_w", "sdown"]
+out = [{ edge = "f", format = "bf16", shape = "n x hidden" }]
+params = { shared_gate = "none" }
+
+[[block.moe.node]]
+id = "post"
+op = "hc_post"
+in = ["f", "x", "post", "comb"]
+out = [{ edge = "y", format = "bf16", shape = "n x hc*hidden" }]

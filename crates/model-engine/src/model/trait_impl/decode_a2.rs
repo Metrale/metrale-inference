@@ -11,6 +11,7 @@
 
 #![allow(unused_imports, dead_code, clippy::too_many_arguments)]
 
+use super::super::lm_head_vocab_tp::HeadRanks;
 use anyhow::Result;
 use metrale_config::LayerType;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
@@ -22,15 +23,9 @@ use crate::traits::{ModelEp, ModelForward};
 use metrale_model_layers::layer::{ForwardContext, LayerState, SsmLayerState};
 use metrale_model_layers::layers::ops;
 
+mod batch_hooks;
 mod pad_states;
 mod perseq;
-
-/// 2026-09-25: Multi-sequence decode CUDA graphs: on unless
-/// `METRALE_NO_DECODE_GRAPHS_MULTISEQ` is exactly `1`. Read once per process.
-fn multiseq_graphs_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_NO_DECODE_GRAPHS_MULTISEQ").as_deref() != Ok("1"))
-}
 
 impl TransformerModel {
     pub(super) fn decode_batch_dispatch(
@@ -52,7 +47,8 @@ impl TransformerModel {
         // scheduler, so the per-sequence loop below can interleave announcements
         // with `decode()` calls.
         if n == 1 {
-            self.ep_broadcast_cmd_for_seq(seqs[0].slot_idx as u32, tokens[0])?;
+            // 2026-10-10: With the step's device-argmax arming, when it has one.
+            self.ep_broadcast_decode(seqs[0].slot_idx as u32, tokens[0])?;
             self.decode(tokens[0], seqs[0], stream)?;
             return Ok(self.decode_logits_ptr());
         }
@@ -63,7 +59,8 @@ impl TransformerModel {
         // worker from `ep_worker_decode_batch`), so each layer's collectives match
         // in shape and order across ranks.
         let mla_perseq_fallback = self.is_mla_dispatch() && self.levers.mla_perseq_fallback;
-        let qsa_active = self.config.index_topk > 0 && {
+        // 2026-10-08: Never active when every layer selects per row (`batch_hooks.rs`).
+        let qsa_active = self.config.index_topk > 0 && !self.layers_select_index_per_row() && {
             // 2026-09-25: `QsaIndexer::inert_bound`: below `index_topk +
             // index_compress_ratio - 1` visible tokens every block is selected,
             // so selection is inert.
@@ -136,9 +133,11 @@ impl TransformerModel {
             "decode_batch_compute_main",
         )?;
         // 2026-09-25: `--ssm-h-dtype f16`: narrow each sequence's SSM h-state to FP16
-        // here, before any graph region. No-op without the flag.
+        // here, before any graph region. No-op without the flag. 2026-10-21: and return a
+        // commit-swapped slot home, as the slot-vector graphs bake it (`commit_swap.rs`).
         for s in seqs.iter_mut() {
             self.ssm_h_to_f16_dispatch(s)?;
+            self.unswap_for_batch(s)?;
         }
         if self.levers.decode_batch_log {
             let slots: Vec<i64> = seqs
@@ -177,7 +176,11 @@ impl TransformerModel {
         // 2026-09-25: The per-layer graph veto, as in `decode_a` (QSA's host top-k,
         // PLE's host hash on the hc multi-seq path).
         let layer_veto = self.decode_graph_veto;
-        let graph_key = if !ms_profile && !lora_eager && !layer_veto && multiseq_graphs_enabled() {
+        let graph_key = if !ms_profile
+            && !lora_eager
+            && !layer_veto
+            && !self.settings.kernels.no_decode_graphs_multiseq
+        {
             self.batch_decode_graph_key(&*seqs, padded_n)
         } else {
             None
@@ -206,7 +209,7 @@ impl TransformerModel {
             if let Some(e) = g.0.get_mut(key) {
                 e.1 = tick;
                 replay = Some(e.0);
-            } else if super::graph_borrow::graph_borrow_enabled()
+            } else if !self.settings.scheduler.no_graph_borrow
                 && self.comm.is_none()
                 && self.config.num_ssm_layers() > 0
             {
@@ -218,7 +221,8 @@ impl TransformerModel {
                 // 2026-09-25: A key that keeps borrowing has settled at its width:
                 // decline and capture it (`borrow_streak.rs`).
                 if let Some(bk) = borrowed
-                    && super::borrow_streak::DECODE_BORROW_STREAK.allow(key)
+                    && super::borrow_streak::DECODE_BORROW_STREAK
+                        .allow(key, self.engine.borrow_streak_limit)
                 {
                     dispatch_n = bk.len();
                     let e =
@@ -279,8 +283,10 @@ impl TransformerModel {
             // 2026-09-25: `Refuse` was rejected above. `upload_batch_metadata_fixed`
             // supplies the per-row MoE adapter map for `Fold`.
             moe_lora_route: self.decode_moe_route(),
+            ab_levers: metrale_model_layers::layer::AbLevers::NONE,
             derived: &self.derived,
             levers: &self.levers,
+            settings: &self.settings,
             stats: &self.stats,
             attn_metadata: Some(metadata),
             profile: false,
@@ -298,9 +304,12 @@ impl TransformerModel {
         };
 
         if let Some(graph) = replay {
+            // 2026-10-08: Room before the launch, host bookkeeping after (`batch_hooks.rs`).
+            self.batch_replay_check_room(seqs)?;
             if graph.0 != 0 {
                 self.gpu.launch_graph(graph, stream)?;
             }
+            self.batch_replay_sync(seqs)?;
 
             if let Some(tokens) = input.host() {
                 for (i, seq) in seqs.iter_mut().enumerate() {
@@ -440,7 +449,7 @@ impl TransformerModel {
                 // mixed co-dispatch head `decode_b2::mixed_final_norm_lm_head` calls the
                 // same function. The returned pointer is dropped: the function ends
                 // with `decode_logits_ptr()`, the same buffer.
-                self.lm_head_project_batched(normed, padded_n, h, bf16, stream)?;
+                self.lm_head_project_batched(normed, padded_n, h, bf16, HeadRanks::Every, stream)?;
                 if let Some(t0) = lmhead_t0 {
                     self.gpu.synchronize(stream).ok();
                     let head_us = t0.elapsed().as_micros();

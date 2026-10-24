@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "l-path"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[lib]
+path = "src/root.rs"
+
+[package.metadata.metrale]
+role = "core"

@@ -252,7 +252,7 @@ fn test_seq(
         enable_thinking: false,
         thinking_budget: None,
         repetition_detection: None,
-        spontaneous_think_budget: 0,
+        spontaneous_think_budget: Some(0),
         thinking_tokens: 0,
         force_end_thinking: false,
         think_force_closed: false,
@@ -438,58 +438,8 @@ fn a_normal_finish_is_unaffected_by_the_error_branch() {
     assert_eq!(finish_and_recv(a, rx).finish_reason, "length");
 }
 
-/// 2026-09-26: Source scan of the `verify_k2_step`, `verify_k3_step` and
-/// `verify_k4_step` modules, each file of their splits included: no
-/// `a.finished = true;` line directly after a `tracing::error!` line. That
-/// shape reports a failed generation as a normal completion; `fail_sequence`
-/// is the error path.
-#[test]
-fn no_reachable_verify_error_arm_silently_finishes() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/scheduler");
-    for (module, split) in [
-        ("verify_k2_step", &[][..]),
-        ("verify_k3_step", &["stats.rs"][..]),
-        ("verify_k4_step", &["stats.rs"][..]),
-    ] {
-        let sub = dir.join(module);
-        let mut found: Vec<String> = match std::fs::read_dir(&sub) {
-            Ok(entries) => entries
-                .map(|e| e.expect("readable split entry").file_name())
-                .filter_map(|n| n.into_string().ok())
-                .collect(),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-            Err(e) => panic!("{}: {e}", sub.display()),
-        };
-        found.sort();
-        assert_eq!(
-            found, split,
-            "{module}/ has a file this scan does not include"
-        );
-    }
-    for (name, src) in [
-        ("verify_k2_step", include_str!("verify_k2_step.rs")),
-        ("verify_k3_step", include_str!("verify_k3_step.rs")),
-        (
-            "verify_k3_step/stats",
-            include_str!("verify_k3_step/stats.rs"),
-        ),
-        ("verify_k4_step", include_str!("verify_k4_step.rs")),
-        (
-            "verify_k4_step/stats",
-            include_str!("verify_k4_step/stats.rs"),
-        ),
-    ] {
-        for (i, w) in src.lines().collect::<Vec<_>>().windows(2).enumerate() {
-            let silent = w[0].contains("tracing::error!") && w[1].trim() == "a.finished = true;";
-            assert!(
-                !silent,
-                "{name}:{}: an error arm still sets `finished = true` without \
-                 fail_sequence — that returns HTTP 200 over a failed generation",
-                i + 1
-            );
-        }
-    }
-}
-
 #[path = "lifecycle_derive_tests.rs"]
 mod lifecycle_derive_tests;
+
+#[path = "lifecycle_fail_tests.rs"]
+mod lifecycle_fail_tests;

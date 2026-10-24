@@ -11,22 +11,6 @@ use anyhow::Result;
 
 use crate::layers::qwen3_ssm::Qwen3SsmLayer;
 
-/// 2026-09-25: Kill switch for the register-resident wy2 twin:
-/// `METRALE_NO_GDN_WY2_RESIDENT` set to any value, `0` included, disables it. Read once
-/// per process.
-fn wy2_resident_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("METRALE_NO_GDN_WY2_RESIDENT").is_none())
-}
-
-/// 2026-09-25: Kill switch for the register-resident wy3 twin, separate from wy2's:
-/// `METRALE_NO_GDN_WY3_RESIDENT` set to any value, `0` included, disables it. Read once
-/// per process.
-fn wy3_resident_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("METRALE_NO_GDN_WY3_RESIDENT").is_none())
-}
-
 /// 2026-09-25: Minimum launch width (sequences) at which `wy2_kernel` and `wy3_kernel`
 /// select the register-resident twins, which are `__launch_bounds__(128, 1)`
 /// (kernels/gb10/common/gated_delta_rule_wy{2,3}_resident.cu). Narrower launches run the
@@ -44,7 +28,8 @@ impl Qwen3SsmLayer {
     /// 2026-09-25: The K=2 verify WY kernel for a launch of `n` sequences. With an FP32
     /// h-state: the register-resident `gated_delta_rule_wy2_resident` when kd == vd ==
     /// 128, `n >= wy_resident_min_width()`, its handle is linked and
-    /// `METRALE_NO_GDN_WY2_RESIDENT` is absent; the base `gated_delta_rule_wy2` otherwise.
+    /// `METRALE_NO_GDN_WY2_RESIDENT` is absent (`SsmLevers::wy2_resident`, kept on the layer);
+    /// the base `gated_delta_rule_wy2` otherwise.
     /// The two take the same arguments, and the resident-parity leg of the
     /// `gdn_wy_verify_microtest` example compares them bit for bit. The first call of
     /// each FP32 outcome logs it with the handle.
@@ -59,7 +44,7 @@ impl Qwen3SsmLayer {
             && vd == 128
             && wide_enough
             && self.gdn_wy2_resident_k.0 != 0
-            && wy2_resident_enabled();
+            && self.levers.wy2_resident;
         static LOGGED_ENGAGED: std::sync::Once = std::sync::Once::new();
         static LOGGED_BASE: std::sync::Once = std::sync::Once::new();
         // 2026-09-25: With an FP16 h-state only an FP16 twin is correct, chosen by the
@@ -93,7 +78,7 @@ impl Qwen3SsmLayer {
                      base gated_delta_rule_wy2 in use (wider K=2 launches re-decide)",
                     wy_resident_min_width(),
                     self.gdn_wy2_resident_k.0,
-                    !wy2_resident_enabled(),
+                    !self.levers.wy2_resident,
                 );
             });
             self.gdn_wy2_k
@@ -116,7 +101,7 @@ impl Qwen3SsmLayer {
             && vd == 128
             && wide_enough
             && self.gdn_wy3_resident_k.0 != 0
-            && wy3_resident_enabled();
+            && self.levers.wy3_resident;
         static LOGGED_ENGAGED: std::sync::Once = std::sync::Once::new();
         static LOGGED_BASE: std::sync::Once = std::sync::Once::new();
         // 2026-09-25: FP16 h-state: as in `wy2_kernel`.
@@ -148,7 +133,7 @@ impl Qwen3SsmLayer {
                      base gated_delta_rule_wy3 in use (wider K=3 launches re-decide)",
                     wy_resident_min_width(),
                     self.gdn_wy3_resident_k.0,
-                    !wy3_resident_enabled(),
+                    !self.levers.wy3_resident,
                 );
             });
             self.gdn_wy3_k

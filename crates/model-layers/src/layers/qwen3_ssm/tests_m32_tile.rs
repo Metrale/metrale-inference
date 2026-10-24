@@ -9,7 +9,7 @@
 //! Invariants: none beyond the types.
 //!
 //! A child of `tests.rs`, using its native-FP8 layer and verify helpers. The GPU oracle
-//! `native_fp8_gdn_proj_m32_microtest` (metrale-model-arch example) compares the twin's
+//! `native_fp8_gdn_proj_m32_microtest` (metrale-gpu-examples example) compares the twin's
 //! output byte for byte with the 128-row tile.
 
 use super::{native_fp8_gdn_layer, run_batched_verify, scalar_u32};

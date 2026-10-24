@@ -10,8 +10,9 @@
 use anyhow::Result;
 use metrale_model_layers::layer::AttnMetadataDev;
 
+use super::super::super::block_tables::{Region, RowSpec};
 use super::super::super::types::TransformerModel;
-use super::{VMETA_BT, VMETA_R, VMETA_SEQ_LENS, VMETA_SEQ_SLOT, VMETA_SLOTS};
+use super::{VMETA_R, VMETA_SEQ_LENS, VMETA_SEQ_SLOT, VMETA_SLOTS};
 use crate::traits::SequenceState;
 
 impl TransformerModel {
@@ -33,7 +34,6 @@ impl TransformerModel {
         // so other paths using other layouts at the same base do not conflict.
         let meta_base = self.verify_batch_meta_at().positions;
         let max_blocks = self.max_blocks_per_seq;
-        let mb = max_blocks as usize;
 
         let mut positions = [0u32; VMETA_R];
         let mut slots = [0i64; VMETA_R];
@@ -81,27 +81,23 @@ impl TransformerModel {
         // 2026-09-25: Every row of sequence i gets sequence i's block table.
         // A ghost row has causal length 1, so only its entry 0 is read; it
         // points at the dummy KV block.
-        let needed = r_up * mb;
-        let mut bt_buf = vec![0i32; needed];
-        for (i, seq) in seqs.iter().enumerate() {
-            for j in 0..ks[i] {
-                let row = off[i] + j;
-                for (bi, &block) in seq.block_table.iter().enumerate().take(mb) {
-                    bt_buf[row * mb + bi] = block as i32;
-                }
-            }
-        }
-        for row in r_total..r_up {
-            bt_buf[row * mb] = self.dummy_kv_block as i32;
-        }
-        // 2026-09-25: SAFETY: `bt_buf` is `vec![0i32; needed]`, so its length
-        // is `needed` and `needed * 4 == size_of_val(&bt_buf[..])`. The
-        // zero-initialisation covers entries the fill loops skip when
-        // `block_table.len() < mb`.
-        let bt_bytes =
-            unsafe { std::slice::from_raw_parts(bt_buf.as_ptr() as *const u8, needed * 4) };
-        self.gpu
-            .copy_h2d_async(bt_bytes, meta_base.offset(VMETA_BT), stream)?;
+        // 2026-10-13: Each row is its blocks then 0 to the stride, as the full upload wrote it,
+        // in its own region (`block_tables.rs`) with only the changed entries copied.
+        let ghost = [self.dummy_kv_block];
+        let rows: Vec<RowSpec<'_>> = seqs
+            .iter()
+            .zip(ks)
+            .flat_map(|(seq, &k)| std::iter::repeat_n(seq.block_table.as_slice(), k))
+            .chain(std::iter::repeat_n(&ghost[..], r_up - r_total))
+            .map(|blocks| RowSpec { blocks, fill: 0 })
+            .collect();
+        debug_assert_eq!(
+            rows.len(),
+            r_up,
+            "rows are seq-major: off is the prefix sum of ks"
+        );
+        self.block_tables
+            .upload(Region::Verify, self.gpu.as_ref(), &rows, stream)?;
 
         // 2026-09-25: Every row takes `seqs[0].adapter_slot`.
         // `upload_seq_slot_uniform` returns `DevicePtr(0)` when no adapter is
@@ -137,7 +133,7 @@ impl TransformerModel {
             positions_w: meta_base,
             slot: meta_base.offset(VMETA_SLOTS),
             seq_len: meta_base.offset(VMETA_SEQ_LENS),
-            block_table: meta_base.offset(VMETA_BT),
+            block_table: self.block_tables.ptr(Region::Verify),
             max_blocks_per_seq: 0,
             num_seqs: 0,
             seq_slot: metrale_gpu_runtime::gpu::DevicePtr::NULL,

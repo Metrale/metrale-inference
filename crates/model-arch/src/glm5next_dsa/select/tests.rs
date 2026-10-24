@@ -385,3 +385,69 @@ fn the_first_complete_pool_switches_the_sparse_arm_on() {
     assert_eq!((g3.n_pools, g3.select_k), (0, 0));
     assert_eq!((g4.n_pools, g4.select_k), (1, 1));
 }
+
+/// 2026-10-12: The tensor-core scores take an exact launch of several query rows at GLM-5.3's
+/// 32 heads of 128, only under the lever and with the kernel; one row, a ceiling launch, another
+/// head count or dim, a missing kernel or the lever off keep the other paths.
+#[test]
+fn the_mma_scores_take_only_exact_multi_row_launches_of_the_built_shape() {
+    use metrale_gpu_runtime::gpu::KernelHandle;
+    let k = KernelHandle(7);
+    let g = DsaSelectGeometry::plan(&cfg(), 4096, 2048).unwrap();
+    assert!(scores_mma_for(false, &g, k, true));
+    assert!(!scores_mma_for(false, &g, k, false), "lever off");
+    assert!(!scores_mma_for(true, &g, k, true), "ceiling launch");
+    assert!(
+        !scores_mma_for(false, &g, KernelHandle(0), true),
+        "no kernel"
+    );
+    let one = DsaSelectGeometry::plan(&cfg(), 4096, 1).unwrap();
+    assert!(!scores_mma_for(false, &one, k, true), "one row");
+    for (heads, dim) in [(16usize, 128usize), (32, 64)] {
+        let c = Glm5NextDsaConfig {
+            index_heads: heads,
+            index_head_dim: dim,
+            ..cfg()
+        };
+        let g = DsaSelectGeometry::plan(&c, 4096, 2048).unwrap();
+        assert!(!scores_mma_for(false, &g, k, true), "{heads} x {dim}");
+    }
+}
+
+/// 2026-10-12: The radix top-k takes any exact launch whose selection fits it, under the lever
+/// and with the kernel. 2026-10-21: a ceiling launch takes it under its own lever, and each
+/// launch kind ignores the other's.
+#[test]
+fn the_radix_topk_takes_launches_that_fit_under_their_lever() {
+    use metrale_gpu_runtime::gpu::KernelHandle;
+    let k = KernelHandle(9);
+    for rows in [1usize, 2048] {
+        let g = DsaSelectGeometry::plan(&cfg(), 16_384, rows).unwrap();
+        let sk = g.select_k;
+        assert!(sk <= TOPK_RADIX_MAX);
+        assert!(topk_radix_for(false, sk, k, true, false), "{rows} rows exact");
+        assert!(!topk_radix_for(false, sk, k, false, true), "exact ignores the ceiling lever");
+        assert!(topk_radix_for(true, sk, k, false, true), "ceiling");
+        assert!(!topk_radix_for(true, sk, k, true, false), "ceiling ignores the exact lever");
+        assert!(
+            !topk_radix_for(false, sk, KernelHandle(0), true, true),
+            "no kernel"
+        );
+        assert!(
+            !topk_radix_for(true, sk, KernelHandle(0), true, true),
+            "no kernel, ceiling"
+        );
+    }
+    let wide = Glm5NextDsaConfig {
+        index_topk: 4096,
+        ..cfg()
+    };
+    let g = DsaSelectGeometry::plan(&wide, 16_384, 4).unwrap();
+    assert!(g.select_k > TOPK_RADIX_MAX);
+    for ceiling in [false, true] {
+        assert!(
+            !topk_radix_for(ceiling, g.select_k, k, true, true),
+            "select_k past the kernel"
+        );
+    }
+}

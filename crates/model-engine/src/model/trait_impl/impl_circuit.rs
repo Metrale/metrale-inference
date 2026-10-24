@@ -121,6 +121,7 @@ impl TransformerModel {
         fusions: Fusions,
         modules: &TargetModules,
         config_json: &str,
+        verify_rows: &[u64],
     ) -> Result<CircuitExec> {
         let unmodelled = self.circuit_unmodelled();
         if !unmodelled.is_empty() {
@@ -174,13 +175,7 @@ impl TransformerModel {
                 residual: self.buffers.residual(),
                 logits: self.buffers.logits(),
                 meta: self.decode_meta(0, DevicePtr::NULL),
-                batch_meta: self.batch_meta_at(
-                    self.batch_meta_base(),
-                    0,
-                    0,
-                    DevicePtr::NULL,
-                    DevicePtr::NULL,
-                ),
+                batch_meta: self.decode_batch_meta(0, 0, DevicePtr::NULL, DevicePtr::NULL),
                 ffn_act_q8: self.buffers.ffn_act_q8(),
                 tokens: self.buffers.scratch(),
                 draft: draft.as_ref().map(|d| DraftFixed {
@@ -201,7 +196,8 @@ impl TransformerModel {
                 verify_meta: self.verify_meta(0, 0, DevicePtr::NULL),
                 verify_batch_meta: self.verify_batch_meta_at(),
                 verify_wy_tables: self.verify_wy_tables,
-                verify_batch_tokens: super::verify_e::mapped_argmax_host_dev(self.gpu.as_ref())
+                verify_batch_tokens: self
+                    .mapped_argmax()
                     .map_or(self.buffers.scratch(), |(_, d)| d),
                 k_pools: (0..n).map(|i| cache.k_pool_ptr(i)).collect(),
                 v_pools: (0..n).map(|i| cache.v_pool_ptr(i)).collect(),
@@ -215,7 +211,7 @@ impl TransformerModel {
             config_json,
             levers: &self.levers,
             instance,
-            policy: policy::live_policy(&self.levers, policy::kv_dtype_name(kv)?, lm_head_dtype),
+            policy: policy::live_policy(&self.levers, kv.name(), lm_head_dtype),
             layers,
             head,
             fixed,
@@ -225,8 +221,10 @@ impl TransformerModel {
             // 2026-09-29: The MTP verify widths the scheduler runs one sequence at
             // (`serial_verify_plan`), when a drafter is loaded.
             draft: draft.map(|d| d.layer),
+            // 2026-10-23: The serve's verify widths (`ForwardSelect::Circuit::verify_rows`), when
+            // a drafter is loaded.
             verify_rows: if self.proposer.is_some() {
-                vec![2, 3, 4]
+                verify_rows.to_vec()
             } else {
                 Vec::new()
             },
@@ -255,6 +253,27 @@ impl TransformerModel {
 
 impl ModelCircuit for TransformerModel {
     fn set_forward(&self, sel: &ForwardSelect) -> Result<()> {
+        // 2026-10-23: A TP rank runs plan sites inside its layers (`impl_circuit_ranks`); every
+        // switch first returns them to their own code.
+        self.clear_rank_plans()?;
+        if let ForwardSelect::Circuit {
+            instance,
+            fusions,
+            modules,
+            config_json,
+            verify_rows,
+        } = sel
+            && self.circuit_by_rank()
+        {
+            self.destroy_lora_decode_graphs();
+            let sites =
+                self.install_rank_plans(instance, *fusions, modules, config_json, verify_rows)?;
+            tracing::info!(
+                "{}",
+                super::impl_circuit_ranks::report_sites(self.config.tp_rank, &sites)
+            );
+            return Ok(());
+        }
         let next = match sel {
             ForwardSelect::Legacy => None,
             ForwardSelect::Circuit {
@@ -262,7 +281,8 @@ impl ModelCircuit for TransformerModel {
                 fusions,
                 modules,
                 config_json,
-            } => Some(self.build_circuit(instance, *fusions, modules, config_json)?),
+                verify_rows,
+            } => Some(self.build_circuit(instance, *fusions, modules, config_json, verify_rows)?),
         };
         self.destroy_lora_decode_graphs();
         // 2026-09-29: The draft head drops the previous executor's program before its
@@ -283,7 +303,9 @@ impl ModelCircuit for TransformerModel {
 
     fn forward_disclosure(&self) -> ForwardDisclosure {
         match &*self.circuit.read() {
-            None => ForwardDisclosure::legacy(),
+            None => self
+                .rank_plans_disclosure()
+                .unwrap_or_else(ForwardDisclosure::legacy),
             Some(e) => ForwardDisclosure {
                 forward: match e.fusions {
                     Fusions::All => "circuit",

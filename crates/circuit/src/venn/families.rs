@@ -17,7 +17,9 @@
 //!   typed error, and a parameter a node cannot supply is an error unless the manifest states
 //!   its `absent` value.
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use super::compute::{ComputeUnit, FamilyCompute};
 use crate::format::Format;
@@ -238,6 +240,8 @@ pub struct Family {
     pub id: String,
     /// 2026-09-29: One line.
     pub description: String,
+    /// 2026-10-22: What its kernels compute, as prose and LaTeX ([`explain`]).
+    pub explain: explain::Explain,
     /// 2026-09-29: Entry points, as FUSIONS.toml names them.
     pub kernels: Vec<KernelId>,
     /// 2026-09-29: FUSIONS.toml emitters of kernel-less groups (host copies) it stands for.
@@ -317,6 +321,16 @@ pub struct LegacyPath {
     pub holds: String,
     /// 2026-09-29: One line.
     pub note: String,
+    /// 2026-10-22: Policy settings under which the engine takes another arm and the loop does not
+    /// run (all must hold); empty is always.
+    pub unless: BTreeMap<String, String>,
+}
+
+impl LegacyPath {
+    /// 2026-10-22: Whether the loop runs under `settings`.
+    pub fn runs_under(&self, settings: &BTreeMap<String, String>) -> bool {
+        self.unless.is_empty() || self.unless.iter().any(|(k, v)| settings.get(k) != Some(v))
+    }
 }
 
 /// 2026-09-29: The roofline constants of the hardware.
@@ -334,6 +348,29 @@ pub struct Roofline {
     pub context_tokens: u64,
 }
 
+/// 2026-10-22: The energy roofline (DESIGN-kernel-energy.md §3.3): dynamic GPU-rail energy per
+/// DRAM byte and per FLOP of each class, and the static rail power. A floor is the sum
+/// `bytes * dram_pj_per_byte + flops * <class>_pj_per_flop`; a class absent here is unmeasured.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnergyRoofline {
+    /// 2026-10-22: Dynamic energy per DRAM byte, pJ.
+    pub dram_pj_per_byte: f64,
+    /// 2026-10-22: Per scalar (SIMT) FP32 FLOP, pJ (TOML `cuda_core_fp32_pj_per_flop`).
+    pub simt_fp32_pj_per_flop: Option<f64>,
+    /// 2026-10-22: Per BF16 MMA FLOP, pJ.
+    pub bf16_mma_pj_per_flop: Option<f64>,
+    /// 2026-10-22: Per FP8 MMA FLOP, pJ.
+    pub fp8_mma_pj_per_flop: Option<f64>,
+    /// 2026-10-22: Per NVFP4 MMA FLOP, pJ.
+    pub nvfp4_mma_pj_per_flop: Option<f64>,
+    /// 2026-10-22: Static rail power (context up, no work), W.
+    pub static_w: f64,
+    /// 2026-10-22: `preliminary`, `measured` or `certified`.
+    pub label: String,
+    /// 2026-10-22: Where the constants were measured.
+    pub source: String,
+}
+
 /// 2026-09-29: A parsed manifest.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Families {
@@ -341,6 +378,8 @@ pub struct Families {
     pub hardware: String,
     /// 2026-09-29: Estimate constants.
     pub roofline: Roofline,
+    /// 2026-10-22: The energy roofline, when the manifest declares one.
+    pub energy: Option<EnergyRoofline>,
     /// 2026-09-29: Families, in file order.
     pub families: Vec<Family>,
     /// 2026-09-29: Legacy per-sequence facts.
@@ -415,10 +454,14 @@ pub enum FamilyError {
 
 #[path = "families_compute.rs"]
 mod compute_file;
+#[path = "families_explain.rs"]
+pub mod explain;
 #[path = "families_file.rs"]
 mod file;
 #[path = "families_legacy.rs"]
 mod legacy_file;
+#[path = "families_roofline.rs"]
+mod roofline_file;
 #[path = "families_workspace.rs"]
 mod workspace_file;
 

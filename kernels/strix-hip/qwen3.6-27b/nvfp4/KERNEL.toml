@@ -9,7 +9,6 @@ extra_nvcc_flags = ["-ffp-contract=off"]
 # (crates/kernels/build.rs); a stem listed nowhere is its own module name.
 
 [modules]
-e2m1_branchless = "e2m1"
 moe_permute = "moe"
 dense_gemm_bf16 = "gemm"
 rms_norm = "norm"
@@ -52,5 +51,3 @@ use = [
 # reason; kernels/FORKS.md has the diff distances.
 [shadow]
 gated_delta_rule = "uses gb10/qwen3.6-27b/nvfp4/gated_delta_rule.cu over gb10/common/gated_delta_rule.cu (2206 of 2514 lines differ); see kernels/FORKS.md"
-moe_w4a16_grouped_gemm = "fork of strix-hip/common/moe_w4a16_grouped_gemm.cu (1018 of 1030 lines differ); see kernels/FORKS.md"
-w4a16_gemm = "fork of strix-hip/common/w4a16_gemm.cu (1061 of 1095 lines differ); see kernels/FORKS.md"

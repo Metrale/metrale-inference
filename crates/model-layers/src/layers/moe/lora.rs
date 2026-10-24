@@ -20,21 +20,6 @@ use crate::layers::ops::lora_delta::{LoraKernels, LoraPair};
 use crate::layers::ops::moe_lora_grouped::{MoeExpertRoute, pack_expert_tables};
 use crate::lora::{ExpertLoraLayer, ExpertProj};
 
-/// 2026-09-25: Row capacity of the LoRA apply scratch: METRALE_LORA_EXPERT_MAX_TOKENS
-/// when it parses as a positive integer, else 4096; read once per process.
-/// Prefill expert folds run in windows of this many rows; a decode fold over
-/// more rows errors.
-fn max_tokens() -> u32 {
-    static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    *V.get_or_init(|| {
-        std::env::var("METRALE_LORA_EXPERT_MAX_TOKENS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .filter(|&t: &u32| t > 0)
-            .unwrap_or(4096)
-    })
-}
-
 /// 2026-09-25: Column count of the `delta` scratch. Its two readers are the
 /// router fold's expand (`router_n_out` = num_experts columns) and the decode
 /// down fold's activation recompute (`down_k_in` = moe_inter columns); the
@@ -50,7 +35,7 @@ pub(crate) struct MoeLoraWeights {
     /// 2026-09-25: Router (`mlp.gate`) delta on the routing logits; `None` if unadapted.
     pub(super) router: Option<LoraPair>,
     pub(super) kernels: LoraKernels,
-    /// 2026-09-25: Scratch capacity in rows (`max_tokens()`).
+    /// 2026-09-25: Scratch capacity in rows (`LoraLevers::expert_max_tokens`).
     pub(super) cap: u32,
     /// 2026-09-25: `[cap, max_rank]` BF16 shrink scratch, indexed by the row within
     /// the current window (prefill) or by flat slot (decode). The gate, up and
@@ -98,7 +83,9 @@ impl MoeLayer {
             .map(|p| p.max_rank)
             .max()
             .unwrap_or(0) as usize;
-        let cap = max_tokens() as usize;
+        // 2026-10-17: Row capacity of the scratch (`LoraLevers::expert_max_tokens`). Prefill
+        // expert folds run in windows of this many rows; a decode fold over more rows errors.
+        let cap = kernels.levers.expert_max_tokens as usize;
         let router_n_out = router.as_ref().map(|p| p.n_out);
         let down_k_in = experts
             .pairs

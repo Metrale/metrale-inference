@@ -12,10 +12,14 @@ use metrale_config::ModelConfig;
 use metrale_gpu_runtime::buffers::BufferArena;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
+mod ab_levers;
+mod one_row_path;
+pub use ab_levers::AbLevers;
 mod transformer_layer;
+pub use one_row_path::{split_segment_takes_decode_path, takes_decode_path};
 pub use transformer_layer::{
     GdnCarryBinding, LayerAuxState, LayerCapabilities, LayerGraphHooks, LayerSplitPrefill,
-    LayerWeightSetup, LayerWriteOnAccept, MTP_CATCHUP_MAX, TransformerLayer,
+    LayerWeightSetup, LayerWriteOnAccept, MTP_CATCHUP_MAX, PrefillSpan, TransformerLayer,
     VERIFY_WY_LAYER_STRIDE_BYTES, VERIFY_WY_TABLE_SEQS, VERIFY_WY_TABLE_STRIDE_BYTES,
     VERIFY_WY_TABLES_PER_LAYER,
 };
@@ -56,6 +60,15 @@ impl LayerState for EmptyLayerState {
     }
 }
 
+/// 2026-10-08: One sequence's verify-input record region for one recurrent layer under the
+/// replay rollback mode (`--ssm-rollback-mode replay`): `bytes` bytes at `base`, a pool
+/// address fixed per slot. The layer lays its rows out in it (`supports_ssm_replay`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SsmReplayRing {
+    pub base: DevicePtr,
+    pub bytes: usize,
+}
+
 /// 2026-09-25: Per-sequence state of a recurrent (SSM/GDN) layer: the recurrent h state
 /// and the conv1d window, plus the copies speculative decode rolls back to.
 pub struct SsmLayerState {
@@ -75,6 +88,9 @@ pub struct SsmLayerState {
     /// 2026-09-25: Per-token conv states of a verify, indexed like
     /// `h_state_intermediates`.
     pub conv_state_intermediates: Vec<DevicePtr>,
+    /// 2026-10-08: The verify-input record a replay-mode verify writes and its commit replays
+    /// from; `None` outside the replay rollback mode.
+    pub replay_ring: Option<SsmReplayRing>,
     /// 2026-09-25: Storage format of `h_state`: `false` = FP32, `true` = FP16.
     ///
     /// A sequence on an f16-sized pool (`h_prefill_stage` is `Some`) starts `true`: the
@@ -91,6 +107,27 @@ pub struct SsmLayerState {
     /// 2026-09-25: PLE per-sequence carry (token history and dilated-conv state), created
     /// on first use, only on a layer that hosts a `PleLayer`.
     pub ple: Option<crate::layers::ple::PleSeqState>,
+}
+
+impl SsmLayerState {
+    /// 2026-10-21: Exchange the live h and conv state with intermediate 0, the sequence's side
+    /// of a commit by swap (`ssm_reserve::commit_swap`). Errors, changing nothing, without an
+    /// intermediate 0 of either kind.
+    pub fn swap_live_with_inter0(&mut self) -> anyhow::Result<()> {
+        let (Some(h0), Some(c0)) = (
+            self.h_state_intermediates.first_mut(),
+            self.conv_state_intermediates.first_mut(),
+        ) else {
+            anyhow::bail!(
+                "commit swap: the layer state has no intermediate 0 (h {}, conv {})",
+                self.h_state_intermediates.len(),
+                self.conv_state_intermediates.len()
+            );
+        };
+        std::mem::swap(&mut self.h_state, h0);
+        std::mem::swap(&mut self.conv_state, c0);
+        Ok(())
+    }
 }
 
 impl LayerState for SsmLayerState {
@@ -232,6 +269,9 @@ pub struct ForwardContext<'a> {
     /// 2026-09-25: This model's kernel-path switches other than GEMM selection
     /// (`layers::ops::ModelLevers`).
     pub levers: &'a crate::layers::ops::ModelLevers,
+    /// 2026-10-17: The process's settings, resolved once at startup (`metrale_settings::resolve`):
+    /// the levers `levers` does not carry, read as plain fields.
+    pub settings: &'a metrale_settings::InferenceServerSettings,
     /// 2026-09-25: This model's diagnostic counters and one-shot latches
     /// (`layers::ops::ModelStats`). They belong to the model, so none spans a model swap.
     pub stats: &'a crate::layers::ops::ModelStats,
@@ -293,6 +333,9 @@ pub struct ForwardContext<'a> {
     /// draft passes, and `Refuse` on a kernel-batched multi-stream prefill. Read by the MoE
     /// LoRA fold hooks (`layers/moe/lora.rs`).
     pub moe_lora_route: MoeLoraRoute,
+    /// 2026-10-23: The paired A/B instrument's lever set for this pass (`ab_levers.rs`);
+    /// `AbLevers::NONE` outside the instrument.
+    pub ab_levers: AbLevers,
 }
 
 /// 2026-09-25: Per-pass descriptor for mid-chunk SSM tail capture: the reserved snapshot
@@ -374,6 +417,9 @@ pub enum MoeLoraRoute {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod one_row_path_tests;
 
 #[cfg(test)]
 #[path = "layer/release_contract_tests.rs"]

@@ -15,6 +15,8 @@ pub(in crate::layers::qwen3_attention) mod attention_forward_mla;
 mod attention_forward_oproj;
 mod attention_forward_v4;
 mod high_speed_swap;
+// 2026-10-18: The layer's `kv_abi::KvExecutor`, read by `run_paged_decode` and `write_kv_cache`.
+mod kv_exec;
 mod run_paged_decode;
 // 2026-09-25: The paged-decode split-K rule, called from the NVFP4, FP8 and BF16 arms of
 // `run_paged_decode.rs`.

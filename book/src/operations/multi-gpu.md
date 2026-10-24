@@ -157,7 +157,7 @@ MiniMax-M2.7 EP=2 has scored 8/10 on the suite; the Qwen3.5-122B EP=2 equivalent
 | Pure TP=2 | 2 | 1 | Dense / attention sharding |
 | TP=2 + EP=2 overlapping | 2 | 2 | Attention sharded TP, experts sharded EP, on the same two ranks |
 
-TP applies only to model families whose loader supports it (`ModelWeightLoader::supports_tp`). EP stays the default split for the MoE models here: GB10 is unified memory with no NVLink island to exploit, TP needs per-layer all-reduces, and at these model shapes EP moves less collective traffic. `docs/adr/0007-tp-ep-composition.md` records the design.
+TP applies only to model families whose loader supports it (`ModelWeightLoader::tp_support`). EP stays the default split for the MoE models here: GB10 is unified memory with no NVLink island to exploit, TP needs per-layer all-reduces, and at these model shapes EP moves less collective traffic. `docs/adr/0007-tp-ep-composition.md` records the design.
 
 ## Files to read
 

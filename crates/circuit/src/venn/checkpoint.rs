@@ -9,7 +9,9 @@
 //! Owner: metrale-circuit (venn).
 //! Invariants: pure (the caller reads the files); every disagreement is listed in one error.
 
-use metrale_config::{DeclaredPrecisionPlan, WeightQuantPolicy};
+use crate::prelude::*;
+
+use metrale_precision::{DeclaredPrecisionPlan, WeightQuantPolicy};
 
 use super::VennError;
 use super::repo::config_layer_kinds;

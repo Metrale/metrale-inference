@@ -91,6 +91,7 @@ pub(super) fn native_fp8_gdn_layer(
         None,
         config,
         gpu,
+        crate::lever_equivalence::DefaultLoad::at_defaults().lc(),
     )
     .unwrap();
     let fp8 = |n: usize, k: usize| Fp8Weight {
@@ -125,6 +126,7 @@ fn mk_state(gpu: &MockGpuBackend, layer: &Qwen3SsmLayer, n_inter: usize) -> SsmL
         conv_state_intermediates: (0..n_inter)
             .map(|i| conv_slab.offset(i * conv_bytes))
             .collect(),
+        replay_ring: None,
         h_is_f16: false,
         h_prefill_stage: None,
         ple: None,
@@ -144,11 +146,13 @@ fn run_batched_verify(
     let dispatch = crate::layers::ops::GemmDispatch::defaults();
     let derived = crate::layers::ops::DerivedWeights::new();
     let levers = crate::layers::ops::ModelLevers::defaults();
+    let settings = crate::lever_equivalence::defaults();
     let stats = crate::layers::ops::ModelStats::new();
     let ctx = ForwardContext {
         dispatch: &dispatch,
         derived: &derived,
         levers: &levers,
+        settings: &settings,
         stats: &stats,
         buffers: &buffers,
         hc_row_offset: 0,
@@ -167,6 +171,7 @@ fn run_batched_verify(
         midchunk_capture: None,
         // 2026-09-25: The default route; the layer has no FFN, so nothing reads it.
         moe_lora_route: crate::layer::MoeLoraRoute::Fold,
+        ab_levers: crate::layer::AbLevers::NONE,
     };
     let kv_config = metrale_cache::kv_cache::KvCacheConfig {
         block_size: 16,
@@ -177,6 +182,7 @@ fn run_batched_verify(
         layer_dtypes: vec![],
         layer_dims: vec![],
         cache_blocks_per_seq: None,
+        v_block_bytes: None,
     };
     let mut kv = metrale_cache::kv_cache::PagedKvCache::new(kv_config, 8, gpu).unwrap();
     let mut states_own: Vec<SsmLayerState> = ks.iter().map(|_| mk_state(gpu, layer, 4)).collect();
@@ -189,6 +195,8 @@ fn run_batched_verify(
         buffers.residual(),
         ks.len(),
         ks,
+        // 2026-10-09: The GDN layer does not read the lengths.
+        &vec![0; ks.len()],
         &mut states,
         &mut kv,
         DevicePtr::NULL,

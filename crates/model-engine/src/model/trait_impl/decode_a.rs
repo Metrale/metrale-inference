@@ -35,10 +35,6 @@ use metrale_model_layers::layers::ops;
 use metrale_model_layers::speculative::DraftProposer;
 use metrale_model_layers::weight_map::{DenseWeight, MtpWeights, QuantizedWeight};
 
-#[path = "decode_a_redzone.rs"]
-mod redzone;
-use redzone::{redzone_every, redzone_range_file};
-
 impl TransformerModel {
     /// 2026-09-25: Whether every layer that runs online FP8-KV calibration reports
     /// frozen (`graphs_ready_after_fp8_kv_cal`). True when no layer calibrates.
@@ -72,6 +68,9 @@ impl TransformerModel {
         // 2026-09-25: The backend's own stream (`default_stream`), which CUDA-graph
         // capture records.
         let stream = self.gpu.default_stream();
+        // 2026-10-10: Whether this step ends in the sharded device argmax; taking the arming
+        // here consumes it on every path, including an early error.
+        let head_keys = self.device_argmax.begin_step();
         // 2026-09-25: `--ssm-h-dtype f16`: narrow this sequence's SSM h-state to FP16
         // here, before any graph region. No-op without the flag.
         self.ssm_h_to_f16_dispatch(seq)?;
@@ -105,7 +104,7 @@ impl TransformerModel {
         // 2026-09-25: Red-zone bisection. The range is re-read and re-applied every
         // step, so it can be swept without a restart; `poison_redzones` allocates
         // and moves nothing, only the guard-band contents change.
-        if let Some(path) = redzone_range_file() {
+        if let Some(path) = self.settings.storage.redzone_range_file.as_deref() {
             let txt = std::fs::read_to_string(path).unwrap_or_default();
             let mut it = txt.split_whitespace();
             let lo: usize = it.next().and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -253,7 +252,10 @@ impl TransformerModel {
         // graphs for the whole model: a graph captured on the dense path would
         // replay the wrong attention once selection activates.
         let layer_veto = self.decode_graph_veto;
-        let use_graphs = (self.comm.is_none() || ep_graphs || gdn_graphs)
+        // 2026-10-09: Or every layer declares its decode capturable with a communicator
+        // (GLM-5.3; `layers_capture_with_comm`, `METRALE_COMM_DECODE_GRAPHS=0` turns it off).
+        let layer_comm_graphs = self.layers_capture_with_comm();
+        let use_graphs = (self.comm.is_none() || ep_graphs || gdn_graphs || layer_comm_graphs)
             && !self.profile
             && !self
                 .suppress_graphs
@@ -272,6 +274,7 @@ impl TransformerModel {
             dispatch: &self.dispatch,
             derived: &self.derived,
             levers: &self.levers,
+            settings: &self.settings,
             stats: &self.stats,
             attn_metadata: Some(attn_metadata),
             profile: self.profile,
@@ -287,10 +290,13 @@ impl TransformerModel {
             routed_lora_layers: None,
             midchunk_capture: None,
             moe_lora_route: self.decode_moe_route(),
+            ab_levers: metrale_model_layers::layer::AbLevers::NONE,
         };
 
         // 2026-10-03: The graph key: the pool slot and the LoRA routes a capture bakes.
-        let graph_key = super::SlotGraphKey::new(seq.slot_idx, seq_slot, ctx.moe_lora_route);
+        let graph_key = self
+            .slot_graph_key(seq.slot_idx, seq_slot, ctx.moe_lora_route)
+            .with_device_argmax(head_keys);
 
         // 2026-09-25: Profile mode: per-layer synchronised decode for a timing breakdown.
         if let (true, Some(token)) = (self.profile, input.host()) {
@@ -459,7 +465,7 @@ impl TransformerModel {
 
         // 2026-09-25: Red-zone scan (`METRALE_REDZONE`), after the whole step with
         // the device drained, so a violation names the step that caused it.
-        if redzone_every() > 0 && seq.seq_len.is_multiple_of(redzone_every()) {
+        if self.engine.redzone_every > 0 && seq.seq_len.is_multiple_of(self.engine.redzone_every) {
             self.gpu.synchronize(stream)?;
             match self.gpu.scan_redzones() {
                 Ok(0) => {}

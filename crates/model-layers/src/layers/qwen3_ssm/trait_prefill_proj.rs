@@ -45,13 +45,19 @@ impl Qwen3SsmLayer {
         if self.qkvz_q2.is_some() {
             let scratch = ctx.buffers.q2_dequant_scratch();
             let act_q8 = ctx.buffers.q2_act_q8();
-            self.qkvz_q2_prefill_gemm(ctx.gpu, normed, proj_dst, scratch, act_q8, k, stream)?;
+            self.qkvz_q2_prefill_gemm(
+                ctx.gpu,
+                ctx.levers.ops.native_q2_mmq,
+                normed,
+                proj_dst,
+                scratch,
+                act_q8,
+                k,
+                stream,
+            )?;
             return Ok(());
         }
-        let force_bf16 = matches!(
-            std::env::var("METRALE_GDN_BF16_WEIGHTS").ok().as_deref(),
-            Some("1")
-        );
+        let force_bf16 = ctx.levers.ssm.bf16_weights;
         // 2026-09-25: Per-row FP8 weights (`qkvz_fp8w_rowwise`), dequantised
         // once per layer to BF16 in the arena slab (`rowwise_bf16.rs`) and run
         // on cuBLASLt. FP8 E4M3 is exact in BF16, so this arm keeps the
@@ -235,6 +241,7 @@ impl Qwen3SsmLayer {
             ops::w8a16_gemm_pipelined(
                 ctx.gpu,
                 self.w8a16_gemm_pipelined_k,
+                ctx.levers.ops.w8a16.pipe128,
                 normed,
                 fp8w.weight,
                 fp8w.row_scale,
@@ -275,6 +282,7 @@ impl Qwen3SsmLayer {
             ops::fp8_gemm_n128(
                 ctx.gpu,
                 self.fp8_gemm_k,
+                ctx.levers.ops.fp8_ldmab,
                 normed,
                 fp8,
                 proj_dst,

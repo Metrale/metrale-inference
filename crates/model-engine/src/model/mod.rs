@@ -11,9 +11,15 @@
 #![allow(unused_imports, dead_code)]
 
 pub(crate) mod block_mgmt;
+pub(crate) mod block_tables;
+pub(crate) mod device_argmax;
 pub(crate) mod drop;
+mod engine_levers;
+pub(crate) mod ep_ctrl;
 mod gdn_carry;
 pub(crate) mod impl_a1;
+pub(crate) use impl_a1::build_lm_head_nvfp4_t;
+pub(crate) use screen_head::build_screen_head;
 pub(crate) mod impl_a1_init;
 pub(crate) mod impl_a2;
 mod impl_a2_ep_broadcast;
@@ -33,12 +39,17 @@ mod impl_ngram;
 pub(crate) mod lm_head_fp8_rows;
 pub(crate) mod lm_head_nvfp4_rows;
 pub(crate) mod lm_head_q6k;
+pub(crate) mod lm_head_vocab_tp;
 pub(crate) mod pinned_pack;
+pub(crate) mod prefill_zero;
 pub(crate) mod prefix_reclaim;
+pub(crate) mod screen_head;
+mod screen_head_lazy;
 pub(crate) mod seq_memtrace;
 pub(crate) mod ssm_batched_copy;
 pub(crate) mod ssm_pool;
 mod ssm_pool_slots;
+mod ssm_pool_swap;
 pub(crate) mod ssm_snapshot;
 mod ssm_snapshot_decode;
 pub(crate) mod ssm_snapshot_faultin;
@@ -59,4 +70,12 @@ pub mod nllb;
 #[path = "nllb/host_tests.rs"]
 mod nllb_host_tests;
 
+// 2026-10-24: Served embedding model (mean-pooled bidirectional text tower); the GPU engine is
+// cuda-only, the packing and validation are pure.
+pub mod embed;
+
 pub use types::TransformerModel;
+
+#[cfg(test)]
+#[path = "impl_a1/telemetry_settings_tests.rs"]
+mod impl_a1_telemetry_settings_tests;

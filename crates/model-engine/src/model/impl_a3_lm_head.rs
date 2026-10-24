@@ -26,6 +26,7 @@ use super::block_mgmt::{
     apply_evicted_blocks, ensure_blocks_through_decode, ensure_blocks_through_prefill,
     extract_layer_refs, reuse_prefix_match_disk_ids,
 };
+use super::lm_head_vocab_tp::HeadRanks;
 use super::ssm_pool::SsmStatePool;
 use super::ssm_snapshot::SsmSnapshotPool;
 use super::types::{PinnedMetaStaging, TransformerModel};
@@ -36,14 +37,6 @@ use metrale_model_layers::layer::{
 use metrale_model_layers::layers::ops;
 use metrale_model_layers::speculative::DraftProposer;
 use metrale_model_layers::weight_map::{DenseWeight, MtpWeights, QuantizedWeight};
-
-/// 2026-09-25: Whether the wide batched LM head arm runs. Setting
-/// `METRALE_NO_LMHEAD_BATCHED_WIDE` to any value, `0` included, turns it off
-/// and leaves those row counts on `w4a16_gemm`. Read once per process.
-fn lmhead_batched_wide_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_NO_LMHEAD_BATCHED_WIDE").is_err())
-}
 
 impl TransformerModel {
     /// 2026-09-25: Wide batched LM head for the batched-verify row counts,
@@ -106,6 +99,7 @@ impl TransformerModel {
             ops::w4a16_gemv_batchm(
                 self.gpu.as_ref(),
                 self.w4a16_gemv_batch16_kernel,
+                self.w4a16_batchm.tc(),
                 hidden,
                 nvfp4,
                 logits,
@@ -120,12 +114,14 @@ impl TransformerModel {
     }
 
     /// 2026-09-25: LM head for K rows: `hidden[K, H]` → `logits_dst[K, V]`,
-    /// which it returns.
+    /// which it returns. 2026-10-10: `ranks` says whether every rank makes this call
+    /// (`lm_head_vocab_tp.rs`); only then may the head shard by vocab.
     pub(super) fn lm_head_batched(
         &self,
         hidden: DevicePtr,
         num_tokens: u32,
         logits_dst: DevicePtr,
+        ranks: HeadRanks,
         stream: u64,
     ) -> Result<DevicePtr> {
         let h = self.config.hidden_size as u32;
@@ -133,6 +129,8 @@ impl TransformerModel {
         // 2026-09-25: The caller picks the destination, so co-dispatched
         // prefill streams can each write their own logits rows.
         let logits = logits_dst;
+        // 2026-10-21: This call writes logits: a screened verify's are no longer lazy.
+        self.screen_clear_lazy();
         if self.lm_head_q6k_run(hidden, num_tokens, logits, stream)?
             || self.lm_head_nvfp4_rows_run(hidden, num_tokens as usize, logits, stream)?
         {
@@ -147,8 +145,32 @@ impl TransformerModel {
         {
             return Ok(logits);
         }
-        if self.lm_head_fp8_run(hidden, num_tokens as usize, logits, stream)? {
+        if self.lm_head_fp8_run(hidden, num_tokens as usize, logits, ranks, stream)? {
             // 2026-09-28: FP8 E4M3 head, one weight pass per launch (`lm_head_fp8_rows.rs`).
+        } else if num_tokens == 1
+            && self.lm_head_nvfp4.is_none()
+            && let Some((begin, len)) = self.lmhead_vocab_shard(v, ranks)
+        {
+            // 2026-10-10: One row on a vocab-parallel BF16 head takes `lm_head`'s sharded GEMV,
+            // so a prefill's first token gets the bits a decode step gets. It fell through to the
+            // whole-vocab tile GEMM on every rank: 14.4 ms per prompt on GLM-5.3 (nsys of a
+            // 16-prompt prefill burst), against ~1.8 ms for the shard.
+            self.gpu.memset_async(logits, 0, v as usize * 2, stream)?;
+            ops::dense_gemv(
+                self.gpu.as_ref(),
+                self.dense_gemv_kernel,
+                hidden,
+                &metrale_model_layers::weight_map::DenseWeight {
+                    weight: self.lm_head_weight.weight.offset(begin * h as usize * 2),
+                },
+                logits.offset(begin * 2),
+                len as u32,
+                h,
+                stream,
+            )?;
+            if let Some(comm) = self.comm_ref() {
+                comm.all_reduce_async(logits.0, v as usize * 2, stream)?;
+            }
         } else if self.lm_head_nvfp4.is_none()
             && (2..=ops::DENSE_GEMV_BATCHM_DECODE_MAX_M).contains(&num_tokens)
             && self.dense_gemv_batchm_kernel.0 != 0
@@ -156,7 +178,7 @@ impl TransformerModel {
             // 2026-09-25: BF16 head, 2..=`DENSE_GEMV_BATCHM_DECODE_MAX_M` rows: one
             // batched GEMV for every row, since the NVFP4 tiers below do not
             // cover a BF16 head.
-            let (w, n, dst) = match self.lmhead_vocab_shard(v) {
+            let (w, n, dst) = match self.lmhead_vocab_shard(v, ranks) {
                 // 2026-09-25: Vocab-parallel, as in `lm_head`: this rank computes its
                 // row range into a zeroed buffer, and the all-reduce below sums the
                 // ranks' pieces.
@@ -207,6 +229,7 @@ impl TransformerModel {
                 ops::w4a16_gemv_batch2(
                     self.gpu.as_ref(),
                     self.w4a16_gemv_batch2_kernel,
+                    self.w4a16_batchm.tc(),
                     hidden,
                     nvfp4,
                     logits,
@@ -236,7 +259,7 @@ impl TransformerModel {
                     stream,
                 )?;
             }
-        } else if (3..=ops::gemv_tc::narrow_gemv_max_rows()).contains(&num_tokens)
+        } else if (3..=self.w4a16_batchm.tc().narrow_max_rows()).contains(&num_tokens)
             && self.w4a16_batchm.kernel(num_tokens).0 != 0
             && let Some(ref nvfp4) = self.lm_head_nvfp4
         {
@@ -245,6 +268,7 @@ impl TransformerModel {
             ops::w4a16_gemv_batchm(
                 self.gpu.as_ref(),
                 self.w4a16_batchm.kernel(num_tokens),
+                self.w4a16_batchm.tc(),
                 hidden,
                 nvfp4,
                 logits,
@@ -254,7 +278,7 @@ impl TransformerModel {
                 stream,
             )?;
         } else if (9..=super::trait_impl::verify_e2::VERIFY_ROW_CAP as u32).contains(&num_tokens)
-            && lmhead_batched_wide_enabled()
+            && !self.settings.scheduler.no_lmhead_batched_wide
             && self.lm_head_batched_wide(hidden, num_tokens, logits, stream)?
         {
             // 2026-09-25: The wide arm launched. When it returns `false` it
@@ -265,6 +289,22 @@ impl TransformerModel {
                 self.w4a16_gemm_kernel,
                 hidden,
                 nvfp4,
+                logits,
+                num_tokens,
+                v,
+                h,
+                stream,
+            )?;
+        } else if self.config.model_type == "glm5_next"
+            && num_tokens > ops::DENSE_GEMV_BATCHM_DECODE_MAX_M
+        {
+            // 2026-10-09: GLM-5.3's BF16 head over a wide verify (up to 128 rows) on the
+            // tile GEMM took 118 ms per step (nsys, C16 DFlash2, 154,880-row vocab); cuBLASLt's
+            // tensor-core GEMM reads the head once. Rows above the batched-GEMV width already
+            // depend on their batch-mates on this path, so no row-invariance is lost.
+            ops::cublas_bf16_proj_dense(
+                hidden,
+                self.lm_head_weight.weight,
                 logits,
                 num_tokens,
                 v,
@@ -297,29 +337,16 @@ impl TransformerModel {
         Ok(logits)
     }
 
-    /// 2026-09-25: `(begin, len)` rows of the BF16 LM head this rank computes,
-    /// or `None` for the whole-vocab projection.
-    ///
-    /// `None` unless there is a communicator with at least 2 ranks and the vocab
-    /// divides evenly by the world size, or when `METRALE_NO_LMHEAD_VOCAB_TP=1`
-    /// (read once per process). Only the BF16 dense-head paths call it.
-    fn lmhead_vocab_shard(&self, v: u32) -> Option<(usize, usize)> {
-        static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *OFF.get_or_init(|| std::env::var("METRALE_NO_LMHEAD_VOCAB_TP").as_deref() == Ok("1")) {
-            return None;
-        }
-        let comm = self.comm_ref()?;
-        let ws = comm.world_size();
-        if ws < 2 || !(v as usize).is_multiple_of(ws) {
-            return None;
-        }
-        let len = v as usize / ws;
-        Some((comm.rank() * len, len))
-    }
-
-    pub(super) fn lm_head(&self, hidden: DevicePtr, stream: u64) -> Result<DevicePtr> {
+    /// 2026-10-10: `ranks` as for `lm_head_batched`.
+    pub(super) fn lm_head(
+        &self,
+        hidden: DevicePtr,
+        ranks: HeadRanks,
+        stream: u64,
+    ) -> Result<DevicePtr> {
         let h = self.config.hidden_size as u32;
         let v = self.config.vocab_size as u32;
+        self.screen_clear_lazy();
         // 2026-09-25: The FP32 scratch when `use_fp32_logits`, else the shared
         // BF16 buffer; readers take the dtype from `decode_logits_fp32`.
         let (logits, fp32) = if self.use_fp32_logits {
@@ -342,9 +369,9 @@ impl TransformerModel {
         if !fp32
             && metrale_model_layers::layers::fixed_act(metrale_config::ProjFamily::LmHead, 1)
                 .is_some()
-            && self.lmhead_vocab_shard(v).is_none()
+            && self.lmhead_vocab_shard(v, ranks).is_none()
         {
-            self.lm_head_project_batched(hidden, 1, h as usize, 2, stream)?;
+            self.lm_head_project_batched(hidden, 1, h as usize, 2, ranks, stream)?;
         } else if !fp32 && self.lm_head_nvfp4_rows_run(hidden, 1, logits, stream)? {
             // 2026-10-02: Declared W4A16 NVFP4 head (`lm_head_nvfp4_rows.rs`).
             return Ok(logits);
@@ -352,7 +379,7 @@ impl TransformerModel {
             // 2026-09-25: FP8 E4M3 head (`--lm-head-dtype fp8`). It has no
             // FP32-output variant; with `use_fp32_logits` false, `logits` is the
             // BF16 buffer. 2026-09-28: W8A8 when declared (`lm_head_fp8_rows.rs`).
-            self.lm_head_fp8_run(hidden, 1, logits, stream)?;
+            self.lm_head_fp8_run(hidden, 1, logits, ranks, stream)?;
         } else if let Some(ref nvfp4) = self.lm_head_nvfp4 {
             // 2026-09-25: The FP32-output variant when the destination is the
             // FP32 buffer, which does not happen while `use_fp32_logits` is false.
@@ -384,7 +411,7 @@ impl TransformerModel {
                 h,
                 stream,
             )?;
-        } else if let Some((begin, len)) = self.lmhead_vocab_shard(v) {
+        } else if let Some((begin, len)) = self.lmhead_vocab_shard(v, ranks) {
             // 2026-09-25: Vocab-parallel BF16 head. Each rank holds the whole head
             // but computes only its row range (`lmhead_vocab_shard`) into a zeroed
             // buffer, and the all-reduce sums the ranks' pieces into full logits.

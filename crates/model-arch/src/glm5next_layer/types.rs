@@ -26,7 +26,7 @@ pub enum Glm5NextMixer {
 /// 2026-09-25: The layer's MLP: dense for the layers the config lists in `mlp_only_layers`,
 /// routed MoE for the rest.
 pub enum Glm5NextMlpSite {
-    Dense(Glm5NextDenseMlpWeights),
+    Dense(Box<Glm5NextDenseSite>),
     Moe(Box<Glm5NextMoeWeights>),
 }
 
@@ -39,6 +39,10 @@ pub struct Glm5NextMhc {
     pub hc_mult: usize,
     pub sinkhorn_iters: usize,
     pub hc_eps: f32,
+    /// 2026-10-10: One token's `hc_mult * hidden` FP32 streams: where the folded post-mix of the
+    /// attention site writes (`METRALE_GLM_MHC_POST_FOLD=1`), since the fused kernel's blocks
+    /// all read the streams it updates. NULL unless the lever is on.
+    pub fold_streams: DevicePtr,
 }
 
 /// 2026-09-25: One bound GLM-5.3 decoder layer.
@@ -49,7 +53,7 @@ pub struct Glm5NextLayer {
     pub mlp_cfg: Glm5NextMlpConfig,
     pub mlp_kernels: Glm5NextMlpKernels,
     /// 2026-09-25: MLP scratch. The text layers share one workspace unless
-    /// `METRALE_GLM_MLP_WS_SHARED=0` (`mlp_ws_shared`); the MTP block builds its own.
+    /// `METRALE_GLM_MLP_WS_SHARED=0` (`GlmLevers::mlp_ws_shared`); the MTP block builds its own.
     pub mlp_ws: Arc<Glm5NextMlpWorkspace>,
     /// 2026-09-25: `None` for the MTP block, which runs `forward_one_plain`. Every text layer has
     /// one: the skeleton marks every text layer `hyper_connection`.
@@ -72,4 +76,28 @@ pub struct Glm5NextLayer {
     pub is_first: bool,
     /// 2026-09-25: Collapse the highway in this layer; true for the last text layer only.
     pub is_last: bool,
+    /// 2026-10-10: The stack's L2 warm (`METRALE_GLM_AR_L2_PREFETCH`), shared by every text
+    /// layer; `None` when the lever is off and for the MTP block.
+    pub l2_warm: Option<Arc<l2_warm::L2Warm>>,
+    /// 2026-10-17: `scheduler.glm_keep_slot_graphs` at construction ([`Self::slot_graphs_stale`]).
+    pub keep_slot_graphs: bool,
+    /// 2026-10-17: The layer dump lever (`crate::glm5next_layer_dump::config`), resolved once at
+    /// load and shared by every layer; `None` when off.
+    pub dump: Option<Arc<crate::glm5next_layer_dump::DumpConfig>>,
+    /// 2026-10-17: The GLM layer levers, resolved once at load ([`GlmLevers::from_settings`]).
+    pub levers: super::GlmLevers,
+    /// 2026-10-23: The plans `--forward circuit` installs (`install_plans`); each empty site
+    /// runs the layer's own code.
+    pub plans: crate::glm5next_plan::LayerPlans,
+}
+
+impl Glm5NextLayer {
+    /// 2026-10-14: True, so a new sequence re-captures its slot's graphs, unless
+    /// `glm_keep_slot_graphs` is on and this is not a flat-indexer DSA layer. A flat state's
+    /// `alloc_state` buffers belong to one sequence; a paged state has no device buffers (its
+    /// rows go through the decode metadata), and KDA state lives in the SSM pool.
+    pub(crate) fn slot_graphs_stale(&self) -> bool {
+        !self.keep_slot_graphs
+            || matches!(&self.mixer, Glm5NextMixer::Dsa(l) if l.indexer_cache == IndexerCache::Flat)
+    }
 }

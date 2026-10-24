@@ -9,7 +9,6 @@ extra_nvcc_flags = ["-ffp-contract=off"]
 # (crates/kernels/build.rs); a stem listed nowhere is its own module name.
 
 [modules]
-e2m1_branchless = "e2m1"
 moe_permute = "moe"
 dense_gemm_bf16 = "gemm"
 rms_norm = "norm"

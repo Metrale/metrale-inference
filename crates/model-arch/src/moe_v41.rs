@@ -9,7 +9,7 @@
 //! slices into its device-visible slots (misses are read from the
 //! `ExpertSource`), and the kernels read the blocks directly with the
 //! activation quantised to q8_1: GEMVs for groups of up to eight rows, and by
-//! default MMQ above. The shared expert is resident, bf16 or K-quant (`ResidentMat`).
+//! default MMQ above. The shared expert is resident, bf16, K-quant or FP8 blocks (`ResidentMat`).
 //!
 //! Routing matches `deepseek_v41_ref::moe::gate`: f32-accumulated router
 //! logits, scores `sqrt(softplus(logit / gate_temp))`, the top-k chosen by
@@ -28,6 +28,8 @@ use metrale_gpu_runtime::gpu::{DevicePtr, KernelHandle};
 
 use metrale_model_layers::layers::ops::ResidentMat;
 
+use crate::fp8_block_v41::{Fp8BlockStage, Fp8StageSize};
+
 mod device_route;
 mod forward;
 
@@ -35,6 +37,8 @@ mod forward;
 /// `device_route_ok` refuses the device selection for a layer at or past it.
 pub(crate) const SLOT_TABLE_LAYERS: usize = 64;
 mod init;
+pub mod resident;
+pub mod resident_plan;
 mod route;
 mod shared;
 mod single;
@@ -53,6 +57,9 @@ pub struct MoeV41Cfg {
     pub route_scale: f32,
     pub swiglu_limit: f32,
     pub max_tokens: usize,
+    /// 2026-10-19: The FP8 block shared-expert projections' scratch (`Fp8StageSize::NONE`
+    /// when they are bf16 or K-quant).
+    pub fp8_stage: Fp8StageSize,
 }
 
 /// 2026-09-25: One layer's resident MoE weights: the router and the shared expert.
@@ -78,20 +85,6 @@ pub struct RouterWeights {
     /// 2026-09-25: bf16 `[n_routed, dim]`.
     pub gate_w: DevicePtr,
     pub gate_bias: Vec<f32>,
-}
-
-/// 2026-09-25: `METRALE_DS41_PREFETCH_K`, read once (default 0, off): how
-/// many of the next layer's predicted experts to start reading while this
-/// layer computes. It acts only at one token, with the host selection, and
-/// with the reader pool (`METRALE_DS41_READER_POOL=1`).
-pub fn prefetch_k() -> usize {
-    static K: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *K.get_or_init(|| {
-        std::env::var("METRALE_DS41_PREFETCH_K")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0)
-    })
 }
 
 struct Kernels {
@@ -169,11 +162,11 @@ pub struct MoeV41Stage {
 pub struct MoeV41 {
     /// 2026-09-25: The last forward's timing.
     pub last: std::cell::Cell<MoeV41Timing>,
-    /// 2026-09-25: `METRALE_DS41_DIAG=1`: synchronise at the end of `forward`
-    /// so `compute_ms` is GPU time.
-    timing_sync: bool,
+    /// 2026-10-17: The settings levers, fixed at load (`Ds41Levers::from_settings`).
+    pub(crate) levers: crate::deepseek_v41_layer::levers::Ds41Levers,
     pub cfg: MoeV41Cfg,
     k: Kernels,
+    fp8: Fp8BlockStage,
     logits: DevicePtr,
     /// 2026-09-25: The next layer's router on this layer's input
     /// (`[n_routed]` f32).
@@ -217,16 +210,6 @@ pub struct MoeV41 {
     side: u64,
     ev_in: u64,
     ev_out: u64,
-}
-
-/// 2026-09-25: `METRALE_DS41_SHARED_SIDE`, read once (default on; `0` turns it
-/// off): at one token the shared expert runs on a side stream while the main
-/// stream runs the router and the host picks the experts. Its output is added
-/// into `acc` after the routed experts, the same point as on the main stream,
-/// so the accumulation order does not change.
-pub fn shared_side() -> bool {
-    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *V.get_or_init(|| !std::env::var("METRALE_DS41_SHARED_SIDE").is_ok_and(|v| v == "0"))
 }
 
 fn softplus(x: f32) -> f32 {
@@ -285,6 +268,12 @@ pub fn bf16_bytes(v: &[f32]) -> Vec<u8> {
         .collect()
 }
 
+#[cfg(all(test, feature = "cuda"))]
+#[path = "moe_v41_resident_gpu_tests.rs"]
+mod resident_gpu_tests;
+#[cfg(test)]
+#[path = "moe_v41_resident_tests.rs"]
+mod resident_tests;
 #[cfg(test)]
 #[path = "moe_v41_route_tests.rs"]
 mod route_tests;

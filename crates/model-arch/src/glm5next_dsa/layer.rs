@@ -35,76 +35,46 @@
 //!   K half, so it is in the `kv_lora_rank`-wide latent space the kernel dots against. The
 //!   raw `q_b_proj` is `qk_head_dim` (256) per head.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use metrale_cache::kv_cache::PagedKvCache;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
-use metrale_gpu_runtime::kernel_args::KernelLaunch;
 
-use super::attend::{DsaDecodeInputs, DsaDecodePaging, Glm5NextDsaDecodeKernel, decode_attention};
+use super::attend::Glm5NextDsaDecodeKernel;
+use super::paged::{IndexerCache, IndexerRowsDev};
 use super::select::{DsaSelectInputs, select_tokens};
 use super::state::Glm5NextDsaState;
 use super::{Glm5NextDsaConfig, Glm5NextDsaKernels};
 use metrale_model_layers::layer::{ForwardContext, LayerState, TransformerLayer};
 
+mod attend_rows;
 mod decode_k;
+mod decode_plan;
+mod decode_rows;
+mod drafter_rows;
+mod host_rows;
+mod indexer_place;
+mod kernels;
+mod prefill_rows;
 mod proj_gemm;
+mod proj_in_merged;
+mod row_ops;
 mod rows;
+mod select_rows;
+mod selector_pair;
+mod slot_upload;
+mod verify_select;
 mod workspace;
 
-use proj_gemm::gemm;
+pub use decode_rows::DsaRowSpan;
+pub use indexer_place::{IndexerKernels, IndexerPlace};
+pub use kernels::Glm5NextDsaLayerKernels;
+pub use slot_upload::SlotUpload;
 pub use workspace::Glm5NextDsaWorkspace;
 pub(crate) use workspace::batch_select_enabled;
-
-/// 2026-09-25: The projection, norm and latent-write kernels of a DSA block. The selection
-/// kernels are in `Glm5NextDsaKernels`, the decode kernel in `attend`.
-#[derive(Clone, Copy)]
-pub struct Glm5NextDsaLayerKernels {
-    /// 2026-09-25: `dense_gemm_bf16`, `C = A @ B^T`, BF16 out.
-    pub gemm: KernelHandle,
-    /// 2026-09-25: The same with FP32 out, for the selector's `q_idx` and head weights.
-    pub gemm_f32: KernelHandle,
-    /// 2026-09-25: M = 1 kernels for `gemm` and `gemm_f32`. `gemv_f32` is `KernelHandle(0)`
-    /// on a target without `dense_gemv_bf16_fp32out`, and `dense_mm_bf16` then uses the tile
-    /// GEMM.
-    pub gemv: KernelHandle,
-    pub gemv_f32: KernelHandle,
-    /// 2026-09-25: `dense_gemv_bf16_batchm`: 2..=`DENSE_GEMV_BATCHM_MAX_M` rows in one pass
-    /// over the weight; `KernelHandle(0)` when the target lacks it.
-    pub gemv_batchm: KernelHandle,
-    /// 2026-09-25: `rms_norm_vanilla`; see the module header.
-    pub rms_norm: KernelHandle,
-    /// 2026-09-25: `glm5next_mla_latent_write_fp8`: RMSNorm, FP8 quantisation and the paged
-    /// slot write of the KV latent.
-    pub latent_write: KernelHandle,
-}
-
-impl Glm5NextDsaLayerKernels {
-    pub fn resolve(gpu: &dyn GpuBackend) -> Result<Self> {
-        Ok(Self {
-            // 2026-09-25: `kernels/gb10/common/KERNEL.toml` `[modules]` maps
-            // `dense_gemm_bf16 = "gemm"` and `dense_gemv_bf16 = "gemv"`; an unlisted `.cu`
-            // file's module is its file stem.
-            gemm: gpu.kernel("gemm", "dense_gemm_bf16")?,
-            gemm_f32: gpu.kernel("gemm", "dense_gemm_bf16_f32out")?,
-            gemv: gpu.kernel("gemv", "dense_gemv_bf16")?,
-            gemv_f32: metrale_model_layers::layers::try_kernel(
-                gpu,
-                "gemv",
-                "dense_gemv_bf16_fp32out",
-            ),
-            gemv_batchm: metrale_model_layers::layers::try_kernel(
-                gpu,
-                "dense_gemv_bf16_batchm",
-                "dense_gemv_bf16_batchm",
-            ),
-            rms_norm: gpu.kernel("rms_norm_vanilla", "rms_norm_vanilla")?,
-            latent_write: gpu
-                .kernel("glm5next_mla_latent_write", "glm5next_mla_latent_write_fp8")?,
-        })
-    }
-}
+pub use workspace::{select_scratch_geometry, select_scratch_rows};
 
 /// 2026-09-25: One DSA block's weights on the device, already sharded for this rank.
+#[derive(Clone)]
 pub struct Glm5NextDsaWeights {
     pub q_a_proj: DevicePtr,
     pub q_a_layernorm: DevicePtr,
@@ -133,13 +103,17 @@ pub struct Glm5NextDsaWeights {
     pub ape: DevicePtr,
 }
 
+#[derive(Clone)]
 pub struct Glm5NextDsaLayer {
     pub cfg: Glm5NextDsaConfig,
     pub weights: Glm5NextDsaWeights,
     pub kernels: Glm5NextDsaLayerKernels,
     pub select_kernels: Glm5NextDsaKernels,
     pub decode_kernel: Glm5NextDsaDecodeKernel,
-    pub workspace: Glm5NextDsaWorkspace,
+    /// 2026-10-12: One per layer, or (`METRALE_GLM_DSA_WS_SHARED`, the default) the one the
+    /// whole stack shares (`GlmLevers::dsa_ws_shared`): layers run in sequence on one stream and
+    /// nothing in it carries across layers.
+    pub workspace: std::sync::Arc<Glm5NextDsaWorkspace>,
     /// 2026-09-25: Index in the model's layer stack; used only in error messages.
     pub layer_idx: usize,
     /// 2026-09-25: Index into the KV pool (`kv_cache.k_pool_ptr`): the loader counts DSA
@@ -150,24 +124,76 @@ pub struct Glm5NextDsaLayer {
     /// 2026-09-25: FP8 latent-cache scale. The decode reads with it and the latent write
     /// takes `1/scale`.
     pub kv_scale: f32,
-    /// 2026-09-25: Use the workspace's `bt`/`sl` rather than allocating them per call. The
-    /// loaders set it true unless `METRALE_GLM_DSA_ALLOC_PER_STEP=1`.
+    /// 2026-09-25: Use the workspace's `bt`/`sl`, not per-call ones (`!levers.dsa_alloc_per_step`).
     pub persist_bt: bool,
+    /// 2026-10-09: Where `alloc_state` puts a sequence's indexer rows. The text stack's
+    /// loader sets `paged::text_stack_indexer_cache()`; the MTP drafter's layer is flat.
+    pub indexer_cache: IndexerCache,
+    /// 2026-10-16: How a paged state keeps its rows (`--indexer-cache-dtype`); flat layers are BF16.
+    pub indexer_format: super::fp8_rows::IndexerRowFormat,
+    /// 2026-10-17: The GLM layer levers this mixer reads, resolved at load.
+    pub levers: crate::glm5next_layer::GlmLevers,
+    /// 2026-10-17: The DSA levers that own heap data, resolved once per load and shared by the
+    /// stack's DSA layers.
+    pub dsa_owned: std::sync::Arc<super::levers::DsaOwnedLevers>,
 }
 
 impl Glm5NextDsaLayer {
+    /// 2026-10-09: Every BF16-output projection this layer launches through `Self::gemm`,
+    /// as `(weight, n, k, name)` with the shapes the forward passes, for
+    /// `--dense-quantization fp8`. The FP32-output `wq_b` and `weights_proj` are not listed.
+    pub fn dense_projections(&self) -> Vec<(DevicePtr, usize, usize, &'static str)> {
+        let c = &self.cfg;
+        let w = &self.weights;
+        let latent = c.local_heads * c.kv_lora_rank;
+        vec![
+            (w.q_a_proj, c.q_lora_rank, c.hidden, "dsa.q_a_proj"),
+            (w.q_absorb, latent, c.q_lora_rank, "dsa.q_absorb"),
+            (w.kv_a_proj, c.kv_lora_rank, c.hidden, "dsa.kv_a_proj"),
+            (w.o_absorb, c.hidden, latent, "dsa.o_absorb"),
+            (w.wk, c.index_head_dim, c.hidden, "dsa.indexer.wk"),
+            (
+                w.compress_gate,
+                c.index_head_dim,
+                c.hidden,
+                "dsa.indexer.compress_gate",
+            ),
+        ]
+    }
+
     /// 2026-09-25: Project `hidden` into indexer cache row `state.len()`, then advance by one.
     ///
-    /// With `pos_dev`, `k_normed` and `gate` go to the workspace staging rows and
-    /// `dsa_indexer_store` places them at the device-side position; without it they are
-    /// written straight into the cache row. Also leaves this row's selector head weights in
-    /// the workspace. Fails before any write when the cache is full.
+    /// With [`IndexerPlace::Device`], `k_normed` and `gate` go to the workspace staging rows
+    /// and `dsa_indexer_store` places them at the device-side position; with
+    /// [`IndexerPlace::Host`] they are written straight into the cache row. Also leaves this
+    /// row's selector head weights in the workspace. Fails before any write when the cache is
+    /// full.
     pub fn indexer_forward(
         &self,
         gpu: &dyn GpuBackend,
         hidden: DevicePtr,
         state: &mut Glm5NextDsaState,
-        pos_dev: Option<DevicePtr>,
+        kv_cache: &PagedKvCache,
+        place: IndexerPlace<'_>,
+        stream: u64,
+    ) -> Result<()> {
+        let own = self.indexer_kernels();
+        self.indexer_forward_with(gpu, hidden, state, kv_cache, place, true, own, stream)
+    }
+
+    /// 2026-10-09: [`Self::indexer_forward`], with the selector head weights computed only
+    /// when `head_weights` is set; `decode_rows` computes them for all its rows at once.
+    /// 2026-10-23: `own` are the key norm and placement kernels (the layer's, or a plan's).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn indexer_forward_with(
+        &self,
+        gpu: &dyn GpuBackend,
+        hidden: DevicePtr,
+        state: &mut Glm5NextDsaState,
+        kv_cache: &PagedKvCache,
+        place: IndexerPlace<'_>,
+        head_weights: bool,
+        own: IndexerKernels,
         stream: u64,
     ) -> Result<()> {
         // 2026-09-25: Checked before any write: everything below writes row `state.len()`,
@@ -175,14 +201,15 @@ impl Glm5NextDsaLayer {
         state.ensure_room(1)?;
         let d = self.cfg.index_head_dim;
         let pos = state.len();
-        let off = state.row_offset(pos);
         let w = &self.workspace;
-        let (k_dst, gate_dst) = match pos_dev {
-            Some(_) => (w.stage_k, w.stage_gate),
-            None => (state.k_normed.offset(off), state.gate.offset(off)),
+        let (k_dst, gate_dst) = match place {
+            IndexerPlace::Device { .. } => (w.stage_k, w.stage_gate),
+            IndexerPlace::Host { block_table } => {
+                self.host_row_ptrs(state, kv_cache, block_table)?
+            }
         };
 
-        gemm(
+        self.gemm(
             gpu,
             self.kernels.gemm,
             self.kernels.gemv,
@@ -195,19 +222,9 @@ impl Glm5NextDsaLayer {
             self.cfg.hidden,
             stream,
         )?;
-        KernelLaunch::new(gpu, self.select_kernels.k_norm)
-            .grid([1, 1, 1])
-            .block([d.min(1024) as u32, 1, 1])
-            .shared_mem((d.min(1024) * 4) as u32)
-            .arg_ptr(k_dst)
-            .arg_ptr(self.weights.k_norm_weight)
-            .arg_ptr(self.weights.k_norm_bias)
-            .arg_u32(1)
-            .arg_u32(d as u32)
-            .arg_f32(self.rms_eps)
-            .launch(stream)?;
+        self.k_norm_rows(gpu, own.k_norm, k_dst, 1, stream)?;
 
-        gemm(
+        self.gemm(
             gpu,
             self.kernels.gemm,
             self.kernels.gemv,
@@ -226,22 +243,24 @@ impl Glm5NextDsaLayer {
         // `weights_proj(hidden) * index_heads**-0.5`
         // (`glm5next_dsa_ref/gen_dsa_indexer_golden.py`), and the scale is already in the
         // weight (`build.rs` transform 2).
-        gemm(
-            gpu,
-            self.kernels.gemm_f32,
-            self.kernels.gemv_f32,
-            // 2026-09-25: No FP32-out batched GEMV kernel exists.
-            KernelHandle(0),
-            hidden,
-            self.weights.weights_proj,
-            self.workspace.head_weights,
-            1,
-            self.cfg.index_heads,
-            self.cfg.hidden,
-            stream,
-        )?;
+        if head_weights {
+            self.gemm(
+                gpu,
+                self.kernels.gemm_f32,
+                self.kernels.gemv_f32,
+                // 2026-09-25: M = 1; the batched rows use `gemv_batchm_f32` (`decode_rows`).
+                KernelHandle(0),
+                hidden,
+                self.weights.weights_proj,
+                self.workspace.head_weights,
+                1,
+                self.cfg.index_heads,
+                self.cfg.hidden,
+                stream,
+            )?;
+        }
 
-        self.store_indexer_row(gpu, state, pos_dev, pos, d, stream)
+        self.store_indexer_row(gpu, state, kv_cache, place, pos, 0, own, stream)
     }
 
     /// 2026-09-25: The selector query projection and the selection for one query row, written
@@ -255,37 +274,28 @@ impl Glm5NextDsaLayer {
         gpu: &dyn GpuBackend,
         row: usize,
         state: &Glm5NextDsaState,
+        rows: IndexerRowsDev,
         q_pos_dev: DevicePtr,
         replay_safe: bool,
+        // 2026-10-09: `(q_idx, head_weights)` this row's selector query and head weights
+        // when the caller computed them already (`decode_rows`, several rows in one launch);
+        // `None` computes the query here and reads the head weights `indexer_forward` left.
+        pre: Option<(DevicePtr, DevicePtr)>,
         stream: u64,
     ) -> Result<()> {
         let w = &self.workspace;
         let geom = state.geometry(&self.cfg, 1)?;
 
-        // 2026-09-25: The selector query `q_idx`, FP32 out.
-        gemm(
-            gpu,
-            self.kernels.gemm_f32,
-            self.kernels.gemv_f32,
-            // 2026-09-25: No FP32-out batched GEMV kernel exists.
-            KernelHandle(0),
-            w.q_resid.offset(row * self.cfg.q_lora_rank * 2),
-            self.weights.wq_b,
-            w.q_idx,
-            1,
-            self.cfg.index_heads * self.cfg.index_head_dim,
-            self.cfg.q_lora_rank,
-            stream,
-        )?;
-        // 2026-09-25: `head_weights` comes from `indexer_forward`, which has the layer input.
+        let (q, weights) = match pre {
+            Some(p) => p,
+            None => self.selector_query_row(gpu, row, stream)?,
+        };
 
         let inputs = DsaSelectInputs {
-            k_normed: state.k_normed,
-            gate: state.gate,
-            valid: state.valid,
+            rows,
             ape: self.weights.ape,
-            q: w.q_idx,
-            weights: w.head_weights,
+            q,
+            weights,
             q_pos: q_pos_dev,
             // 2026-09-25: All 1s, set once in `Glm5NextDsaWorkspace::new`.
             q_mask: w.q_mask,
@@ -300,16 +310,11 @@ impl Glm5NextDsaLayer {
         // at the context ceiling and the live extents come from `geom_dev`, so one graph
         // serves every context length.
         let launch = if replay_safe {
-            super::select::DsaSelectLaunch::Ceiling {
-                max_pools: super::select::contiguous_pool_count(
-                    self.cfg.index_kpool,
-                    super::state::max_dsa_context(&self.cfg),
-                ),
-            }
+            self.ceiling_launch()
         } else {
             super::select::DsaSelectLaunch::Exact
         };
-        let t = crate::glm5next_layer::profile::start();
+        let t = self.levers.profile.start();
         // 2026-09-25: Row `row` of the `[max_rows, out_width]` selection output. The kernels
         // run one query row (`q_rows == 1`) into this row's slot, so `attend_rows` reads all
         // rows in one launch.
@@ -327,85 +332,39 @@ impl Glm5NextDsaLayer {
         profile::end(profile::DSA_SELECT, t, gpu, stream);
         Ok(())
     }
+}
 
-    /// 2026-09-25: The gather-attend for all `rows` query rows in one launch.
-    ///
-    /// Grid y is the row. Each row reads the paged latent cache through its own `q_abs` row,
-    /// selection row and `seq_lens` entry, and the block-table row at stride
-    /// `max_blocks_per_seq` (0 when the rows share one table).
-    #[allow(clippy::too_many_arguments)]
-    fn attend_rows(
+impl Glm5NextDsaLayer {
+    /// 2026-09-25: The selector query `q_idx` of row `row`, FP32 out, at M = 1 (`select_row`'s
+    /// `pre` carries the batched rows'); returns it with the head weights `indexer_forward` left
+    /// (it has the layer input).
+    pub(super) fn selector_query_row(
         &self,
         gpu: &dyn GpuBackend,
-        rows: usize,
-        state: &Glm5NextDsaState,
-        kv_cache: &PagedKvCache,
-        block_table_dev: DevicePtr,
-        seq_lens_dev: DevicePtr,
-        paging: &DsaDecodePaging,
+        row: usize,
         stream: u64,
-    ) -> Result<()> {
-        use crate::glm5next_layer::profile;
+    ) -> Result<(DevicePtr, DevicePtr)> {
         let w = &self.workspace;
-        // 2026-09-25: `decode_attention` reads only `out_width` and `q_rows` from it.
-        let geom = state.geometry(&self.cfg, rows)?;
-        let paging = DsaDecodePaging {
-            num_seqs: rows,
-            ..*paging
-        };
-        let t = profile::start();
-        let pool = kv_cache.k_pool_ptr(self.attn_layer_idx);
-        decode_attention(
+        self.gemm(
             gpu,
-            self.decode_kernel,
-            &self.cfg,
-            &geom,
-            &paging,
-            &DsaDecodeInputs {
-                q: w.q_abs,
-                k_cache: pool,
-                v_cache: pool, // 2026-09-25: absorbed NoPE MLA: K and V are the same latent
-                out: w.attn_out,
-                block_tables: block_table_dev,
-                seq_lens: seq_lens_dev,
-                sel_indices: w.select.tokens(),
-                k_scale: self.kv_scale,
-                v_scale: self.kv_scale,
-            },
+            self.kernels.gemm_f32,
+            self.kernels.gemv_f32,
+            KernelHandle(0),
+            w.q_resid.offset(row * self.cfg.q_lora_rank * 2),
+            self.weights.wq_b,
+            w.q_idx,
+            1,
+            self.cfg.index_heads * self.cfg.index_head_dim,
+            self.cfg.q_lora_rank,
             stream,
         )?;
-        profile::end(profile::DSA_ATTEND, t, gpu, stream);
-        Ok(())
-    }
-
-    /// 2026-09-26: `decode_k`'s check that the indexer cache is in lockstep with the KV
-    /// cache: rewinds `st` when it is ahead of `seq_len`, fails when it is behind.
-    fn check_lockstep(&self, st: &mut Glm5NextDsaState, seq_len: usize) -> Result<()> {
-        // 2026-09-25: The indexer cache must advance in lockstep with the KV cache.
-        //
-        // * Ahead (`len > seq_len`) follows a rejected speculative draft: rewinding to
-        //   `seq_len` makes the rows past it unreachable (the selector reads `[0, len)`) and
-        //   the next write overwrites them.
-        // * Behind (`len < seq_len`) means rows were never written, which is an error.
-        match st.len().cmp(&seq_len) {
-            std::cmp::Ordering::Greater => st.rewind_to(seq_len)?,
-            std::cmp::Ordering::Less => bail!(
-                "DSA layer {}: indexer cache holds {} tokens but the sequence is at {} — \
-                 rows are MISSING, not merely stale. The indexer stream must advance in \
-                 lockstep with the KV cache.",
-                self.layer_idx,
-                st.len(),
-                seq_len
-            ),
-            std::cmp::Ordering::Equal => {}
-        }
-        Ok(())
+        Ok((w.q_idx, w.head_weights))
     }
 }
 
 impl TransformerLayer for Glm5NextDsaLayer {
     fn alloc_state(&self, gpu: &dyn GpuBackend) -> Result<Box<dyn LayerState>> {
-        Ok(Box::new(Glm5NextDsaState::alloc(gpu, &self.cfg)?))
+        Ok(Box::new(self.alloc_dsa_state(gpu)?))
     }
 
     /// 2026-09-25: Frees a `Glm5NextDsaState`; any other state type is left alone. The
@@ -494,3 +453,7 @@ mod tests;
 
 #[cfg(test)]
 mod bt_trim_tests;
+
+// 2026-10-09: The mock rig the `decode_rows` and host-row staging tests share.
+#[cfg(test)]
+mod decode_rows_fixture;

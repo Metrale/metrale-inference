@@ -75,6 +75,16 @@ pub struct DflashScratch {
     pub sel_vals: DevicePtr,
     /// 2026-09-25: `[nb * γ, 16]` u32: the selector's top-16 token ids per row.
     pub sel_idx: DevicePtr,
+    /// 2026-10-10: `[nb * γ, topk16_parts(vocab), 16]` f32 and u32: the per-part top-16
+    /// candidates of the two-stage top-16 (`dflash2::topk16_parts`).
+    pub sel_cand_vals: DevicePtr,
+    pub sel_cand_idx: DevicePtr,
+    /// 2026-10-10: Tensor-parallel scratch (`tp.rs`), `DevicePtr(0)` otherwise: the propose
+    /// header and its position overflow (`HEADER_WORDS + max_seq_len` u32), this rank's
+    /// top-16 lists (`[vals nb*gamma*16 | idx nb*gamma*16]`) and every rank's, gathered.
+    pub tp_header: DevicePtr,
+    pub tp_send: DevicePtr,
+    pub tp_recv: DevicePtr,
     /// 2026-09-25: `[nb * γ, selector_rank]` BF16: the selector's hidden
     /// projection.
     pub sel_hproj: DevicePtr,

@@ -20,6 +20,7 @@ impl App {
     /// 2026-09-26: What `q` would throw away, named for the prompt; `None` when nothing is in flight.
     /// A download the user has already asked to cancel does not count.
     pub fn work_in_flight(&self) -> Option<&'static str> {
+        #[cfg(feature = "bench")]
         if self.bench.is_running() {
             return Some("a benchmark is running");
         }

@@ -115,6 +115,32 @@ pub(crate) fn cap_vocab_size_to_tokenizer(model_dir: &Path, config: &mut ModelCo
     }
 }
 
+/// 2026-10-19: Fill `engram_token_map` from `tokenizer.json` when the config declares an engram
+/// compressed vocabulary and the directory holds no GGUF (which ships its own map). A missing or
+/// unreadable tokenizer, or a map of another size than declared, fails the boot.
+pub(crate) fn fill_engram_token_map(model_dir: &Path, config: &mut ModelConfig) -> Result<()> {
+    if config.engram_compressed_vocab_size == 0
+        || metrale_model_weights::weights::find_gguf(model_dir).is_some()
+    {
+        return Ok(());
+    }
+    let tok_path = model_dir.join("tokenizer.json");
+    let tok = tokenizers::Tokenizer::from_file(&tok_path)
+        .map_err(|e| anyhow::anyhow!("{}: {e}", tok_path.display()))?;
+    let map = crate::tokenizer::engram_vocab::CompressedTokenMap::build(
+        &tok,
+        config.engram_compressed_vocab_size as u64,
+    )
+    .context("engram compressed token map")?;
+    config.engram_token_map = map.lookup().to_vec();
+    tracing::info!(
+        "Engram token map: {} tokenizer ids onto {} compressed ids",
+        config.engram_token_map.len(),
+        map.size()
+    );
+    Ok(())
+}
+
 /// 2026-09-26: Where the effective `num_drafts` came from: `--num-drafts`,
 /// MODEL.toml `[behavior].default_num_drafts`, or `cli::DEFAULT_NUM_DRAFTS`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -142,7 +168,7 @@ pub(crate) fn resolve_num_drafts(
 
 pub(crate) fn apply_model_default_num_drafts(
     args: &mut cli::ServeArgs,
-    ptx_set: &metrale_kernels::TargetPtxSet,
+    ptx_set: &metrale_kernel_set::TargetPtxSet,
 ) {
     let (effective, source) =
         resolve_num_drafts(args.num_drafts, ptx_set.behavior.default_num_drafts);
@@ -173,15 +199,17 @@ pub(crate) fn apply_model_default_num_drafts(
 /// 2026-09-29: Resolve the multi-sequence MTP dispatch cap (`--mtp-max-seqs`, MODEL.toml
 /// `[behavior].mtp_max_seqs`, engine default) and publish it before the model sizes its
 /// verify pools. An out-of-range value refuses the serve.
+/// 2026-10-17: The engine default follows the resolved `METRALE_NO_MTP_K_LADDER` (ROTI).
 pub(crate) fn publish_mtp_max_seqs(
     args: &cli::ServeArgs,
-    ptx_set: &metrale_kernels::TargetPtxSet,
+    ptx_set: &metrale_kernel_set::TargetPtxSet,
+    settings: &metrale_settings::InferenceServerSettings,
 ) -> anyhow::Result<()> {
     use metrale_model_layers::speculative as spec;
     let (n, source) = spec::resolve_mtp_max_seqs(
         args.mtp_max_seqs,
         ptx_set.behavior.mtp_max_seqs,
-        spec::mtp_ladder_disabled(),
+        settings.speculative.no_mtp_k_ladder,
     )?;
     if source != spec::MtpMaxSeqsSource::EngineDefault {
         tracing::info!("MTP dispatch cap: {n} ({source:?})");
@@ -218,24 +246,30 @@ pub(crate) fn publish_copy_tier(args: &cli::ServeArgs) -> anyhow::Result<()> {
 /// `speculative::draft_stop`. Nothing is published without the flag.
 pub(crate) fn publish_draft_confidence_stop(args: &cli::ServeArgs) -> anyhow::Result<()> {
     match args.mtp_draft.draft_confidence_stop {
-        Some(tau) => {
-            tracing::info!("MTP draft confidence stop: tau={tau}");
-            metrale_model_layers::speculative::draft_stop::set_draft_confidence_stop(tau)
+        Some(spec) => {
+            tracing::info!("MTP draft confidence stop: {spec}");
+            metrale_model_layers::speculative::draft_stop::set_draft_stop(spec)
         }
         None => Ok(()),
     }
 }
 
 /// 2026-10-03: Publish `--mtp-k-ladder` before the model sizes its verify pools and the
-/// scheduler starts. Without the flag nothing is published, and `METRALE_MTP_K_LADDER`
-/// or the default ladder applies.
-pub(crate) fn publish_mtp_k_ladder(args: &cli::ServeArgs) -> anyhow::Result<()> {
+/// scheduler starts.
+/// 2026-10-17: The ladder is the resolved `METRALE_MTP_K_LADDER` (the flag outranks the
+/// variable in `serve_settings`), so a malformed variable refuses the serve as the flag does.
+/// Unset by both, nothing is published and the default ladder applies.
+pub(crate) fn publish_mtp_k_ladder(
+    settings: &metrale_settings::InferenceServerSettings,
+) -> anyhow::Result<()> {
     use metrale_model_layers::speculative as spec;
-    let Some(value) = args.mtp_shape.mtp_k_ladder.as_deref() else {
+    const VAR: &str = "METRALE_MTP_K_LADDER";
+    let Some(value) = settings.speculative.mtp_k_ladder.as_deref() else {
         return Ok(());
     };
     let steps = spec::parse_mtp_k_ladder(value)?;
-    tracing::info!("MTP K-ladder (--mtp-k-ladder): {steps:?}");
+    let source = settings.provenance.source_of(VAR).map(|s| s.as_str());
+    tracing::info!("MTP K-ladder ({VAR} from {source:?}): {steps:?}");
     spec::set_mtp_k_ladder(steps)
 }
 

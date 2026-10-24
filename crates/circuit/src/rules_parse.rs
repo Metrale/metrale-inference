@@ -6,7 +6,9 @@
 //! Owner: metrale-circuit.
 //! Invariants: those of `rules.rs`.
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 
@@ -31,6 +33,8 @@ struct RuleFile {
     kernels: Vec<KernelFile>,
     repeat: String,
     copies: Option<String>,
+    #[serde(default)]
+    comm: Vec<CommFile>,
     emitter: String,
     rows: [u64; 2],
     modes: Vec<String>,
@@ -38,6 +42,8 @@ struct RuleFile {
     requires: Vec<String>,
     #[serde(default)]
     when: BTreeMap<String, String>,
+    #[serde(default)]
+    dims: BTreeMap<String, super::dims::DimPredFile>,
     numerics: String,
     microtest: Option<String>,
     lever: Option<String>,
@@ -45,6 +51,8 @@ struct RuleFile {
     cite: String,
     #[serde(default)]
     run: Vec<RunFile>,
+    path: Option<String>,
+    sm_budget: Option<core::num::NonZeroU32>,
 }
 
 /// 2026-09-30: `[[rule.run]]`: a per-run selector (`crate::runs::RunSelect`).
@@ -69,6 +77,14 @@ struct LaunchFile {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct CommFile {
+    api: String,
+    kernel: String,
+    at: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct KernelFile {
     module: String,
     func: String,
@@ -84,11 +100,14 @@ struct PatternFile {
     layer_kind: Option<String>,
     format: Option<String>,
     local: Option<String>,
+    block: Option<String>,
     weight: Option<String>,
     input: Option<String>,
     writes: Option<String>,
     #[serde(default)]
     keep: bool,
+    #[serde(default)]
+    elides: bool,
     #[serde(default)]
     stored: bool,
     #[serde(default)]
@@ -96,6 +115,9 @@ struct PatternFile {
     holds: Option<String>,
     #[serde(default)]
     steps: BTreeMap<String, String>,
+    #[serde(default)]
+    params: BTreeMap<String, String>,
+    ranks: Option<super::dims::DimPredFile>,
 }
 
 /// 2026-09-28: Parse FUSIONS.toml text into rules, in file order. 2026-09-30: A file that
@@ -134,7 +156,8 @@ pub(crate) fn parse_file(
     Ok((out, file.runtime))
 }
 
-fn rule(r: RuleFile) -> Result<Rule, RuleError> {
+fn rule(mut r: RuleFile) -> Result<Rule, RuleError> {
+    let dims_file = core::mem::take(&mut r.dims);
     let shape = |detail: &str| RuleError::Shape {
         rule: r.id.clone(),
         detail: detail.to_string(),
@@ -197,26 +220,105 @@ fn rule(r: RuleFile) -> Result<Rule, RuleError> {
         return Err(shape("the first pattern element cannot be a sibling"));
     }
     let numerics = numerics(&r)?;
+    let mut comm = Vec::with_capacity(r.comm.len());
+    for c in &r.comm {
+        let api = super::CommApi::parse(&c.api).ok_or_else(|| {
+            shape(&format!(
+                "unknown comm api `{}` (exchange | all_reduce_ring | broadcast)",
+                c.api
+            ))
+        })?;
+        if c.kernel.trim().is_empty() {
+            return Err(shape("a comm launch names no kernel"));
+        }
+        if c.at > r.kernels.len() as u64 {
+            return Err(shape(&format!(
+                "comm launch at {} but the rule has {} kernels",
+                c.at,
+                r.kernels.len()
+            )));
+        }
+        comm.push(super::CommLaunch {
+            api,
+            kernel: c.kernel.clone(),
+            at: c.at,
+        });
+    }
+    let dims = super::dims::parse(dims_file).map_err(|d| shape(&d))?;
     let mut pattern = Vec::with_capacity(r.pattern.len());
     for p in &r.pattern {
         pattern.push(pattern_op(&r.id, p)?);
     }
+    let path = collective_path(&r, &pattern, &comm).map_err(|d| shape(&d))?;
+    crate::collective::check_sm_budget(r.sm_budget, kernels.len(), &comm)
+        .map_err(|d| shape(&d))?;
     Ok(Rule {
         pattern,
         kernels,
         repeat,
         copies,
+        comm,
         emitter: r.emitter,
         rows: (r.rows[0], r.rows[1]),
         modes,
         requires: r.requires.into_iter().collect(),
         when: r.when,
+        dims,
         numerics,
         priority: r.priority,
         cite: r.cite,
         runs,
+        path,
+        sm_budget: r.sm_budget,
         id: r.id,
     })
+}
+
+/// 2026-10-23: The rule's `path`: only on a rule whose pattern is one all-reduce or all-gather
+/// element (a plain collective: the path the communicator runs it on), or headed by one with
+/// `one_shot` (a fused exchange: the one-shot exchange alone, a later kernel of the group
+/// summing), and with the launches the path issues: the exchange for `two_rank` and `one_shot`
+/// (and a kernel to sum), the library's ring all-reduce and no kernel for `nccl`.
+fn collective_path(
+    r: &RuleFile,
+    pattern: &[PatternOp],
+    comm: &[super::CommLaunch],
+) -> Result<Option<crate::collective::CollectivePath>, String> {
+    use crate::collective::CollectivePath;
+    let Some(name) = r.path.as_deref() else {
+        return Ok(None);
+    };
+    let path = CollectivePath::parse(name)
+        .ok_or_else(|| format!("unknown path `{name}` (two_rank | one_shot | nccl)"))?;
+    let collective = |p: &PatternOp| matches!(p.op, OpKind::AllReduce | OpKind::AllGather);
+    match pattern {
+        [p] if collective(p) => {}
+        [p, _, ..] if collective(p) && path == CollectivePath::OneShot => {}
+        [p, _, ..] if collective(p) => {
+            return Err(format!("a fused exchange's `path` is `one_shot`, not `{name}`"));
+        }
+        _ => {
+            return Err(
+                "`path` on a rule whose pattern is not headed by an all_reduce or all_gather"
+                    .into(),
+            );
+        }
+    }
+    let apis: Vec<super::CommApi> = comm.iter().map(|c| c.api).collect();
+    let (want, kernels) = match path {
+        CollectivePath::TwoRank | CollectivePath::OneShot => (super::CommApi::Exchange, true),
+        CollectivePath::Nccl => (super::CommApi::AllReduceRing, false),
+    };
+    if apis != [want] || r.kernels.is_empty() == kernels {
+        return Err(format!(
+            "path `{name}` issues one `{}` launch and {} kernel; the rule has {apis:?} and {} \
+             kernels",
+            want.name(),
+            if kernels { "a summing" } else { "no" },
+            r.kernels.len()
+        ));
+    }
+    Ok(Some(path))
 }
 
 /// 2026-09-30: The rule's `[[rule.run]]` selectors; every launch must name one of its kernels.
@@ -350,18 +452,38 @@ fn pattern_op(rule: &str, p: &PatternFile) -> Result<PatternOp, RuleError> {
             .map_err(|e| err(format!("step `{name}`: {e}")))?;
         steps.insert(kind, value);
     }
+    // 2026-10-23: `ranks` tests a collective's group size; on any other op it is a load error.
+    let ranks = match &p.ranks {
+        None => None,
+        Some(_)
+            if !matches!(
+                op,
+                OpKind::AllReduce | OpKind::AllGather | OpKind::Broadcast
+            ) =>
+        {
+            return Err(err(format!(
+                "`ranks` on `{}`, which is no collective",
+                op.name()
+            )));
+        }
+        Some(f) => Some(super::dims::parse_one("ranks", f).map_err(err)?),
+    };
     Ok(PatternOp {
         op,
         roles,
         layer_kind,
         local: p.local.clone(),
+        block: p.block.clone(),
         weight: fmt(&p.weight)?,
         input: fmt(&p.input)?,
         writes: fmt(&p.writes)?,
         keep: p.keep,
+        elides: p.elides,
         stored: p.stored,
         sibling: p.sibling,
         holds: fmt(&p.holds)?,
         steps,
+        params: p.params.clone(),
+        ranks,
     })
 }

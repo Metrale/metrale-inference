@@ -9,7 +9,9 @@
 //! Owner: metrale-circuit (hardware).
 //! Invariants: pure; the answer is a list of messages, empty when the rule set complies.
 
-use std::collections::BTreeSet;
+use crate::prelude::*;
+
+use alloc::collections::BTreeSet;
 
 use super::{TcPolicy, unit_of_group};
 use crate::format::Format;

@@ -73,7 +73,13 @@ impl TransformerModel {
                 });
             }
         }
-        run_ssm_state_copies(self.gpu.as_ref(), &h_plan, &conv_plan, stream)?;
+        run_ssm_state_copies(
+            self.gpu.as_ref(),
+            &h_plan,
+            &conv_plan,
+            !self.settings.scheduler.no_batched_ssm_rollback,
+            stream,
+        )?;
         // 2026-09-25: The event `sync_secondary_dispatch` makes the default stream wait on.
         self.gpu.record_event(self.secondary_event, stream)?;
         Ok(())
@@ -85,6 +91,17 @@ impl TransformerModel {
         num_accepted: usize,
     ) -> Result<()> {
         use metrale_model_layers::layer::SsmLayerState;
+
+        // 2026-10-08: Replay mode keeps no intermediates. Every caller (the EP worker's K=2/3/4
+        // verify) rolls back a partial accept, fewer rows than it verified, so the commit of
+        // `num_accepted` rows of a `num_accepted + 1`-row verify restores and replays exactly
+        // those rows. Each layer checkpoints itself before its next verify.
+        if num_accepted > 0
+            && self.ssm_pool.rollback_mode
+                == metrale_model_layers::ssm_reserve::SsmRollbackMode::Replay
+        {
+            return self.commit_replay_prefix(seq, num_accepted, num_accepted + 1);
+        }
 
         let stream = self.secondary_stream;
         let mut ssm_layer_idx = 0usize;
@@ -160,8 +177,20 @@ impl TransformerModel {
                 ssm_layer_idx += 1;
             }
         }
-        run_ssm_state_copies(self.gpu.as_ref(), &h_back, &conv_back, stream)?;
-        run_ssm_state_copies(self.gpu.as_ref(), &h_ckpt, &conv_ckpt, stream)?;
+        run_ssm_state_copies(
+            self.gpu.as_ref(),
+            &h_back,
+            &conv_back,
+            !self.settings.scheduler.no_batched_ssm_rollback,
+            stream,
+        )?;
+        run_ssm_state_copies(
+            self.gpu.as_ref(),
+            &h_ckpt,
+            &conv_ckpt,
+            !self.settings.scheduler.no_batched_ssm_rollback,
+            stream,
+        )?;
         // 2026-09-25: The event `sync_secondary_dispatch` makes the default stream wait on.
         self.gpu.record_event(self.secondary_event, stream)?;
         Ok(())
@@ -208,8 +237,22 @@ impl TransformerModel {
         num_accepted: usize,
         k: usize,
     ) -> Result<()> {
-        use metrale_model_layers::layer::SsmLayerState;
-
+        // 2026-10-21: `METRALE_SSM_COMMIT_SWAP`: keeping only the first row of an armed
+        // single-sequence verify swaps intermediate 0 in as the live state (`commit_swap.rs`).
+        if self.try_commit_by_swap(seq, num_accepted, k)? {
+            return Ok(());
+        }
+        // 2026-10-11: `METRALE_GLM_MTP_DEVICE_STEP` part 3: a K=2 verdict the device verdict agrees
+        // with commits on the device, predicated on its accept word (`commit_k2_on_device`), on
+        // the default stream behind the verdict. Same copies; the host path below otherwise.
+        if let Some(acc) = super::device_step::device_verdict_for(Some(seq.slot_idx), false)
+            && super::device_step::host_agrees(num_accepted, k, acc)
+        {
+            let verdict = self.device_verdict_buf()?;
+            if self.commit_k2_on_device(seq, verdict, self.gpu.default_stream())? {
+                return Ok(());
+            }
+        }
         // 2026-09-26: A carried verify's verdict is already committed
         // (`gdn_carry_commit`): pending rows and any restore, h and conv alike.
         if self.gdn_carry_take_committed(seq.slot_idx) {
@@ -258,12 +301,48 @@ impl TransformerModel {
             );
         }
 
+        // 2026-10-08: Replay mode keeps no intermediates: each layer rebuilds its state from the
+        // slot's checkpoint and verify record (`ssm_replay.rs`).
+        if self.ssm_pool.rollback_mode == metrale_model_layers::ssm_reserve::SsmRollbackMode::Replay
+        {
+            return self.commit_replay_prefix(seq, num_accepted, k);
+        }
+
         let stream = self.secondary_stream;
+        let (h_plan, conv_plan) = self.ssm_commit_plan(seq, num_accepted - 1, !h_folded)?;
+        run_ssm_state_copies(
+            self.gpu.as_ref(),
+            &h_plan,
+            &conv_plan,
+            !self.settings.scheduler.no_batched_ssm_rollback,
+            stream,
+        )?;
+        self.gpu.record_event(self.secondary_event, stream)?;
+        Ok(())
+    }
+}
+
+impl TransformerModel {
+    /// 2026-10-11: The snapshot-mode commit's copies of `seq`'s SSM layers, live state <- the
+    /// verify intermediate `inter_idx`: the h plan (empty without `with_h`) and the conv plan, in
+    /// ascending layer order. Two plans, because h and conv blobs have different widths and one
+    /// pitched 2-D copy carries one width. Shared by `commit_accepted_prefix` and the device
+    /// step's predicated commit (`device_step.rs`).
+    pub(in crate::model) fn ssm_commit_plan(
+        &self,
+        seq: &mut SequenceState,
+        inter_idx: usize,
+        with_h: bool,
+    ) -> Result<(Vec<StateCopy>, Vec<StateCopy>)> {
+        use metrale_model_layers::layer::SsmLayerState;
         let mut ssm_layer_idx = 0usize;
-        // 2026-09-25: Two plans, because h and conv blobs have different widths and
-        // one pitched 2-D copy carries one width. Both are in ascending layer order.
         let mut h_plan = Vec::with_capacity(self.ssm_pool.num_ssm_layers);
         let mut conv_plan = Vec::with_capacity(self.ssm_pool.num_ssm_layers);
+        // 2026-09-25: The pool's h storage width (`ssm_reserve::ssm_h_stored_bytes`).
+        let h_bytes = self.ssm_pool.h_stored_bytes;
+        // 2026-09-30: The pool plan's conv unit (see `checkpoint_ssm_states_dispatch`).
+        let conv_bytes = self.ssm_pool.conv_bytes;
+        let slot = seq.slot_idx;
         for (i, layer_state) in seq.layer_states.iter_mut().enumerate() {
             if self.config.layer_type(i) != LayerType::LinearAttention {
                 continue;
@@ -272,14 +351,7 @@ impl TransformerModel {
                 .as_any_mut()
                 .downcast_mut::<SsmLayerState>()
                 .ok_or_else(|| anyhow::anyhow!("Expected SsmLayerState at layer {i}"))?;
-            // 2026-09-25: The pool's h storage width (`ssm_reserve::ssm_h_stored_bytes`).
-            let h_bytes = self.ssm_pool.h_stored_bytes;
-            // 2026-09-30: The pool plan's conv unit (see `checkpoint_ssm_states_dispatch`).
-            let conv_bytes = self.ssm_pool.conv_bytes;
-
-            let slot = seq.slot_idx;
-            let inter_idx = num_accepted - 1;
-            if !h_folded {
+            if with_h {
                 h_plan.push(StateCopy {
                     src: self.ssm_pool.h_intermediate(ssm_layer_idx, slot, inter_idx),
                     dst: ssm.h_state,
@@ -293,11 +365,8 @@ impl TransformerModel {
                 dst: ssm.conv_state,
                 bytes: conv_bytes,
             });
-
             ssm_layer_idx += 1;
         }
-        run_ssm_state_copies(self.gpu.as_ref(), &h_plan, &conv_plan, stream)?;
-        self.gpu.record_event(self.secondary_event, stream)?;
-        Ok(())
+        Ok((h_plan, conv_plan))
     }
 }

@@ -39,21 +39,14 @@ pub struct HardwareStateReport {
 }
 
 impl HardwareStateReport {
-    /// 2026-09-26: Open a report with the pre-run capture and its verdict. The
-    /// switches come from the environment, the ceilings from the caller.
+    /// 2026-09-26: Open a report with the pre-run capture and its verdict.
+    /// 2026-10-17: The caller supplies the switches (from the resolved levers) and the ceilings.
     pub fn opened(
         sensitivity: Sensitivity,
         before: HardwareState,
-        ceilings: Option<policy::TempCeilings>,
+        options: policy::PolicyOptions,
     ) -> Self {
-        let precheck = policy::precheck(
-            sensitivity,
-            &before,
-            policy::PolicyOptions {
-                ceilings,
-                ..policy::PolicyOptions::from_env()
-            },
-        );
+        let precheck = policy::precheck(sensitivity, &before, options);
         Self {
             sensitivity,
             perf_class: before.machine.perf_class(),
@@ -67,13 +60,10 @@ impl HardwareStateReport {
 
     /// 2026-09-26: Close it with the post-run capture, the delta and the validity
     /// verdict.
-    pub fn close(&mut self, after: HardwareState) {
+    /// 2026-10-17: `options` are the ones the report was opened with.
+    pub fn close(&mut self, after: HardwareState, options: policy::PolicyOptions) {
         let delta = HardwareStateDelta::between(&self.before, &after);
-        self.postcheck = Some(policy::postcheck(
-            self.sensitivity,
-            &delta,
-            policy::PolicyOptions::from_env(),
-        ));
+        self.postcheck = Some(policy::postcheck(self.sensitivity, &delta, options));
         self.delta = Some(delta);
         self.after = Some(after);
     }

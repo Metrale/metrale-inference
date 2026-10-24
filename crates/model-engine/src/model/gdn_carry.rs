@@ -35,13 +35,6 @@ use crate::traits::SequenceState;
 mod flush;
 use flush::state_table;
 
-/// 2026-09-26: Presence of `METRALE_NO_GDN_CARRY` (any value, `0` included) turns the
-/// carried-state verify off. Read once per process.
-fn gdn_carry_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("METRALE_NO_GDN_CARRY").is_none())
-}
-
 struct CarryBufs {
     stash: DevicePtr,
     conv_stash: DevicePtr,
@@ -232,7 +225,10 @@ impl TransformerModel {
     ) -> Result<bool> {
         let mut inner = self.gdn_carry.inner.lock();
         inner.last = None;
-        if !requested || !gdn_carry_enabled() || !self.gdn_carry_bind(&mut inner)? {
+        if !requested
+            || self.settings.speculative.no_gdn_carry
+            || !self.gdn_carry_bind(&mut inner)?
+        {
             // 2026-09-26: This verify's parent kernels read H: nothing may stay pending.
             if !inner.pending.is_empty() {
                 self.gdn_carry_flush_locked(&mut inner, stream, |_| true)?;
@@ -427,7 +423,13 @@ impl TransformerModel {
                 }
             }
         }
-        run_ssm_state_copies(self.gpu.as_ref(), &h_restores, &conv_restores, stream)?;
+        run_ssm_state_copies(
+            self.gpu.as_ref(),
+            &h_restores,
+            &conv_restores,
+            !self.settings.scheduler.no_batched_ssm_rollback,
+            stream,
+        )?;
         self.upload_mirror(&inner, stream)?;
         inner.committed = slots.to_vec();
         inner
@@ -435,6 +437,12 @@ impl TransformerModel {
             .retain(|p| last.seqs.iter().all(|r| r.slot != p.slot));
         inner.pending.extend(last.seqs);
         Ok(true)
+    }
+
+    /// 2026-10-11: Whether `slot`'s last verdict was committed by `gdn_carry_commit`, without
+    /// consuming the entry (the device step's commit refuses such a slot).
+    pub(super) fn gdn_carry_has_committed(&self, slot: usize) -> bool {
+        self.gdn_carry.inner.lock().committed.contains(&slot)
     }
 
     /// 2026-09-26: Whether `slot`'s last verdict was committed by `gdn_carry_commit`; the

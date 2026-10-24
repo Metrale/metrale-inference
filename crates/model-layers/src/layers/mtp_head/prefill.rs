@@ -116,9 +116,10 @@ impl MtpHead {
             mtp_state.block_table.push(kv_cache.alloc_block()?);
         }
 
-        // 2026-09-25: `METRALE_MTP_PREFILL_PROFILE=1` logs per-phase wall time.
-        // Each profiled phase synchronizes the stream, which slows the pass.
-        let profile = std::env::var("METRALE_MTP_PREFILL_PROFILE").ok().as_deref() == Some("1");
+        // 2026-09-25: `METRALE_MTP_PREFILL_PROFILE` logs per-phase wall time
+        // (`MtpLevers::prefill_profile`). Each profiled phase synchronizes the
+        // stream, which slows the pass.
+        let profile = self.levers.prefill_profile;
         let mut t_embed = 0f64;
         let mut t_concat = 0f64;
         let mut t_rest = 0f64;

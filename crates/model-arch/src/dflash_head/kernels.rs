@@ -49,6 +49,12 @@ pub struct DflashKernels {
     /// dense GEMM weights (q/k/v/o/gate/up/down) and, when the checkpoint has
     /// no FP8 lm_head, the lm_head.
     pub quantize_bf16_to_fp8: KernelHandle,
+    /// 2026-10-10: The NVFP4 weight quantizers (module `quantize_nvfp4`, `quantize_bf16_to_nvfp4.cu`): the absolute
+    /// maximum and the packing, run only in `from_weights` on the NVFP4 tier of
+    /// `--draft-weight-quantization`. `KernelHandle(0)` when the target's build lacks the module;
+    /// the NVFP4 tier then refuses to build.
+    pub nvfp4_global_absmax: KernelHandle,
+    pub quantize_bf16_to_nvfp4: KernelHandle,
     /// 2026-09-25: Row-scaled BF16 × FP8 → BF16 GEMM over an `Fp8DenseWeight`,
     /// from the `w4a16` module (`from_weights` picks the variant). With
     /// `DflashQuantization::Fp8Weights` the layer GEMMs use it when neither rt2
@@ -78,6 +84,10 @@ pub struct DflashKernels {
     /// 2026-09-25: DFlash2 per-row top-16 over the drafter logits; overwrites each
     /// selected logit.
     pub dflash2_topk16: KernelHandle,
+    /// 2026-10-10: `dflash2_topk16` in two stages (`dflash2_topk16_part`, then
+    /// `dflash2_topk16_merge`), with the same outputs and writes; `.0 == 0` when absent.
+    pub dflash2_topk16_part: KernelHandle,
+    pub dflash2_topk16_merge: KernelHandle,
     /// 2026-09-25: DFlash2 candidate-selector chain walk, one launch, one block per
     /// sequence.
     pub dflash2_selector_walk: KernelHandle,

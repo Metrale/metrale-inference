@@ -62,6 +62,7 @@ fn the_footer_names_keys_that_do_something_in_the_section_it_is_showing() {
         (Section::Stats, "cycle"),
         (Section::Network, "node"),
         (Section::Library, "search"),
+        #[cfg(feature = "bench")]
         (Section::Benchmarks, "configure"),
         (Section::Terminal, "Ops↔Chat"),
     ] {

@@ -16,7 +16,10 @@ use crate::cli;
 /// 2026-09-26: Publish the command line's kernel-path selections to the crates
 /// that dispatch on them, then log the resolved values. Called once per
 /// process, from `startup`, before the first model is built.
-pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
+pub(crate) fn publish_kernel_flags(
+    args: &cli::ServeArgs,
+    settings: &metrale_settings::InferenceServerSettings,
+) -> anyhow::Result<()> {
     let plan = super::kernel_flag_plan::KernelFlagPlan::from_args(args);
     // 2026-09-26: The GDN cell (`GdnFlags`) is one `OnceLock` fed by four flags:
     // `--ssm-h-dtype`, `--gdn-fused-norm`, `--ssm-batched-recurrent` and
@@ -44,7 +47,7 @@ pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
                  the command line's ({flags:?}) did NOT take effect"
             );
         }
-        warn_shadowed_env();
+        warn_shadowed_env(settings);
     }
     // 2026-09-28: `--weight-quantization` (with its `--w4a4-downcast` lever) is always
     // published: it has no environment fallback, and the model build reads it
@@ -94,6 +97,19 @@ pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
             args.mtp_draft.mtp_experts_nvfp4
         );
     }
+    // 2026-10-24: The GLM-5.3 decode levers are always published: they have no environment
+    // fallback, and the GLM drafter reads them at build.
+    let glm = args.glm_decode.levers();
+    let glm_in_force =
+        metrale_model_arch::glm5next_decode_levers::set_glm_decode_levers_from_cli(glm);
+    if glm_in_force != glm {
+        tracing::warn!(
+            "GLM decode levers were already resolved ({glm_in_force:?}); the command line's \
+             ({glm:?}) did NOT take effect"
+        );
+    } else if glm != Default::default() {
+        tracing::info!("GLM decode levers: {glm:?}");
+    }
     if args.w4a4_downcast_wide && !args.w4a4_downcast {
         tracing::warn!("--w4a4-downcast-wide needs --w4a4-downcast; it did NOT take effect");
     }
@@ -109,6 +125,69 @@ pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
             plan.expert_quantization.name()
         );
     }
+    // 2026-10-09: `--dense-quantization`, always published; below declared when not `declared`,
+    // which the boot log states loudly.
+    let dense =
+        metrale_model_layers::layers::set_dense_quantization_from_cli(plan.dense_quantization);
+    if dense != plan.dense_quantization {
+        tracing::warn!(
+            "dense-quantization was already resolved ({}); the command line's ({}) did NOT \
+             take effect",
+            dense.name(),
+            plan.dense_quantization.name()
+        );
+    }
+    if dense.below_declared() {
+        tracing::warn!(
+            "--dense-quantization {}: the 16-bit dense projections run BELOW the checkpoint's \
+             declared precision ({}); outputs differ from the declared model",
+            dense.name(),
+            {
+                use metrale_model_layers::layers::DenseQuantization as D;
+                match dense {
+                    D::W4a16 => {
+                        "NVFP4 weights with 16-bit activations for the loader's W4A16 set, FP8 \
+                         per-channel weights with per-token FP8 activations for the rest"
+                    }
+                    D::Fp8 => "FP8 per-channel weights, per-token FP8 activations",
+                    D::Declared => "the checkpoint's",
+                }
+            }
+        );
+    }
+    // 2026-10-11: `--dsa-quantization`, always published (owner decision B3): the GLM DSA q_a /
+    // absorbed q / absorbed o tier, independent of the dense tier; disclosed on every boot.
+    let dsa = metrale_model_layers::layers::set_dsa_quantization_from_cli(plan.dsa_quantization);
+    if dsa != plan.dsa_quantization {
+        tracing::warn!(
+            "dsa-quantization was already resolved ({}); the command line's ({}) did NOT \
+             take effect",
+            dsa.name(),
+            plan.dsa_quantization.name()
+        );
+    }
+    tracing::info!("{}", super::kernel_flag_plan::precision_line(dense, dsa));
+    if dsa.below_declared() {
+        tracing::warn!(
+            "--dsa-quantization {}: the DSA q_a, absorbed q and absorbed o projections run BELOW \
+             the checkpoint's declared precision ({}); outputs differ from the declared model",
+            dsa.name(),
+            dsa.describe()
+        );
+    }
+    // 2026-10-14: `--prefill-tail-mode`, always published and read back on every rank.
+    let tail = metrale_gpu_runtime::prefill_tail_mode::set_prefill_tail_mode_from_cli(
+        plan.prefill_tail_mode,
+    );
+    if tail != plan.prefill_tail_mode {
+        tracing::warn!(
+            "prefill-tail-mode was already resolved ({}); the command line's ({}) did NOT \
+             take effect",
+            tail.name(),
+            plan.prefill_tail_mode.name()
+        );
+    }
+    tracing::info!("prefill tail mode: {} ({})", tail.name(), tail.describe());
     // 2026-09-26: Published only when given; otherwise
     // `prefill_codispatch_enabled()` reads `METRALE_PREFILL_CODISPATCH` on
     // first use.
@@ -161,7 +240,7 @@ pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
                  line's ({varlen}) did NOT take effect"
             );
         }
-        if std::env::var_os("METRALE_PREFILL_VARLEN").is_some() {
+        if lever_was_set(settings, "METRALE_PREFILL_VARLEN") {
             tracing::warn!(
                 "METRALE_PREFILL_VARLEN is set but was OVERRIDDEN: `--prefill-varlen-batch` \
                  on the command line owns the decision. Drop the flag to let the \
@@ -169,12 +248,13 @@ pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
             );
         }
     }
-    // 2026-09-26: `None` unless `--no-ssm-tail-midchunk` was given. `None`
-    // publishes nothing, so `METRALE_SSM_TAIL_MIDCHUNK` decides.
-    metrale_gpu_runtime::set_ssm_tail_midchunk(plan.ssm_tail_midchunk);
-    // 2026-09-26: Published before any prefill: `hermetic_enabled` caches its
-    // first answer. Only `true` is published.
-    metrale_gpu_runtime::set_hermetic(plan.hermetic);
+    // 2026-09-26: `Some(false)` under `--no-ssm-tail-midchunk`. 2026-10-17: Otherwise the
+    // resolved `METRALE_SSM_TAIL_MIDCHUNK` decides, published here before any prefill.
+    let midchunk = &settings.scheduler.ssm_tail_midchunk;
+    metrale_gpu_runtime::set_ssm_tail_midchunk(
+        plan.ssm_tail_midchunk
+            .unwrap_or_else(|| metrale_gpu_runtime::ssm_tail_midchunk_on(midchunk.as_deref())),
+    );
     // 2026-09-26: Both lines below log resolved values, not the raw arguments,
     // because most of them can also come from the environment. `summary_line`
     // names each per-target serving default, its value, and ` (env)` when the
@@ -194,7 +274,7 @@ pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
         // 2026-10-01: `--exact-verify` as given; the fixed-format verify is in `serve_resolved`.
         gdn.verify_exact_active(),
         metrale_gpu_runtime::ssm_tail_midchunk_enabled(),
-        if crate::scheduler::levers::resolve_mtp_gate_force(args.mtp_gate_force()) {
+        if settings.speculative.mtp_gate_force {
             "force"
         } else {
             "auto"
@@ -209,6 +289,7 @@ pub(crate) fn publish_kernel_flags(args: &cli::ServeArgs) {
         // 2026-09-26: Resolved, so it may come from the environment.
         metrale_model_layers::layers::ops::prefill_varlen_enabled(),
     );
+    Ok(())
 }
 
 /// 2026-09-26: Environment variables `warn_shadowed_env` reports as overridden
@@ -223,9 +304,9 @@ const SHADOWED_BY_CLI: &[(&str, &str)] = &[
     ("METRALE_SSM_BATCHED_RECURRENT", "--ssm-batched-recurrent"),
 ];
 
-fn warn_shadowed_env() {
+fn warn_shadowed_env(settings: &metrale_settings::InferenceServerSettings) {
     for (var, flag) in SHADOWED_BY_CLI {
-        if std::env::var_os(var).is_some() {
+        if lever_was_set(settings, var) {
             tracing::warn!(
                 "{var} is set but was OVERRIDDEN: a GDN flag on the command line publishes \
                  all three kernel selections at once, so this variable did not decide \
@@ -234,4 +315,16 @@ fn warn_shadowed_env() {
             );
         }
     }
+}
+
+/// 2026-10-17: `var` was set for this serve, in the environment or by the recipe (the settings'
+/// provenance; until now the process environment was read here).
+fn lever_was_set(settings: &metrale_settings::InferenceServerSettings, var: &str) -> bool {
+    matches!(
+        settings.provenance.source_of(var),
+        Some(
+            metrale_settings::provenance::Source::Env
+                | metrale_settings::provenance::Source::Recipe
+        )
+    )
 }

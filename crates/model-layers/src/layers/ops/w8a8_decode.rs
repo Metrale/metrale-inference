@@ -455,6 +455,10 @@ pub fn w8a8_proj(
 #[path = "w8a8_decode/parts.rs"]
 mod parts;
 
+#[path = "w8a8_decode/split.rs"]
+mod split;
+pub use split::*;
+
 #[cfg(test)]
 #[path = "w8a8_decode_tests.rs"]
 mod tests;

@@ -46,6 +46,7 @@ fn native_fp8_layer(gpu: &MockGpuBackend) -> DenseFfnLayer {
             down_proj_t: None,
         },
         gpu,
+        crate::lever_equivalence::DefaultLoad::at_defaults().lc(),
     )
     .unwrap();
     layer.w8a16_gemm_k = KernelHandle(0xF08);
@@ -84,6 +85,7 @@ fn with_ctx(gpu: &MockGpuBackend, f: impl FnOnce(&ForwardContext, &BufferArena))
     let dispatch = GemmDispatch::defaults();
     let derived = DerivedWeights::new();
     let levers = ModelLevers::defaults();
+    let settings = crate::lever_equivalence::defaults();
     let stats = ModelStats::new();
     let ctx = ForwardContext {
         buffers: &buffers,
@@ -93,6 +95,7 @@ fn with_ctx(gpu: &MockGpuBackend, f: impl FnOnce(&ForwardContext, &BufferArena))
         dispatch: &dispatch,
         derived: &derived,
         levers: &levers,
+        settings: &settings,
         stats: &stats,
         attn_metadata: None,
         profile: false,
@@ -106,6 +109,7 @@ fn with_ctx(gpu: &MockGpuBackend, f: impl FnOnce(&ForwardContext, &BufferArena))
         routed_lora_layers: None,
         midchunk_capture: None,
         moe_lora_route: MoeLoraRoute::Fold,
+        ab_levers: crate::layer::AbLevers::NONE,
     };
     f(&ctx, &buffers);
 }
@@ -140,6 +144,7 @@ fn a_layer_with_neither_nvfp4_nor_fp8_weights_is_not_eligible() {
             down_proj_t: None,
         },
         &gpu,
+        crate::lever_equivalence::DefaultLoad::at_defaults().lc(),
     )
     .unwrap();
     layer.act_mul = KernelHandle(0xAC7);

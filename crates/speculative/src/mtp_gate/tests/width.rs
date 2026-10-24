@@ -11,7 +11,7 @@ use super::*;
 /// 2026-09-25: A plain decode step over n sequences is charged n tokens.
 #[test]
 fn decode_steps_charge_the_batch_width() {
-    let mut g = MtpGate::new(1);
+    let mut g = declared_gate();
     run_mtp_until_probe(&mut g, 2, ms(50));
     // 2026-09-25: Serial probe at width 4: 4 tokens per 10 ms step, 400 tok/s.
     // 2026-09-26: The width-1 to width-4 change leaves the next
@@ -35,7 +35,7 @@ fn decode_steps_charge_the_batch_width() {
 #[test]
 fn serial_refresh_interval_is_per_sequence_of_the_width() {
     let steps_until_probe = |width: usize| {
-        let mut g = MtpGate::new(1);
+        let mut g = declared_gate();
         for step in 0..10_000 {
             if g.next_step() == GateStep::MeasureDecode {
                 return step;
@@ -108,7 +108,7 @@ fn arbiter_charges_active_width_never_a_padded_width() {
 /// the other mode at the new width.
 #[test]
 fn width_regime_change_stales_and_remeasures_in_the_new_regime() {
-    let mut g = MtpGate::new(1);
+    let mut g = declared_gate();
     // 2026-09-25: Both estimates at width 1; the gate stays Mtp (40 against
     // 25 tok/s).
     run_mtp_until_probe(&mut g, 2, ms(50));
@@ -159,7 +159,7 @@ fn width_regime_change_stales_and_remeasures_in_the_new_regime() {
 /// change: nothing goes stale and the window keeps its steps.
 #[test]
 fn width_jitter_inside_a_bucket_does_not_stale() {
-    let mut g = MtpGate::new(1);
+    let mut g = declared_gate();
     for w in [5usize, 6, 7, 8, 6, 5, 7] {
         g.record_verify_step(ms(10), 2 * w, w);
     }

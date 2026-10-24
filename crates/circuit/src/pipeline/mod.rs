@@ -19,7 +19,11 @@
 //!   BF16, an E4M3 weight widened exactly is the precision it widens to; which unit and atom
 //!   carry the multiply is the compute unit's (`venn::compute`).
 
-use std::fmt;
+use crate::prelude::*;
+
+use core::fmt;
+
+use metrale_kv_codec::KvPair;
 
 use crate::format::Format;
 use crate::state::StateDtype;
@@ -72,14 +76,14 @@ impl Num {
         NUMS.iter().find(|(_, n)| *n == s).map(|(v, _)| *v)
     }
 
-    /// 2026-10-02: The precision of a tensor format's values: an FP8 tensor is E4M3, an NVFP4 one
-    /// E2M1; `None` for `i32`, which no multiply or compute step reads as a number.
+    /// 2026-10-02: The precision of a tensor format's values: an FP8 tensor is E4M3, an NVFP4 or MXFP4
+    /// one E2M1; `None` for `i32`, which no multiply or compute step reads as a number.
     pub fn of_format(f: Format) -> Option<Self> {
         match f {
             Format::Bf16 => Some(Num::Bf16),
             Format::F32 => Some(Num::F32),
             Format::Fp8E4m3 { .. } => Some(Num::E4m3),
-            Format::Nvfp4 { .. } => Some(Num::E2m1),
+            Format::Nvfp4 { .. } | Format::Mxfp4 { .. } => Some(Num::E2m1),
             Format::I32 => None,
         }
     }
@@ -149,7 +153,9 @@ pub enum Value {
     /// expert).
     OptNum(Option<Num>),
     /// 2026-10-02: A KV-cache dtype, spelled as `--kv-cache-dtype` spells it.
-    Kv(String),
+    ///
+    /// 2026-10-18: The codec pair the spelling names, so an alias and its long form are one value.
+    Kv(KvPair),
     /// 2026-10-02: A recurrent state's storage element.
     State(StateDtype),
 }
@@ -169,7 +175,7 @@ impl Value {
             Value::Num(n) => n.name().to_string(),
             Value::OptNum(None) => "none".to_string(),
             Value::OptNum(Some(n)) => n.name().to_string(),
-            Value::Kv(k) => k.clone(),
+            Value::Kv(k) => k.name().to_string(),
             Value::State(d) => state_name(*d).to_string(),
         }
     }
@@ -202,11 +208,11 @@ pub struct NodePipeline {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Stated {
     /// 2026-10-02: Stated steps.
-    pub steps: std::collections::BTreeSet<StepKind>,
+    pub steps: alloc::collections::BTreeSet<StepKind>,
     /// 2026-10-02: Indices of inputs read in a stated hand-off format.
-    pub inputs: std::collections::BTreeSet<usize>,
+    pub inputs: alloc::collections::BTreeSet<usize>,
     /// 2026-10-02: Indices of outputs handed on in a stated format.
-    pub outputs: std::collections::BTreeSet<usize>,
+    pub outputs: alloc::collections::BTreeSet<usize>,
 }
 
 impl NodePipeline {

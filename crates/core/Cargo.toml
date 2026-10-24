@@ -13,11 +13,18 @@ cuda = ["dep:cudarc"]
 metal = []
 
 [dependencies]
-anyhow = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-thiserror = { workspace = true }
-cudarc = { workspace = true, optional = true }
+# 2026-10-22: `csf_blocks::ENCODING_NAME`, defined beside the plan that accepts it.
+metrale-precision = { workspace = true }
+# 2026-10-22: `target::KernelTarget` lives there (no_std); re-exported at its old path.
+metrale-kernel-target = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["std", "derive"] }
+serde_json = { workspace = true, features = ["std", "preserve_order"] }
+thiserror = { workspace = true, features = ["std"] }
+cudarc = { workspace = true, optional = true, features = ["std", "driver", "nvrtc", "fallback-dynamic-loading", "cuda-version-from-build-system"] }
 
 [lints]
 workspace = true
+
+[package.metadata.metrale]
+role = "core"

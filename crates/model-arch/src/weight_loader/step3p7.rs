@@ -127,8 +127,8 @@ fn load_fused_nvfp4(
 }
 
 impl ModelWeightLoader for Step3p7WeightLoader {
-    fn supports_tp(&self) -> bool {
-        false
+    fn tp_support(&self) -> metrale_config::TpSupport {
+        metrale_config::TpSupport::Unsupported
     }
 
     fn load_layers(
@@ -137,8 +137,9 @@ impl ModelWeightLoader for Step3p7WeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         layer_kv_dtypes: &[KvCacheDtype],
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
-        load_layers::load_layers(store, config, gpu, layer_kv_dtypes)
+        load_layers::load_layers(store, config, gpu, layer_kv_dtypes, lc)
     }
 
     fn load_embedding(

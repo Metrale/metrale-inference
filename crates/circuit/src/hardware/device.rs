@@ -12,7 +12,9 @@
 //! - A peak the device lacks (`fp4_block_scale` on Hopper, `0.0` in the research file) is
 //!   `None` here, and `native_mma` must agree with the dense peaks.
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 
@@ -191,6 +193,10 @@ pub struct Device {
     pub l2_mb: Option<f64>,
     /// 2026-09-30: Shared memory per SM, KB.
     pub smem_per_sm_kb: u32,
+    /// 2026-10-23: Register file per SM, KB (the what-if's SM residency limit).
+    pub regfile_per_sm_kb: u32,
+    /// 2026-10-23: Resident threads per SM.
+    pub max_threads_per_sm: u32,
     /// 2026-09-30: Largest portable thread-block cluster.
     pub cluster_max: u32,
     /// 2026-09-30: Tensor memory per SM, KB (tcgen05 accumulators); 0 without.
@@ -306,6 +312,8 @@ struct DeviceFile {
     memory_bandwidth_gbps: f64,
     l2_mb: Option<f64>,
     smem_per_sm_kb: u32,
+    regfile_per_sm_kb: u32,
+    max_threads_per_sm: u32,
     tmem_per_sm_kb: u32,
     mma_family: String,
     max_cluster: u32,
@@ -416,6 +424,8 @@ fn device_of(
         bandwidth_gbps: d.memory_bandwidth_gbps,
         l2_mb: d.l2_mb,
         smem_per_sm_kb: d.smem_per_sm_kb,
+        regfile_per_sm_kb: d.regfile_per_sm_kb,
+        max_threads_per_sm: d.max_threads_per_sm,
         cluster_max: d.max_cluster,
         tmem_per_sm_kb: d.tmem_per_sm_kb,
         mma_family,

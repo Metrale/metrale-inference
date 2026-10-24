@@ -116,25 +116,6 @@ pub fn stripe_plan(
     rails
 }
 
-/// 2026-09-25: Chunk size of the striped snapshot transfer: `METRALE_SSM_CHUNK_BYTES`,
-/// or 1 MiB when it is unset, unparsable or below 4096.
-pub fn staging_chunk_bytes() -> usize {
-    std::env::var("METRALE_SSM_CHUNK_BYTES")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .filter(|&v| v >= 4096)
-        .unwrap_or(1024 * 1024)
-}
-/// 2026-09-25: Chunks in flight per rail: `METRALE_SSM_PIPELINE_DEPTH`, or 16 when it
-/// is unset or unparsable, clamped to 1..=128.
-pub fn staging_depth() -> usize {
-    std::env::var("METRALE_SSM_PIPELINE_DEPTH")
-        .ok()
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(16)
-        .clamp(1, 128)
-}
-
 pub const OP_BYE: u8 = 0;
 pub const OP_ALLOC: u8 = 1;
 pub const OP_COMMIT: u8 = 2;

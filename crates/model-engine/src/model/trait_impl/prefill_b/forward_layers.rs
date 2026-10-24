@@ -15,7 +15,7 @@ use metrale_gpu_runtime::gpu::DevicePtr;
 
 use super::super::super::types::TransformerModel;
 use crate::traits::SequenceState;
-use metrale_model_layers::layer::{AttnMetadataDev, ForwardContext};
+use metrale_model_layers::layer::{AttnMetadataDev, ForwardContext, takes_decode_path};
 
 impl TransformerModel {
     pub(super) fn prefill_b_forward_layers(
@@ -91,18 +91,7 @@ impl TransformerModel {
         // prefill takes one ordinal from it, in model order, to index the plan's
         // per-layer destinations (qwen3_ssm/trait_prefill_block.rs).
         let midcap_counter = std::sync::atomic::AtomicUsize::new(0);
-        let midchunk_capture = midcap.map(|p| metrale_model_layers::layer::MidchunkCapture {
-            cap_local: p.cap_local,
-            h_dsts: &p.h_dsts,
-            conv_dsts: &p.conv_dsts,
-            h_bytes: p.h_bytes,
-            conv_bytes: p.conv_bytes,
-            ssm_layer_counter: &midcap_counter,
-            cap_local_early: p.cap_local_early,
-            h_dsts_early: &p.h_dsts_early,
-            conv_dsts_early: &p.conv_dsts_early,
-            replay_tail: p.replay_tail,
-        });
+        let midchunk_capture = midcap.map(|p| p.as_capture(&midcap_counter));
 
         let ctx = ForwardContext {
             buffers: &self.buffers,
@@ -112,6 +101,7 @@ impl TransformerModel {
             dispatch: &self.dispatch,
             derived: &self.derived,
             levers: &self.levers,
+            settings: &self.settings,
             stats: &self.stats,
             attn_metadata: Some(attn_metadata),
             profile: profile_now,
@@ -130,11 +120,19 @@ impl TransformerModel {
             routed_lora_layers: self.routed_slot_layers(seq.adapter_slot),
             midchunk_capture,
             moe_lora_route: self.moe_lora_route(seq.adapter_slot),
+            ab_levers: metrale_model_layers::layer::AbLevers::NONE,
         };
 
         // 2026-09-25: A single-token pass after position 0 (for example the last-token
-        // re-run in `proc_range`) runs each layer's decode path.
-        let use_decode_path = proc_count == 1 && effective_seq_len_start > 0;
+        // re-run in `proc_range`) runs each layer's decode path. 2026-10-14: unless
+        // `METRALE_ONE_ROW_PREFILL=1` and the layers split their pass at a capture
+        // (`takes_decode_path`).
+        let use_decode_path = takes_decode_path(
+            proc_count,
+            effective_seq_len_start,
+            self.levers.one_row_prefill,
+            self.splits_whole_pass_at_capture(),
+        );
         // 2026-09-25: After a snapshot restore this pass recomputes the positions between
         // the snapshot and `seq.cached_prefix_tokens` (the radix match), whose K/V already
         // sits in shared prefix-cache blocks. Their count within this pass is the layers'
@@ -156,7 +154,7 @@ impl TransformerModel {
         let mut layer_times: Vec<u128> = Vec::new();
         // 2026-09-25: `METRALE_PREFILL_HOST_TIMING=1`: host wall-clock spans with no
         // synchronize, unlike `profile_now`, which synchronizes per layer.
-        let host_timing = std::env::var("METRALE_PREFILL_HOST_TIMING").as_deref() == Ok("1");
+        let host_timing = self.settings.telemetry.prefill_host_timing;
         let t_loop = host_timing.then(std::time::Instant::now);
         let mut t_in_prefill = std::time::Duration::ZERO;
         let mut t_dflash = std::time::Duration::ZERO;
@@ -225,9 +223,7 @@ impl TransformerModel {
             // 2026-09-25: `METRALE_DUMP_HYPER_RMS=1` (hyper-connection models): after each
             // layer, log the RMS of the FP32 `hc_streams` buffer, `[proc_count, hc_mult, H]`.
             // Debug only: one D2H copy per layer.
-            if std::env::var("METRALE_DUMP_HYPER_RMS").as_deref() == Ok("1")
-                && self.config.hc_mult > 0
-            {
+            if self.settings.telemetry.dump_hyper_rms && self.config.hc_mult > 0 {
                 let n = proc_count * self.config.hc_mult * self.config.hidden_size;
                 let mut buf = vec![0u8; n * 4];
                 self.gpu
@@ -277,14 +273,14 @@ impl TransformerModel {
             // the last token's hidden row as headerless little-endian f32 to
             // `<dir>/metrale_L{i}.bin`.
             if is_last_chunk
-                && let Ok(dir) = std::env::var("METRALE_NEMO_DUMP")
+                && let Some(dir) = self.settings.telemetry.nemo_dump.as_deref()
                 && !dir.is_empty()
             {
                 self.gpu.synchronize(stream)?;
                 let last_start = (proc_count - 1) * h;
                 let (vals, _) = self.readback_bf16(hidden.offset(last_start * elem_bytes), h)?;
                 let bytes: Vec<u8> = vals.iter().flat_map(|v| v.to_le_bytes()).collect();
-                std::fs::create_dir_all(&dir).ok();
+                std::fs::create_dir_all(dir).ok();
                 let path = std::path::Path::new(&dir).join(format!("metrale_L{i}.bin"));
                 std::fs::write(&path, &bytes).ok();
                 if i == self.layers.len() - 1 {

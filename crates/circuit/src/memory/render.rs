@@ -8,12 +8,13 @@
 //! Owner: metrale-circuit (memory).
 //! Invariants: deterministic text; MiB are 2^20 bytes.
 
-use std::collections::BTreeMap;
-use std::fmt::Write as _;
+use crate::prelude::*;
 
-use serde_json::{Value, json};
+use alloc::collections::BTreeMap;
+use core::fmt::Write as _;
 
 use super::MemoryReport;
+pub use super::json::{MemoryJson, render_json};
 use crate::ir::Circuit;
 
 /// 2026-10-02: The answers to the inverse queries, as the caller computed them.
@@ -213,79 +214,4 @@ pub fn render_text(
         );
     }
     s
-}
-
-/// 2026-10-02: The report as JSON: every node with memory, every state and cache term.
-pub fn render_json(
-    c: &Circuit,
-    r: &MemoryReport,
-    head: &[(String, String)],
-    inverse: &Inverse,
-) -> Value {
-    let nodes: Vec<Value> = r
-        .nodes
-        .iter()
-        .filter(|m| m.stored + m.derived + m.activations + m.workspace + m.state > 0)
-        .map(|m| {
-            let n = &c.nodes[m.node];
-            let derived: Vec<Value> = r
-                .weights
-                .iter()
-                .find(|w| w.node == m.node)
-                .map(|w| {
-                    w.derived
-                        .iter()
-                        .map(|d| json!({"rule": d.rule, "bytes": d.bytes, "leaked": d.leaked}))
-                        .collect()
-                })
-                .unwrap_or_default();
-            json!({
-                "node": n.id, "op": n.op.name(), "layer": n.layer,
-                "stored": m.stored, "derived": derived, "activations": m.activations,
-                "workspace": m.workspace, "state": m.state,
-            })
-        })
-        .collect();
-    let states: Vec<Value> = r
-        .states
-        .terms
-        .iter()
-        .map(|t| {
-            json!({"state": t.state, "holding": format!("{:?}", t.holding).to_lowercase(),
-                   "lifetime": t.lifetime.name(), "dtype": t.dtype.name(),
-                   "units": t.units, "bytes": t.bytes})
-        })
-        .chain(r.caches.iter().map(|t| {
-            json!({"state": t.state, "kind": t.kind.name(), "host": t.host,
-                   "dtype": t.dtype.name(), "units": t.units, "bytes": t.bytes})
-        }))
-        .collect();
-    let t = &r.totals;
-    json!({
-        "schema": 1,
-        "header": head.iter().map(|(k, v)| (k.clone(), Value::String(v.clone())))
-            .collect::<serde_json::Map<_, _>>(),
-        "nodes": nodes,
-        "states": states,
-        "runs": r.runs.iter().map(|a| json!({"label": a.label, "rows": a.rows,
-            "arena": a.arena, "materialized": a.materialized})).collect::<Vec<_>>(),
-        "workspaces": r.workspaces.iter().map(|w| json!({"family": w.family, "name": w.name,
-            "bytes": w.bytes, "arena": w.arena, "nodes": w.nodes.len()})).collect::<Vec<_>>(),
-        "totals": {
-            "weights_stored": t.weights_stored, "weights_outside": t.weights_outside,
-            "weights_derived": t.weights_derived,
-            "weights_leaked": t.weights_leaked, "activations_planned": t.activations_planned,
-            "activations": t.activations, "workspace": t.workspace, "states": t.states,
-            "caches": t.caches, "host": t.host, "driver": t.driver, "device": t.device,
-            "budget": r.budget_bytes, "headroom": r.headroom().to_string(),
-        },
-        "inverse": {
-            "max_concurrency": inverse.max_concurrency.map(|(i, o, c)|
-                json!({"isl": i, "osl": o, "concurrency": c})),
-            "max_isl": inverse.max_isl.map(|(c, o, i)|
-                json!({"concurrency": c, "osl": o, "isl": i})),
-            "kv_pool": inverse.kv_pool.map(|(b, t, n)|
-                json!({"blocks": b, "tokens": t, "needed_blocks": n})),
-        },
-    })
 }

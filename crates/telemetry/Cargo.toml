@@ -12,12 +12,25 @@ description = "Metrale Engine: run metrics, kernel audit, launch trace, progress
 otlp = []
 # 2026-09-26: NVTX ranges around the serve lanes; builds gpu-sys's NVTX shim against the toolkit's NVTX3 headers.
 nvtx = ["metrale-gpu-sys/nvtx"]
+# 2026-10-22: The AMD SMI power probe (`power_amdsmi`, gfx1151 / Strix Halo): dlopens
+# libamd_smi.so at run time; off by default so a GB10 build carries none of it.
+amdsmi = ["dep:libloading"]
 
 [dependencies]
-metrale-gpu-sys = { path = "../gpu-sys", default-features = false }
-serde = { workspace = true }
-serde_json = { workspace = true }
-tracing = "0.1"
+metrale-gpu-sys = { workspace = true }
+# 2026-10-22: The power port (`PowerProbe`) the NVML and amdsmi probes implement, and the counter
+# tracker they share with the attribution core.
+metrale-abstract-io = { workspace = true }
+metrale-error = { workspace = true }
+metrale-power = { workspace = true }
+serde = { workspace = true, features = ["std", "derive"] }
+serde_json = { workspace = true, features = ["std", "preserve_order"] }
+tracing = { workspace = true, features = ["std", "attributes"] }
+# 2026-10-22: Only under `amdsmi`: the runtime dlopen of libamd_smi.so.
+libloading = { workspace = true, features = ["std"], optional = true }
 
 [lints]
 workspace = true
+
+[package.metadata.metrale]
+role = "device"

@@ -15,9 +15,10 @@ repository's own SPDX header is never stamped over them (see `paths-ignore` in
 ## 1. cudarc — MIT OR Apache-2.0
 
 Rust bindings to the CUDA driver and NVRTC APIs, vendored at upstream version
-0.19.2. The root `Cargo.toml` `[patch.crates-io]` entry explains the one local
-change: CUDA-driver symbols that a non-NVIDIA runtime lacks resolve to a stub
-instead of panicking at init.
+0.19.2 and published from `vendor/cudarc/` as `metrale-cudarc`. The root
+`Cargo.toml` `cudarc` workspace dependency lists the local changes: stream
+priorities, a raw module handle, and CUDA-driver symbols that a non-NVIDIA
+runtime lacks resolve to a stub instead of panicking at init.
 
 - **License**: MIT OR Apache-2.0, at the recipient's option.
 - **License texts**: shipped in place at
@@ -43,7 +44,7 @@ path.
 - **Copyright**: `Copyright (c) 2023-2026 The ggml authors` (from upstream's
   root `LICENSE`; the vendored files carry no per-file copyright line).
 - **Upstream**: https://github.com/ggml-org/llama.cpp (`ggml/src/ggml-cuda/`)
-- **In-repo path**: `kernels/gb10/qwen3.6-27b/nvfp4/q4k_vendor/`
+- **In-repo path**: `kernels/gb10/common/mmq/`
 - **Also derived from llama.cpp**: the DRY repetition penalty in
   `crates/sampling/src/lib.rs` is a Rust port of llama.cpp PR #9702.
 
@@ -155,12 +156,27 @@ recorded in [`CITATIONS.md`](CITATIONS.md) and
 - **`TheTom/turboquant_plus`** — Apache-2.0. The research repository whose
   papers document the per-feature designs (asymmetric K/V, sparse V, InnerQ,
   layer-aware V, weight rotation). Upstream: https://github.com/TheTom/turboquant_plus
+- **`spiritbuun/buun-llama-cpp`** — MIT. Text at
+  [`LICENSES/MIT.txt`](LICENSES/MIT.txt). `Copyright (c) 2023-2026 The ggml
+  authors` (upstream root `LICENSE`, unchanged from llama.cpp). This is the
+  source of the TCQ trellis codebooks, the bitshift-trellis block layout, the
+  V decode scales (turbo1/2/3_tcq), and the 16-level codebook and midpoints of
+  `turbo4_n128`. The codebooks credit spiritbuun, as upstream asks. Pinned at
+  `34ef0ef7c6eaa58afd2011cf4385e8b2d76b225b`. Design report: "Closing the Gap:
+  Trellis-Coded Quantization for KV Cache at 2-3 Bits", Hugging Face dataset
+  `spiritbuun/turboquant-tcq-kv-cache` (Apache-2.0); it is cited, not vendored.
+  Upstream: https://github.com/spiritbuun/buun-llama-cpp
 - **In-repo paths**: `kernels/gb10/common/tq_plus_signs.cuh`,
   `kernels/gb10/common/tq_plus_innerq.cuh`,
   `kernels/gb10/common/tq_plus_innerq_apply.cu`,
   `kernels/gb10/common/paged_decode_attn_bf16k_turbo2v.cu` (sparse V),
   `crates/model-arch/src/weight_loader/qwen35/load_layers/tq_plus_weight_rotation.rs`,
-  `crates/cache/src/kv_cache/tests_tq_plus.rs`
+  `crates/cache/src/kv_cache/tests_tq_plus.rs`,
+  `crates/kv-tq128/` (from buun-llama-cpp), `kernels/gb10/common/tq128_common.cuh`,
+  `kernels/gb10/common/reshape_and_cache_tcq.cu`,
+  `kernels/gb10/common/reshape_and_cache_turbo4_n128.cu`,
+  `kernels/gb10/common/paged_decode_attn_tq128.cu`,
+  `kernels/gb10/common/tq128_dequant_bf16.cu`
 
 ---
 

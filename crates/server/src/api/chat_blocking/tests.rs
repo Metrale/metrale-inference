@@ -83,3 +83,60 @@ fn non_poolside_tool_call_in_reasoning_is_still_hoisted() {
     assert_eq!(calls.len(), 1);
     assert_eq!(calls[0].function.name, "get_weather");
 }
+
+/// 2026-10-13: The GLM blocking split as `build_choice_message` makes it: the
+/// GLM-4.7 parser with the prompt-opened `<think>`, then vLLM's content rule.
+fn glm_split(text: &str, forced_tool_choice: bool) -> (Option<String>, Option<String>) {
+    let parser = crate::reasoning_parser::ReasoningFormat::Glm47.into_parser();
+    assert!(parser.tool_call_closes_reasoning());
+    let (reasoning, answer) = parser.extract_thinking(text, true);
+    (
+        reasoning,
+        super::super::chat_blocking_choice::vllm_split_content(Some(answer), forced_tool_choice),
+    )
+}
+
+#[test]
+fn glm_unclosed_think_is_all_reasoning_with_null_content() {
+    // 2026-10-13: vLLM's GLM53 parser starts in reasoning; with no `</think>`
+    // the whole output is reasoning and the content is null.
+    assert_eq!(glm_split("4", false), (Some("4".into()), None));
+    assert_eq!(
+        glm_split("The answer is 4.\n", false),
+        (Some("The answer is 4.".into()), None)
+    );
+}
+
+#[test]
+fn glm_closed_think_splits_reasoning_from_content() {
+    assert_eq!(
+        glm_split("Let me think.</think>The answer is 4.", false),
+        (
+            Some("Let me think.".into()),
+            Some("The answer is 4.".into())
+        )
+    );
+}
+
+#[test]
+fn glm_empty_think_has_null_reasoning() {
+    // 2026-10-13: An empty reasoning block is `None` in vLLM, not `""`.
+    assert_eq!(
+        glm_split("</think>The answer is 4.", false),
+        (None, Some("The answer is 4.".into()))
+    );
+}
+
+#[test]
+fn glm_forced_tool_choice_sends_empty_string_content() {
+    // 2026-10-13: Under `tool_choice` required or named, vLLM sends `""`
+    // where it would otherwise send null, and keeps non-empty content.
+    assert_eq!(
+        glm_split("4", true),
+        (Some("4".into()), Some(String::new()))
+    );
+    assert_eq!(
+        glm_split("x</think>done", true),
+        (Some("x".into()), Some("done".into()))
+    );
+}

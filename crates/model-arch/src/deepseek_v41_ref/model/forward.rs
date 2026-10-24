@@ -10,17 +10,18 @@
 
 use super::super::attn::AttnWeights;
 use super::super::compress::{CompressorWeights, IndexerWeights, attention_any};
-use super::super::engram::{EngramTables, embed_rows, gate_and_add};
+use super::super::engram::{EngramTables, gate_and_add};
 use super::super::hc::{hc_mixes, hc_post, hc_pre, rms_norm};
+use super::super::mat::{OutPrec, Weight, gather_rows, linear};
 use super::super::moe::{MoeWeights, moe};
 use super::{LayerTrace, ModelCfg, ModelState, ModelWeights, StepTrace};
 
 /// 2026-09-25: The forward for one chunk (`[seqlen]` ids at `start_pos`), text only.
-pub fn forward(
+pub fn forward<M: Weight>(
     ids: &[i64],
     start_pos: usize,
     c: &ModelCfg,
-    w: &ModelWeights,
+    w: &ModelWeights<M>,
     st: &mut ModelState,
     t: &EngramTables,
 ) -> StepTrace {
@@ -28,14 +29,7 @@ pub fn forward(
     let hashes = st.hash.forward(ids, s, start_pos);
     let (nl, cols) = (t.layer_ids.len(), t.n_hash_cols());
 
-    let embed: Vec<f32> = ids
-        .iter()
-        .flat_map(|&id| {
-            w.embed[id as usize * dim..(id as usize + 1) * dim]
-                .iter()
-                .copied()
-        })
-        .collect();
+    let embed = gather_rows(&w.embed, dim, ids);
     let mut h: Vec<f32> = (0..s)
         .flat_map(|tk| std::iter::repeat_n(embed[tk * dim..(tk + 1) * dim].to_vec(), hc).flatten())
         .collect();
@@ -53,9 +47,9 @@ pub fn forward(
             let ids_l: Vec<i64> = (0..s)
                 .flat_map(|tk| (0..cols).map(move |cc| hs[(tk * nl + hi) * cols + cc]))
                 .collect();
-            let emb = embed_rows(&e.table, t.head_dim, &ids_l);
+            let emb = gather_rows(&e.table, t.head_dim, &ids_l);
             let in_f = cols * t.head_dim;
-            let kv = super::super::engram::linear_bf16(&emb, s, in_f, &e.wkv, dim * (hc + 1));
+            let kv = linear(&e.wkv, &emb, s, in_f, dim * (hc + 1), OutPrec::Bf16);
             let out = gate_and_add(&h, &kv, &e.q, &e.k, s, hc, dim, c.eps);
             h = out.clone();
             out
@@ -94,13 +88,13 @@ pub fn forward(
         };
         let comp = lw.comp_wkv.as_ref().map(|wkv| CompressorWeights {
             wkv,
-            wgate: lw.comp_wgate.as_deref(),
+            wgate: lw.comp_wgate.as_ref(),
             norm: lw.comp_norm.as_deref().expect("comp norm"),
         });
         let idxw = lw.idx_wq_b.as_ref().map(|wq_b| IndexerWeights {
             wq_b,
-            weights_proj: lw.idx_weights_proj.as_deref().expect("weights_proj"),
-            wk: lw.idx_wk.as_deref(),
+            weights_proj: lw.idx_weights_proj.as_ref().expect("weights_proj"),
+            wk: lw.idx_wk.as_ref(),
             k_norm: lw.idx_k_norm.as_deref(),
         });
         let ac = c.attn_cfg(l);
@@ -141,11 +135,7 @@ pub fn forward(
         let mw = MoeWeights {
             gate_w: &lw.gate_w,
             gate_bias: &lw.gate_bias,
-            experts: lw
-                .experts
-                .iter()
-                .map(|(a, b, cc)| (a.as_slice(), b.as_slice(), cc.as_slice()))
-                .collect(),
+            experts: lw.experts.iter().map(|(a, b, cc)| (a, b, cc)).collect(),
             shared: (&lw.shared.0, &lw.shared.1, &lw.shared.2),
         };
         let (ffn_out, moe_weights, moe_indices) = moe(&ffn_in, s, &mw, &c.moe);
@@ -181,16 +171,7 @@ pub fn forward(
 
     let h_final = hc_pre(&h, &pre_mix, s, hc, dim);
     let head_in = rms_norm(&h_final, &w.norm, s, dim, c.eps);
-    let mut logits = vec![0f32; s * c.vocab];
-    for tk in 0..s {
-        for v in 0..c.vocab {
-            logits[tk * c.vocab + v] = head_in[tk * dim..(tk + 1) * dim]
-                .iter()
-                .zip(&w.head[v * dim..(v + 1) * dim])
-                .map(|(a, b)| a * b)
-                .sum();
-        }
-    }
+    let logits = linear(&w.head, &head_in, s, dim, c.vocab, OutPrec::F32);
     StepTrace {
         tokens: s,
         embed,

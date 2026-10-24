@@ -38,6 +38,7 @@ impl NemotronHWeightLoader {
         absmax_k: KernelHandle,
         scratch: DevicePtr,
         stream: u64,
+        levers: super::levers::NemotronLevers,
     ) -> Result<NemotronMamba2Layer> {
         // 2026-09-25: `load_nemotron_ssm` reads the format (NVFP4, FP8 or BF16) from
         // `in_proj` and returns NULL projections unless it is NVFP4.
@@ -47,10 +48,8 @@ impl NemotronHWeightLoader {
         // Unset, "1" or "both": FP8 for decode (`w8a16_gemv`) and prefill
         // (`w8a16_gemm_pipelined` or `w8a16_gemm`). "decode": FP8 for decode, NVFP4
         // requant for prefill. Any other value: NVFP4 requant for both.
-        let mode =
-            std::env::var("METRALE_NEMOTRON_NATIVE_FP8_SSM").unwrap_or_else(|_| "1".to_string());
-        let native_fp8_enabled = matches!(mode.as_str(), "1" | "both" | "decode");
-        let native_prefill_wanted = matches!(mode.as_str(), "1" | "both");
+        let native_fp8_enabled = levers.native_fp8_ssm_decode;
+        let native_prefill_wanted = levers.native_fp8_ssm_prefill;
         // 2026-09-25: Native FP8 also needs an FP8 `out_proj`, `w8a16_gemv` and one of
         // the two `w8a16_gemm` kernels; without them the load warns once and takes the
         // requant arm.
@@ -75,7 +74,7 @@ impl NemotronHWeightLoader {
         let dgemm_k =
             metrale_model_layers::layers::try_kernel(gpu, "gemm", "dense_gemm_bf16_pipelined");
         let dgemv_k = metrale_model_layers::layers::try_kernel(gpu, "gemv", "dense_gemv_bf16");
-        let native_bf16 = std::env::var("METRALE_NEMOTRON_NATIVE_BF16_SSM").as_deref() != Ok("0")
+        let native_bf16 = levers.native_bf16_ssm
             && quant_kind == NemotronSsmQuant::Bf16
             && out_is_bf16
             && dgemm_k.0 != 0
@@ -193,12 +192,8 @@ impl NemotronHWeightLoader {
         // - with `METRALE_NO_SSM_FP8_PREFILL` set, transposed NVFP4 for `w4a16_gemm_t`
         //   / `w4a16_gemm_t_m128`;
         // - with `METRALE_NO_SSM_PREFILL_T` also set, no copy.
-        let fp8_prefill =
-            !native_prefill && !native_bf16 && std::env::var("METRALE_NO_SSM_FP8_PREFILL").is_err();
-        let prefill_t = !native_prefill
-            && !native_bf16
-            && !fp8_prefill
-            && std::env::var("METRALE_NO_SSM_PREFILL_T").is_err();
+        let fp8_prefill = !native_prefill && !native_bf16 && !levers.no_ssm_fp8_prefill;
+        let prefill_t = !native_prefill && !native_bf16 && !fp8_prefill && !levers.no_ssm_prefill_t;
         let proj_t = if prefill_t {
             let in_t = ssm
                 .in_proj

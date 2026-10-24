@@ -13,7 +13,9 @@
 //! - Not counted: activations and workspaces, conv windows, the CUDA context, and launch
 //!   overhead. The fit check says so beside its table.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use super::device::Device;
 use super::exec::fp4_fallback;
@@ -21,8 +23,9 @@ use crate::format::Format;
 use crate::fuser::section_of;
 use crate::ir::{Circuit, NodeIdx, OpKind, Section};
 use crate::rules::Mode;
+use crate::state::StateAccess;
 use crate::venn::families::Roofline;
-use crate::venn::roofline::{CostError, node_cost};
+use crate::venn::roofline::{CostError, node_cost, read_unit_bytes, update_state_bytes};
 
 /// 2026-09-30: The roofline constants used on a device, and where they come from.
 #[derive(Debug, Clone, PartialEq)]
@@ -107,7 +110,8 @@ pub struct Footprint {
     pub weights: f64,
     /// 2026-09-30: KV bytes per token of one sequence, over every attention node.
     pub kv_per_token: f64,
-    /// 2026-09-30: Recurrent state bytes of one sequence (GatedDeltaNet and Mamba2).
+    /// 2026-09-30: Recurrent state bytes of one sequence (GatedDeltaNet and Mamba2; 2026-10-18:
+    /// also latent sparse attention's window ring and the latent compression's run tail).
     pub state_per_seq: f64,
 }
 
@@ -119,22 +123,13 @@ impl Footprint {
 }
 
 /// 2026-09-30: The footprint of `c` under `settings` (`kv_cache_dtype`, `ssm_h_dtype`).
+/// 2026-10-18: Each setting is asked only by a node that reads it.
 pub fn footprint(c: &Circuit, settings: &BTreeMap<String, String>) -> Result<Footprint, String> {
     let dim = |d: &str| {
         c.dims
             .get(d)
             .map(|v| *v as f64)
             .ok_or_else(|| format!("the footprint needs dim `{d}`"))
-    };
-    let kv = match settings.get("kv_cache_dtype").map(String::as_str) {
-        Some("bf16") => 2.0,
-        Some("fp8") => 1.0,
-        other => return Err(format!("kv_cache_dtype {other:?} has no element size")),
-    };
-    let h = match settings.get("ssm_h_dtype").map(String::as_str) {
-        Some("f32") => 4.0,
-        Some("f16" | "f16-pool" | "bf16") => 2.0,
-        other => return Err(format!("ssm_h_dtype {other:?} has no element size")),
     };
     let mut weights = 0.0;
     let (mut kv_per_token, mut state) = (0.0, 0.0);
@@ -151,8 +146,9 @@ pub fn footprint(c: &Circuit, settings: &BTreeMap<String, String>) -> Result<Foo
             weights += dim("vocab")? * dim("hidden")? * 2.0;
         }
         if let Some(w) = n.weight {
-            let k = n.inputs.first().map_or(0, |&e| c.edges[e].dim_value);
-            let out: u64 = n.outputs.iter().map(|&e| c.edges[e].dim_value).sum();
+            let (out, k) = c
+                .weight_shape(n)
+                .ok_or_else(|| format!("node `{}`: its weight has no shape", n.id))?;
             let one = w
                 .weight_bytes(out, k)
                 .ok_or_else(|| format!("node `{}`: weight {} has no size", n.id, w.name()))?
@@ -165,15 +161,36 @@ pub fn footprint(c: &Circuit, settings: &BTreeMap<String, String>) -> Result<Foo
         }
         match n.op {
             OpKind::PagedAttention => {
-                kv_per_token += 2.0 * dim("kv_heads")? * dim("head_dim")? * kv
+                // 2026-10-18: One token of both sides, from each side's codec spec.
+                let kv = crate::kv::kv_pair(settings)?;
+                let per_side = crate::num::sat_u64(dim("kv_heads")? * dim("head_dim")?);
+                let token = crate::kv::token_bytes(kv, per_side)
+                    .ok_or_else(|| format!("{kv} KV of {per_side} values per side overflows"))?;
+                kv_per_token += token as f64;
             }
             OpKind::GdnRecurrence => {
-                state += dim("lin_v_heads")? * dim("lin_k_dim")? * dim("lin_v_dim")? * h;
+                state +=
+                    dim("lin_v_heads")? * dim("lin_k_dim")? * dim("lin_v_dim")? * h_size(settings)?;
             }
-            OpKind::SsmUpdate => {
-                state += dim("mamba_heads")? * dim("mamba_head_dim")? * dim("ssm_state")? * 4.0;
+            // 2026-10-08: The latent cache and the indexer's pooled keys, per token, at their
+            // declared formats. 2026-10-18: A selection or a latent sparse attention that reads
+            // an earlier layer's state holds none of its own.
+            OpKind::MlaAttention => {
+                kv_per_token += read_unit_bytes(c, n, settings).map_err(|e| e.to_string())?
+            }
+            OpKind::IndexSelect | OpKind::LatentSparseAttention
+                if n.state.iter().any(|(_, a)| *a == StateAccess::Read) =>
+            {
+                kv_per_token += read_unit_bytes(c, n, settings).map_err(|e| e.to_string())?;
             }
             _ => {}
+        }
+        // 2026-10-18: The window ring and the compression's run tail, per sequence.
+        if matches!(n.op, OpKind::LatentSparseAttention | OpKind::KvCompress) {
+            state += update_state_bytes(c, n, settings).map_err(|e| e.to_string())?;
+        }
+        if n.op == OpKind::SsmUpdate {
+            state += dim("mamba_heads")? * dim("mamba_head_dim")? * dim("ssm_state")? * 4.0;
         }
     }
     Ok(Footprint {
@@ -186,12 +203,19 @@ pub fn footprint(c: &Circuit, settings: &BTreeMap<String, String>) -> Result<Foo
 /// 2026-09-30: Weight bytes a decode step reads at one row: every main-section weight once
 /// (routed experts at `top_k` of them). Divided by bandwidth, the C=1 floor.
 pub fn weight_floor_bytes(c: &Circuit) -> Result<f64, String> {
-    let mut total = 0.0;
+    Ok(main_weight_bytes(c)?.iter().sum())
+}
+
+/// 2026-10-23: Each node's share of [`weight_floor_bytes`], indexed like `c.nodes` (0 for a node
+/// outside the main section or without a weight).
+pub fn main_weight_bytes(c: &Circuit) -> Result<Vec<f64>, String> {
+    let mut per = vec![0.0; c.nodes.len()];
     for b in c.blocks.iter().filter(|b| b.section == Section::Main) {
-        for n in &c.nodes[b.first..b.end] {
+        for (i, n) in c.nodes[b.first..b.end].iter().enumerate() {
             let Some(w) = n.weight else { continue };
-            let k = n.inputs.first().map_or(0, |&e| c.edges[e].dim_value);
-            let out: u64 = n.outputs.iter().map(|&e| c.edges[e].dim_value).sum();
+            let (out, k) = c
+                .weight_shape(n)
+                .ok_or_else(|| format!("node `{}`: its weight has no shape", n.id))?;
             let copies = match n.op {
                 OpKind::ExpertGateUp | OpKind::ExpertDown => {
                     *c.dims.get("top_k").ok_or_else(|| {
@@ -203,13 +227,22 @@ pub fn weight_floor_bytes(c: &Circuit) -> Result<f64, String> {
             let one = w
                 .weight_bytes(out, k)
                 .ok_or_else(|| format!("node `{}`: weight {} has no size", n.id, w.name()))?;
-            total += one as f64 * copies;
+            per[b.first + i] = one as f64 * copies;
         }
     }
-    Ok(total)
+    Ok(per)
 }
 
 /// 2026-09-30: `Format` of a node's first input.
 pub fn activation_of(c: &Circuit, n: &crate::ir::Node) -> Option<Format> {
     n.inputs.first().map(|&e| c.edges[e].format)
+}
+
+/// 2026-10-18: The h-state element size `ssm_h_dtype` names, asked only by a node that keeps it.
+fn h_size(settings: &BTreeMap<String, String>) -> Result<f64, String> {
+    match settings.get("ssm_h_dtype").map(String::as_str) {
+        Some("f32") => Ok(4.0),
+        Some("f16" | "f16-pool" | "bf16") => Ok(2.0),
+        other => Err(format!("ssm_h_dtype {other:?} has no element size")),
+    }
 }

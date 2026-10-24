@@ -9,7 +9,6 @@
 
 use anyhow::Result;
 use metrale_cache::kv_cache::{KvCacheConfig, PagedKvCache};
-use metrale_telemetry::prefix_cache::PrefixCache;
 
 /// 2026-09-26: The block count under `--high-speed-swap`, sized from the
 /// per-sequence cap `cap`.
@@ -41,8 +40,8 @@ pub(super) fn hss_kv_blocks(
 pub(super) const PREFIX_POOL_DRIVER_PER_MILLE: usize = 3;
 
 /// 2026-10-01: The pool's block count for `kv_budget` and `max_batch_size` slots, without
-/// logging: `(blocks, budget_blocks)`, the second before the reachable-demand clamp. With the
-/// prefix cache inactive (and `METRALE_KV_POOL_UNCLAMPED` absent) blocks beyond
+/// logging: `(blocks, budget_blocks)`, the second before the reachable-demand clamp. Unless
+/// `unclamped` (the prefix cache is active, or `METRALE_KV_POOL_UNCLAMPED` is set) blocks beyond
 /// `max_batch_size x blocks per sequence` can never be addressed, so the pool is clamped to that
 /// plus one spare block per sequence and the dummy block. An error when the budget is `0`.
 /// 2026-10-02: An unclamped pool keeps [`PREFIX_POOL_DRIVER_PER_MILLE`] of its budget for the
@@ -50,19 +49,19 @@ pub(super) const PREFIX_POOL_DRIVER_PER_MILLE: usize = 3;
 pub(super) fn pool_blocks(
     kv_config: &KvCacheConfig,
     kv_budget: usize,
-    prefix_active: bool,
+    unclamped: bool,
     max_seq_len: usize,
     kv_block_size: usize,
     max_batch_size: usize,
 ) -> Result<(usize, usize)> {
     anyhow::ensure!(kv_budget > 0, "no memory left for the KV cache");
     let budget_blocks = PagedKvCache::compute_num_blocks(kv_config, kv_budget)?;
-    if prefix_active || std::env::var("METRALE_KV_POOL_UNCLAMPED").is_ok() {
-        let unclamped = PagedKvCache::compute_num_blocks(
+    if unclamped {
+        let blocks = PagedKvCache::compute_num_blocks(
             kv_config,
             kv_budget - kv_budget / 1000 * PREFIX_POOL_DRIVER_PER_MILLE,
         )?;
-        return Ok((unclamped, budget_blocks));
+        return Ok((blocks, budget_blocks));
     }
     let per_seq = max_seq_len.div_ceil(kv_block_size);
     let reachable = max_batch_size
@@ -77,7 +76,7 @@ pub(super) fn pool_blocks(
 pub(super) fn budget_kv_blocks(
     kv_config: &KvCacheConfig,
     kv_budget: usize,
-    prefix_cache: &dyn PrefixCache,
+    unclamped: bool,
     max_seq_len: usize,
     kv_block_size: usize,
     max_batch_size: usize,
@@ -105,7 +104,7 @@ pub(super) fn budget_kv_blocks(
     let (n, budget_blocks) = pool_blocks(
         kv_config,
         kv_budget,
-        prefix_cache.is_active(),
+        unclamped,
         max_seq_len,
         kv_block_size,
         max_batch_size,
@@ -149,8 +148,8 @@ pub(super) fn full_length_blocks(max_seq_len: usize, kv_block_size: usize) -> us
     max_seq_len.div_ceil(kv_block_size.max(1)).max(1)
 }
 
-/// 2026-09-26: Warns, or with `METRALE_KV_OVERCOMMIT=0` or `=false` returns an
-/// error, when the pool holds fewer than `max_batch_size` sequences.
+/// 2026-09-26: Warns, or unless `overcommit` (off when `METRALE_KV_OVERCOMMIT` is `0` or
+/// `false`) returns an error, when the pool holds fewer than `max_batch_size` sequences.
 /// 2026-10-01: `balanced` is the slot count `--max-batch-size auto` would build
 /// (`slots::balance_slots`), named in the warning as the fix.
 pub(super) fn check_kv_concurrency(
@@ -160,6 +159,7 @@ pub(super) fn check_kv_concurrency(
     kv_block_size: usize,
     max_batch_size: usize,
     balanced: Option<usize>,
+    overcommit: bool,
 ) -> Result<()> {
     // 2026-09-25: With `--high-speed-swap` a sequence needs only its cap of
     // blocks resident, so the concurrency check uses the cap.
@@ -175,10 +175,6 @@ pub(super) fn check_kv_concurrency(
         // `--max-seq-len`. Paged KV allocates blocks on demand, so by default
         // (overcommit) it only warns; `METRALE_KV_OVERCOMMIT=0` or `=false`
         // makes it refuse to start.
-        let overcommit = !matches!(
-            std::env::var("METRALE_KV_OVERCOMMIT").as_deref(),
-            Ok("0") | Ok("false")
-        );
         if overcommit {
             tracing::warn!(target: "metrale_model_engine::factory::build", "KV OVERCOMMIT: pool fits {} seq(s) at full --max-seq-len={} but \
                  --max-batch-size={} requested ({} block(s)/seq, {} block(s) total). \

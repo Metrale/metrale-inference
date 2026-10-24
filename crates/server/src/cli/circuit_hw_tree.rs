@@ -17,8 +17,8 @@ use std::path::{Path, PathBuf};
 use metrale_circuit::hardware::{ClassSources, KernelTree, Module};
 use metrale_circuit::venn::Repo;
 use metrale_closure::layout::{self, Target};
-use metrale_kernels::ModelTypeMatch;
-use metrale_kernels::resolve::{ResolveCandidate, resolve_target};
+use metrale_kernel_set::ModelTypeMatch;
+use metrale_kernel_set::resolve::{ResolveCandidate, resolve_target};
 
 use super::circuit_venn::FsRepo;
 
@@ -43,13 +43,19 @@ impl FsTree {
 }
 
 impl Repo for FsTree {
-    fn read(&self, rel: &str) -> Result<String, String> {
+    fn read(&self, rel: &str) -> metrale_error::Result<String> {
         self.repo.read(rel)
     }
 
-    fn list(&self, rel: &str) -> Result<Vec<String>, String> {
+    fn list(&self, rel: &str) -> metrale_error::Result<Vec<String>> {
         self.repo.list(rel)
     }
+}
+
+/// 2026-10-22: A resolution failure as the port's registry error; the text is kept verbatim
+/// because the hardware reports quote it.
+fn resolve_err(why: String) -> metrale_error::Error {
+    metrale_error::error!(metrale_error::ErrorCode::KernelTreeResolve, why)
 }
 
 fn renames(configs: &[PathBuf]) -> Result<BTreeMap<String, String>, String> {
@@ -108,7 +114,30 @@ fn expected_absent(
 }
 
 impl KernelTree for FsTree {
-    fn class_sources(&self, class: &str, model: &str, quant: &str) -> Result<ClassSources, String> {
+    fn class_sources(
+        &self,
+        class: &str,
+        model: &str,
+        quant: &str,
+    ) -> metrale_error::Result<ClassSources> {
+        self.resolve_class(class, model, quant).map_err(resolve_err)
+    }
+
+    fn kernel_target(
+        &self,
+        config_json: &str,
+        refs: &[&str],
+    ) -> metrale_error::Result<Option<String>> {
+        self.resolve_target(config_json, refs).map_err(resolve_err)
+    }
+
+    fn as_repo(&self) -> &dyn Repo {
+        self
+    }
+}
+
+impl FsTree {
+    fn resolve_class(&self, class: &str, model: &str, quant: &str) -> Result<ClassSources, String> {
         let root = &self.repo.root;
         let want = Target {
             hardware: class.to_string(),
@@ -180,7 +209,7 @@ impl KernelTree for FsTree {
         })
     }
 
-    fn kernel_target(&self, config_json: &str, refs: &[&str]) -> Result<Option<String>, String> {
+    fn resolve_target(&self, config_json: &str, refs: &[&str]) -> Result<Option<String>, String> {
         // 2026-09-30: The serve path's inputs (serve_load/model_setup.rs): the engine's config
         // parse, which rewrites some model_types (crates/config/src/dispatch.rs), not the raw
         // config.json field.
@@ -202,10 +231,6 @@ impl KernelTree for FsTree {
         resolve_target(&candidates, &cfg.model_type, cfg.hidden_size, refs)
             .map(|i| i.map(|i| owned[i].name.clone()))
             .map_err(|e| e.to_string())
-    }
-
-    fn as_repo(&self) -> &dyn Repo {
-        self
     }
 }
 

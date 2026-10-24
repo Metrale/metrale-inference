@@ -35,9 +35,17 @@ async fn run_against(port: u16) -> metrale_bench::RunRecord {
 }
 
 async fn run_with_orders(port: u16, orders: &str) -> metrale_bench::RunRecord {
-    let store = ArtifactStore::discover().expect("an artifact store");
-    let executor =
-        metrale_bench::BenchmarkExecutor::new(tokio::runtime::Handle::current(), store.clone());
+    // 2026-10-17: The store this box's environment names, as `met benchmark` would find it.
+    let levers = std::sync::Arc::new(
+        metrale_bench::levers::BenchLevers::resolve(&metrale_io_host_std::ProcessEnv)
+            .expect("the levers resolve"),
+    );
+    let store = ArtifactStore::discover(&levers).expect("an artifact store");
+    let executor = metrale_bench::BenchmarkExecutor::new(
+        tokio::runtime::Handle::current(),
+        store.clone(),
+        levers,
+    );
     let descriptor = metrale_bench::registry::find("kat-equality-gate").expect("registered");
     let specs = descriptor.build().parameters();
     let values = ParamValues::from_overrides(

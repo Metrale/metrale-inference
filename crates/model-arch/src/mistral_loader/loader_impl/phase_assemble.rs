@@ -22,6 +22,7 @@ pub(super) fn assemble_layer(
     ctx: MistralLayerCtx<'_>,
     yarn_inv_freq: DevicePtr,
     layer_kv_dtypes: &[KvCacheDtype],
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Box<dyn TransformerLayer>> {
     let i = ctx.layer_idx;
     let prefix = format!("layers.{i}");
@@ -62,12 +63,7 @@ pub(super) fn assemble_layer(
     // 2026-09-25: The NVFP4 copies of wq_a, wq_b, wkv_a and wo are used
     // unless METRALE_NVFP4_MLA is 0, false, no or off (trimmed, any case);
     // then the layer gets the BF16 weights only.
-    let disable_nvfp4_mla = std::env::var("METRALE_NVFP4_MLA")
-        .map(|v| {
-            let v = v.trim().to_ascii_lowercase();
-            matches!(v.as_str(), "0" | "false" | "no" | "off")
-        })
-        .unwrap_or(false);
+    let disable_nvfp4_mla = crate::weight_loader::shared_levers::nvfp4_mla_disabled(lc.settings);
 
     // 2026-09-25: A field an earlier step left unset is an error naming the
     // field, not a panic.
@@ -134,12 +130,12 @@ pub(super) fn assemble_layer(
 
     let input_norm = dense(ctx.store, &format!("{prefix}.attention_norm.weight"))?;
     let post_norm = dense(ctx.store, &format!("{prefix}.ffn_norm.weight"))?;
-    let kv_dtype = layer_kv_dtypes.get(i).copied().unwrap_or(KvCacheDtype::Fp8);
+    let kv_dtype = metrale_kv_codec::layer_entry(layer_kv_dtypes, i)?;
 
     let ffn = build_moe_ffn(ctx.store, i, gpu, config);
 
     let mut layer = Qwen3AttentionLayer::new_ungated(
-        input_norm, attn, post_norm, ffn, i, None, None, None, gpu, kv_dtype, 0, config,
+        input_norm, attn, post_norm, ffn, i, None, None, None, gpu, kv_dtype, 0, config, lc,
     )?;
     layer.set_mla_weights(mla_weights);
     Ok(Box::new(layer))

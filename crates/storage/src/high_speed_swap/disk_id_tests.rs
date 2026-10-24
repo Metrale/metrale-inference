@@ -18,6 +18,8 @@ fn dims() -> ModelDims {
         head_dim: 128,
         block_size: 16,
         model_fp: None,
+        // 2026-10-18: No KV paging peer is connected here, so nothing reads the codec salt.
+        kv_codec_salt: 0,
     }
 }
 

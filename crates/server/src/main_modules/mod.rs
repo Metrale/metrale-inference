@@ -9,6 +9,7 @@
 pub(crate) mod app_state;
 pub(crate) mod auto_swap;
 pub(crate) mod byte_count;
+pub(crate) mod embed_stdio;
 pub(crate) mod kernel_flag_plan;
 pub(crate) mod kv_dtypes;
 pub(crate) mod listener_rcvbuf;
@@ -22,6 +23,7 @@ pub(crate) mod serve_flags;
 pub(crate) mod serve_load;
 pub(crate) mod serve_phases;
 mod serve_router;
+pub(crate) mod serve_settings;
 pub(crate) mod telemetry_boot;
 #[cfg(feature = "otlp")]
 mod telemetry_otlp;
@@ -30,5 +32,5 @@ mod telemetry_otlp;
 mod tests;
 
 pub(crate) use app_state::AppState;
-pub(crate) use kv_dtypes::{auto_high_precision_layers, build_layer_kv_dtypes};
+pub(crate) use kv_dtypes::{legacy, legacy_layer_dtypes};
 pub(crate) use serve::serve;

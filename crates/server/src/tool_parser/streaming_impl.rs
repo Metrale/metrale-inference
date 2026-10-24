@@ -12,18 +12,14 @@ use super::*;
 
 impl StreamingToolDetector {
     pub fn new() -> Self {
-        Self::new_with_tools(Vec::new())
+        Self::new_with_tools(Vec::new(), false)
     }
 
     /// 2026-09-26: Build a detector that holds the request's tool schemas; live
     /// argument streaming uses them to name and coerce XML parameters. With
-    /// `METRALE_BUFFER_TOOL_ARGS` set to `1` or `true`, arguments are not
-    /// streamed: one `ToolCallDelta` carries them when the call closes.
-    pub fn new_with_tools(tools: Vec<ToolDefinition>) -> Self {
-        let buffer_args = matches!(
-            std::env::var("METRALE_BUFFER_TOOL_ARGS").as_deref(),
-            Ok("1") | Ok("true")
-        );
+    /// `buffer_args` (`ChatLevers::buffer_tool_args`), arguments are not streamed: one
+    /// `ToolCallDelta` carries them when the call closes.
+    pub fn new_with_tools(tools: Vec<ToolDefinition>, buffer_args: bool) -> Self {
         Self {
             buffer: String::new(),
             inside_tag: false,
@@ -39,6 +35,8 @@ impl StreamingToolDetector {
             args_open: false,
             emitted_keys: Vec::new(),
             incremental_emitted: false,
+            fail_closed: false,
+            header_decided: false,
         }
     }
 
@@ -68,6 +66,7 @@ impl StreamingToolDetector {
         self.args_open = false;
         self.emitted_keys.clear();
         self.incremental_emitted = false;
+        self.header_decided = false;
     }
 
     /// 2026-09-26: Feed a text delta and return the events it completes:
@@ -76,6 +75,10 @@ impl StreamingToolDetector {
     pub fn process(&mut self, new_text: &str) -> Vec<DetectorOutput> {
         let mut outputs = Vec::new();
         self.buffer.push_str(new_text);
+        if self.fail_closed {
+            self.process_fail_closed(&mut outputs);
+            return outputs;
+        }
         loop {
             match self.process_dsml(&mut outputs) {
                 DsmlStreamAction::Continue => continue,

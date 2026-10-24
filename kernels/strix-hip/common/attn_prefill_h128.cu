@@ -4,8 +4,7 @@
 // 2026-09-25: Flash-attention prefill for HDIM = 128 on AMD WMMA (gfx1151):
 // full, causal, or causal with a sliding window, with the online softmax
 // staged through shared memory. One block per (q_head, 32-row q block,
-// batch); warps 4 and above return at once. Layouts and exp as in
-// attn_prefill_v47.cu.
+// batch); warps 4 and above return at once.
 //
 // Owner: strix-hip kernels.
 // Invariants: assumes head_dim == HDIM.
@@ -183,28 +182,6 @@ __device__ __forceinline__ float sw_exp_h(float x) {
     }
 
 extern "C" __global__ void attn_prefill_h128(
-    const __nv_bfloat16* __restrict__ Q,
-    const __nv_bfloat16* __restrict__ K,
-    const __nv_bfloat16* __restrict__ V,
-    __nv_bfloat16* __restrict__ O,
-    const unsigned int seq_len,
-    const unsigned int num_q_heads,
-    const unsigned int num_kv_heads,
-    const unsigned int head_dim,
-    const float inv_sqrt_d,
-    const unsigned int causal,
-    const unsigned int sliding_window
-) {
-    ATTN_PREFILL_H128_BODY(BR)
-}
-
-// 2026-09-25: The 64-row entry point runs the same 32-row body. No crate looks
-// it up.
-
-
-
-
-extern "C" __global__ void attn_prefill_h128_64(
     const __nv_bfloat16* __restrict__ Q,
     const __nv_bfloat16* __restrict__ K,
     const __nv_bfloat16* __restrict__ V,

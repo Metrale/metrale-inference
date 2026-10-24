@@ -38,6 +38,8 @@ pub(super) struct LoadCx<'a> {
     pub(super) policy: metrale_config::WeightQuantPolicy<'a>,
     /// 2026-09-30: What each arm built, for the load summary (`served_formats`).
     pub(super) served: &'a std::cell::RefCell<ServedFormats>,
+    /// 2026-10-17: The settings and levers of this load.
+    pub(super) lc: metrale_model_layers::load_context::LoadContext<'a>,
 }
 
 impl LoadCx<'_> {

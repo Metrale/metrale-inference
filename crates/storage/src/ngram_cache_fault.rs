@@ -81,15 +81,8 @@ fn run_one(
     Ok(())
 }
 
-/// 2026-09-25: `METRALE_PLE_SERIAL_FAULT=1` faults every batch serially. Read once per
-/// process.
-fn serial_forced() -> bool {
-    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *V.get_or_init(|| std::env::var("METRALE_PLE_SERIAL_FAULT").as_deref() == Ok("1"))
-}
-
 /// 2026-09-25: Fault every job in: serially below [`PARALLEL_MIN`] jobs or with
-/// `METRALE_PLE_SERIAL_FAULT=1`, else on up to [`MAX_WORKERS`] scoped threads. If any
+/// `serial` (`METRALE_PLE_SERIAL_FAULT`), else on up to [`MAX_WORKERS`] scoped threads. If any
 /// job fails, one failed job's error is returned; a worker stops after its own error
 /// or once another worker has recorded one.
 pub(super) fn fault_all(
@@ -98,6 +91,7 @@ pub(super) fn fault_all(
     scale_file: Option<&File>,
     row_stride: usize,
     bounce: &mut AlignedBlock,
+    serial: bool,
 ) -> Result<()> {
     // 2026-09-25: Per job, since two jobs in one batch can read different files.
     let pick = |job: &FaultJob| -> Result<&File> {
@@ -110,7 +104,7 @@ pub(super) fn fault_all(
             )
         })
     };
-    if jobs.len() < PARALLEL_MIN || serial_forced() {
+    if jobs.len() < PARALLEL_MIN || serial {
         for job in jobs {
             run_one(job, pick(job)?, scale_file, row_stride, bounce)?;
         }

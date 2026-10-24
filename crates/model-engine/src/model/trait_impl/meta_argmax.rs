@@ -41,6 +41,8 @@ impl TransformerModel {
         logits_ptr: DevicePtr,
         _stream: u64,
     ) -> Result<u32> {
+        // 2026-10-21: A screened verify's lazy rows are recomputed first (`screen_head_lazy.rs`).
+        self.screen_materialize()?;
         let stream = self.gpu.default_stream();
         let out_ptr = self.buffers.scratch();
         // 2026-09-25: `argmax_fp32` runs only when `use_fp32_logits` is set and the
@@ -74,6 +76,7 @@ impl TransformerModel {
         n: usize,
         _stream: u64,
     ) -> Result<Vec<u32>> {
+        self.screen_materialize()?;
         let stream = self.gpu.default_stream();
         let v = self.config.vocab_size;
         let bf16 = 2usize;
@@ -83,13 +86,7 @@ impl TransformerModel {
         // serialise n single-SM scans. The batched kernel runs the same per-row
         // body, so ties resolve to the same index. The per-row loop runs when the
         // kernel set lacks `argmax_bf16_batch` or `METRALE_NO_ARGMAX_BATCH=1`.
-        fn argmax_batch_enabled() -> bool {
-            static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-            *ON.get_or_init(|| {
-                std::env::var("METRALE_NO_ARGMAX_BATCH").ok().as_deref() != Some("1")
-            })
-        }
-        if self.argmax_batch_kernel.0 != 0 && argmax_batch_enabled() {
+        if self.argmax_batch_kernel.0 != 0 && !self.settings.scheduler.no_argmax_batch {
             ops::argmax_bf16_batch(
                 self.gpu.as_ref(),
                 self.argmax_batch_kernel,

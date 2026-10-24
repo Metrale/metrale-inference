@@ -208,3 +208,58 @@ fn a_rule_chain_that_does_not_resolve_is_an_error_not_a_shorter_list() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// 2026-10-17: The rerun directories are the largest toml-only subtrees: never a directory
+/// holding a derived plan or a doc (regenerating those must not recompile the kernels), and a
+/// subtree that gains a non-TOML file drops out while its toml-only children stay.
+#[test]
+fn rerun_dirs_are_the_largest_toml_only_subtrees() {
+    let root = tree("dirs");
+    let rel = |root: &Path| -> Vec<String> {
+        circuit_dirs(root)
+            .iter()
+            .map(|p| p.strip_prefix(root).unwrap().display().to_string())
+            .collect()
+    };
+    assert_eq!(rel(&root), ["kernels/circuits/precision"]);
+
+    let c = root.join("kernels/circuits");
+    for d in ["blocks/nested", "venn", "plans/hw"] {
+        std::fs::create_dir_all(c.join(d)).unwrap();
+    }
+    for (p, s) in [
+        ("blocks/attn.toml", "d = 1\n"),
+        ("blocks/nested/mlp.toml", "e = 1\n"),
+        ("venn/a-vs-b.md", "doc\n"),
+        ("plans/hw/gb10.md", "plan\n"),
+    ] {
+        std::fs::write(c.join(p), s).unwrap();
+    }
+    assert_eq!(
+        rel(&root),
+        ["kernels/circuits/blocks", "kernels/circuits/precision"],
+        "a nested toml-only dir is covered by its parent; plans/ and venn/ are never watched"
+    );
+
+    std::fs::write(c.join("blocks/README.md"), "doc\n").unwrap();
+    assert_eq!(
+        rel(&root),
+        [
+            "kernels/circuits/blocks/nested",
+            "kernels/circuits/precision"
+        ],
+        "a doc in blocks/ drops it, keeping its toml-only child"
+    );
+
+    std::fs::remove_file(c.join("ROUTING-AUDIT.md")).unwrap();
+    std::fs::remove_dir_all(c.join("plans")).unwrap();
+    std::fs::remove_dir_all(c.join("venn")).unwrap();
+    std::fs::remove_file(c.join("blocks/README.md")).unwrap();
+    assert_eq!(
+        rel(&root),
+        ["kernels/circuits"],
+        "an all-TOML tree is watched whole, so a new top-level .toml reruns"
+    );
+    assert!(circuit_dirs(&root.join("absent")).is_empty());
+    let _ = std::fs::remove_dir_all(&root);
+}

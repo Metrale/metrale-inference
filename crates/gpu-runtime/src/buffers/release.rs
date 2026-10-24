@@ -73,7 +73,13 @@ impl metrale_core::scope::ModelResource<dyn GpuBackend> for BufferArena {
             q2_act_q8,
             ssm_rowwise_w_bf16,
             ssm_rowwise_w_bf16_used: _,
+            zero_rows_graph,
         } = self;
+        // 2026-10-10: The captured zeroing graph goes first; it names buffers freed below.
+        let graph_freed = match zero_rows_graph.get_mut().take() {
+            Some((_, graph)) => gpu.destroy_graph(graph),
+            None => Ok(()),
+        };
         // 2026-09-25: Free every pointer, then set it to NULL, so a second call
         // frees only NULL pointers: `ModelResource::release` must be idempotent.
         let owned = [
@@ -124,7 +130,7 @@ impl metrale_core::scope::ModelResource<dyn GpuBackend> for BufferArena {
             *q2_act_q8,
             *ssm_rowwise_w_bf16,
         ];
-        let mut first_error = None;
+        let mut first_error = graph_freed.err();
         for ptr in owned {
             if let Err(e) = gpu.free(ptr)
                 && first_error.is_none()

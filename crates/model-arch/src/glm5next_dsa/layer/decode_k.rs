@@ -9,15 +9,14 @@
 //! - The lockstep check (`check_lockstep`) and the `k` and metadata checks run before the
 //!   first launch.
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use metrale_cache::kv_cache::PagedKvCache;
 use metrale_gpu_runtime::gpu::DevicePtr;
-use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use metrale_model_layers::layer::{ForwardContext, LayerState};
 
 use super::super::attend::DsaDecodePaging;
 use super::super::state::Glm5NextDsaState;
-use super::{Glm5NextDsaLayer, batch_select_enabled, gemm};
+use super::{Glm5NextDsaLayer, IndexerPlace, batch_select_enabled};
 
 impl Glm5NextDsaLayer {
     /// 2026-09-25: `k` consecutive tokens of one sequence, from position `seq_len`.
@@ -47,7 +46,41 @@ impl Glm5NextDsaLayer {
         // it; see `batch_select_enabled`.
         is_prefill: bool,
     ) -> Result<()> {
-        use crate::glm5next_layer::profile;
+        self.decode_k_with(
+            hidden,
+            k,
+            state,
+            kv_cache,
+            seq_len,
+            block_table,
+            ctx,
+            stream,
+            is_prefill,
+            self.levers.dsa_indexer_rows,
+        )
+    }
+
+    /// 2026-10-09: [`Self::decode_k`] with the batched indexer (`indexer_rows`, the
+    /// `METRALE_GLM_DSA_INDEXER_ROWS` lever) explicit. On a prefill sub-chunk that takes the
+    /// batched selector over a paged cache, it writes every row's latent in one launch, computes
+    /// the indexer key, gate, key norm and head weights of all rows in groups of at most
+    /// `DENSE_GEMV_BATCHM_MAX_M` rows, places them with one `dsa_indexer_store_rows`, and runs
+    /// the selector query in such groups too: one launch per stage instead of per row, each row
+    /// with the per-row path's bits. Otherwise the rows run as before.
+    #[allow(clippy::too_many_arguments)]
+    pub fn decode_k_with(
+        &self,
+        hidden: DevicePtr,
+        k: usize,
+        state: &mut dyn LayerState,
+        kv_cache: &mut PagedKvCache,
+        seq_len: usize,
+        block_table: &mut Vec<u32>,
+        ctx: &ForwardContext,
+        stream: u64,
+        is_prefill: bool,
+        indexer_rows: bool,
+    ) -> Result<()> {
         let bt_block_size = kv_cache.block_size().max(1);
         let st = state
             .as_any_mut()
@@ -81,59 +114,13 @@ impl Glm5NextDsaLayer {
             .filter(|m| m.num_seqs as usize == k);
         let gpu = ctx.gpu;
         let w = &self.workspace;
-        let t_proj = crate::glm5next_layer::profile::start();
+        let t_proj = self.levers.profile.start();
 
-        gemm(
-            gpu,
-            self.kernels.gemm,
-            self.kernels.gemv,
-            self.kernels.gemv_batchm,
-            hidden,
-            self.weights.q_a_proj,
-            w.q_a,
-            k,
-            self.cfg.q_lora_rank,
-            self.cfg.hidden,
-            stream,
-        )?;
-        KernelLaunch::new(gpu, self.kernels.rms_norm)
-            // 2026-09-25: `rms_norm_vanilla` runs one block per row, so one launch covers all
-            // k rows.
-            .grid([k as u32, 1, 1])
-            .block([256, 1, 1])
-            .arg_ptr(w.q_a)
-            .arg_ptr(self.weights.q_a_layernorm)
-            .arg_ptr(w.q_resid)
-            .arg_u32(self.cfg.q_lora_rank as u32)
-            .arg_f32(self.rms_eps)
-            .launch(stream)?;
-        gemm(
-            gpu,
-            self.kernels.gemm,
-            self.kernels.gemv,
-            self.kernels.gemv_batchm,
-            w.q_resid,
-            self.weights.q_absorb,
-            w.q_abs,
-            k,
-            self.cfg.local_heads * self.cfg.kv_lora_rank,
-            self.cfg.q_lora_rank,
-            stream,
-        )?;
-
-        gemm(
-            gpu,
-            self.kernels.gemm,
-            self.kernels.gemv,
-            self.kernels.gemv_batchm,
-            hidden,
-            self.weights.kv_a_proj,
-            w.kv_a,
-            k,
-            self.cfg.kv_lora_rank,
-            self.cfg.hidden,
-            stream,
-        )?;
+        // 2026-10-10: `hidden` is not written until `project_out`, so under the fp8 and w4a16
+        // tiers the indexer's `wk` and compress gate of a one-row step reuse the activation
+        // quantization `kv_a_proj` made of it instead of quantizing it twice more (same bytes:
+        // the same kernel on the same input).
+        let stable = crate::glm5next_fp8_dense::stable_input(hidden);
         let mut attend_bt = DevicePtr::NULL;
         let mut attend_sl = DevicePtr::NULL;
         // 2026-09-25: On the host path without `persist_bt`, row 0 allocates the shared bt/sl
@@ -145,50 +132,98 @@ impl Glm5NextDsaLayer {
         let batch_select =
             batch_select_enabled(w.q_idx_rows.0 != 0, is_prefill, ctx.graph_capture, k);
         let mut batch_q_pos: Vec<i32> = Vec::with_capacity(if batch_select { k } else { 0 });
+        let block_size = kv_cache.config().block_size;
+        // 2026-09-25: With `meta`, the row's position, KV slot, `seq_len` and block table are
+        // read from device arrays and nothing is copied from the host; without it they are
+        // computed on the host. 2026-10-09: and uploaded once for all rows, stream-ordered
+        // (`stage_host_rows`), instead of four synchronous copies per row.
+        let meta = if ctx.decode_step {
+            ctx.attn_metadata.as_ref()
+        } else {
+            rowwise_meta
+        };
+        let host = match meta {
+            Some(_) => None,
+            None => Some(self.stage_host_rows(
+                gpu,
+                k,
+                seq_len,
+                block_table,
+                block_size,
+                bt_block_size,
+                stream,
+            )?),
+        };
+        // 2026-10-09: `indexer_rows` on a batched-selector prefill over a paged cache: the
+        // latent writes, the indexer rows and their head weights for all rows before the loop
+        // (`stage_prefill_rows`); the loop then only plans each row's attend.
+        let staged = indexer_rows
+            && batch_select
+            && st.cache() == super::super::paged::IndexerCache::Paged
+            && self.select_kernels.rows.store.0 != 0;
+        // 2026-10-11: `METRALE_GLM_DSA_VERIFY_ROWS`: a captured k-row verify with row metadata
+        // (every row placed on the device) computes the selector query and head weights of all
+        // rows in one launch each, and the indexer key, gate and key norm in one pass; each row
+        // is then placed from its staging row and selected with its precomputed query.
+        let verify_rows = verify_rows_apply(
+            self.levers.dsa_verify_rows,
+            is_prefill,
+            k,
+            ctx.graph_capture && meta.is_some(),
+            self.select_kernels.indexer_store.0 != 0 && self.select_kernels.write_geom.0 != 0,
+            self.selector_query_rows_ready(k),
+        );
+        // 2026-10-21: `METRALE_GLM_DSA_VERIFY_SELECT_ONCE`: the verify rows over persisted pool
+        // keys are selected in one pass after the row loop (`select_verify_rows`), each row's
+        // geometry at its slots of `geom_rows`.
+        let select_once = match meta {
+            Some(m) if verify_rows => {
+                let rows = self.indexer_rows(st, kv_cache, m.block_table)?;
+                self.verify_select_once_for(st, rows, k)?
+            }
+            _ => false,
+        };
+        // 2026-10-21: After `verify_rows` is known, so the indexer's projections can join
+        // `project_in`'s merged launch (`METRALE_GLM_DSA_PROJ_IN_MERGED`); nothing before reads
+        // its outputs.
+        let projected = self.project_in(gpu, hidden, k, verify_rows, stream)?;
+        if verify_rows {
+            self.selector_query_rows(gpu, hidden, k, false, stream)?;
+            self.indexer_project_rows(gpu, hidden, k, projected, stream)?;
+        }
+        if staged {
+            let (slot0, pos0, bt0, bt_rows) = match (meta, &host) {
+                (Some(m), _) => (m.slot, m.positions, m.block_table, m.max_blocks_per_seq),
+                (None, Some(h)) => (h.slot, h.q_pos, h.bt, 0),
+                (None, None) => bail!("DSA layer {}: no row metadata staged", self.layer_idx),
+            };
+            self.write_latent_rows(
+                gpu,
+                self.kernels.latent_write,
+                0,
+                k,
+                kv_cache,
+                slot0,
+                stream,
+            )?;
+            self.stage_prefill_rows(gpu, hidden, k, st, kv_cache, pos0, bt0, bt_rows, stream)?;
+        }
         for row in 0..k {
             let pos = seq_len + row;
-            let block_size = kv_cache.config().block_size;
-            // 2026-09-25: With `meta`, the row's position, KV slot, `seq_len` and block table
-            // are read from device arrays and nothing is copied from the host; without it they
-            // are computed here and copied host-to-device.
-            let meta = if ctx.decode_step {
-                ctx.attn_metadata.as_ref()
-            } else {
-                rowwise_meta
-            };
             let bt_stride = meta.map_or(0, |m| m.max_blocks_per_seq as usize) * 4;
-            let slot_dev = match meta {
-                Some(m) => m.slot.offset(row * 8),
-                None => {
-                    let logical = pos / block_size;
-                    let physical = *block_table.get(logical).ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "DSA layer {}: block table has {} entries, needs logical block \
-                             {logical} for position {pos}",
-                            self.layer_idx,
-                            block_table.len()
-                        )
-                    })? as usize;
-                    let slot = (physical * block_size + pos % block_size) as i64;
-                    gpu.copy_h2d(&slot.to_le_bytes(), w.slot)?;
-                    w.slot
-                }
+            let slot_dev = match (meta, &host) {
+                (Some(m), _) => m.slot.offset(row * 8),
+                (None, Some(h)) => h.slot.offset(row * 8),
+                (None, None) => bail!("DSA layer {}: no row metadata staged", self.layer_idx),
             };
-            KernelLaunch::new(gpu, self.kernels.latent_write)
-                .grid([1, 1, 1])
-                .block([self.cfg.kv_lora_rank as u32, 1, 1])
-                .arg_ptr(w.kv_a.offset(row * self.cfg.kv_lora_rank * 2))
-                .arg_ptr(self.weights.kv_a_layernorm)
-                .arg_ptr(kv_cache.k_pool_ptr(self.attn_layer_idx))
-                .arg_ptr(slot_dev)
-                .arg_u32(self.cfg.kv_lora_rank as u32)
-                .arg_f32(self.rms_eps)
-                .arg_f32(1.0 / self.kv_scale)
-                .launch(stream)?;
+            if !staged {
+                let latent = self.kernels.latent_write;
+                self.write_latent_rows(gpu, latent, row, 1, kv_cache, slot_dev, stream)?;
+            }
 
             use crate::glm5next_layer::profile;
             profile::end(profile::DSA_PROJ, t_proj, gpu, stream);
-            let t = profile::start();
+            let t = self.levers.profile.start();
             // 2026-09-25: Replay-safe placement (device-side position and geometry) only while
             // capturing a graph, with metadata, and with both `dsa_indexer_store` and
             // `dsa_write_geom` resolved; otherwise the host-offset path.
@@ -196,75 +231,64 @@ impl Glm5NextDsaLayer {
                 && meta.is_some()
                 && self.select_kernels.indexer_store.0 != 0
                 && self.select_kernels.write_geom.0 != 0;
-            let pos_dev = if replay_safe {
-                meta.map(|m| m.positions.offset(row * 4))
-            } else {
-                None
+            // 2026-10-09: The device placement carries the row's block table (`bt_stride` is
+            // the metadata's, so this is the row's own table); a flat state ignores it.
+            // 2026-10-16: An FP8 row is always placed by its store kernel: with metadata at its
+            // row, else at the host path's uploaded position through its one table.
+            let fp8 = st.fp8_ring().is_some();
+            let place = match (meta, &host) {
+                (Some(m), _) if replay_safe || fp8 => IndexerPlace::Device {
+                    pos: m.positions.offset(row * 4),
+                    bt: m.block_table.offset(row * bt_stride),
+                },
+                (None, Some(h)) if fp8 => IndexerPlace::Device {
+                    pos: h.q_pos.offset(row * 4),
+                    bt: h.bt,
+                },
+                _ => IndexerPlace::Host {
+                    block_table: block_table.as_slice(),
+                },
             };
-            self.indexer_forward(
-                gpu,
-                hidden.offset(row * self.cfg.hidden * 2),
-                st,
-                pos_dev,
-                stream,
-            )?;
+            if verify_rows {
+                st.ensure_room(1)?;
+                let pos = st.len();
+                self.store_indexer_row(
+                    gpu,
+                    st,
+                    kv_cache,
+                    place,
+                    pos,
+                    row,
+                    self.indexer_kernels(),
+                    stream,
+                )?;
+            } else if !staged {
+                self.indexer_forward(
+                    gpu,
+                    hidden.offset(row * self.cfg.hidden * 2),
+                    st,
+                    kv_cache,
+                    place,
+                    stream,
+                )?;
+            }
             profile::end(profile::DSA_INDEXER, t, gpu, stream);
 
-            let (q_pos_dev, bt_dev_meta, sl_dev_meta) = match meta {
-                Some(m) => (
+            // 2026-09-25: The attend reads `bt`/`sl` after the row loop. On the host path the
+            // block table is the same for every row (the rows are one sequence, and
+            // `bt_entries_needed` does not depend on `row`) and is read with a row stride of 0
+            // (`max_blocks_per_seq` below); `sl[row]` is row `row`'s length. On that path
+            // `d_sl` is the array's base, as the attend takes it.
+            let (q_pos_dev, d_bt, d_sl, owns_bt) = match (meta, &host) {
+                (Some(m), _) => (
                     m.positions.offset(row * 4),
-                    Some(m.block_table.offset(row * bt_stride)),
-                    Some(m.seq_len.offset(row * 4)),
+                    m.block_table.offset(row * bt_stride),
+                    m.seq_len.offset(row * 4),
+                    false,
                 ),
-                None => {
-                    let qp = pos as i32;
-                    gpu.copy_h2d(&qp.to_le_bytes(), w.q_pos)?;
-                    (w.q_pos, None, None)
-                }
+                (None, Some(h)) => (h.q_pos.offset(row * 4), h.bt, h.sl, h.owned),
+                (None, None) => bail!("DSA layer {}: no row metadata staged", self.layer_idx),
             };
-            let (d_bt, d_sl) = match (bt_dev_meta, sl_dev_meta) {
-                // 2026-09-25: The metadata already holds both; nothing to copy.
-                (Some(b), Some(l)) => (b, l),
-                _ => {
-                    // 2026-09-25: Upload only the prefix the gather can index
-                    // ([`bt_entries_needed`]), not the caller's whole table.
-                    let bt_used = {
-                        let needed = bt_entries_needed(seq_len, k, bt_block_size);
-                        &block_table[..needed.min(block_table.len())]
-                    };
-                    let bt: Vec<u8> = bt_used.iter().flat_map(|b| b.to_le_bytes()).collect();
-                    if bt_used.len() > w.bt_cap {
-                        anyhow::bail!(
-                            "DSA layer {}: block table needs {} entries for seq_len {} + {} rows \
-                     but the persistent buffer holds {}. This is a BLOCK count against a buffer \
-                     sized by max_dsa_context (a TOKEN count); do not write past the allocation.",
-                            self.layer_idx,
-                            bt_used.len(),
-                            seq_len,
-                            k,
-                            w.bt_cap
-                        );
-                    }
-                    // 2026-09-25: `attend_rows` reads these buffers after the row loop, so they
-                    // outlive the row that wrote them. Each row writes its own `sl[row]`. The
-                    // block table is the same for every row (the rows are one sequence, and
-                    // `bt_entries_needed` does not depend on `row`), and it is read with a row
-                    // stride of 0 (`max_blocks_per_seq` below).
-                    let (d_bt, d_sl) = if self.persist_bt {
-                        (w.bt, w.sl)
-                    } else if row == 0 {
-                        (gpu.alloc(bt.len().max(4))?, gpu.alloc(k * 4)?)
-                    } else {
-                        // 2026-09-25: Row 0 allocated these; later rows write their own `sl`
-                        // slot into them.
-                        (attend_bt, attend_sl)
-                    };
-                    gpu.copy_h2d(&bt, d_bt)?;
-                    gpu.copy_h2d(&((pos + 1) as i32).to_le_bytes(), d_sl.offset(row * 4))?;
-                    (d_bt, d_sl)
-                }
-            };
-            let owns_bt = bt_dev_meta.is_none();
 
             let paging = DsaDecodePaging {
                 num_seqs: 1,
@@ -282,19 +306,17 @@ impl Glm5NextDsaLayer {
                 cache_stride_bytes: (block_size * self.cfg.kv_lora_rank) as u64,
             };
             if replay_safe {
-                // 2026-09-25: `dsa_write_geom` reads S from `d_sl`, this row's `seq_len` entry
-                // in the metadata.
-                KernelLaunch::new(gpu, self.select_kernels.write_geom)
-                    .grid([1, 1, 1])
-                    .block([1, 1, 1])
-                    .arg_ptr(d_sl)
-                    .arg_ptr(w.geom_dev)
-                    .arg_u32(self.cfg.index_kpool as u32)
-                    .arg_u32(self.cfg.index_topk as u32)
-                    .arg_u32(super::super::select::topk_tile() as u32)
-                    .launch(stream)?;
+                let geom = if select_once {
+                    w.geom_rows.offset(row * super::super::select::GEOM_SLOT_BYTES)
+                } else {
+                    w.geom_dev
+                };
+                self.write_geom(gpu, self.select_kernels.write_geom, d_sl, geom, stream)?;
             }
-            if batch_select {
+            if select_once {
+            } else if batch_select && staged {
+                batch_q_pos.push(pos as i32);
+            } else if batch_select {
                 // 2026-09-25: `indexer_forward` left this row's head weights in the single-row
                 // slot; copy them to row `row` for the batched pass, which reads `weights[r*H]`.
                 gpu.copy_d2d_async(
@@ -305,7 +327,15 @@ impl Glm5NextDsaLayer {
                 )?;
                 batch_q_pos.push(pos as i32);
             } else {
-                self.select_row(gpu, row, st, q_pos_dev, replay_safe, stream)?;
+                let rows = self.indexer_rows(st, kv_cache, d_bt)?;
+                let pre = verify_rows.then(|| {
+                    let idx_row = self.cfg.index_heads * self.cfg.index_head_dim;
+                    (
+                        w.q_idx_rows.offset(row * idx_row * 4),
+                        w.head_weights_rows.offset(row * self.cfg.index_heads * 4),
+                    )
+                });
+                self.select_row(gpu, row, st, rows, q_pos_dev, replay_safe, pre, stream)?;
             }
             // 2026-09-25: The attend takes row 0's pointers, the base of the per-row arrays,
             // and indexes rows itself on grid y.
@@ -321,11 +351,31 @@ impl Glm5NextDsaLayer {
         // write is in the cache. Row `r` only takes pools that end at or before `q_pos[r]`,
         // so the rows written after it do not change its selection.
         if batch_select && !batch_q_pos.is_empty() {
-            self.select_rows_batched(gpu, k, st, &batch_q_pos, stream)?;
+            // 2026-10-09: Every row is this one sequence, so row 0's block table serves all.
+            let rows = self.indexer_rows(st, kv_cache, attend_bt)?;
+            self.select_rows_batched(
+                gpu,
+                k,
+                st,
+                rows,
+                &batch_q_pos,
+                indexer_rows,
+                ctx.comm,
+                is_prefill,
+                stream,
+            )?;
+        }
+
+        if select_once {
+            let m = meta.context("DSA verify: one selection pass needs the row metadata")?;
+            let rows = self.indexer_rows(st, kv_cache, attend_bt)?;
+            self.select_verify_rows(gpu, k, st, rows, m.positions, stream)?;
         }
 
         if let Some(paging) = attend_paging {
-            self.attend_rows(gpu, k, st, kv_cache, attend_bt, attend_sl, &paging, stream)?;
+            self.attend_rows(
+                gpu, k, st, kv_cache, attend_bt, attend_sl, &paging, is_prefill, stream,
+            )?;
         }
         // 2026-09-25: Freed after the attend, which reads both buffers.
         if owns_scratch {
@@ -333,22 +383,8 @@ impl Glm5NextDsaLayer {
             gpu.free(attend_sl)?;
         }
 
-        let t_proj = profile::start();
-        gemm(
-            gpu,
-            self.kernels.gemm,
-            self.kernels.gemv,
-            self.kernels.gemv_batchm,
-            w.attn_out,
-            self.weights.o_absorb,
-            hidden,
-            k,
-            self.cfg.hidden,
-            self.cfg.local_heads * self.cfg.kv_lora_rank,
-            stream,
-        )?;
-        profile::end(profile::DSA_PROJ, t_proj, gpu, stream);
-        Ok(())
+        drop(stable);
+        self.project_out(gpu, hidden, k, stream)
     }
 }
 
@@ -360,4 +396,46 @@ impl Glm5NextDsaLayer {
 /// of 0 is treated as 1.
 pub(super) fn bt_entries_needed(seq_len: usize, k: usize, block_size: usize) -> usize {
     (seq_len + k) / block_size.max(1) + 2
+}
+
+/// 2026-10-11: Whether a `decode_k` call takes the batched verify rows
+/// (`METRALE_GLM_DSA_VERIFY_ROWS`): the lever on, not a prefill sub-chunk, 2..=16 rows (one
+/// group of the batched FP32-out GEMV), every row placed on the device (`device_rows`: a capture
+/// with row metadata, so each row's `replay_safe` holds; `device_kernels`: the indexer store and
+/// geometry kernels), and the selector-query kernels and buffers ready.
+pub(super) fn verify_rows_apply(
+    lever: bool,
+    is_prefill: bool,
+    k: usize,
+    device_rows: bool,
+    device_kernels: bool,
+    query_ready: bool,
+) -> bool {
+    lever
+        && !is_prefill
+        && (2..=metrale_model_layers::layers::ops::DENSE_GEMV_BATCHM_MAX_M as usize).contains(&k)
+        && device_rows
+        && device_kernels
+        && query_ready
+}
+
+#[cfg(test)]
+mod verify_rows_tests {
+    use super::verify_rows_apply;
+
+    /// 2026-10-11: The batched verify rows apply only with every condition: one false input
+    /// (lever off, a prefill, one row, more rows than one batched group, host-placed rows,
+    /// missing kernels or buffers) keeps the per-row path.
+    #[test]
+    fn every_condition_is_required() {
+        assert!(verify_rows_apply(true, false, 2, true, true, true));
+        assert!(verify_rows_apply(true, false, 16, true, true, true));
+        assert!(!verify_rows_apply(false, false, 2, true, true, true));
+        assert!(!verify_rows_apply(true, true, 2, true, true, true));
+        assert!(!verify_rows_apply(true, false, 1, true, true, true));
+        assert!(!verify_rows_apply(true, false, 17, true, true, true));
+        assert!(!verify_rows_apply(true, false, 2, false, true, true));
+        assert!(!verify_rows_apply(true, false, 2, true, false, true));
+        assert!(!verify_rows_apply(true, false, 2, true, true, false));
+    }
 }

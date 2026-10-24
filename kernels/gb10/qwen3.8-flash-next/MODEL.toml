@@ -268,9 +268,4 @@ use_sampling_presets_for_core = true
 
 
 min_reasoning_floor_tokens = 0
-# 2026-09-25: When thinking is the only reason an EOS is held back, the EOS
-# closes the thinking block (the EOS itself is still dropped) instead of
-# thinking going on (crates/server/src/scheduler/decode_logits_step.rs).
-
-honor_eos_inside_thinking = true
 max_thinking_budget = 2048

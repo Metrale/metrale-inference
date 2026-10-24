@@ -7,7 +7,9 @@
 //! Invariants: see [`crate::state`]; a recurrent state names its verify intermediates, a KV
 //! side names none, and a cache is touched by no layer node.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use crate::circuit_toml::{CircuitError, StateFile};
 use crate::dims::DimExpr;
@@ -160,12 +162,14 @@ pub(super) fn check_state_access(
     circuit: &crate::ir::Circuit,
     first_state: usize,
     first_node: usize,
+    idle: &[(usize, StateAccess)],
 ) -> Result<(), CircuitError> {
     for (i, s) in circuit.states.iter().enumerate().skip(first_state) {
         let count = |a: StateAccess| {
             circuit.nodes[first_node..]
                 .iter()
                 .flat_map(|n| &n.state)
+                .chain(idle)
                 .filter(|&&(si, sa)| si == i && sa == a)
                 .count()
         };

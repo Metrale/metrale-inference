@@ -24,14 +24,6 @@ use crate::layer::ForwardContext;
 use crate::layers::ops;
 use crate::weight_map::{Fp8Weight, WeightQuantFormat};
 
-/// 2026-09-25: `METRALE_SSM_OUT_W8A16_ONLY`, read by presence (any value,
-/// empty and `0` included) once per process. When set, the SSM `out_proj`
-/// prefill never takes the cuBLASLt W8A8 arm.
-pub(super) fn ssm_out_w8a16_only() -> bool {
-    static ONLY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ONLY.get_or_init(|| std::env::var_os("METRALE_SSM_OUT_W8A16_ONLY").is_some())
-}
-
 /// 2026-09-25: Whether the SSM `out_proj` prefill takes the cuBLASLt arm. A
 /// pure function, so `prefill_out_w8a8_tests.rs` checks each clause without a
 /// GPU.
@@ -48,7 +40,7 @@ pub(super) fn ssm_out_w8a16_only() -> bool {
 /// * Room for the padded rows (`m_pad = ceil16(m)`), which
 ///   `cublas_fp8_proj_prequant` writes: `m_pad * n` BF16 of output,
 ///   `m_pad * k` FP8 of activation and `m_pad * K/128` FP32 of scales.
-/// * The quantizer resolved, and under the default k-major scale layout the
+/// * The quantizer resolved, and under the k-major scale layout (`kmajor`) the
 ///   `fp8_act_scale_to_kmajor` kernel and a scratch of `m_pad * K/128` FP32.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn out_proj_cublas_selected(
@@ -63,6 +55,7 @@ pub(super) fn out_proj_cublas_selected(
     act_capacity_bytes: usize,
     act_scale_capacity_bytes: usize,
     quant_k: ops::Fp8ActQuant,
+    kmajor: bool,
     scale_kmajor_k: KernelHandle,
     scale_kmajor_buf: DevicePtr,
     scale_kmajor_capacity_bytes: usize,
@@ -84,7 +77,7 @@ pub(super) fn out_proj_cublas_selected(
         && m_pad * (k as usize) <= act_capacity_bytes
         && m_pad * kg * 4 <= act_scale_capacity_bytes
         && quant_k.available()
-        && (kmajor_ready || !ops::cublas_scale_layout_kmajor())
+        && (kmajor_ready || !kmajor)
 }
 
 impl Qwen3SsmLayer {
@@ -103,7 +96,7 @@ impl Qwen3SsmLayer {
         out_proj_cublas_selected(
             ctx.dispatch.cublas.ssm,
             ctx.dispatch.fp8_blockscaled_prefill,
-            ssm_out_w8a16_only(),
+            ctx.levers.ssm.out_w8a16_only,
             fp8w.scale_format,
             m,
             n,
@@ -112,6 +105,7 @@ impl Qwen3SsmLayer {
             ctx.buffers.fp8_act_bytes(),
             ctx.buffers.fp8_act_scale_bytes(),
             self.per_token_group_quant_fp8_k,
+            ctx.levers.ops.cublas_kmajor,
             self.fp8_act_scale_kmajor_k,
             ctx.buffers.fp8_act_scale_kmajor(),
             ctx.buffers.fp8_act_scale_kmajor_bytes(),
@@ -160,6 +154,7 @@ impl Qwen3SsmLayer {
         )?;
         ops::cublas_fp8_proj_prequant(
             ctx.gpu,
+            ctx.levers.ops.cublas_kmajor,
             self.fp8_act_scale_kmajor_k,
             a_fp8,
             a_scale,

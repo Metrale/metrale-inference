@@ -15,7 +15,9 @@
 //! - `recipe` precision is the instance's own (the golden plans' formats); `declared` is the
 //!   checkpoint's declared formats. Neither is chosen silently: the report prints which.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use super::HwError;
 use super::class::ClassInfo;
@@ -70,6 +72,10 @@ pub struct ModelUnderPlan {
     pub kernel_quant: String,
     /// 2026-09-30: The circuit.
     pub circuit: Circuit,
+    /// 2026-10-23: Each rank's circuit, rank order ([`crate::parallel`]); empty on one device.
+    pub ranks: Vec<Circuit>,
+    /// 2026-10-23: The deployment's layout; `None` on one device.
+    pub layout: Option<crate::parallel::Layout>,
     /// 2026-09-30: Policy as the model's source states it.
     pub policy: Policy,
     /// 2026-09-30: Plan header lines (`target` is re-spelled per class).
@@ -104,7 +110,7 @@ impl CircuitSource for InstancesSource<'_> {
         let text = self
             .repo
             .read("kernels/circuits/INSTANCES.toml")
-            .map_err(HwError::Model)?;
+            .map_err(|e| HwError::Model(e.to_string()))?;
         let all = parse_instances(&text).map_err(|e| HwError::Model(e.to_string()))?;
         let inst = resolve(&all, spec.checkpoint).map_err(|e| HwError::Model(e.to_string()))?;
         let (inst, precision) = match (spec.precision, &inst.precision) {
@@ -162,6 +168,8 @@ pub fn model_of(
         kernel_model: model.to_string(),
         kernel_quant: quant.to_string(),
         circuit: loaded.circuit,
+        ranks: loaded.ranks,
+        layout: loaded.layout,
         policy: inst.policy.clone(),
         header: crate::header(inst),
         precision,

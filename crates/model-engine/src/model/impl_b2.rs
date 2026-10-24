@@ -211,6 +211,7 @@ impl TransformerModel {
                 dispatch: &self.dispatch,
                 derived: &self.derived,
                 levers: &self.levers,
+                settings: &self.settings,
                 stats: &self.stats,
                 attn_metadata: None,
                 profile: false,
@@ -224,6 +225,7 @@ impl TransformerModel {
                 routed_lora_layers: None,
                 midchunk_capture: None,
                 moe_lora_route: self.decode_moe_route(),
+                ab_levers: metrale_model_layers::layer::AbLevers::NONE,
             };
             let drafts = proposer.propose(
                 token_0,

@@ -14,85 +14,112 @@
 //!   decrement at 0 never pushes: it is logged, and `dec_ref` also panics in
 //!   a debug build.
 
-use anyhow::{Result, bail};
 use metrale_gpu_runtime::gpu::DevicePtr;
+use metrale_kv_codec::{
+    BlockGeometry, KvCodecId, KvPair, KvSide, KvSidePlan, LayerIx, RungIx, SpillSalt, spec,
+};
 
-pub(crate) const NVFP4_GROUP_SIZE: usize = 16;
-
-/// 2026-09-25: KV cache storage format. A symmetric variant uses one format
-/// for K and V; a `*K*V` variant names the K format, then the V format
-/// (`kv_pair`).
+/// 2026-09-25: KV cache storage format. A symmetric format uses one codec for K and V; a
+/// `*K*V` format names the K codec, then the V codec (`kv_pair`). 2026-10-18: A view of one
+/// registry [`KvPair`], so every registered codec and pair alias is a format without a variant
+/// of its own here; the named constants below are the legacy spellings, bound to the registry
+/// at compile time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum KvCacheDtype {
+pub struct KvCacheDtype(KvPair);
+
+/// 2026-10-18: The legacy formats by their pre-registry names. Each is resolved from its
+/// `--kv-cache-dtype` spelling by the registry in a `const`, so a spelling the registry does not
+/// accept fails to compile.
+#[allow(non_upper_case_globals)]
+impl KvCacheDtype {
     /// 2026-09-25: BF16, 2 bytes per element.
-    Bf16,
+    pub const Bf16: Self = Self::named("bf16");
     /// 2026-09-25: FP8 E4M3, 1 byte per element, with one scale per tensor
     /// (the `k_scale`/`v_scale` arguments of `reshape_and_cache_flash_fp8`).
-    Fp8,
+    pub const Fp8: Self = Self::named("fp8");
     /// 2026-09-25: E2M1 values, two per byte, plus one FP8 E4M3 scale byte per
     /// 16-element group: 4.5 bits per element.
-    Nvfp4,
+    pub const Nvfp4: Self = Self::named("nvfp4");
     /// 2026-09-25: WHT-rotated 16-level Lloyd-Max codebook (`TURBO4_LUT`) in
     /// the `Nvfp4` byte layout.
-    Turbo4,
+    pub const Turbo4: Self = Self::named("turbo4");
     /// 2026-09-25: WHT-rotated 8-level Lloyd-Max codebook (`TURBO3_LUT`), 8
     /// values in 3 bytes plus one FP8 scale byte per group: 3.5 bits per
     /// element, 22% smaller than `Turbo4`.
-    Turbo3,
+    pub const Turbo3: Self = Self::named("turbo3");
     /// 2026-09-25: WHT-rotated 4-level codebook, 4 values per byte plus one FP8
     /// scale byte per group: 2.5 bits per element, 6.4x smaller than `Bf16`.
-    /// The server's `auto_high_precision_layers` gives this dtype a larger
+    /// Its registry row (`AutoBoundary::FourFifths`) gives this dtype a larger
     /// high-precision boundary than the other symmetric turbo dtypes.
-    Turbo2,
+    pub const Turbo2: Self = Self::named("turbo2");
     /// 2026-09-25: WHT-rotated FP8 E4M3 data plus one BF16 scale per group: 9
     /// bits per element, 12.5% more than `Fp8`.
-    Turbo8,
+    pub const Turbo8: Self = Self::named("turbo8");
     /// 2026-09-25: K `Turbo4`, V `Turbo3`: 8 bits per K+V element pair, against
     /// 9 for `Turbo4`.
-    Turbo4KTurbo3V,
+    pub const Turbo4KTurbo3V: Self = Self::named("turbo4k_turbo3v");
     /// 2026-09-25: K `Turbo4`, V `Turbo8`: 13.5 bits per K+V element pair,
     /// against 18 for `Turbo8`.
-    Turbo4KTurbo8V,
+    pub const Turbo4KTurbo8V: Self = Self::named("turbo4k_turbo8v");
     /// 2026-09-25: K `Turbo3`, V `Turbo8`.
-    Turbo3KTurbo8V,
+    pub const Turbo3KTurbo8V: Self = Self::named("turbo3k_turbo8v");
     /// 2026-09-25: K `Bf16`, V `Turbo4`.
-    Bf16KTurbo4V,
+    pub const Bf16KTurbo4V: Self = Self::named("bf16k_turbo4v");
     /// 2026-09-25: K `Bf16`, V `Turbo3`.
-    Bf16KTurbo3V,
+    pub const Bf16KTurbo3V: Self = Self::named("bf16k_turbo3v");
     /// 2026-09-25: K `Fp8`, V `Turbo4`.
-    Fp8KTurbo4V,
+    pub const Fp8KTurbo4V: Self = Self::named("fp8k_turbo4v");
     /// 2026-09-25: K `Fp8`, V `Turbo3`.
-    Fp8KTurbo3V,
+    pub const Fp8KTurbo3V: Self = Self::named("fp8k_turbo3v");
     /// 2026-09-25: K `Bf16`, V `Turbo2`.
-    Bf16KTurbo2V,
+    pub const Bf16KTurbo2V: Self = Self::named("bf16k_turbo2v");
     /// 2026-09-25: K `Fp8`, V `Turbo2`.
-    Fp8KTurbo2V,
+    pub const Fp8KTurbo2V: Self = Self::named("fp8k_turbo2v");
+
+    /// 2026-10-18: The format a registry spelling names, in a `const`: an unaccepted spelling
+    /// stops compilation (PCND: no fallback format).
+    const fn named(name: &str) -> Self {
+        match KvPair::named(name) {
+            Some(pair) => KvCacheDtype(pair),
+            None => panic!("a legacy KvCacheDtype spelling is not accepted by the registry"),
+        }
+    }
 }
 
 impl std::fmt::Display for KvCacheDtype {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // 2026-09-25: The spelling lives only in `name` (catalog.rs), whose
-        // match has no wildcard arm.
+        // 2026-09-25: The spelling lives only in `name` (catalog.rs).
         f.write_str(self.name())
     }
 }
 
+impl From<KvPair> for KvCacheDtype {
+    /// 2026-10-18: Every accepted registry pair is a format.
+    fn from(pair: KvPair) -> Self {
+        KvCacheDtype(pair)
+    }
+}
+
 impl KvCacheDtype {
-    /// 2026-09-25: The (K, V) formats. A symmetric variant returns
-    /// `(self, self)`.
+    /// 2026-10-18: The registry codec of each side; every property below is read from the
+    /// codecs' specs.
+    pub const fn pair(self) -> (KvCodecId, KvCodecId) {
+        (self.0.k(), self.0.v())
+    }
+
+    /// 2026-10-18: The format whose `pair()` is `(k, v)`, or `None` when the registry does not
+    /// accept the pair (`KvPair::new`).
+    pub fn from_pair(k: KvCodecId, v: KvCodecId) -> Option<Self> {
+        KvPair::new(k, v).ok().map(KvCacheDtype)
+    }
+
+    /// 2026-09-25: The (K, V) formats. A symmetric format returns
+    /// `(self, self)`. 2026-10-18: Each side is that side's codec on both sides.
     pub fn kv_pair(self) -> (KvCacheDtype, KvCacheDtype) {
-        match self {
-            KvCacheDtype::Turbo4KTurbo3V => (KvCacheDtype::Turbo4, KvCacheDtype::Turbo3),
-            KvCacheDtype::Turbo4KTurbo8V => (KvCacheDtype::Turbo4, KvCacheDtype::Turbo8),
-            KvCacheDtype::Turbo3KTurbo8V => (KvCacheDtype::Turbo3, KvCacheDtype::Turbo8),
-            KvCacheDtype::Bf16KTurbo4V => (KvCacheDtype::Bf16, KvCacheDtype::Turbo4),
-            KvCacheDtype::Bf16KTurbo3V => (KvCacheDtype::Bf16, KvCacheDtype::Turbo3),
-            KvCacheDtype::Fp8KTurbo4V => (KvCacheDtype::Fp8, KvCacheDtype::Turbo4),
-            KvCacheDtype::Fp8KTurbo3V => (KvCacheDtype::Fp8, KvCacheDtype::Turbo3),
-            KvCacheDtype::Bf16KTurbo2V => (KvCacheDtype::Bf16, KvCacheDtype::Turbo2),
-            KvCacheDtype::Fp8KTurbo2V => (KvCacheDtype::Fp8, KvCacheDtype::Turbo2),
-            other => (other, other),
-        }
+        (
+            KvCacheDtype(KvPair::symmetric(self.0.k())),
+            KvCacheDtype(KvPair::symmetric(self.0.v())),
+        )
     }
 
     /// 2026-09-25: True for the symmetric turbo formats, whose cache contents
@@ -101,58 +128,25 @@ impl KvCacheDtype {
     /// attention calls it on each side of `kv_pair()`, applying the WHT to Q
     /// when K is rotated and the inverse WHT to the output when V is rotated.
     /// A `*K*V` variant itself returns false, so call it on a side.
+    /// 2026-10-18: Read from the codec spec's rotation.
     pub fn is_wht_rotated(self) -> bool {
-        matches!(
-            self,
-            KvCacheDtype::Turbo2
-                | KvCacheDtype::Turbo3
-                | KvCacheDtype::Turbo4
-                | KvCacheDtype::Turbo8
-        )
+        let (k, v) = self.pair();
+        k == v && spec(k).rotates()
     }
 
     /// 2026-09-25: True if K and V use different formats.
     pub fn is_asymmetric(self) -> bool {
-        matches!(
-            self,
-            KvCacheDtype::Turbo4KTurbo3V
-                | KvCacheDtype::Turbo4KTurbo8V
-                | KvCacheDtype::Turbo3KTurbo8V
-                | KvCacheDtype::Bf16KTurbo4V
-                | KvCacheDtype::Bf16KTurbo3V
-                | KvCacheDtype::Fp8KTurbo4V
-                | KvCacheDtype::Fp8KTurbo3V
-                | KvCacheDtype::Bf16KTurbo2V
-                | KvCacheDtype::Fp8KTurbo2V
-        )
+        let (k, v) = self.pair();
+        k != v
     }
 }
 
 impl std::str::FromStr for KvCacheDtype {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self> {
-        match s {
-            "bf16" => Ok(KvCacheDtype::Bf16),
-            "fp8" => Ok(KvCacheDtype::Fp8),
-            "nvfp4" => Ok(KvCacheDtype::Nvfp4),
-            "turbo4" => Ok(KvCacheDtype::Turbo4),
-            "turbo3" => Ok(KvCacheDtype::Turbo3),
-            "turbo2" => Ok(KvCacheDtype::Turbo2),
-            "turbo8" => Ok(KvCacheDtype::Turbo8),
-            "turbo4k_turbo3v" | "turbo4k3v" => Ok(KvCacheDtype::Turbo4KTurbo3V),
-            "turbo4k_turbo8v" | "turbo4k8v" => Ok(KvCacheDtype::Turbo4KTurbo8V),
-            "turbo3k_turbo8v" | "turbo3k8v" => Ok(KvCacheDtype::Turbo3KTurbo8V),
-            "bf16k_turbo4v" | "bf16k4v" => Ok(KvCacheDtype::Bf16KTurbo4V),
-            "bf16k_turbo3v" | "bf16k3v" => Ok(KvCacheDtype::Bf16KTurbo3V),
-            "fp8k_turbo4v" | "fp8k4v" => Ok(KvCacheDtype::Fp8KTurbo4V),
-            "fp8k_turbo3v" | "fp8k3v" => Ok(KvCacheDtype::Fp8KTurbo3V),
-            "bf16k_turbo2v" | "bf16k2v" => Ok(KvCacheDtype::Bf16KTurbo2V),
-            "fp8k_turbo2v" | "fp8k2v" => Ok(KvCacheDtype::Fp8KTurbo2V),
-            other => bail!(
-                "Unsupported --kv-cache-dtype '{other}'. Symmetric: 'bf16', 'fp8', 'nvfp4', 'turbo4', 'turbo3', 'turbo8'. \
-                Asymmetric (TQ+): turbo*_turbo*v, bf16k_turbo[34]v (safer asym: K baseline, V compressed), fp8k_turbo[34]v."
-            ),
-        }
+    type Err = metrale_error::Error;
+    /// 2026-10-18: Parsed by the registry (`KvPair`), whose error lists every accepted
+    /// spelling.
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        s.parse::<KvPair>().map(KvCacheDtype)
     }
 }
 
@@ -180,6 +174,10 @@ pub struct KvCacheConfig {
     /// sequence's window at `N` blocks (`ensure_blocks_through_decode`);
     /// `None` means no cap.
     pub cache_blocks_per_seq: Option<u32>,
+    /// 2026-10-16: V-side bytes per block of every layer, overriding the size its format and
+    /// dims give; `None` keeps that size. A model whose V side holds something other than V
+    /// rows sets it (the FP8 sparse-attention indexer layout).
+    pub v_block_bytes: Option<usize>,
 }
 
 impl KvCacheConfig {
@@ -195,48 +193,9 @@ impl KvCacheConfig {
     /// 2026-09-25: Bytes of one side of one block for `dtype` and
     /// `(nkv, hd)`. A `*K*V` variant gives its K-side size.
     fn block_bytes_dims(&self, dtype: KvCacheDtype, nkv: usize, hd: usize) -> usize {
-        let elems = self.block_size * nkv * hd;
-        match dtype {
-            KvCacheDtype::Bf16
-            | KvCacheDtype::Bf16KTurbo4V
-            | KvCacheDtype::Bf16KTurbo3V
-            | KvCacheDtype::Bf16KTurbo2V => elems * 2,
-            KvCacheDtype::Fp8
-            | KvCacheDtype::Fp8KTurbo4V
-            | KvCacheDtype::Fp8KTurbo3V
-            | KvCacheDtype::Fp8KTurbo2V => elems,
-            KvCacheDtype::Nvfp4
-            | KvCacheDtype::Turbo4
-            | KvCacheDtype::Turbo4KTurbo3V
-            | KvCacheDtype::Turbo4KTurbo8V => {
-                // 2026-09-25: Two 4-bit values per byte, then one FP8 scale
-                // byte per group. NVFP4 and Turbo4 differ only in codebook.
-                let data = elems / 2;
-                let num_groups = elems / NVFP4_GROUP_SIZE;
-                data + num_groups
-            }
-            KvCacheDtype::Turbo3 | KvCacheDtype::Turbo3KTurbo8V => {
-                // 2026-09-25: 8 values in 3 bytes, then one FP8 scale byte per
-                // group.
-                let data = elems * 3 / 8;
-                let num_groups = elems / NVFP4_GROUP_SIZE;
-                data + num_groups
-            }
-            KvCacheDtype::Turbo2 => {
-                // 2026-09-25: 4 values per byte, then one FP8 scale byte per
-                // group.
-                let data = elems / 4;
-                let num_groups = elems / NVFP4_GROUP_SIZE;
-                data + num_groups
-            }
-            KvCacheDtype::Turbo8 => {
-                // 2026-09-25: One FP8 byte per element, then one 2-byte BF16
-                // scale per group, where the layouts above use a 1-byte FP8
-                // scale.
-                let num_groups = elems / NVFP4_GROUP_SIZE;
-                elems + num_groups * 2
-            }
-        }
+        // 2026-10-18: Derived from the K-side codec's registry spec; the kv-codec layout golden
+        // test holds every codec to the sizes the per-variant match here used to compute.
+        side_bytes(dtype.pair().0, self.block_size, nkv, hd)
     }
 
     /// 2026-09-25: V-side bytes per block: `block_bytes_dims` of
@@ -265,8 +224,12 @@ impl KvCacheConfig {
     }
 
     /// 2026-09-25: V-side bytes per block of attention layer `layer_idx`.
-    /// Equals `k_block_bytes_for_layer` for a symmetric format.
+    /// Equals `k_block_bytes_for_layer` for a symmetric format. 2026-10-16: `v_block_bytes`
+    /// when set.
     pub fn v_block_bytes_for_layer(&self, layer_idx: usize) -> usize {
+        if let Some(bytes) = self.v_block_bytes {
+            return bytes;
+        }
         let (nkv, hd) = self.dims_for_layer(layer_idx);
         let (_, v) = self.dtype_for_layer(layer_idx).kv_pair();
         self.block_bytes_dims(v, nkv, hd)
@@ -316,66 +279,127 @@ impl KvCacheConfig {
             .sum()
     }
 
+    /// 2026-10-18: What this cache's formats contribute to the KV peer-paging namespace
+    /// (`ModelDims::kv_codec_salt` in metrale-storage): every layer's K and V codec at rung 0 and
+    /// its shape, then the sparse-attention indexer rows the V block carries (`indexer` is their
+    /// codec when they live in the blocks). Caches whose blocks mean different things get
+    /// different salts, so a spilled block is never read back under another format.
+    pub fn spill_salt(&self, indexer: Option<KvCodecId>) -> u64 {
+        let side = |codec| KvSidePlan {
+            codec,
+            rung: RungIx(0),
+        };
+        let mut salt = SpillSalt::new();
+        for i in 0..self.num_layers {
+            let layer = LayerIx(u32::try_from(i).expect("an attention layer index fits u32"));
+            let (k, v) = self.dtype_for_layer(i).pair();
+            let (nkv, hd) = self.dims_for_layer(i);
+            salt = salt
+                .side(layer, KvSide::K, side(k))
+                .side(layer, KvSide::V, side(v))
+                .layer_shape(layer, nkv as u64, hd as u64);
+        }
+        salt.indexer(indexer, self.v_block_bytes.map(|b| b as u64))
+            .finish()
+    }
+
     /// 2026-09-25: Elements per block and side, from the global dims:
     /// `block_size * num_kv_heads * head_dim`.
     pub fn cache_stride_elements(&self) -> usize {
         self.block_size * self.num_kv_heads * self.head_dim
     }
 
+    /// 2026-10-18: Values per block and side with the global dims.
+    fn values(&self) -> u64 {
+        geometry(self.block_size, self.num_kv_heads, self.head_dim).values()
+    }
+
+    /// 2026-10-18: Packed-value bytes per block of `codec`, from the global dims: where a
+    /// block-scaled side's side tensors start.
+    pub fn data_bytes_of(&self, codec: KvCodecId) -> usize {
+        to_usize(spec(codec).data_bytes(self.values()))
+    }
+
+    /// 2026-10-18: Side-tensor bytes per block of `codec`, from the global dims.
+    fn scale_bytes_of(&self, codec: KvCodecId) -> usize {
+        to_usize(spec(codec).side_bytes(self.values()))
+    }
+
     /// 2026-09-25: NVFP4 data bytes per block (two E2M1 values per byte),
     /// from the global dims.
     pub fn nvfp4_data_bytes(&self) -> usize {
-        self.block_size * self.num_kv_heads * self.head_dim / 2
+        self.data_bytes_of(KvCodecId::Nvfp4)
     }
 
     /// 2026-09-25: NVFP4 scale bytes per block (one FP8 byte per group), from
     /// the global dims.
     pub fn nvfp4_scale_bytes(&self) -> usize {
-        self.block_size * self.num_kv_heads * self.head_dim / NVFP4_GROUP_SIZE
+        self.scale_bytes_of(KvCodecId::Nvfp4)
     }
 
     /// 2026-09-25: Turbo4 data bytes per block, equal to the NVFP4 value.
     pub fn turbo4_data_bytes(&self) -> usize {
-        self.nvfp4_data_bytes()
+        self.data_bytes_of(KvCodecId::Turbo4)
     }
 
     /// 2026-09-25: Turbo4 scale bytes per block, equal to the NVFP4 value.
     pub fn turbo4_scale_bytes(&self) -> usize {
-        self.nvfp4_scale_bytes()
+        self.scale_bytes_of(KvCodecId::Turbo4)
     }
 
     /// 2026-09-25: Turbo3 data bytes per block (8 values in 3 bytes).
     pub fn turbo3_data_bytes(&self) -> usize {
-        let elems = self.block_size * self.num_kv_heads * self.head_dim;
-        elems * 3 / 8
+        self.data_bytes_of(KvCodecId::Turbo3)
     }
 
     /// 2026-09-25: Turbo3 scale bytes per block, equal to the NVFP4 value.
     pub fn turbo3_scale_bytes(&self) -> usize {
-        self.nvfp4_scale_bytes()
+        self.scale_bytes_of(KvCodecId::Turbo3)
     }
 
     /// 2026-09-25: Turbo2 data bytes per block (4 values per byte).
     pub fn turbo2_data_bytes(&self) -> usize {
-        let elems = self.block_size * self.num_kv_heads * self.head_dim;
-        elems / 4
+        self.data_bytes_of(KvCodecId::Turbo2)
     }
 
     /// 2026-09-25: Turbo2 scale bytes per block, equal to the NVFP4 value.
     pub fn turbo2_scale_bytes(&self) -> usize {
-        self.nvfp4_scale_bytes()
+        self.scale_bytes_of(KvCodecId::Turbo2)
     }
 
     /// 2026-09-25: Turbo8 data bytes per block (one FP8 byte per element).
     pub fn turbo8_data_bytes(&self) -> usize {
-        self.block_size * self.num_kv_heads * self.head_dim
+        self.data_bytes_of(KvCodecId::Turbo8)
     }
 
     /// 2026-09-25: Turbo8 scale bytes per block: one 2-byte BF16 scale per
     /// group, twice the NVFP4 value.
     pub fn turbo8_scale_bytes(&self) -> usize {
-        self.nvfp4_scale_bytes() * 2
+        self.scale_bytes_of(KvCodecId::Turbo8)
     }
+}
+
+/// 2026-10-18: Bytes of one side of one block of `codec` at `(block_size, nkv, hd)`, from the
+/// codec's registry spec.
+pub fn side_bytes(codec: KvCodecId, block_size: usize, nkv: usize, hd: usize) -> usize {
+    to_usize(spec(codec).block_bytes(&geometry(block_size, nkv, hd)))
+}
+
+/// 2026-10-18: The registry geometry of `(block_size, nkv, hd)`. A dimension past `u32` is a
+/// configuration no model has, so it is an invariant violation, not a mode.
+fn geometry(block_size: usize, nkv: usize, hd: usize) -> BlockGeometry {
+    let dim = |d: usize| u32::try_from(d).expect("a KV block dimension fits u32");
+    BlockGeometry {
+        block_size: dim(block_size),
+        num_kv_heads: dim(nkv),
+        head_dim: dim(hd),
+    }
+}
+
+/// 2026-10-18: A byte count as `usize`; it indexes host memory, so it fits on any host that
+/// could allocate it.
+fn to_usize(bytes: u64) -> usize {
+    usize::try_from(bytes).expect("a KV block byte count fits usize")
 }
 
 /// 2026-09-25: One attention layer's K and V pools.
@@ -444,3 +468,6 @@ mod tests;
 
 #[cfg(test)]
 mod tests_tq_plus;
+
+#[cfg(test)]
+mod spill_salt_tests;

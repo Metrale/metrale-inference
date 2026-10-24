@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 
 use metrale_closure::layout::{Entry, Layout};
 
+use super::build_ptx_cache::PtxCache;
 use super::build_shadow::shadowed_missing_symbols;
 use super::build_target::ComputeTarget;
 use super::{CompileJob, Target, build_hip_shim, build_stage, build_summary};
@@ -171,8 +172,14 @@ pub(super) fn print_summary(
 }
 
 /// 2026-09-26: Run every unique compile on `n_threads` workers; panic with
-/// every error once all jobs have run.
-fn run_compile_jobs(compute: &dyn ComputeTarget, compile_jobs: &[CompileJob], n_threads: usize) {
+/// every error once all jobs have run. 2026-10-17: With `cache`, each compile
+/// goes through the PTX cache, and a cache I/O error is one of those errors.
+fn run_compile_jobs(
+    compute: &dyn ComputeTarget,
+    cache: Option<&PtxCache<'_>>,
+    compile_jobs: &[CompileJob],
+    n_threads: usize,
+) {
     let errors_mutex: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
     let next_idx = std::sync::atomic::AtomicUsize::new(0);
 
@@ -193,8 +200,13 @@ fn run_compile_jobs(compute: &dyn ComputeTarget, compile_jobs: &[CompileJob], n_
                     // closure attestation hashes and records.
                     let mut flags = job.extra_flags.clone();
                     flags.push(format!("-I{}", job.include_dir.display()));
-                    if let Err(e) = compute.compile(&job.cu_file, &job.out_file, &job.arch, &flags)
-                    {
+                    let result = match cache {
+                        Some(cache) => {
+                            cache.compile(&job.cu_file, &job.out_file, &job.arch, &flags)
+                        }
+                        None => compute.compile(&job.cu_file, &job.out_file, &job.arch, &flags),
+                    };
+                    if let Err(e) = result {
                         errors_mutex.lock().unwrap().push(e);
                     }
                 }
@@ -223,8 +235,10 @@ fn run_copy_jobs(copy_jobs: &[(PathBuf, PathBuf)]) {
 
 /// 2026-09-26: Run the work plan: the unique compiles, then the cache-hit
 /// copies, then the HIP shims when `is_hip`, then the dedup summary line.
+/// 2026-10-17: With the PTX cache on, its `finish` runs after the compiles.
 pub(super) fn run_plan(
     compute: &dyn ComputeTarget,
+    cache: Option<&PtxCache<'_>>,
     compile_jobs: &[CompileJob],
     copy_jobs: &[(PathBuf, PathBuf)],
     is_hip: bool,
@@ -241,7 +255,10 @@ pub(super) fn run_plan(
         .min(nvcc_invocations.max(1));
 
     if nvcc_invocations > 0 {
-        run_compile_jobs(compute, compile_jobs, n_threads);
+        run_compile_jobs(compute, cache, compile_jobs, n_threads);
+    }
+    if let Some(cache) = cache {
+        cache.finish();
     }
 
     run_copy_jobs(copy_jobs);

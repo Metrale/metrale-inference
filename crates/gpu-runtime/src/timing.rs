@@ -23,6 +23,9 @@
 
 #[cfg(feature = "cuda")]
 mod cuda_events;
+mod step_timer;
+
+pub use step_timer::StepTimer;
 
 #[cfg(feature = "cuda")]
 pub use imp::*;

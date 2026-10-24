@@ -12,6 +12,7 @@ moe_w4a16_grouped_gemm = "moe_w4a16"
 [sources]
 use = [
   "deepseek-v4-flash/nvfp4/moe_w4a16_grouped_gemm.cu",
+  "deepseek-v4-flash/nvfp4/moe_w4a16_ptrtable_sm.cuh",
 ]
 
 # 2026-09-25: Entries of this directory that replace a same-stem entry of common/. The

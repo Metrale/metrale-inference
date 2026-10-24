@@ -9,7 +9,9 @@
 //! - Every line is a node of the primary plan, in execution order; a node no kernel of the
 //!   class covers still has its requirement, marked as a gap.
 
-use std::fmt::Write as _;
+use crate::prelude::*;
+
+use core::fmt::Write as _;
 
 use crate::hardware::plan::NOVEL_EMITTER;
 use crate::hardware::{ModelUnderPlan, OnePlan};

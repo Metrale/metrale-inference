@@ -8,9 +8,8 @@ A GB10 target compiles the shared baseline in `kernels/gb10/common/` plus its ow
 
 | Role | File example | What it does |
 |---|---|---|
-| Prefill attention | `attn_prefill_v47.cu` | Flash Attention v2, `cp.async` pipelining, `mma.sync.aligned.m16n8k16` tensor cores, 2 CTAs/SM |
+| Prefill attention | `attn_prefill.cu` | Flash-attention prefill, `mma.sync.aligned.m16n8k16` tensor cores, online softmax |
 | Decode attention | `paged_decode_attn_turbo3_128.cu` | Online softmax, split-K, adaptive split count |
-| Prefill attention (FP8 KV) | `attn_prefill_fp8kv.cu` | Same but with FP8 KV read path |
 | KV append | `reshape_and_cache.cu`, `fused_k_norm_rope_cache.cu` | Per-token K/V write into paged cache |
 | MoE prefill | `moe_prefill.cu` | Fused dequant + grouped GEMM, 256 experts, topk=10 |
 | MoE decode — shared expert | `moe_shared_expert_fused_fp8.cu` | Shared-expert path with fused FP8 GEMM |
@@ -23,7 +22,7 @@ A GB10 target compiles the shared baseline in `kernels/gb10/common/` plus its ow
 | Primitive — SiLU×Mul | `moe_silu_mul.cu` | SwiGLU for the MoE path |
 | Primitive — RoPE | `rope.cu` | GQA-aware rotary embedding |
 | Primitive — argmax BF16 | `argmax_bf16.cu` | Single-block tree reduction, 4-byte result |
-| E2M1 conversion | `e2m1_branchless.cu` | Software FP32 → E2M1 conversion for SM121 |
+| E2M1 conversion | `reshape_and_cache.cu` (`nvfp4_float_to_e2m1`) | Software FP32 → E2M1 conversion for SM121 |
 | MoE gating | `moe_gate_topk.cu` | Expert selection pre-dispatch |
 | WHT | `wht_bf16.cu` | Walsh-Hadamard for TurboQuant KV |
 | Element-wise | `bf16_add.cu`, `fp8_scale_transpose.cu` | Small utilities |
@@ -102,7 +101,7 @@ Turning graphs off (`--profile`) disables capture — useful when you are profil
 3. **Decide the module name.** Default is the file stem (`your_kernel`). Override in `KERNEL.toml` if you want a short name.
 4. **Call it from the layer.** In `crates/model-layers/src/layers/<your_layer>.rs`, `gpu.kernel("your_kernel_module", "your_kernel_function")` returns a `KernelHandle`. Store it in the layer struct at load time, not per-step.
 5. **Wire the launch** with the typed launch helpers the layer's ops use (`crates/model-layers/src/layers/ops/`, `crates/gpu-runtime/src/gpu_args.rs`): grid, block, shared memory, the argument list and the stream, then `GpuBackend::launch`.
-6. **Benchmark.** Add a shape to a `met benchmark` benchmark (`crates/bench`) or a micro-benchmark: a `*_microtest` example in `crates/model-arch/examples/`, or a Criterion bench in the relevant crate. A kernel without a benchmark is not allowed to claim "faster".
+6. **Benchmark.** Add a shape to a `met benchmark` benchmark (`crates/bench`) or a micro-benchmark: a `*_microtest` example in `crates/gpu-examples/examples/`, or a Criterion bench in the relevant crate. A kernel without a benchmark is not allowed to claim "faster".
 7. **Verify correctness** against a PyTorch reference on a fixture tensor. Numerical diff tolerance: for BF16 outputs, abs-tol 1e-3 / rel-tol 1e-2 is a typical starting point.
 
 ## Anti-patterns

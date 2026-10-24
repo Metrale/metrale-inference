@@ -21,14 +21,16 @@ use super::*;
 /// B_fp8 `[N, K]` FP8 E4M3 (from [`predequant_nvfp4_to_fp8`]), C `[M, N]`
 /// BF16.
 ///
-/// When `k` is a multiple of 32 and `METRALE_FP8_LDMAB` is not `0`, it casts A
-/// to FP8 into a scratch buffer ([`bf16_to_fp8`]) and launches
-/// `fp8_fp8_gemm_ldmab` (module `w4a16_fp8_ldmab`, 128x256 tiles, two 128-byte K
-/// stages) instead of `kernel`.
+/// When `k` is a multiple of 32 and `ldmab` (`METRALE_FP8_LDMAB`,
+/// `OpsLevers::fp8_ldmab`), it casts A to FP8 into a scratch buffer
+/// ([`bf16_to_fp8`]) and launches `fp8_fp8_gemm_ldmab` (module
+/// `w4a16_fp8_ldmab`, 128x256 tiles, two 128-byte K stages) instead of
+/// `kernel`.
 #[allow(clippy::too_many_arguments)]
 pub fn fp8_gemm_n128(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
+    ldmab: bool,
     input: DevicePtr,
     b_fp8: DevicePtr,
     output: DevicePtr,
@@ -38,7 +40,7 @@ pub fn fp8_gemm_n128(
     stream: u64,
 ) -> Result<()> {
     check_e4m3_activation_range(gpu, kernel, input, m, k, stream)?;
-    if k.is_multiple_of(32) && std::env::var("METRALE_FP8_LDMAB").as_deref() != Ok("0") {
+    if k.is_multiple_of(32) && ldmab {
         return fp8_act_ldmab_gemm(gpu, input, b_fp8, output, m, n, k, stream);
     }
     KernelLaunch::new(gpu, kernel)
@@ -127,34 +129,6 @@ pub fn w4a16_t_via_fp8_ldmab(
         .arg_u32(k)
         .launch(stream)?;
     fp8_act_ldmab_gemm(gpu, input, b8, output, m, n, k, stream)
-}
-
-#[allow(clippy::too_many_arguments)]
-/// 2026-09-25: FP8-weight GEMM through the `fp8_gemm_t_mfast` kernel, with M
-/// on the fast grid axis (`blockIdx.x` = M block), so consecutive CTAs share a
-/// B panel.
-pub fn fp8_gemm_n128_mfast(
-    gpu: &dyn GpuBackend,
-    kernel: KernelHandle,
-    input: DevicePtr,
-    b_fp8: DevicePtr,
-    output: DevicePtr,
-    m: u32,
-    n: u32,
-    k: u32,
-    stream: u64,
-) -> Result<()> {
-    check_e4m3_activation_range(gpu, kernel, input, m, k, stream)?;
-    KernelLaunch::new(gpu, kernel)
-        .grid([div_ceil(m, 64), div_ceil(n, 128), 1])
-        .block([128, 1, 1])
-        .arg_ptr(input)
-        .arg_ptr(b_fp8)
-        .arg_ptr(output)
-        .arg_u32(m)
-        .arg_u32(n)
-        .arg_u32(k)
-        .launch(stream)
 }
 
 /// 2026-09-25: FP8-weight GEMM through `fp8_gemm_t_m128_mfast`: a 128-row M

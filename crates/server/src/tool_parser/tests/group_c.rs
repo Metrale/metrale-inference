@@ -374,7 +374,7 @@ fn _mcp_call(name: &str) -> ToolCall {
 fn fuzzy_repair_mcp_double_underscore_dropped() {
     let tools = vec![_mcp_tool("mcp__discord__discord_send")];
     let calls = vec![_mcp_call("mcp_discord__discord_send")];
-    let v = validate_tool_calls(calls, &tools);
+    let v = validate_tool_calls(calls, &tools, false);
     assert!(v.errors.is_empty(), "errors: {:?}", v.errors);
     assert_eq!(v.valid.len(), 1);
     assert_eq!(v.valid[0].function.name, "mcp__discord__discord_send");
@@ -384,7 +384,7 @@ fn fuzzy_repair_mcp_double_underscore_dropped() {
 fn fuzzy_repair_mcp_double_underscore_added() {
     let tools = vec![_mcp_tool("mcp_discord_send")];
     let calls = vec![_mcp_call("mcp__discord__send")];
-    let v = validate_tool_calls(calls, &tools);
+    let v = validate_tool_calls(calls, &tools, false);
     assert!(v.errors.is_empty(), "errors: {:?}", v.errors);
     assert_eq!(v.valid.len(), 1);
     assert_eq!(v.valid[0].function.name, "mcp_discord_send");
@@ -394,7 +394,7 @@ fn fuzzy_repair_mcp_double_underscore_added() {
 fn fuzzy_repair_dash_vs_underscore() {
     let tools = vec![_mcp_tool("read-file")];
     let calls = vec![_mcp_call("read_file")];
-    let v = validate_tool_calls(calls, &tools);
+    let v = validate_tool_calls(calls, &tools, false);
     assert!(v.errors.is_empty(), "errors: {:?}", v.errors);
     assert_eq!(v.valid.len(), 1);
     assert_eq!(v.valid[0].function.name, "read-file");
@@ -404,7 +404,7 @@ fn fuzzy_repair_dash_vs_underscore() {
 fn fuzzy_repair_case_insensitive() {
     let tools = vec![_mcp_tool("get_weather")];
     let calls = vec![_mcp_call("Get_Weather")];
-    let v = validate_tool_calls(calls, &tools);
+    let v = validate_tool_calls(calls, &tools, false);
     assert!(v.errors.is_empty(), "errors: {:?}", v.errors);
     assert_eq!(v.valid.len(), 1);
     assert_eq!(v.valid[0].function.name, "get_weather");
@@ -414,7 +414,7 @@ fn fuzzy_repair_case_insensitive() {
 fn fuzzy_repair_no_false_positive_on_distinct_names() {
     let tools = vec![_mcp_tool("get_weather"), _mcp_tool("get_news")];
     let calls = vec![_mcp_call("get_unknown")];
-    let v = validate_tool_calls(calls, &tools);
+    let v = validate_tool_calls(calls, &tools, false);
     // 2026-09-26: No strategy of `fuzzy_match_tool_name` matches, so the call
     // is refused as an unknown tool.
     assert_eq!(v.valid.len(), 0);

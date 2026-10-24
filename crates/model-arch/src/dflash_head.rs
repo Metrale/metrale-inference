@@ -22,6 +22,9 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
 use metrale_model_layers::speculative::{DraftProposer, ProposerState};
 use metrale_model_layers::weight_map::{DenseWeight, QuantizedWeight};
 
+pub use draft_weight::DraftWeight;
+pub use precision::DraftWeightQuantization;
+
 pub use kernels::DflashKernels;
 pub use state::{DflashProposerState, DflashScratch};
 
@@ -40,16 +43,20 @@ pub(super) struct DflashBatch<'a> {
     pub ctx_counts: Vec<u32>,
 }
 
-/// 2026-09-25: Drafter weight precision. `from_weights` builds the head as
-/// `Bf16` and switches it to `Fp8Weights` unless `METRALE_DFLASH_DRAFTER_FP8=0`
-/// or the `fp8_gemm_n128_row_scaled` kernels are missing.
+/// 2026-09-25: The drafter's weight precision in effect. `from_weights` builds the head as
+/// `Bf16` and switches it per `--draft-weight-quantization` (`DraftWeightQuantization`): to
+/// `Fp8Weights` on the FP8 tiers when the `fp8_gemm_n128_row_scaled` kernels are present (else it
+/// stays `Bf16` with a warning), to `Nvfp4Weights` on the NVFP4 tier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DflashQuantization {
     Bf16,
     /// 2026-09-25: Weight-only FP8: the q/k/v/o/gate/up/down weights get FP8
     /// E4M3 copies with per-row f32 scales at load, and the LM head is FP8
-    /// (`lm_head_shared_fp8`). The KV cache stays bf16.
+    /// (`lm_head_q`). The KV cache stays bf16.
     Fp8Weights,
+    /// 2026-10-10: Weight-only NVFP4 (W4A16): the same weights, the LM head and the auxiliary
+    /// GEMMs get NVFP4 copies (`draft_weight.rs`). The KV cache stays bf16.
+    Nvfp4Weights,
 }
 
 /// 2026-09-25: One drafter layer's weights: the bf16 norms (with per-head Q/K
@@ -70,18 +77,27 @@ pub struct DflashLayer {
     pub up_proj: DenseWeight,
     pub down_proj: DenseWeight,
 
-    pub q_proj_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
-    pub k_proj_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
-    pub v_proj_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
-    pub o_proj_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
-    pub gate_proj_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
-    pub up_proj_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
-    pub down_proj_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
+    /// 2026-10-10: The quantized copies of the seven GEMM weights
+    /// (`--draft-weight-quantization`, `draft_weight.rs`), `None` on the declared tier.
+    pub q_proj_q: Option<DraftWeight>,
+    pub k_proj_q: Option<DraftWeight>,
+    pub v_proj_q: Option<DraftWeight>,
+    pub o_proj_q: Option<DraftWeight>,
+    pub gate_proj_q: Option<DraftWeight>,
+    pub up_proj_q: Option<DraftWeight>,
+    pub down_proj_q: Option<DraftWeight>,
 
     pub attention_conv_base: Option<DenseWeight>,
     pub attention_conv_proj: Option<DenseWeight>,
     pub mlp_conv_base: Option<DenseWeight>,
     pub mlp_conv_proj: Option<DenseWeight>,
+    /// 2026-10-10: Quantized copies of the conv kernel projections on the tiers that copy the
+    /// auxiliary GEMMs (`aux_quant.rs`), else `None`.
+    pub attention_conv_proj_q: Option<DraftWeight>,
+    pub mlp_conv_proj_q: Option<DraftWeight>,
+    /// 2026-10-10: The whole weights a tensor-parallel layer's slices were cut from
+    /// (`tp::LayerSources`); `None` on one rank.
+    pub tp_src: Option<tp::LayerSources>,
 }
 
 #[allow(dead_code)]
@@ -124,6 +140,10 @@ pub struct BlockDiffusionDraftHead {
     /// 2026-09-25: Widest cross-sequence batch the scratch bands can hold.
     pub(super) max_batch: usize,
     pub mask_token_id: u32,
+    /// 2026-10-09: The sliding window the drafter's attention applies (the paged path's
+    /// indirect attention, `attn_window_arg`); `None` attends every ctx row. The factory
+    /// sets it only when the serve's `--dflash-window-size` equals the window the drafter
+    /// was trained at (`install_dflash_drafter`).
     pub window_size: Option<usize>,
     /// 2026-09-25: The target layers whose hidden states the drafter is
     /// conditioned on, from the drafter config's `dflash_config.target_layer_ids`.
@@ -141,10 +161,11 @@ pub struct BlockDiffusionDraftHead {
     /// 2026-09-25: The target's NVFP4 LM head, when it ships one; the final
     /// logits GEMM then uses it instead of `lm_head_shared`.
     pub lm_head_nvfp4: Option<QuantizedWeight>,
-    /// 2026-09-25: The FP8 LM head for `Fp8Weights`: the target checkpoint's
+    /// 2026-09-25: The quantized LM head: on the FP8 tiers the target checkpoint's
     /// native FP8 head when the loader passes one, else an FP8 copy of
-    /// `lm_head_shared`. `None` on the bf16 path.
-    pub lm_head_shared_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
+    /// `lm_head_shared`; 2026-10-10: on the NVFP4 tier an NVFP4 copy of it. `None` on the
+    /// declared tier.
+    pub lm_head_q: Option<DraftWeight>,
 
     // 2026-09-25: From the drafter checkpoint: `hidden_norm` (applied to the
     // projected target context), the final `norm`, and `fc`, which projects
@@ -172,7 +193,7 @@ pub struct BlockDiffusionDraftHead {
 
     pub kernels: DflashKernels,
 
-    /// 2026-09-25: The model's `max_seq_len`; with `dflash_ctx_cap()` and the
+    /// 2026-09-25: The model's `max_seq_len`; with `levers.ctx_cap` and the
     /// request's budget it bounds each sequence's ctx accumulator.
     pub max_seq_len: usize,
 
@@ -237,22 +258,23 @@ pub struct BlockDiffusionDraftHead {
     pub selector_pred: Option<DenseWeight>,
     pub selector_succ: Option<DenseWeight>,
     pub selector_hidden_proj: Option<DenseWeight>,
+    /// 2026-10-10: Quantized copies of the ctx and selector GEMMs on the tiers that copy the
+    /// auxiliary GEMMs (`aux_quant.rs`), else `None`.
+    pub aux_q: Option<aux_quant::DflashAuxQuant>,
+    /// 2026-10-10: This rank's part of the tensor-parallel drafter (`--draft-tp-size`,
+    /// `tp.rs`); `None` on one rank or with the lever off. Under it the head's head counts,
+    /// intermediate size and vocab are this rank's.
+    pub tp: Option<tp::DflashTp>,
 }
 
+mod aux_quant;
 mod dflash2;
+pub mod draft_weight;
+pub mod precision;
+pub mod tp;
+mod tp_propose;
 /// 2026-09-25: Rows the batched ctx precompute staging holds per step.
 pub(super) const PRECOMPUTE_BATCH_ROWS: usize = 256;
-
-/// 2026-09-25: Whether the batched ctx precompute (one fc + fused-KV pass over
-/// every sequence's uncommitted ctx rows) runs on the batched propose path:
-/// yes unless `METRALE_DFLASH_NO_BATCHED_PRECOMPUTE=1`, which runs the
-/// per-sequence loop.
-pub(super) fn batched_precompute_enabled() -> bool {
-    std::env::var("METRALE_DFLASH_NO_BATCHED_PRECOMPUTE")
-        .ok()
-        .as_deref()
-        != Some("1")
-}
 
 /// 2026-09-25: The `METRALE_DFLASH_OPTION_B` predicate (`DFlashLevers::option_b`):
 /// on unless the value is `0`. Pure over the raw value, so `option_b_tests`
@@ -277,24 +299,31 @@ mod propose;
 mod proposer;
 mod state;
 
-/// 2026-09-25: Read once: false only when `METRALE_NO_DFLASH_FP8_RT=1`, so the
-/// kernel choice stays fixed across CUDA-graph captures.
-pub(crate) fn fp8_rt_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_NO_DFLASH_FP8_RT").as_deref() != Ok("1"))
-}
-
 /// 2026-09-25: The DFlash context-window bound, in tokens: the most recent
 /// target positions the drafter may accumulate. Both the per-sequence ctx
 /// accumulator (`proposer.rs`) and the model's whole-prompt hidden capture
 /// (`metrale-model-engine`'s `impl_a1.rs`) are sized from it.
 ///
-/// `METRALE_DFLASH_CTX_CAP=<tokens>` (default 16384); `0` disables the cap.
-pub fn dflash_ctx_cap() -> usize {
-    std::env::var("METRALE_DFLASH_CTX_CAP")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
+/// `METRALE_DFLASH_CTX_CAP=<tokens>` (default 16384); `0` disables the cap. 2026-10-17: From
+/// the settings; a negative value reads as unset, as the `usize` parse it replaced did.
+pub fn dflash_ctx_cap(settings: &metrale_settings::InferenceServerSettings) -> usize {
+    settings
+        .speculative
+        .dflash_ctx_cap
+        .and_then(|v| usize::try_from(v).ok())
         .unwrap_or(16384)
+}
+
+/// 2026-10-17: The ctx rows the non-paged drafter path attends to and one ctx precompute call
+/// takes, read when a head is built. `METRALE_DFLASH_CTX_WINDOW=<rows>` (default 4096); a value
+/// that does not parse as a `usize` reads as unset. Public so every reader shares one parse.
+pub fn dflash_ctx_window(settings: &metrale_settings::InferenceServerSettings) -> usize {
+    settings
+        .speculative
+        .dflash_ctx_window
+        .as_deref()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(4096)
 }
 
 impl BlockDiffusionDraftHead {
@@ -304,13 +333,31 @@ impl BlockDiffusionDraftHead {
         self.block_gamma.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// 2026-10-09: How many of a block's drafts a propose of `num_drafts` returns:
+    /// `METRALE_DFLASH_DRAFT_CAP` when set, else the block's own count (`block_g`), and under
+    /// `METRALE_DFLASH_FULL_BLOCK=1` never more than `num_drafts`.
+    pub(super) fn drafts_to_return(&self, num_drafts: usize) -> usize {
+        let cap = self.levers.draft_cap.unwrap_or(self.block_g());
+        if self.levers.full_block {
+            cap.min(num_drafts)
+        } else {
+            cap
+        }
+    }
+
     /// 2026-09-25: Arm the block width for the next propose from the
     /// scheduler's draft count: `num_drafts + 1` rows (anchor + masks),
     /// clamped to `2..=gamma.max(2)`, so a request above the head's sizing
     /// gets the widest block.
     #[inline]
     pub(super) fn set_block_g(&self, num_drafts: usize) {
-        let g = (num_drafts + 1).clamp(2, self.gamma.max(2));
+        // 2026-10-09: `METRALE_DFLASH_FULL_BLOCK=1` keeps the full width; the caller then
+        // returns `num_drafts` drafts from it (`drafts_to_return`).
+        let g = if self.levers.full_block {
+            self.gamma.max(2)
+        } else {
+            (num_drafts + 1).clamp(2, self.gamma.max(2))
+        };
         self.block_gamma
             .store(g, std::sync::atomic::Ordering::Relaxed);
     }

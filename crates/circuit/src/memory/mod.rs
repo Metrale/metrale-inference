@@ -24,14 +24,18 @@
 //! - A state is attributed to the node that owns it (updates or writes it); caches, which no
 //!   node touches, appear only in the state table.
 
+use crate::prelude::*;
+
+pub mod box_plan;
 pub mod budget;
 pub mod caches;
 pub mod copies;
+mod json;
 pub mod render;
 pub mod weights;
 mod workspace;
 
-use std::collections::BTreeMap;
+use alloc::collections::BTreeMap;
 
 pub use budget::{BudgetError, DriverTerms};
 pub use caches::{CacheInputs, CacheTerm, LookupInputs};

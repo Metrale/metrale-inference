@@ -27,24 +27,6 @@ fn widen_bf16(buf: &[u8]) -> Vec<f32> {
         .collect()
 }
 
-/// 2026-09-25: Worker threads for the absorption GEMM:
-/// `METRALE_MLA_ABSORB_THREADS` when it parses as a positive integer,
-/// otherwise the machine's available parallelism, clamped to `1..=rows`.
-/// `1` runs it sequentially; the count does not change the result (see
-/// `absorb_rows`).
-fn absorb_threads(rows: usize) -> usize {
-    let want = std::env::var("METRALE_MLA_ABSORB_THREADS")
-        .ok()
-        .and_then(|v| v.trim().parse::<usize>().ok())
-        .filter(|&n| n > 0)
-        .unwrap_or_else(|| {
-            std::thread::available_parallelism()
-                .map(|n| n.get())
-                .unwrap_or(1)
-        });
-    want.clamp(1, rows.max(1))
-}
-
 /// 2026-09-25: Compute one contiguous span of W_QK rows.
 ///
 /// `out` is `[rows_here, q_lora]`, covering absorbed rows
@@ -95,7 +77,8 @@ fn absorb_rows(
 /// 2026-09-25: W_QK_absorbed as FP32 `[n_kv * kv_lora, q_lora]`, row-parallel.
 ///
 /// Each worker owns a disjoint span of output rows, so the split changes
-/// nothing about any individual dot product — see `absorb_rows`.
+/// nothing about any individual dot product — see `absorb_rows`. `threads`
+/// workers (`AbsorbThreads::for_rows`); `1` runs it sequentially.
 #[allow(clippy::too_many_arguments)]
 fn absorb_qk(
     wqb: &[f32],
@@ -105,10 +88,10 @@ fn absorb_qk(
     q_lora: usize,
     nope: usize,
     hd: usize,
+    threads: usize,
 ) -> Vec<f32> {
     let rows = n_kv * kv_lora;
     let mut out = vec![0.0f32; rows * q_lora];
-    let threads = absorb_threads(rows);
     if threads <= 1 {
         absorb_rows(&mut out, 0, wqb, wuk, kv_lora, q_lora, nope, hd);
         return out;
@@ -125,7 +108,10 @@ fn absorb_qk(
     out
 }
 
-pub(crate) fn build_w_qk_absorbed(ctx: &mut MistralLayerCtx<'_>) -> Result<()> {
+pub(crate) fn build_w_qk_absorbed(
+    ctx: &mut MistralLayerCtx<'_>,
+    absorb: crate::mla_absorb::AbsorbThreads,
+) -> Result<()> {
     let t_phase = std::time::Instant::now();
     let n_kv = ctx.n_kv;
     let n_heads = ctx.n_heads;
@@ -156,8 +142,8 @@ pub(crate) fn build_w_qk_absorbed(ctx: &mut MistralLayerCtx<'_>) -> Result<()> {
         let wuk_f32 = widen_bf16(&wuk_buf);
         let t_widen = t.elapsed();
         let t = std::time::Instant::now();
-        let threads = absorb_threads(n_kv * kv_lora);
-        let wqk_f32 = absorb_qk(&wqb_f32, &wuk_f32, n_kv, kv_lora, q_lora, nope, hd);
+        let threads = absorb.for_rows(n_kv * kv_lora);
+        let wqk_f32 = absorb_qk(&wqb_f32, &wuk_f32, n_kv, kv_lora, q_lora, nope, hd, threads);
         let t_gemm = t.elapsed();
 
         // 2026-09-25: FP32 to BF16 by truncation, not rounding: the high 16
@@ -202,6 +188,14 @@ pub(crate) fn build_w_qk_absorbed(ctx: &mut MistralLayerCtx<'_>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 2026-10-17: Workers for `rows` at the declared defaults (the available parallelism).
+    fn default_threads(rows: usize) -> usize {
+        crate::mla_absorb::AbsorbThreads::from_settings(
+            &metrale_model_layers::lever_equivalence::defaults(),
+        )
+        .for_rows(rows)
+    }
 
     /// 2026-09-25: The bit-exactness oracle: a scalar loop over `(n, lkv, l)`
     /// that sums ascending `p` and decodes the BF16 operands inside the loop.
@@ -315,7 +309,7 @@ mod tests {
     }
 
     /// 2026-09-25: `absorb_qk`, which the loader calls, with the thread count
-    /// from `absorb_threads`, is bit-identical to `reference`.
+    /// of the declared defaults, is bit-identical to `reference`.
     #[test]
     fn absorb_qk_matches_reference() {
         let (n_kv, kv_lora, q_lora, nope, hd) = (4usize, 16usize, 40usize, 24usize, 32usize);
@@ -330,6 +324,7 @@ mod tests {
             q_lora,
             nope,
             hd,
+            default_threads(n_kv * kv_lora),
         );
         assert_eq!(got.len(), want.len());
         for (i, (g, w)) in got.iter().zip(want.iter()).enumerate() {
@@ -363,7 +358,8 @@ mod tests {
         let wuk_f32 = widen_bf16(&wuk);
         let t_widen = t.elapsed();
         let t = std::time::Instant::now();
-        let got = absorb_qk(&wqb_f32, &wuk_f32, n_kv, kv_lora, q_lora, nope, hd);
+        let threads = default_threads(n_kv * kv_lora);
+        let got = absorb_qk(&wqb_f32, &wuk_f32, n_kv, kv_lora, q_lora, nope, hd, threads);
         let t_new = t.elapsed();
 
         assert_eq!(got.len(), want.len());
@@ -379,7 +375,7 @@ mod tests {
              speedup gemm-only {:.1}x, including widen {:.1}x\n  \
              bit-mismatched elements: {diffs}",
             macs / 1e9,
-            absorb_threads(n_kv * kv_lora),
+            threads,
             t_ref.as_secs_f64() / t_new.as_secs_f64(),
             t_ref.as_secs_f64() / (t_new + t_widen).as_secs_f64(),
         );

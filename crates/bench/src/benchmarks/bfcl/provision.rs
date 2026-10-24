@@ -94,7 +94,12 @@ pub async fn ensure(store: &ArtifactStore, handle: &PluginHandle) -> Result<Arti
     }
 
     handle.status("BFCL: checking for python");
-    let system_python = python::find_python(MIN_PYTHON.0, MIN_PYTHON.1).await?;
+    let system_python = python::find_python(
+        handle.levers().python.as_deref(),
+        MIN_PYTHON.0,
+        MIN_PYTHON.1,
+    )
+    .await?;
     handle.info(format!("python: {}", system_python.display()));
 
     handle.status("BFCL: creating venv");

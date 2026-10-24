@@ -77,6 +77,7 @@ impl BlockDiffusionDraftHead {
         if ctx_count == 0 {
             ops::prefill_attention(
                 gpu,
+                ctx.levers.ops.attn_512_tc,
                 self.kernels.prefill_attn,
                 self.scratch.q_buf,
                 self.scratch.k_buf,
@@ -168,6 +169,7 @@ impl BlockDiffusionDraftHead {
         //   attn_out: [ctx + g, q_dim], of which rows [ctx, ctx + g) are kept
         ops::prefill_attention(
             gpu,
+            ctx.levers.ops.attn_512_tc,
             self.kernels.prefill_attn,
             self.scratch.q_buf,
             self.scratch.k_buf,

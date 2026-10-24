@@ -47,7 +47,7 @@ impl TransformerModel {
         // only reads the radix tree: no refs, no LRU update, no hit or miss
         // counted.
         let bs = self.kv_cache.lock().block_size();
-        let effective_arena = effective_arena_charge_enabled();
+        let effective_arena = self.settings.kernels.q12_effective_arena;
         let eff = |s: &PrefillSlice<'_>| -> usize {
             if !effective_arena {
                 return s.chunk_len;
@@ -129,7 +129,7 @@ impl TransformerModel {
     /// block or an SSM slot, and log each stream's slot and prompt shape. Runs
     /// only with `METRALE_CODISPATCH_BTCHECK=1`.
     pub(super) fn codispatch_btcheck(&self, streams: &[PrefillSlice<'_>], n: usize) {
-        if std::env::var("METRALE_CODISPATCH_BTCHECK").ok().as_deref() != Some("1") {
+        if !self.settings.scheduler.codispatch_btcheck {
             return;
         }
         let mut owner: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
@@ -259,16 +259,4 @@ where
         metrale_gpu_runtime::buffers::q12_batched_scratch_bytes(n, max_chunk_len, top_k, mrope)
     };
     scratch_needed <= scratch_cap
-}
-
-/// 2026-09-25: `METRALE_Q12_EFFECTIVE_ARENA=1` charges the batched-prefill arena
-/// by the tokens each stream will stage (chunk minus the probed cached prefix)
-/// instead of the raw chunk length; off otherwise.
-///
-/// The staging loop in `batch_kernel.rs` checks each stream's real packed
-/// offset against the arena and returns an error if a match shrank after the
-/// probe.
-pub(in crate::model) fn effective_arena_charge_enabled() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("METRALE_Q12_EFFECTIVE_ARENA").as_deref() == Ok("1"))
 }

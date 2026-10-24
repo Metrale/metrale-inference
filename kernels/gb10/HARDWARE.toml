@@ -255,6 +255,7 @@ ops = ["linear", "lm_head"]
 modes = ["decode", "multi_seq", "verify", "draft"]
 rows = [1, 3]
 kernels = [
+  "w4a16_gemv::w4a16_gemv",
   "w4a16_gemv::w4a16_gemv_sw",
   "w4a16_gemv::w4a16_gemv_qg",
   "w4a16_gemv::w4a16_gemv_batch2",
@@ -351,6 +352,73 @@ rows = [9, 128]
 kernels = ["gemm::dense_gemm_bf16"]
 kind = "backlog"
 reason = "The BF16 head above 8 rows runs dense_gemm_bf16, a CUDA-core tiled FMA GEMM. The mma.sync twin in the same source (dense_gemm_bf16_pipelined) is not selected by any rule; routing the head to it (or to dense_bf16_tc up to 32 rows) is the tensor-core path."
+# 2026-10-08: GLM-5 (`glm5_next`) single-sequence decode: its BF16 projections that run as CUDA-core
+# GEMVs inside GLM-only rule groups (kernels/gb10/common/FUSIONS.toml `glm_*`).
+[[tensor_core_policy.exempt]]
+ops = ["linear:hc_mix"]
+modes = ["decode", "multi_seq", "verify"]
+rows = [1, 16]
+# 2026-10-22: And the recipe's fused pre-norm (glm_mhc_fused: the same mix GEMV with the Sinkhorn,
+# collapse and norm in one launch, `glm5next_hc_pre_norm_c1` at 1-2 rows, `glm5next_hc_pre_norm` above).
+kernels = [
+  "glm5next_mhc::glm5next_hc_mix_bf16", "glm5next_mhc::glm5next_hc_finish",
+  "glm5next_mhc_c1::glm5next_hc_pre_norm_c1", "glm5next_mhc_fused::glm5next_hc_pre_norm",
+]
+kind = "backlog"
+reason = "GLM-5 hyper-connection mix: the 4 x hidden streams projected to 24 FP32 columns by a CUDA-core reduction, then the Sinkhorn finish. At one row it is a GEMV; a tensor-core tile (N = 24 pads to 32) is the path once the multi-sequence decode exists."
+[[tensor_core_policy.exempt]]
+ops = ["linear:index_q", "linear:index_weights", "router"]
+# 2026-10-23: And the MTP draft layer's (the same GEMVs at its one row).
+modes = ["decode", "multi_seq", "verify", "draft"]
+rows = [1, 16]
+kernels = [
+  "gemv::dense_gemv_bf16_fp32out",
+  "dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out_pair",
+  "dense_gemv_bf16_batchm::dense_gemv_bf16_batchm_wide_fp32out",
+  # 2026-10-22: The recipe's batched router (glm_router_rows) at 2-8 rows, in one group with the
+  # top-k after it (FUSIONS.toml `glm_router_rows_*`), which has no MMA.
+  "dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few_fp32out",
+  "glm5next_ffn::glm5next_router_topk", "glm5next_ffn::glm5next_router_topk_rank",
+]
+kind = "backlog"
+reason = "GLM-5 indexer query, indexer head weights and the FP32-logit MoE router: the BF16 CUDA-core GEMV with an FP32 output at one row. dense_bf16_tc has no FP32-out point; measure one against this GEMV at M = 1-16."
+[[tensor_core_policy.exempt]]
+ops = ["linear:mla_q_b", "linear:o"]
+modes = ["decode", "multi_seq", "verify"]
+rows = [1, 16]
+kernels = [
+  "gemv::dense_gemv_bf16",
+  "glm5next_dsa_mla_decode::glm5next_dsa_mla_decode_fp8",
+  "dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few",
+  "dense_gemv_bf16_batchm::dense_gemv_bf16_batchm_wide",
+]
+kind = "backlog"
+reason = "GLM-5 absorbed latent attention: the load-time absorbed query and output products as BF16 CUDA-core GEMVs around the latent decode, at one row. dense_bf16_tc covers BF16 at M = 1-32; measure it at these widths (32768 x 1536, 4096 x 32768)."
+
+# 2026-10-22: GLM-5's BF16 projections at 2..16 rows (a verify's rows, a batched decode group):
+# the register-resident batched GEMVs `glm_mm` picks (FUSIONS.toml `glm_bf16_gemv_few_*`,
+# `_wide_*`, `glm_shared_gate_up_*`).
+[[tensor_core_policy.exempt]]
+ops = ["linear"]
+modes = ["multi_seq", "verify"]
+rows = [2, 16]
+kernels = [
+  "dense_gemv_bf16_batchm_few::dense_gemv_bf16_batchm_few",
+  "dense_gemv_bf16_batchm::dense_gemv_bf16_batchm_wide",
+]
+kind = "backlog"
+reason = "GLM-5 BF16 projections at 2-16 rows: CUDA-core batched GEMVs with the accumulators in registers (2-8 rows) or the wide entry (9-16), the M = 1 GEMV's bits per row. dense_bf16_tc (tc8/tc16) covers BF16 at these rows; measure it against them at the KDA, DSA and shared-expert widths."
+
+# 2026-10-22: GLM-5's shared expert under the recipe's `--dense-quantization w4a16` at one row:
+# the NVFP4 CUDA-core GEMV for gate, up and down, with the clamp + SiLU between them in the same
+# rule group (FUSIONS.toml `glm_w4a16_shared_1row`).
+[[tensor_core_policy.exempt]]
+ops = ["linear:shared_gate_up", "linear:shared_down"]
+modes = ["decode"]
+rows = [1, 1]
+kernels = ["w4a16_gemv::w4a16_gemv", "glm5next_ffn::glm5next_swiglu_clamp"]
+kind = "backlog"
+reason = "GLM-5 W4A16 shared expert at one row on the CUDA-core NVFP4 GEMV, as every W4A16 projection of one row (#1). The tensor-core row tile w4a16_tc_rows runs it from two rows; measure it at one row against this GEMV."
 
 # 2026-10-02: What the driver holds beyond the allocation ledger on this class, for the circuit
 # memory model (`met circuit memory`, crates/circuit/src/memory/budget.rs). Calibrated by PR #72 on
@@ -372,3 +440,65 @@ util_ceiling = 0.85
 driver_fixed_bytes = 1073741824
 driver_budget_per_mille = 21
 unified = true
+
+# 2026-10-22: GLM-5's W4A16 projections under the recipe's GEMV tier (glm_w4a16_gemv_seg, with
+# glm_w4a16_gemv_rows 2): the pipelined CUDA-core NVFP4 GEMV at one and two rows, a group's
+# projections in one launch, with the clamp + SiLU and the KDA output norm in the same rule
+# groups (FUSIONS.toml `glm_w4a16_pipe_*`).
+[[tensor_core_policy.exempt]]
+ops = [
+  "linear:q", "linear:k", "linear:v", "linear:kda_f_a", "linear:kda_b", "linear:kda_g_a",
+  "linear:o", "linear:shared_gate_up", "linear:shared_down",
+]
+modes = ["decode", "multi_seq", "verify"]
+rows = [1, 2]
+kernels = [
+  "w4a16_gemv_pipe::w4a16_gemv_pipe_m1", "w4a16_gemv_pipe::w4a16_gemv_pipe_m2",
+  "glm5next_ffn::glm5next_swiglu_clamp", "kda_layer_ops::kda_o_norm_gated_bf16",
+  # 2026-10-23: The same GEMV with the clamp + SiLU in its input stage (glm_swiglu_down_fold).
+  "glm5next_swiglu_down::glm5next_swiglu_down_pipe_m1",
+  "glm5next_swiglu_down::glm5next_swiglu_down_pipe_m2",
+  # 2026-10-23: The same GEMV phases as one persistent segment (glm_dense_segment, P3).
+  "glm5next_dense_seg::glm5next_dense_seg_pipe_m1",
+  "glm5next_dense_seg::glm5next_dense_seg_pipe_m2",
+]
+kind = "backlog"
+reason = "GLM-5 W4A16 projections at 1-2 rows on the pipelined CUDA-core NVFP4 GEMV (the recipe's GEMV tier). The segmented tensor-core row tile w4a16_tc_rows_seg runs them from two rows without the tier; measure it at 1-2 rows against this GEMV."
+
+# 2026-10-23 (P0-prereq): The served verify head and the MTP draft head, now planned per rank
+# (FUSIONS.toml `glm_screen_head_k2`, `glm_mtp_*`).
+[[tensor_core_policy.exempt]]
+ops = ["lm_head"]
+modes = ["verify"]
+rows = [2, 2]
+kernels = ["screen_head::screen_head_scan", "screen_head::screen_head_rescore", "screen_head::screen_head_resolve"]
+kind = "backlog"
+reason = "GLM-5 screened K=2 verify head: an INT8 screen of the rank's vocab rows scanned on CUDA cores, the rows a bound cannot rule out rescored in BF16. A tensor-core INT8 scan (mma.sync s8) is the candidate; measure it at K = 2 against this scan."
+[[tensor_core_policy.exempt]]
+ops = ["expert_gate_up", "expert_down"]
+modes = ["draft"]
+rows = [1, 1]
+kernels = ["w4a16_gemv::w4a16_gemv_sw_moe"]
+kind = "backlog"
+reason = "GLM-5 MTP draft layer's routed experts: the NVFP4 W4A16 CUDA-core GEMV over the 8 selected experts at its one row (the drafter keeps them W4A16). The routed W4A4 union sweep the text layers take is the tensor-core candidate; measure it at one row."
+[[tensor_core_policy.exempt]]
+ops = ["lm_head"]
+modes = ["draft"]
+rows = [1, 1]
+kernels = [
+  "gemv_fp8w::dense_gemv_fp8w", "argmax::argmax_bf16", "glm5next_mtp_xchg::glm5next_mtp_xchg_pack",
+  "bf16_add::bf16_add_rank_sum", "glm5next_mtp_xchg::glm5next_mtp_xchg_pick",
+]
+kind = "backlog"
+reason = "GLM-5 MTP draft head: the FP8 copy of the rank's vocab shard on the CUDA-core FP8-weight GEMV at one row, then the shard argmax and the exchange. The screened head (screen_head_scan) is the alternative the verify head takes; measure both at one row."
+
+# 2026-10-23 (P0-prereq): The link model the parallel cost model prices a derived collective with
+# (crates/circuit/src/parallel_cost.rs): per collective, the measured one-shot exchange of a TP=3
+# GB10 step (kernel median 13.47 us plus 4.10 us idle before it, inside the decode graph; f14a p1k,
+# claude-state glm/megakernel/P1-MEASUREMENTS.md "Collectives per step", tools/collectives.py), and
+# the ConnectX-7 payload bandwidth (200 Gb/s, datasheet, unmeasured at these sizes: every C=1 payload
+# is <= 310 KB, so latency dominates).
+[collective]
+latency_us = 17.57
+gbps = 25.0
+basis = "f14a_p1k rank 0: 95 ncclDevKernel_SendRecv/step, median 13.47 [13.22, 13.79] us + idle-before 4.10 [4.06, 4.13] us (P1-MEASUREMENTS.md); bandwidth: ConnectX-7 200 Gb/s datasheet"

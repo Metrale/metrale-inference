@@ -1,42 +1,9 @@
 [build]
 extra_nvcc_flags = ["--fmad=false"]
 
-# 2026-09-26: Entry points a model shadow may omit without a shadow-drop build
-# warning, keyed by module name (after the [modules] mapping). This silences
-# only the build warning (crates/kernels/build_plan.rs, `reportable`): the boot
-# gate still refuses any lookup that fails and is not declared in the model's
-# [expected_absent] (server serve_phases/kernel_gate.rs, audit_and_gate).
-#
-# No crate looks up w4a16::w4a16_dequant or moe_w4a16::moe_w4a16_grouped_gemm;
-# the MoE dispatch uses the moe_w4a16_grouped_gemm_ptrtable* entry points
-# (model-layers layers/moe/init.rs).
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-[shadow_exempt]
-w4a16 = ["w4a16_dequant"]
-moe_w4a16 = ["moe_w4a16_grouped_gemm"]
-
 # 2026-09-25: File stem → module name overrides.
 # Any .cu file not listed here uses its file stem as the module name.
 [modules]
-e2m1_branchless = "e2m1"
 moe_permute = "moe"
 dense_gemm_bf16 = "gemm"
 dense_gemm_splitk = "gemm_splitk"
@@ -58,7 +25,6 @@ moe_shared_expert_fused_batch3 = "moe_fused_batch3"
 attn_prefill_paged = "prefill_paged"
 attn_prefill_paged_fp8 = "prefill_paged_fp8"
 attn_prefill_paged_nvfp4 = "prefill_paged_nvfp4"
-attn_prefill_fp8kv = "prefill_fp8kv"
 nemotron_moe_prefill = "nemotron_moe_prefill"
 
 # 2026-09-25: A [modules] rename makes the compiled module name match the name
@@ -91,7 +57,6 @@ use = [
   "../gb10/common/dense_gemv_bf16.cu",
   "../gb10/common/dense_gemv_fp8w.cu",
   "../gb10/common/dequant_fp8_blockscaled_bf16.cu",
-  "../gb10/common/e2m1_branchless.cu",
   "../gb10/common/e4m3_lut.cuh",
   "../gb10/common/embed_from_argmax.cu",
   "../gb10/common/gated_delta_rule.cu",
@@ -112,7 +77,6 @@ use = [
   "../gb10/common/mamba2_ssm_decode.cu",
   "../gb10/common/metadata_fill.cu",
   "../gb10/common/moe_expert_gemv.cu",
-  "../gb10/common/moe_expert_gemv_fused.cu",
   "../gb10/common/moe_expert_relu2_down_shared.cu",
   "../gb10/common/moe_fp8_grouped_blend.cu",
   "../gb10/common/moe_gate_topk.cu",
@@ -162,7 +126,6 @@ use = [
   "../gb10/common/ssm_preprocess.cu",
   "../gb10/common/ssm_state_norm.cu",
   "../gb10/common/transpose_u8.cu",
-  "../gb10/common/vector_add.cu",
   "../gb10/common/w4a16_gemv.cu",
   "../gb10/common/w4a16_gemv_fused.cu",
   "../gb10/common/w8a16_gemv.cu",

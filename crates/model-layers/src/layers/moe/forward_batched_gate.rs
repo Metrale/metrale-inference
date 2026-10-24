@@ -90,7 +90,14 @@ impl MoeLayer {
         }
         // 2026-09-25: `dump_gate_logits` reads BF16, so the FP32-gate path skips it.
         if !fp32_gate {
-            super::dump::dump_gate_logits(ctx.gpu, stream, gate_logits, n, num_experts)?;
+            super::dump::dump_gate_logits(
+                ctx.levers.moe.dump_expert_ids,
+                ctx.gpu,
+                stream,
+                gate_logits,
+                n,
+                num_experts,
+            )?;
         }
 
         // 2026-09-25: Fold the router LoRA delta onto all N rows of `gate_logits`

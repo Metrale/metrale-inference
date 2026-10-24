@@ -5,6 +5,9 @@
 //! While `seq.think_ended` is set, masks the close token
 //! (`ctx.think_end_token`) and the open token (`seq.think_start_token`) to
 //! `-inf`, so the model can neither repeat `</think>` nor re-open `<think>`.
+//! 2026-10-14: Off when the model's `thinking_steering` is off: vLLM masks
+//! neither, so a repeated `</think>` stays content and `<think>` re-opens
+//! reasoning (`decode_logits_step/per_token.rs`).
 //!
 //! Owner: scheduler.
 //! Invariants: none beyond the types.
@@ -21,7 +24,7 @@ impl LogitsProcessor for PostCloseThinkMask {
         a: &mut ActiveSeq,
         ctx: &LogitsContext,
     ) -> ProcessorOutcome {
-        if a.think_ended {
+        if ctx.watchdog.thinking_steering && a.think_ended {
             if let Some(end_tok) = ctx.think_end_token {
                 let end_idx = end_tok as usize;
                 if end_idx < logits.len() {

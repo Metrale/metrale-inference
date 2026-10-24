@@ -11,6 +11,7 @@
 use anyhow::Result;
 
 use metrale_config::ModelConfig;
+use metrale_kv_codec::{BlockGeometry, KvCachePlan, KvCodecId, KvPair, KvPlanInputs, spec};
 
 use crate::cli;
 
@@ -23,6 +24,8 @@ pub(crate) struct PrefillBudget {
 pub(crate) fn resolve_prefill_budget(
     args: &cli::ServeArgs,
     ssm_prefill_chunk: usize,
+    // 2026-10-17: `METRALE_MAX_BATCH_TOKENS` (`LoadLevers::max_batch_tokens`).
+    max_batch_tokens_lever: Option<usize>,
 ) -> PrefillBudget {
     let spec_tokens = super::preflight::spec_reserve_tokens(args);
     let user_set_prefill = args.max_prefill_tokens != 8192;
@@ -89,34 +92,29 @@ pub(crate) fn resolve_prefill_budget(
     // 2026-09-26: `max_batch_tokens` defaults to `prefill_budget +
     // max_batch_size`, raised to `spec_tokens` when that is larger.
     // `METRALE_MAX_BATCH_TOKENS` can raise it further; a value below the
-    // default, or one that does not parse, is ignored with a warning.
+    // default is ignored with a warning (2026-10-17: one that does not parse stopped the
+    // load in `LoadLevers`).
     let default_max_batch_tokens = (prefill_budget + args.max_batch_size.ceiling())
         .max(spec_tokens)
         .max(args.max_batch_size.ceiling());
-    let max_batch_tokens = match std::env::var("METRALE_MAX_BATCH_TOKENS") {
-        Ok(v) => match v.parse::<usize>() {
-            Ok(n) if n >= default_max_batch_tokens => {
-                tracing::info!(
-                    "METRALE_MAX_BATCH_TOKENS override: {} (default would be {})",
-                    n,
-                    default_max_batch_tokens
-                );
-                n
-            }
-            Ok(n) => {
-                tracing::warn!(
-                    "METRALE_MAX_BATCH_TOKENS={} ignored — must be >= default {}",
-                    n,
-                    default_max_batch_tokens
-                );
+    let max_batch_tokens = match max_batch_tokens_lever {
+        Some(n) if n >= default_max_batch_tokens => {
+            tracing::info!(
+                "METRALE_MAX_BATCH_TOKENS override: {} (default would be {})",
+                n,
                 default_max_batch_tokens
-            }
-            Err(e) => {
-                tracing::warn!("METRALE_MAX_BATCH_TOKENS parse error: {e}");
+            );
+            n
+        }
+        Some(n) => {
+            tracing::warn!(
+                "METRALE_MAX_BATCH_TOKENS={} ignored — must be >= default {}",
+                n,
                 default_max_batch_tokens
-            }
-        },
-        Err(_) => default_max_batch_tokens,
+            );
+            default_max_batch_tokens
+        }
+        None => default_max_batch_tokens,
     };
     tracing::info!(
         "Prefill config: ssm_prefill_chunk={}, args.max_prefill_tokens={}, prefill_budget={}, max_batch_tokens={}",
@@ -207,8 +205,11 @@ pub(crate) fn resolve_kv_cache_config(
             behavior_default_kv_dtype,
         ),
     }
-    let kv_dtype: metrale_cache::kv_cache::KvCacheDtype = effective_kv_dtype_str.parse()?;
-    if kv_dtype == metrale_cache::kv_cache::KvCacheDtype::Fp8 {
+    // 2026-10-18: The requested pair, then the plan, are resolved once here (ROTI); the legacy
+    // `kv_dtype` and per-layer list the loaders take are derived from them.
+    let requested: KvPair = effective_kv_dtype_str.parse()?;
+    let kv_dtype = crate::main_modules::legacy(requested)?;
+    if !requested.is_asymmetric() && spec(requested.k()).online_calibration {
         let source = super::fp8_kv_scale_source::fp8_kv_scale_source(
             config.fp8_kv_calibration_tokens,
             kv_scale_census.len(),
@@ -223,7 +224,7 @@ pub(crate) fn resolve_kv_cache_config(
     let num_attn_layers = config.num_attention_layers();
     // 2026-09-26: Parsed with `cli::flag_values::KvHighPrecisionLayers`, the
     // parser `validate_serve_args` also uses; a parse error fails the boot.
-    let kv_hp_layers: usize = args
+    let hp_form = args
         .kv_high_precision_layers
         .parse::<crate::cli::flag_values::KvHighPrecisionLayers>()
         .map_err(|why| {
@@ -231,13 +232,16 @@ pub(crate) fn resolve_kv_cache_config(
                 "--kv-high-precision-layers '{}': {why}",
                 args.kv_high_precision_layers
             )
-        })?
-        .resolve(num_attn_layers);
-    let kv_hp_layers = match (
-        kv_hp_layers,
-        crate::main_modules::auto_high_precision_layers(kv_dtype, num_attn_layers),
-    ) {
-        (0, Some(auto_hp)) => {
+        })?;
+    let kv_hp_layers: usize = hp_form.resolve(num_attn_layers);
+    // 2026-10-18: The auto boundary count is the codec table's policy for the pair; only the
+    // default `0` defers to it (2026-10-19: `none` declares zero).
+    let auto = requested
+        .auto_boundary()
+        .layers(u32::try_from(num_attn_layers)?);
+    let kv_hp_layers = match (hp_form.defers_to_codec(), auto) {
+        (true, Some(auto_hp)) => {
+            let auto_hp = usize::try_from(auto_hp)?;
             tracing::info!(
                 "Auto-enabling --kv-high-precision-layers {} for {} ({}/{} attn layers BF16; \
                  scaled with attn-layer count to keep accumulated turbo quant error tractable)",
@@ -250,7 +254,9 @@ pub(crate) fn resolve_kv_cache_config(
         }
         _ => kv_hp_layers,
     };
-    if kv_hp_layers == 0 && kv_dtype != metrale_cache::kv_cache::KvCacheDtype::Bf16 {
+    // 2026-10-18: Boundary layers hold bf16 on both sides.
+    let boundary = KvPair::symmetric(KvCodecId::Bf16);
+    if kv_hp_layers == 0 && requested != boundary {
         tracing::warn!(
             "⚠ --kv-high-precision-layers is 0: all KV cache layers use {} precision. \
              NVFP4 models may hallucinate or lose coherence at long context. \
@@ -258,12 +264,23 @@ pub(crate) fn resolve_kv_cache_config(
             effective_kv_dtype_str,
         );
     }
-    let layer_dtypes = crate::main_modules::build_layer_kv_dtypes(
-        kv_dtype,
-        num_attn_layers,
-        kv_hp_layers,
-        metrale_cache::kv_cache::KvCacheDtype::Bf16,
-    );
+    // 2026-10-18: One geometry per attention layer from the config's uniform head shape; the
+    // per-layer `layer_dims` overrides (Gemma) are still applied by the cache config.
+    let geometry = vec![
+        BlockGeometry {
+            block_size: u32::try_from(args.block_size)?,
+            num_kv_heads: u32::try_from(config.num_key_value_heads)?,
+            head_dim: u32::try_from(config.head_dim)?,
+        };
+        num_attn_layers
+    ];
+    let plan = KvCachePlan::resolve(&KvPlanInputs {
+        requested,
+        boundary_layers: u32::try_from(kv_hp_layers)?,
+        boundary,
+        geometry: &geometry,
+    });
+    let layer_dtypes = crate::main_modules::legacy_layer_dtypes(&plan, requested, boundary)?;
     let hss_cache_blocks_per_seq = if args.high_speed_swap {
         Some(args.high_speed_swap_cache_blocks_per_seq)
     } else {

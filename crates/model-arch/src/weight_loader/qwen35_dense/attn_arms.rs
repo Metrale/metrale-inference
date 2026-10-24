@@ -38,6 +38,7 @@ pub(super) fn build_q2_attention(
     p: &str,
     attn_idx: usize,
     l: LayerIn<'_>,
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Qwen3AttentionLayer> {
     let LoadCx {
         store,
@@ -85,6 +86,7 @@ pub(super) fn build_q2_attention(
         layer_kv_dtypes[attn_idx],
         config.fp8_kv_calibration_tokens,
         config,
+        lc,
     )?;
     attn_layer.set_packed_q2_weights(
         packed_q2_from_store(store, &format!("{p}.q_proj"))?,

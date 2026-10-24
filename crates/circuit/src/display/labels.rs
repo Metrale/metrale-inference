@@ -5,6 +5,8 @@
 //! Owner: metrale-circuit.
 //! Invariants: every label is built from the glyph set, so the ASCII render stays 7-bit.
 
+use crate::prelude::*;
+
 use super::COMPACT_BELOW;
 use super::Style;
 use super::glyphs::Set;
@@ -60,6 +62,7 @@ pub(super) fn format_label(f: Format, g: &Set) -> String {
             Scale::Block(r, c) => format!("fp8 e4m3/{r}{}{c} blk", g.times),
         },
         Format::Nvfp4 { group } => format!("nvfp4 g{group}"),
+        Format::Mxfp4 { group } => format!("mxfp4 g{group}"),
         other => other.name(),
     }
 }

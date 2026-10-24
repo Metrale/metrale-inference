@@ -10,10 +10,9 @@
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::DevicePtr;
 use metrale_model_engine::traits::{
-    BeamReq, FeedSource, MixedBatchResult, MixedForwardResult, Model, ModelAdapters,
-    ModelDeviceFeed, ModelDraft, ModelEp, ModelForward, ModelLifecycle, ModelLogits, ModelSsmState,
-    ModelStreams, ModelVerify, ModelVision, PrefillSlice, RowMask, SequenceState,
-    VerifyBatchedOpts,
+    BeamReq, MixedBatchResult, MixedForwardResult, Model, ModelAdapters, ModelDraft, ModelEp,
+    ModelForward, ModelLifecycle, ModelLogits, ModelSsmState, ModelStreams, ModelVerify,
+    ModelVision, PrefillSlice, SequenceState, VerifyBatchedOpts,
 };
 
 use super::model::RecordingModel;
@@ -386,6 +385,21 @@ impl ModelDraft for RecordingModel {
         let masked = grammar_bitmask.is_some();
         Ok(self.fx_propose_multi(token, position, num_drafts, seq, stream, masked))
     }
+    fn run_mtp_propose_announced(
+        &self,
+        token: u32,
+        position: usize,
+        num_drafts: usize,
+        seq: &mut SequenceState,
+        grammar_bitmask: Option<&[i32]>,
+    ) -> Result<Vec<u32>> {
+        rec!(
+            self,
+            "run_mtp_propose_announced(token={token}, pos={position})"
+        );
+        let masked = grammar_bitmask.is_some();
+        Ok(self.fx_propose_multi(token, position, num_drafts, seq, 0, masked))
+    }
     fn read_deferred_draft_token(&self) -> Result<u32> {
         anyhow::bail!("read_deferred_draft_token is not a scheduler path")
     }
@@ -427,14 +441,20 @@ impl ModelVision for RecordingModel {
 
 impl ModelEp for RecordingModel {
     facts! {
-        fn is_ep(&self) -> bool = false;
+        fn is_ep(&self) -> bool = self.cfg.ep;
+        fn is_healthy(&self) -> bool = self.cfg.healthy;
+        fn ep_prefill_batch_rows(&self) -> Option<usize> = self.cfg.ep_prefill_batch;
         fn ep_protocol_v2(&self) -> bool = false;
+        fn k2_fused_wire(&self) -> bool = self.cfg.k2_fused_wire;
     }
     recorded! {
         fn ep_worker_step(&self, _slots: &mut [Option<SequenceState>]) -> Result<bool> = Ok(false) => "ep_worker_step()";
         fn ep_broadcast_cmd(&self, cmd: u32) -> Result<()> = Ok(()) => "ep_broadcast_cmd({cmd:#x})";
         fn ep_broadcast_cmd_for_seq(&self, seq_id: u32, cmd: u32) -> Result<()> = Ok(()) => "ep_broadcast_cmd_for_seq(seq={seq_id}, cmd={cmd:#x})";
         fn ep_broadcast_tokens(&self, tokens: &[u32]) -> Result<Vec<u32>> = Ok(tokens.to_vec()) => "ep_broadcast_tokens(n={})", tokens.len();
+        fn ep_announce_k2_fused(&self, seq_id: u32, tokens: [u32; 2], flags: metrale_model_layers::speculative::K2Flags) -> Result<()> = Ok(()) => "ep_announce_k2_fused(seq={seq_id}, tokens={tokens:?}, flags={flags:?})";
+        fn ep_send_k2_verdict_after_propose(&self, v: metrale_model_layers::speculative::K2Verdict) -> Result<()> = Ok(()) => "ep_send_k2_verdict_after_propose(accepted={}, next={}, drafts={}, pos={})", v.accepted, v.next_token, v.num_drafts, v.position;
+        fn ep_send_k2_verdict(&self, v: metrale_model_layers::speculative::K2Verdict) -> Result<()> = Ok(()) => "ep_send_k2_verdict(accepted={}, next={}, drafts={}, pos={})", v.accepted, v.next_token, v.num_drafts, v.position;
     }
 }
 
@@ -456,44 +476,3 @@ impl ModelStreams for RecordingModel {
 }
 
 impl metrale_model_engine::traits::ModelCircuit for RecordingModel {}
-impl ModelDeviceFeed for RecordingModel {
-    fn decode_batch_fed(
-        &self,
-        sources: &[FeedSource],
-        seqs: &mut [&mut SequenceState],
-        stream: u64,
-    ) -> Result<DevicePtr> {
-        self.fx_decode_batch_fed(sources, seqs, stream)
-    }
-    fn argmax_batch_to_feed(
-        &self,
-        logits_ptr: DevicePtr,
-        masks: &[RowMask],
-        dst: *mut u32,
-        event: u64,
-        stream: u64,
-    ) -> Result<()> {
-        self.fx_argmax_batch_to_feed(logits_ptr, masks, dst, event, stream)
-    }
-    fn reserve_decode_block(&self, seq: &mut SequenceState) -> Result<usize> {
-        self.fx_reserve_decode_block(seq)
-    }
-    fn release_decode_blocks(&self, seq: &mut SequenceState, blocks: usize) -> Result<()> {
-        self.fx_release_decode_blocks(seq, blocks)
-    }
-    fn alloc_host_pinned(&self, bytes: usize) -> Result<*mut u8> {
-        metrale_gpu_runtime::host_heap::alloc_zeroed(bytes)
-    }
-    fn free_host_pinned(&self, ptr: *mut u8, bytes: usize) -> Result<()> {
-        metrale_gpu_runtime::host_heap::free(ptr, bytes)
-    }
-    facts! {
-        fn supports_device_token_feed(&self) -> bool = self.cfg.device_token_feed;
-        fn event_query(&self, event: u64) -> Result<bool> = self.fx_event_query(event);
-    }
-    recorded! {
-        fn event_synchronize(&self, event: u64) -> Result<()> = { self.fx_event_synchronize(event); Ok(()) } => "event_synchronize(event={event})";
-        fn destroy_event(&self, event: u64) -> Result<()> = Ok(()) => "destroy_event(event={event})";
-        fn fed_step_settled(&self) -> () = () => "fed_step_settled()";
-    }
-}

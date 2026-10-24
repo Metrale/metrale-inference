@@ -27,10 +27,10 @@ use metrale_model_layers::weight_map::{
 pub struct Qwen3WeightLoader;
 
 impl ModelWeightLoader for Qwen3WeightLoader {
-    fn supports_tp(&self) -> bool {
+    fn tp_support(&self) -> metrale_config::TpSupport {
         // 2026-09-25: Full-attention layers shard on both arms. Linear-attention layers are
         // loaded unsharded (`load_ssm`).
-        true
+        metrale_config::TpSupport::Even
     }
 
     fn load_layers(
@@ -39,6 +39,7 @@ impl ModelWeightLoader for Qwen3WeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         layer_kv_dtypes: &[KvCacheDtype],
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
         let layer_types = if config.layer_types.is_empty() {
             (0..config.num_hidden_layers)
@@ -78,7 +79,7 @@ impl ModelWeightLoader for Qwen3WeightLoader {
 
         // 2026-09-25: `super::moe_prefill_copies_fit` decides whether the transposed MoE prefill
         // tables fit in free memory; `METRALE_MOE_PREFILL_COPIES=0` forces them off.
-        let skip_moe_transpose = !super::moe_prefill_copies_fit(config, gpu);
+        let skip_moe_transpose = !super::moe_prefill_copies_fit(config, gpu, lc.settings);
 
         for (i, lt) in layer_types.iter().enumerate() {
             let lp = config.layer_prefix(i);
@@ -92,7 +93,7 @@ impl ModelWeightLoader for Qwen3WeightLoader {
             };
             // 2026-09-25: `METRALE_BF16_ROUTER=1` keeps the router gate BF16 (`gate_nvfp4` None),
             // so the gate GEMM runs dense on `weights.gate` (`moe/forward_batched_gate.rs`).
-            let gate_nvfp4 = if std::env::var("METRALE_BF16_ROUTER").as_deref() == Ok("1") {
+            let gate_nvfp4 = if lc.settings.kernels.bf16_router {
                 None
             } else {
                 Some(quantize_to_nvfp4(
@@ -208,6 +209,7 @@ impl ModelWeightLoader for Qwen3WeightLoader {
                         layer_kv_dtype,
                         config.fp8_kv_calibration_tokens,
                         config,
+                        lc,
                     )?;
                     layer.set_fp8_weights(Some(q_fp8), Some(k_fp8), Some(v_fp8), Some(o_fp8));
                     if let Err(e) = layer.transpose_fp8_for_prefill(gpu, stream) {
@@ -320,6 +322,7 @@ impl ModelWeightLoader for Qwen3WeightLoader {
                         layer_kv_dtype,
                         config.fp8_kv_calibration_tokens,
                         config,
+                        lc,
                     )?;
                     let qt = q_nvfp4.transpose_for_gemm(
                         gpu,
@@ -367,6 +370,7 @@ impl ModelWeightLoader for Qwen3WeightLoader {
                         Some(qkvz_nvfp4),
                         config,
                         gpu,
+                        lc,
                     )?));
                 }
                 LayerType::SlidingAttention => {

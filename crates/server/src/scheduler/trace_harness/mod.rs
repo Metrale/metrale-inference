@@ -17,16 +17,28 @@
 //! deadlines have already passed when the scheduler checks them, and
 //! cancel flags are flipped by the model at a scripted point.
 
+mod adaptive_k_tests;
+mod bootstrap_stash_tests;
+mod dflash_ctx_tests;
+mod ep_prefill_tests;
+mod ep_verify_tests;
+mod gate;
+mod k2_fused_tests;
+mod max_tokens_tests;
 mod model;
 mod model_feed;
 mod model_forward;
 mod model_impl;
+mod model_recurrent;
 mod park;
+mod pipeline_ep_tests;
 mod pipeline_tests;
 mod prompt_lookup_tests;
+mod run_options;
 mod runner;
 mod scenarios;
 mod scripted_tests;
 mod shared_lookup_tests;
 mod telemetry_tests;
+mod twophase_fail_tests;
 mod tests;

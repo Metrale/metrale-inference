@@ -21,10 +21,12 @@ use super::*;
 /// 2026-09-25: Flash-attention prefill on contiguous BF16 tensors: Q and O
 /// `[batch, seq_len, num_q_heads, head_dim]`, K and V `[batch, seq_len,
 /// num_kv_heads, head_dim]`. `sliding_window == 0` disables the window;
-/// otherwise keys with `q - k >= sliding_window` are masked.
+/// otherwise keys with `q - k >= sliding_window` are masked. `attn_512_tc` is
+/// `OpsLevers::attn_512_tc`, the value `kernel` was resolved under.
 #[allow(clippy::too_many_arguments)]
 pub fn prefill_attention(
     gpu: &dyn GpuBackend,
+    attn_512_tc: bool,
     kernel: KernelHandle,
     q: DevicePtr,
     k: DevicePtr,
@@ -44,7 +46,7 @@ pub fn prefill_attention(
     // grid is built here; both call `wide_prefill_kernel()`, which returns the
     // kernel and its BR together.
     let br = if head_dim > 256 {
-        wide_prefill_kernel(gpu).1
+        wide_prefill_kernel(gpu, attn_512_tc).1
     } else {
         32u32
     };

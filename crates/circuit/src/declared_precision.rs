@@ -13,10 +13,12 @@
 //! - A module the plan does not cover is 16-bit (`LayerPrecision::UNQUANTIZED`); an expert
 //!   projection is covered by its fused-experts module's declaration (2026-10-02).
 
-use std::cell::RefCell;
+use crate::prelude::*;
 
-use metrale_config::DeclaredPrecisionPlan;
-use metrale_config::precision_plan::{Granularity, NumKind, Operand};
+use core::cell::RefCell;
+
+use metrale_precision::DeclaredPrecisionPlan;
+use metrale_precision::precision_plan::{Granularity, NumKind, Operand};
 
 use crate::format::{Format, Scale};
 use crate::precision::{EdgePrecision, LinearFormats};
@@ -49,9 +51,14 @@ impl<'a> DeclaredPrecision<'a> {
 }
 
 /// 2026-09-30: The weight format `o` declares, if the circuit has one.
+/// 2026-10-18: MXFP4 (`Operand::MXFP4`: E2M1, one E8M0 scale per 32, no tensor scale) is its
+/// own format; any other 4-bit float group is NVFP4 at that group.
 fn weight_format(o: Operand) -> Option<Format> {
     if o.kind != NumKind::Float {
         return None;
+    }
+    if o == Operand::MXFP4 {
+        return Some(Format::Mxfp4 { group: 32 });
     }
     match (o.bits, o.granularity) {
         (4, Granularity::TensorGroup(g) | Granularity::Group(g)) => {
@@ -96,16 +103,9 @@ fn activation_format(o: Operand) -> Option<Format> {
 
 impl EdgePrecision for DeclaredPrecision<'_> {
     fn linear(&self, module: &str) -> LinearFormats {
-        // 2026-10-02: An expert projection the plan does not name is declared by its experts
-        // module, where the checkpoint quantizes that as one (`precision::expert_container`); a
-        // projection the checkpoint ignores keeps its own (16-bit) answer.
-        let mut declared = self.plan.resolve(module);
-        if declared.weight.is_none()
-            && !self.plan.ignore.iter().any(|t| t.matches_name(module))
-            && let Some(container) = crate::precision::expert_container(module)
-        {
-            declared = self.plan.resolve(container);
-        }
+        // 2026-10-17: The plan's own resolve reaches an expert projection's fused-experts entry
+        // and keeps an ignored projection 16-bit (`DeclaredPrecisionPlan::resolve`).
+        let declared = self.plan.resolve(module);
         let weight = match declared.weight {
             None => Format::Bf16,
             Some(o) => weight_format(o).unwrap_or_else(|| {
@@ -121,6 +121,11 @@ impl EdgePrecision for DeclaredPrecision<'_> {
             }),
         };
         LinearFormats { weight, activation }
+    }
+
+    /// 2026-10-23: A checkpoint's config never reaches a module it does not quantize.
+    fn named(&self, _module: &str) -> Option<LinearFormats> {
+        None
     }
 }
 

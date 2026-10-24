@@ -25,9 +25,9 @@ use crate::scheduler::{LoraAck, LoraCommand};
 
 /// 2026-09-25: The `ep_broadcast_cmd_for_seq` word that frees and re-allocates a
 /// worker's mirrored sequence in that slot.
-pub const EP_FREE_REALLOC: u32 = 0xFFFFFFF1;
+pub const EP_FREE_REALLOC: u32 = metrale_model_layers::ep_wire::EP_CMD_ALLOC_SLOT;
 /// 2026-09-25: The word that stops the worker (`seq_id` ignored).
-pub const EP_SHUTDOWN: u32 = 0xFFFFFFFF;
+pub const EP_SHUTDOWN: u32 = metrale_model_layers::ep_wire::EP_CMD_SHUTDOWN;
 
 pub struct SyncDeviceIo {
     model: Arc<dyn Model>,

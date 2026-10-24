@@ -47,7 +47,7 @@ pub struct MockGpuBackend {
     /// 2026-09-25: `copy_d2d` and `copy_d2d_async` calls, in one counter.
     d2d: AtomicUsize,
     /// 2026-09-25: `copy_d2d_2d_async` calls, which the CUDA backend issues as
-    /// one `cudaMemcpy2DAsync` whatever `height` is. Counted apart from `d2d`.
+    /// one `cuMemcpy2DAsync_v2` whatever `height` is. Counted apart from `d2d`.
     d2d_2d: AtomicUsize,
     /// 2026-09-25: Streams passed to `copy_d2d_async`, in call order, so a test
     /// can check a copy went to the right stream.
@@ -288,6 +288,32 @@ impl GpuBackend for MockGpuBackend {
         self.blit(src, dst, bytes)
     }
 
+    fn memcpy_2d_async(&self, copy: Memcpy2d, _stream: u64) -> metrale_error::Result<()> {
+        // 2026-10-17: Emulated row by row; a width above either pitch would make rows overlap.
+        if copy.width_bytes > copy.src_pitch || copy.width_bytes > copy.dst_pitch {
+            return Err(metrale_error::error!(
+                metrale_error::ErrorCode::InvalidArgument,
+                "memcpy_2d_async width_bytes",
+                copy.width_bytes
+            ));
+        }
+        for r in 0..copy.height {
+            self.blit(
+                copy.src.offset(r * copy.src_pitch),
+                copy.dst.offset(r * copy.dst_pitch),
+                copy.width_bytes,
+            )
+            .map_err(|e| {
+                metrale_error::error!(
+                    metrale_error::ErrorCode::InvalidArgument,
+                    "memcpy_2d_async row",
+                    e.to_string()
+                )
+            })?;
+        }
+        Ok(())
+    }
+
     fn copy_d2d_2d_async(
         &self,
         src: DevicePtr,
@@ -298,24 +324,19 @@ impl GpuBackend for MockGpuBackend {
         height: usize,
         stream: u64,
     ) -> Result<()> {
-        // 2026-09-25: One `d2d_2d` tick per call; the row loop below emulates
-        // the copy and does not touch `d2d`.
+        // 2026-09-25: One `d2d_2d` tick per call; the emulated copy does not touch `d2d`.
+        // 2026-10-17: Routed through `memcpy_2d_async`, as the CUDA backend does.
         self.d2d_2d.fetch_add(1, Ordering::Relaxed);
         self.d2d_2d_async_streams.lock().push(stream);
-        if width_bytes > src_pitch || width_bytes > dst_pitch {
-            anyhow::bail!(
-                "copy_d2d_2d_async: width {width_bytes} exceeds pitch \
-                 (src {src_pitch}, dst {dst_pitch}) — rows would overlap"
-            );
-        }
-        for r in 0..height {
-            self.blit(
-                src.offset(r * src_pitch),
-                dst.offset(r * dst_pitch),
-                width_bytes,
-            )?;
-        }
-        Ok(())
+        let copy = Memcpy2d {
+            src,
+            src_pitch,
+            dst,
+            dst_pitch,
+            width_bytes,
+            height,
+        };
+        Ok(self.memcpy_2d_async(copy, stream)?)
     }
 
     fn launch(

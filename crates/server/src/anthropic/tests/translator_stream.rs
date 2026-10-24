@@ -302,3 +302,49 @@ fn non_envelope_error_payload_is_passed_through() {
     }]);
     assert_eq!(evs[1].data["error"]["message"], "raw failure text");
 }
+
+/// 2026-10-20: A leading `Prompt` delta feeds `message_start.usage`
+/// `input_tokens` before the first content event, so a client reading the
+/// opening frame sees the real prompt count instead of 0.
+#[test]
+fn prompt_delta_populates_message_start_input_tokens() {
+    let evs = drive(vec![
+        StreamDelta::Prompt { tokens: 4321 },
+        StreamDelta::Content {
+            text: "Hi".into(),
+            token_ids: Vec::new(),
+        },
+        StreamDelta::Finish {
+            reason: FinishReason::Stop,
+            usage: usage(3, 1),
+            token_ids: Vec::new(),
+        },
+    ]);
+    let start = evs
+        .iter()
+        .find(|e| e.event == "message_start")
+        .expect("message_start");
+    let data = &start.data;
+    assert_eq!(data["message"]["usage"]["input_tokens"], 4321);
+}
+
+/// 2026-10-20: Without the prompt delta the old behavior is unchanged
+/// (message_start reports 0; the final delta carries the real count).
+#[test]
+fn without_prompt_delta_message_start_still_reports_zero() {
+    let evs = drive(vec![
+        StreamDelta::Content {
+            text: "Hi".into(),
+            token_ids: Vec::new(),
+        },
+        StreamDelta::Finish {
+            reason: FinishReason::Stop,
+            usage: usage(3, 1),
+            token_ids: Vec::new(),
+        },
+    ]);
+    let start = &evs[0];
+    assert_eq!(start.event, "message_start");
+    let data = &start.data;
+    assert_eq!(data["message"]["usage"]["input_tokens"], 0);
+}

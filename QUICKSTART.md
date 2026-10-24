@@ -27,7 +27,7 @@ sudo apt-get update && sudo apt-get install -y \
 # (metrale-grammar) is a pure-Rust in-tree XGrammar port with no build.rs.
 ```
 
-The first `cargo build --release -p metrale-server` takes ~15-30 minutes (PTX
+The first `cargo build --release -p met` takes ~15-30 minutes (PTX
 compilation across the supported model targets dominates). Expect ~3-5 GB
 under `target/`.
 

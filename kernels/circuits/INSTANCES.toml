@@ -99,6 +99,9 @@ settings = { row_tiers = "by_rows", kv_cache_dtype = "bf16", lm_head_dtype = "bf
 # kernels/gb10/qwen3.6-35b-a3b/BENCH.toml). As above, except:
 # - row_tiers: canonical, the default for an FP8 MoE checkpoint (ml/row_tiers.rs:64-78,
 #   published at crates/server/src/main_modules/serve_load/model_setup.rs:282-290).
+# - 2026-10-23: screen_head: the engine-wide METRALE_SCREEN_HEAD at its code default `on`
+#   (crates/settings/src/groups/speculative.rs:129); read only by the rules over a rank circuit's
+#   vocab gather, so a one-device plan is unchanged. Also stated by the NVFP4 instance below.
 [[instance]]
 recipe = "qwen3.6/qwen3.6-35b-a3b-fp8-bf16head"
 checkpoint = "Qwen/Qwen3.6-35B-A3B-FP8"
@@ -112,7 +115,7 @@ plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], 
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "canonical", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }
+settings = { row_tiers = "canonical", kv_cache_dtype = "bf16", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", screen_head = "on" }
 
 # 2026-10-02: nvidia/Qwen3.6-35B-A3B-NVFP4 under `--weight-quantization declared`: NVFP4 W4A16
 # routed and shared experts and lm_head (the grouped NVFP4 decode on the tensor-core kernels,
@@ -138,7 +141,7 @@ plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], 
 
 [instance.policy]
 opt_in_levers = []
-settings = { row_tiers = "canonical", kv_cache_dtype = "bf16", lm_head_dtype = "nvfp4", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }
+settings = { row_tiers = "canonical", kv_cache_dtype = "bf16", lm_head_dtype = "nvfp4", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", screen_head = "on" }
 
 # 2026-09-29: NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4, the first model built by the
 # `new-model` method (`.claude/skills/new-model/SKILL.md`). The recipe id is the planned one: no
@@ -167,3 +170,119 @@ plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], 
 [instance.policy]
 opt_in_levers = []
 settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "nvfp4", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }
+
+# 2026-10-22: The served GLM recipe, glm-5.3/glm-5.3-flash-nvfp4-tp3-512k (recipes/glm-5.3/): the
+# instance below at the recipe's formats (`dense_quantization: w4a16`, `dsa_quantization: w8a8`,
+# `weight_quantization: declared`; precision/glm-5.3-flash-nvfp4-tp3.toml). Listed first, so the
+# checkpoint id resolves to it under `--precision recipe` (venn::repo::resolve takes the first
+# match); `--precision declared` reads the checkpoint itself. Shape, plans and policy are the
+# instance below's (the recipe's `kv_cache_dtype: fp8`). 2026-10-23: TP=3 is planned per rank
+# (`[instance.parallel]` below). Not golden, not an executor target.
+# - The glm_* settings are the recipe's `env:` levers that pick another kernel for a planned node
+#   (kernels/gb10/common/FUSIONS.toml `when`): glm_mhc_fused (METRALE_GLM_MHC_FUSED=1),
+#   glm_router_rows (METRALE_GLM_ROUTER_ROWS=1), glm_router_topk_rank (METRALE_GLM_ROUTER_TOPK_RANK=1),
+#   glm_moe_combine_split (METRALE_GLM_MOE_COMBINE_SPLIT=1, 2026-10-23: the combine's grid),
+#   glm_moe_w4a4_grouped (METRALE_GLM_MOE_W4A4_GROUPED=1) and glm_moe_expert_layout (the recipe's
+#   `moe_expert_layout: tp`), glm_kda_row_reg, glm_kda_rows_reg, glm_kda_seq_rows (`decode`) and
+#   glm_kda_verify_tokens (METRALE_GLM_KDA_ROW_REG, _ROWS_REG, _SEQ_ROWS, _VERIFY_TOKENS), glm_w4a16_gemv_seg,
+#   glm_w4a16_gemv_rows (`2`) and glm_w4a16_seg (`fuse`), glm_swiglu_down_fold, glm_dense_segment and glm_kda_conv_one (METRALE_GLM_W4A16_GEMV_SEG, _GEMV_ROWS, _SEG, METRALE_GLM_SWIGLU_DOWN_FOLD, METRALE_GLM_DENSE_SEGMENT, METRALE_GLM_KDA_CONV_ONE),
+#   glm_dsa_decode_hb (`8`), glm_dsa_verify_rows and glm_dsa_indexer_rows (METRALE_GLM_DSA_DECODE_HB,
+#   _VERIFY_ROWS, _INDEXER_ROWS). Their code defaults are kernels/circuits/glm5_next.config.toml [policy].
+# - 2026-10-23: glm_ar_fused_post (METRALE_GLM_AR_FUSED_POST=1) lowers each rank's mHC-site all-reduce
+#   into glm5next_hc_post_rank_sum; screen_head (METRALE_SCREEN_HEAD, code default on:
+#   crates/settings/src/groups/speculative.rs:129) lowers the verify head's vocab all-reduce into the
+#   screened key exchange. Both read only by rules over a rank circuit's derived collectives.
+# - 2026-10-23: all_reduce_oneshot_max_kb (recipe :75, --all-reduce-oneshot-max-kb 1024): the payload
+#   bound of the one-shot collective rules (crates/circuit/src/collective.rs); a serve overwrites it
+#   from its communicator at boot.
+# - 2026-10-23: glm_mtp_device_step (recipe :159 METRALE_GLM_MTP_DEVICE_STEP=1): a K=2 verify gathers
+#   the device draft's embedding row (batched_embed). final_norm_vanilla: the arch config's value
+#   (glm5_next ships plain RMSNorm weights), pinned like the other settings.
+[[instance]]
+recipe = "glm-5.3/glm-5.3-flash-nvfp4-tp3-512k"
+checkpoint = "nvidia/GLM-5.3-Flash-NVFP4"
+arch = "glm5_next"
+precision = "glm-5.3-flash-nvfp4-tp3"
+target = "gb10/glm-5.3-flash/nvfp4"
+golden = false
+layer_kinds = "GGGS GGGS GGGS GGGS GGGS GGGS GGGS GGGS GGGS GGGS GGGS G"
+dims = { hidden = 4096, vocab = 154880, inter = 12288, first_dense = 3, hc = 4, lin_k_heads = 64, lin_k_dim = 128, lin_v_heads = 64, lin_v_dim = 128, conv_kernel = 4, q_heads = 64, q_lora = 1536, kv_lora = 512, mla_qk = 256, mla_v = 256, index_heads = 32, index_head_dim = 128, index_kpool = 4, index_topk = 2048, experts = 288, top_k = 8, moe_inter = 2048, shared_inter = 2048, mtp = 1 }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4, 8], draft = [1] }
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", glm_mhc_fused = "on", glm_router_rows = "on", glm_router_topk_rank = "on", glm_moe_combine_split = "on", glm_moe_w4a4_grouped = "on", glm_moe_expert_layout = "tp", glm_kda_row_reg = "on", glm_kda_rows_reg = "on", glm_kda_seq_rows = "decode", glm_kda_verify_tokens = "on", glm_w4a16_gemv_seg = "on", glm_w4a16_gemv_rows = "2", glm_w4a16_seg = "fuse", glm_swiglu_down_fold = "off", glm_dense_segment = "off", glm_kda_conv_one = "off", glm_dsa_decode_hb = "8", glm_dsa_verify_rows = "on", glm_dsa_indexer_rows = "on", glm_ar_fused_post = "on", screen_head = "on", glm_mtp_device_step = "on", final_norm_vanilla = "on", all_reduce_oneshot_max_kb = "1024" }
+
+# 2026-10-23: The recipe serves --tp-size 3 (one GB10 per rank) with every split part of the
+# circuit's `[parallel]` spec (kernels/circuits/glm5_next.toml) over all three ranks; `hidden` is
+# the MTP eh_proj row split, on under the recipe's METRALE_GLM_MTP_EH_TP=1. Each rank's circuit is
+# derived from the one circuit (crates/circuit/src/parallel.rs).
+[instance.parallel]
+ranks = 3
+degree = { lin_k_heads = 3, q_heads = 3, moe_inter = 3, shared_inter = 3, inter = 3, vocab = 3, hidden = 3 }
+why = "recipes/glm-5.3/glm-5.3-flash-nvfp4-tp3-512k.yaml:87 (tensor_parallel: 3), :89 (moe_expert_layout: tp), :123 (METRALE_GLM_MTP_EH_TP=1)"
+
+# 2026-10-08: nvidia/GLM-5.3-Flash-NVFP4 (`glm5_next`), the GLM campaign's model, built by the
+# `new-model` method. The recipe id is the planned one: no recipe serves this checkpoint yet, and
+# the circuit is not an executor target (`golden = false`: FUSIONS.toml covers the GLM kernels'
+# single-sequence decode only; `met circuit venn` reads it).
+# - Shape: config.json `text_config` (verified 2026-10-08): `layer_types` (G = linear_attention,
+#   the KDA layers; S = deepseek_sparse_attention, the DSA layers 3, 7, ..., 43),
+#   `first_k_dense_replace`, `hc_mult`, the `linear_*` KDA dims, the MLA ranks and head widths,
+#   the `index_*` indexer dims, the MoE dims, `num_nextn_predict_layers` (kernels/circuits/
+#   glm5_next.config.toml maps each).
+# - kv_cache_dtype: fp8, as the checkpoint declares (`kv_cache_scheme`, static, no scale
+#   tensors); the engine's latent cache is FP8 at scale 1.0. lm_head_dtype: bf16, declared.
+# - ssm_h_dtype: f32, the only KDA state the engine runs (glm5next_layer/steps.rs refuses f16).
+# - row_tiers: by_rows, the default for a checkpoint that is not an FP8 MoE (ml/row_tiers.rs:64-78).
+#   The other settings are the flag defaults cited for the entries above; the GLM layer code
+#   reads none of them.
+# - 2026-10-22: The glm_* settings are the GLM layer levers at their code defaults
+#   (kernels/circuits/glm5_next.config.toml [policy], which cites each).
+[[instance]]
+recipe = "glm-5.3/glm-5.3-flash-nvfp4"
+checkpoint = "nvidia/GLM-5.3-Flash-NVFP4"
+arch = "glm5_next"
+precision = "glm-5.3-flash-nvfp4"
+target = "gb10/glm-5.3-flash/nvfp4"
+golden = false
+layer_kinds = "GGGS GGGS GGGS GGGS GGGS GGGS GGGS GGGS GGGS GGGS GGGS G"
+dims = { hidden = 4096, vocab = 154880, inter = 12288, first_dense = 3, hc = 4, lin_k_heads = 64, lin_k_dim = 128, lin_v_heads = 64, lin_v_dim = 128, conv_kernel = 4, q_heads = 64, q_lora = 1536, kv_lora = 512, mla_qk = 256, mla_v = 256, index_heads = 32, index_head_dim = 128, index_kpool = 4, index_topk = 2048, experts = 288, top_k = 8, moe_inter = 2048, shared_inter = 2048, mtp = 1 }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4, 8], draft = [1] }
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive", glm_mhc_fused = "on", glm_router_rows = "off", glm_router_topk_rank = "off", glm_moe_combine_split = "off", glm_moe_w4a4_grouped = "off", glm_moe_expert_layout = "ep", glm_kda_row_reg = "off", glm_kda_rows_reg = "off", glm_kda_seq_rows = "off", glm_kda_verify_tokens = "off", glm_w4a16_gemv_seg = "off", glm_w4a16_gemv_rows = "off", glm_w4a16_seg = "off", glm_swiglu_down_fold = "off", glm_dense_segment = "off", glm_kda_conv_one = "off", glm_dsa_decode_hb = "off", glm_dsa_verify_rows = "off", glm_dsa_indexer_rows = "on", glm_ar_fused_post = "off" }
+
+# 2026-10-18: deepseek-ai/DeepSeek-V4.1-Flash-1017 (`deepseek_v41`), the three-node campaign's
+# model. The recipe id is the planned one: no recipe serves this checkpoint yet, and the circuit
+# is not an executor target (`golden = false`: FUSIONS.toml covers none of the V4.1 kernels;
+# `met circuit venn` reads it).
+# - Shape: config.json `text_config` (verified 2026-10-18 against the snapshot's config.json;
+#   crates/circuit/tests/deepseek_v41.rs re-checks every dim against the config crate's fixture):
+#   `compress_ratios` (W = 0, the sliding-window layers; S = 2 or 1, the sparse layers; the
+#   three trailing entries are the draft layers, not modelled), hidden_size, vocab_size,
+#   hc_mult, num_attention_heads, q_lora_rank, head_dim, qk_rope_head_dim, o_groups,
+#   o_lora_rank, sliding_window, the `index_*` dims, the MoE dims, the `engram_*` dims
+#   (`engram_cols` = (engram_max_ngram_size - 1) * engram_n_heads). `late_first` is the first
+#   ratio-1 layer; `hca_ratio` is 1.
+# - kv_cache_dtype: fp8, kernels/gb10/deepseek-v4.1-flash/MODEL.toml `default_kv_dtype`. The
+#   circuit's compressed caches and window ring are states at the checkpoint's packed formats;
+#   nothing in it is held at `kv_cache_dtype`. lm_head_dtype: bf16, declared.
+# - row_tiers: by_rows, the default for a checkpoint that is not an FP8 MoE (ml/row_tiers.rs:64-78);
+#   the routed experts are MXFP4. The other settings are the flag defaults cited for the entries
+#   above; the V4.1 layer code reads none of them.
+[[instance]]
+recipe = "deepseek-v4.1/deepseek-v4.1-flash-mxfp4"
+checkpoint = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
+arch = "deepseek_v41"
+precision = "deepseek-v4.1-flash-mxfp4"
+target = "gb10/deepseek-v4.1-flash/nvfp4"
+golden = false
+layer_kinds = "WWSS SSSS SSSS SSSS SSSS SSSS SSSS SSSS SSSS SSSS"
+dims = { hidden = 5120, vocab = 129280, hc = 4, q_heads = 64, q_lora = 1280, head_dim = 512, rope_dim = 64, o_groups = 8, o_lora = 1024, window = 128, csa_ratio = 2, hca_ratio = 1, late_first = 20, index_heads = 32, index_head_dim = 128, index_topk = 512, experts = 384, top_k = 6, moe_inter = 2304, shared_inter = 2304, engram_cols = 24, engram_head_dim = 256 }
+plans = { decode = [1], multi_seq = [2, 4, 8, 12, 16, 24, 32, 48, 64, 96, 128], verify = [2, 3, 4] }
+
+[instance.policy]
+opt_in_levers = []
+settings = { row_tiers = "by_rows", kv_cache_dtype = "fp8", lm_head_dtype = "bf16", ssm_h_dtype = "f32", ssm_batched_recurrent = "on", ssm_ba_gates_hopper = "on", gemv_sw = "on", w4a16_tc = "on", decode_split_silu = "on", rms_norm_act_quant = "off", activation_quantization = "adaptive" }

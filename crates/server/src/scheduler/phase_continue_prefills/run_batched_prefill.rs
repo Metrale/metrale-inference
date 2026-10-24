@@ -13,8 +13,34 @@ use metrale_gpu_runtime::gpu::DevicePtr;
 use metrale_model_engine::traits::{Model, PrefillSlice};
 
 use super::super::types::PrefillInProgress;
+use super::super::lifecycle::send_error_to_sink;
 use super::super::{FirstTokenPolicy, sample_first_token};
 use super::prefill_waves::{WaveGeom, plan_prefill_waves};
+
+/// 2026-09-25: The chunk a prefilling stream advances by in a batched step when it does not
+/// share the co-dispatch geometry. 2026-10-09: Also what the multi-rank step's row budget
+/// counts (`phase_continue_prefills`).
+pub(super) fn stream_chunk_len(
+    model: &dyn Model,
+    p: &PrefillInProgress,
+    max_prefill_tokens: usize,
+) -> usize {
+    let remaining = p.prompt_tokens.len() - p.chunk_offset;
+    // 2026-09-25: MLA: one chunk for the whole remaining prompt, as
+    // in `run_standard_chunk_loop`.
+    let effective_max = if model.is_mla() {
+        remaining
+    } else {
+        max_prefill_tokens
+    };
+    metrale_model_engine::prefill_plan::plan_chunk_len(
+        p.chunk_offset,
+        p.prompt_tokens.len(),
+        remaining.min(effective_max),
+        model.kv_block_size(),
+        model.prefill_tail_split(&p.prompt_tokens),
+    )
+}
 
 pub(super) fn run_batched_prefill_step(
     model: &dyn Model,
@@ -74,21 +100,7 @@ pub(super) fn run_batched_prefill_step(
         let (chunk_len, is_last) = if let Some((cl, il)) = shared_geom {
             (cl, il)
         } else {
-            let remaining = p.prompt_tokens.len() - p.chunk_offset;
-            // 2026-09-25: MLA: one chunk for the whole remaining prompt, as
-            // in `run_standard_chunk_loop`.
-            let effective_max = if model.is_mla() {
-                remaining
-            } else {
-                max_prefill_tokens
-            };
-            let chunk_len = metrale_model_engine::prefill_plan::plan_chunk_len(
-                p.chunk_offset,
-                p.prompt_tokens.len(),
-                remaining.min(effective_max),
-                model.kv_block_size(),
-                model.prefill_tail_split(&p.prompt_tokens),
-            );
+            let chunk_len = stream_chunk_len(model, p, max_prefill_tokens);
             let is_last = p.chunk_offset + chunk_len >= p.prompt_tokens.len();
             (chunk_len, is_last)
         };
@@ -156,8 +168,17 @@ pub(super) fn run_batched_prefill_step(
                 );
                 // 2026-09-25: Fail only this wave's streams (freed in
                 // `promote_completed_prefills`). Later waves have not
-                // advanced and retry next tick.
+                // advanced and retry next tick. 2026-10-20: the client gets
+                // an error frame before the `(i, None)` frees the sequence
+                // (`promote_completed_prefills` drops the sink without a
+                // frame).
+                drop(slices);
                 for &i in &wave {
+                    send_error_to_sink(
+                        &sched.io,
+                        &mut prefilling[i].sink,
+                        &format!("batched prefill failed: {e:#}"),
+                    );
                     completed_indices.push((i, None));
                 }
                 return;
@@ -190,7 +211,12 @@ pub(super) fn run_batched_prefill_step(
             let logits = logits_per_stream[k];
             if logits == DevicePtr::NULL {
                 tracing::error!(
-                    "Batched prefill: stream {i} marked is_last but model returned NULL logits",
+                    "Batched prefill: stream {i} marked is_last but model returned NULL logits"
+                );
+                send_error_to_sink(
+                    &sched.io,
+                    &mut p.sink,
+                    "batched prefill: model returned no logits",
                 );
                 completed_indices.push((i, None));
                 continue;
@@ -211,6 +237,8 @@ pub(super) fn run_batched_prefill_step(
                     p.enable_thinking,
                     think_end_token,
                     tool_call_start_token,
+                    p.min_tokens,
+                    p.require_tool_call,
                 ),
                 &sched.levers.sampling(),
                 sched.io.tel.dumps(),
@@ -225,6 +253,11 @@ pub(super) fn run_batched_prefill_step(
                 }
                 Err(e) => {
                     tracing::error!("Batched prefill[{i}] sampling: {e:#}");
+                    send_error_to_sink(
+                        &sched.io,
+                        &mut p.sink,
+                        &format!("prefill sampling failed: {e:#}"),
+                    );
                     completed_indices.push((i, None));
                 }
             }

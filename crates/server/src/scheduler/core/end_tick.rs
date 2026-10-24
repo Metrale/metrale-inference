@@ -14,10 +14,32 @@ impl SchedulerCore {
         // 2026-09-25: Deadline sweep before retirement, so a timed-out sequence retires
         // in this same tick.
         enforce_request_deadlines(&self.ctx.io, &mut self.active);
+        // 2026-10-20: Parked requests carry `timeout_at` too; nothing else
+        // checked it, so a request parked past its deadline hung forever.
+        enforce_parked_deadlines(
+            self.ctx.io.dev.model(),
+            &self.ctx.io,
+            self.ctx.io.spill.as_deref(),
+            &mut self.prefilling,
+            &mut self.swapped,
+            &mut self.preempted,
+        );
         // 2026-09-25: A finishing row releases its slot and blocks at retirement; a step
         // still running ahead may be writing them, so it settles first (its
         // row for the finished sequence is the over-run it discards).
         if self.pipeline.has_inflight() && self.active.iter().any(|a| a.finished) {
+            self.drain_pipeline();
+        }
+        // 2026-10-20: Swap-in and preempt-resume below append rows to
+        // `active`; a step held in flight was launched against the
+        // pre-append batch, and its settle asserts the batch it was launched
+        // with. When an append is actually pending, settle the held step
+        // now, so the append lands on an empty pipeline. When nothing is
+        // parked the pipeline stays held: launch-ahead needs the in-flight
+        // step to feed from.
+        if self.pipeline.has_inflight()
+            && (!self.swapped.is_empty() || !self.preempted.is_empty())
+        {
             self.drain_pipeline();
         }
         let Self {

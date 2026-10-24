@@ -187,11 +187,82 @@ fn tp2_local_bytes_are_exact() {
     );
 }
 
-/// 2026-09-25: A head count that `tp_size` does not divide is refused.
+/// 2026-10-08: Every sharded tensor's per-rank slices, in rank order, are contiguous and cover
+/// the full tensor along its sharded axis; replicated tensors are whole on every rank.
+fn assert_ranks_partition(ranks: &[KdaTpPlan]) {
+    for (i, t0) in ranks[0].tensors.iter().enumerate() {
+        let (mut next, mut bytes) = (0usize, 0usize);
+        for p in ranks {
+            let t = &p.tensors[i];
+            assert_eq!(t.name, t0.name, "tensor order must match across ranks");
+            match t.kind {
+                KdaShard::Replicated => assert_eq!(t.local_bytes(), t.full_bytes(), "{}", t.name),
+                KdaShard::HeadRows | KdaShard::ChannelRows => {
+                    assert_eq!(t.src_row_offset, next, "{} rank {}", t.name, p.tp_rank);
+                    assert_eq!(t.local_row_elems, t.full_row_elems, "{}", t.name);
+                    next += t.local_rows;
+                }
+                KdaShard::ChannelCols => {
+                    assert_eq!(t.src_col_offset, next, "{} rank {}", t.name, p.tp_rank);
+                    assert_eq!(t.local_rows, t.full_rows, "{}", t.name);
+                    next += t.local_row_elems;
+                }
+            }
+            bytes += t.local_bytes();
+        }
+        match t0.kind {
+            KdaShard::Replicated => {}
+            KdaShard::HeadRows | KdaShard::ChannelRows => {
+                assert_eq!(next, t0.full_rows, "{} covered", t0.name);
+                assert_eq!(bytes, t0.full_bytes(), "{} bytes", t0.name);
+            }
+            KdaShard::ChannelCols => {
+                assert_eq!(next, t0.full_row_elems, "{} covered", t0.name);
+                assert_eq!(bytes, t0.full_bytes(), "{} bytes", t0.name);
+            }
+        }
+    }
+}
+
+/// 2026-10-08: TP=3 splits the 64 heads 22/21/21, every sharded tensor partitions exactly in
+/// whole heads, and the 256-channel rule holds on every rank (`2 * 21 * 128 = 21 * 256`).
 #[test]
-fn indivisible_head_count_is_rejected() {
-    let e = KdaTpPlan::new(0, 3, H, HD, HEADS, CONV_K, GATE_RANK).unwrap_err();
-    assert!(e.to_string().contains("divisible"), "unexpected error: {e}");
+fn tp3_splits_the_heads_22_21_21_and_partitions_every_tensor() {
+    let ranks: Vec<KdaTpPlan> = (0..3).map(|r| plan(r, 3)).collect();
+    assert_eq!(
+        ranks
+            .iter()
+            .map(|p| (p.head_start, p.local_heads))
+            .collect::<Vec<_>>(),
+        vec![(0, 22), (22, 21), (43, 21)]
+    );
+    assert_ranks_partition(&ranks);
+    for p in &ranks {
+        assert!(p.needs_output_all_reduce());
+        // 2026-10-08: Per-head and per-channel slices stay aligned to the same heads.
+        let (a, d) = (p.get("A_log").unwrap(), p.get("dt_bias").unwrap());
+        assert_eq!(a.src_row_offset, p.head_start);
+        assert_eq!(d.src_row_offset, p.head_start * HD);
+        assert_eq!(d.local_rows, p.local_heads * HD);
+        assert_eq!(p.get("o_proj").unwrap().local_row_elems, p.local_heads * HD);
+    }
+}
+
+/// 2026-10-08: TP=2 through the shared partition check, so the check itself is proven on the
+/// geometry whose offsets the tests above pin by hand.
+#[test]
+fn tp2_partitions_through_the_shared_check() {
+    assert_ranks_partition(&[plan(0, 2), plan(1, 2)]);
+}
+
+/// 2026-10-08: Fewer heads than ranks would leave a rank with none; refused.
+#[test]
+fn fewer_heads_than_ranks_is_rejected() {
+    let e = KdaTpPlan::new(0, 3, H, HD, 2, CONV_K, GATE_RANK).unwrap_err();
+    assert!(
+        e.to_string().contains("own nothing"),
+        "unexpected error: {e}"
+    );
 }
 
 /// 2026-09-25: The 256-channel rule is checked on the local q|k width.

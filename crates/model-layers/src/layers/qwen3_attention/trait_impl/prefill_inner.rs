@@ -72,7 +72,7 @@ impl Qwen3AttentionLayer {
         // 2026-09-25: `METRALE_OP_DUMP` hook: the layer's input hidden state (last token).
         if num_tokens > 0 {
             super::super::op_dump::dump_bf16(
-                ctx.gpu,
+                ctx,
                 hidden,
                 (num_tokens - 1) * h * bf16,
                 h,
@@ -100,7 +100,7 @@ impl Qwen3AttentionLayer {
         // the Q/K/V projections' input.
         if num_tokens > 0 {
             super::super::op_dump::dump_bf16(
-                ctx.gpu,
+                ctx,
                 normed,
                 (num_tokens - 1) * h * bf16,
                 h,
@@ -317,7 +317,7 @@ impl Qwen3AttentionLayer {
         // token), the FFN's input.
         if num_tokens > 0 {
             super::super::op_dump::dump_bf16(
-                ctx.gpu,
+                ctx,
                 ctx.buffers.norm_output(),
                 (num_tokens - 1) * h * bf16,
                 h,
@@ -329,7 +329,9 @@ impl Qwen3AttentionLayer {
 
         // 2026-09-25: `METRALE_PREFILL_HOST_TIMING=1`: host wall-clock time of this
         // layer's FFN half, taken with no synchronize.
-        let t_ffn = (std::env::var("METRALE_PREFILL_HOST_TIMING").as_deref() == Ok("1"))
+        let t_ffn = self
+            .levers
+            .prefill_host_timing
             .then(std::time::Instant::now);
         // 2026-09-25: LongCat shortcut MoE (producer): runs before the dense FFN
         // (both write `moe_output`), folds the zero experts in, and stashes the
@@ -359,7 +361,7 @@ impl Qwen3AttentionLayer {
             // buffer. Not the same as "moe_out" below, the dense FFN output.
             if num_tokens > 0 {
                 super::super::op_dump::dump_bf16(
-                    ctx.gpu,
+                    ctx,
                     moe_out,
                     (num_tokens - 1) * h * bf16,
                     h,
@@ -383,7 +385,7 @@ impl Qwen3AttentionLayer {
         // any post-FFN norm or residual add.
         if num_tokens > 0 {
             super::super::op_dump::dump_bf16(
-                ctx.gpu,
+                ctx,
                 dense_out,
                 (num_tokens - 1) * h * bf16,
                 h,

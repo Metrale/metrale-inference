@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-kv-codec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: the KV-cache codec registry (xPEAR): one table row per codec, the layout math derived from it, and the resolved KV-cache plan. Pure: no_std + alloc."
+
+# 2026-10-18: Pure (no_std + alloc, builds for both wasm32 targets): the circuit and
+# serve-identity core crates read it without linking a device crate.
+[package.metadata.metrale]
+role = "core"
+
+[dependencies]
+metrale-error = { workspace = true }
+
+[lints]
+workspace = true

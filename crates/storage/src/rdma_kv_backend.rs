@@ -30,6 +30,7 @@ use anyhow::{Context, Result, bail};
 use crate::backend::{ReadRequest, StorageBackend};
 use crate::cuda_min::{PinnedBuffer, stream_sync};
 use crate::group::{GroupKey, GroupLayout};
+use crate::links::StorageLinks;
 
 mod rail;
 
@@ -41,7 +42,7 @@ pub struct RdmaKvBackend {
     remote_base: u64,
     // 2026-09-25: Round-robin rail cursor for writes.
     rr: usize,
-    /// 2026-09-25: Zero-copy restore (`METRALE_KV_ZERO_COPY=1`): the RDMA READ lands
+    /// 2026-09-25: Zero-copy restore (`StorageLinks::kv_zero_copy`): the RDMA READ lands
     /// in the destination itself, with no bounce and no `copy_h2d`. Cleared for good
     /// the first time a destination cannot be registered.
     zero_copy: bool,
@@ -55,9 +56,8 @@ unsafe impl Sync for RdmaKvBackend {}
 impl RdmaKvBackend {
     /// 2026-09-25: Connect to the peer at `addr`, request an arena that holds every
     /// group of `layout`, bring up the rails with `metrale_gpu_sys::railset::RailSet`,
-    /// and register each rail's bounce ring.
-    pub fn connect(addr: &str, layout: GroupLayout) -> Result<Self> {
-        use metrale_gpu_sys::env::{first_set, first_set_u32};
+    /// and register each rail's bounce ring. Rails, depth and zero-copy come from `links`.
+    pub fn connect(addr: &str, layout: GroupLayout, links: &StorageLinks) -> Result<Self> {
         use metrale_gpu_sys::railset::{RailSet, RailSpec};
 
         let group_bytes = layout.group_bytes() as usize;
@@ -67,27 +67,14 @@ impl RdmaKvBackend {
             * (layout.num_kv_heads as u64);
         let total_bytes = num_groups * layout.group_stride;
 
-        // 2026-09-25: Rail 0 from `METRALE_EXPERT_RDMA_DEV`/`GID`, rail 1 (only with
-        // `METRALE_KV_DUAL_RAIL=1`) from `METRALE_KV_RAIL2_DEV`/`GID`; a random 24-bit
-        // PSN per rail.
-        let spec =
-            |dev: String, gid: u32| RailSpec::new(dev, gid, rand::random::<u32>() & 0xff_ffff);
-        let rail0 = spec(
-            first_set(&["METRALE_EXPERT_RDMA_DEV"], "roceP2p1s0f1"),
-            first_set_u32(&["METRALE_EXPERT_RDMA_GID"], 3),
-        );
-        let dual = std::env::var("METRALE_KV_DUAL_RAIL").ok().as_deref() == Some("1");
-        let specs: Vec<RailSpec> = if dual {
-            let rail1 = spec(
-                first_set(&["METRALE_KV_RAIL2_DEV"], "rocep1s0f1"),
-                first_set_u32(&["METRALE_KV_RAIL2_GID"], 3),
-            );
-            vec![rail0, rail1]
-        } else {
-            vec![rail0]
-        };
+        // 2026-09-25: The KV rails (`StorageLinks::kv_rails`); a random 24-bit PSN per rail.
+        let specs: Vec<RailSpec> = links
+            .kv_rails()
+            .into_iter()
+            .map(|r| RailSpec::new(r.dev, r.gid, rand::random::<u32>() & 0xff_ffff))
+            .collect();
         let n_rails = specs.len();
-        let depth: usize = first_set_u32(&["METRALE_KV_PIPELINE_DEPTH"], 16).clamp(1, 128) as usize;
+        let depth = links.kv_pipeline_depth;
 
         let mut stream =
             TcpStream::connect(addr).with_context(|| format!("connect kv peer {addr}"))?;
@@ -152,7 +139,7 @@ impl RdmaKvBackend {
             layout,
             remote_base: base,
             rr: 0,
-            zero_copy: std::env::var("METRALE_KV_ZERO_COPY").ok().as_deref() == Some("1"),
+            zero_copy: links.kv_zero_copy,
             _stream: stream,
         })
     }

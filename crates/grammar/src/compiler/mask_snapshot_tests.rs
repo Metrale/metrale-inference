@@ -41,7 +41,7 @@ fn compiler(info: &TokenizerInfo) -> GrammarCompiler {
 }
 
 /// The coherency gate's `get_weather` arguments (#918), as a bare JSON
-/// schema so this test needs nothing from `metrale-server`.
+/// schema so this test needs nothing from `met`.
 const WEATHER_SCHEMA: &str = r#"{"type":"object","properties":{
     "city":{"type":"string"},"days":{"type":"integer"}},
     "required":["city","days"]}"#;

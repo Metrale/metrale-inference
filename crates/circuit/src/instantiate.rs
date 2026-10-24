@@ -11,13 +11,15 @@
 //! Invariants: see [`crate::circuit_toml`]; every check there is enforced here, in file
 //! order, and the first failure is returned.
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use crate::circuit_toml::{
-    BlockFile, CircuitError, CircuitFile, LayoutRule, NodeFile, layout_rule, parse_file, when_holds,
+    BlockFile, CircuitError, CircuitFile, NodeFile, layout_rule, parse_file, when_holds,
 };
 use crate::format::Format;
-use crate::ir::{ArchShape, BlockInstance, Circuit, LayerKind, Node, OpKind, Section};
+use crate::ir::{ArchShape, BlockInstance, Circuit, Node, OpKind, Section};
 use crate::precision::{EdgePrecision, LinearFormats};
 
 /// 2026-09-28: Parse `text`, merge the block libraries it includes (`includes`: name to
@@ -30,11 +32,70 @@ pub fn instantiate(
     precision: &dyn EdgePrecision,
 ) -> Result<Circuit, CircuitError> {
     let file = parse_file(text, includes)?;
+    build(&file, shape, precision, None)
+}
+
+/// 2026-10-23: The parallel spec a circuit TOML declares (`[parallel.<dim>]`), for a deployment
+/// to place its parts ([`crate::parallel::place`]).
+pub fn parallel_spec(
+    text: &str,
+    includes: &[(&str, &str)],
+) -> Result<crate::parallel::ParallelSpec, CircuitError> {
+    Ok(parse_file(text, includes)?.parallel)
+}
+
+/// 2026-10-23: Rank `at.rank`'s circuit of `layout`: the same TOML at the rank's dims, with each
+/// edge's sharding derived and the collectives inserted ([`crate::parallel`]). At one rank it is
+/// [`instantiate`]'s circuit.
+pub fn instantiate_rank(
+    text: &str,
+    includes: &[(&str, &str)],
+    shape: &ArchShape,
+    precision: &dyn EdgePrecision,
+    at: crate::parallel::RankOf<'_>,
+) -> Result<Circuit, CircuitError> {
+    let file = parse_file(text, includes)?;
+    let perr = |e: crate::parallel::ParallelError| CircuitError::Parallel(e.to_string());
+    let dims = crate::parallel::rank_dims(&file.parallel, &shape.dims, at).map_err(perr)?;
+    let slices = crate::parallel::slices(&file.parallel, &shape.dims, at).map_err(perr)?;
+    let marked = slices
+        .iter()
+        .filter(|(d, _)| file.parallel[*d].scope == crate::parallel::Scope::Marked)
+        .map(|(d, s)| (d.clone(), s.map_or(0, |(_, len)| len)))
+        .collect();
+    let rank_shape = ArchShape {
+        layer_kinds: shape.layer_kinds.clone(),
+        dims,
+    };
+    let par = shard::Par {
+        spec: &file.parallel,
+        layout: at.layout,
+        rank: at.rank,
+        whole: shape.dims.clone(),
+        shards: BTreeMap::new(),
+        marked,
+        idle_reads: BTreeSet::new(),
+        idle_access: Vec::new(),
+    };
+    build(&file, &rank_shape, precision, Some(par))
+}
+
+fn build(
+    file: &CircuitFile,
+    shape: &ArchShape,
+    precision: &dyn EdgePrecision,
+    par: Option<shard::Par<'_>>,
+) -> Result<Circuit, CircuitError> {
     let rule = layout_rule(&file.layout)?;
-    check_dims(&file, shape)?;
-    let sequence = block_sequence(&file, &rule, &shape.layer_kinds, &shape.dims)?;
+    check_dims(file, shape)?;
+    if let Some(bad) = file.parallel.keys().find(|d| !file.dims.contains(d)) {
+        return Err(CircuitError::Parallel(format!(
+            "`[parallel.{bad}]` is not in the circuit's `dims` list"
+        )));
+    }
+    let sequence = block_sequence(file, &rule, &shape.layer_kinds, &shape.dims)?;
     let mut b = Builder {
-        file: &file,
+        file,
         shape,
         precision,
         circuit: Circuit {
@@ -49,129 +110,13 @@ pub fn instantiate(
         },
         stream: None,
         quantized: BTreeMap::new(),
+        par,
+        absent: BTreeMap::new(),
     };
     for (template, layer, section, module) in sequence {
         b.block(&template, layer, section, module)?;
     }
     b.finish()
-}
-
-fn check_dims(file: &CircuitFile, shape: &ArchShape) -> Result<(), CircuitError> {
-    for d in &file.dims {
-        if !shape.dims.contains_key(d) {
-            return Err(CircuitError::ShapeMismatch(format!(
-                "circuit `{}` needs dim `{d}`, which the arch shape does not give",
-                file.arch
-            )));
-        }
-    }
-    Ok(())
-}
-
-/// 2026-09-30: One block to instantiate: template, layer, section, and a module that replaces
-/// the draft module for its `{L}`.
-type Planned = (String, Option<usize>, Section, Option<String>);
-
-fn block_sequence(
-    file: &CircuitFile,
-    rule: &LayoutRule,
-    kinds: &[LayerKind],
-    dims: &BTreeMap<String, u64>,
-) -> Result<Vec<Planned>, CircuitError> {
-    if kinds.is_empty() {
-        return Err(CircuitError::Layout("the arch shape has no layers".into()));
-    }
-    let mut used = BTreeSet::new();
-    let mut out = Vec::new();
-    let known = |name: &str, used: &mut BTreeSet<String>| {
-        if !file.block.contains_key(name) {
-            return Err(CircuitError::Layout(format!("no block template `{name}`")));
-        }
-        used.insert(name.to_string());
-        Ok(())
-    };
-    for name in &file.prologue {
-        known(name, &mut used)?;
-        out.push((name.clone(), None, Section::Main, None));
-    }
-    // 2026-09-30: The layout blocks per kind, with the overrides of every switch that holds.
-    let mut layout = file.layout.blocks.clone();
-    for (w, over) in &file.layout.when {
-        for names in over.values() {
-            for n in names {
-                known(n, &mut used)?;
-            }
-        }
-        if when_holds(w, &file.dims, dims)? {
-            layout.extend(over.clone());
-        }
-    }
-    for (i, kind) in kinds.iter().enumerate() {
-        if let LayoutRule::Interval { period } = rule {
-            let want = if (i + 1) % period == 0 {
-                LayerKind::FullAttention
-            } else {
-                LayerKind::LinearAttention
-            };
-            if *kind != want {
-                return Err(CircuitError::Layout(format!(
-                    "layer {i} is {} but the interval-{period} layout puts {} there",
-                    kind.name(),
-                    want.name()
-                )));
-            }
-        }
-        let blocks = layout.get(kind.name()).ok_or_else(|| {
-            CircuitError::Layout(format!(
-                "layer {i} is {}, which the layout maps to no blocks",
-                kind.name()
-            ))
-        })?;
-        for name in blocks {
-            known(name, &mut used)?;
-            out.push((name.clone(), Some(i), Section::Main, None));
-        }
-    }
-    for name in &file.epilogue {
-        known(name, &mut used)?;
-        out.push((name.clone(), None, Section::Main, None));
-    }
-    let on = match &file.draft_when {
-        Some(w) => when_holds(w, &file.dims, dims)?,
-        None => true,
-    };
-    let mut draft = &file.draft;
-    for (w, list) in &file.draft_variant {
-        for entry in list {
-            known(entry.split('@').next().unwrap_or_default(), &mut used)?;
-        }
-        if when_holds(w, &file.dims, dims)? {
-            draft = list;
-        }
-    }
-    for entry in &file.draft {
-        known(entry.split('@').next().unwrap_or_default(), &mut used)?;
-    }
-    if on {
-        for entry in draft {
-            let (name, module) = match entry.split_once('@') {
-                Some((n, m)) => (n.to_string(), Some(m.to_string())),
-                None => (entry.clone(), None),
-            };
-            out.push((name, None, Section::Draft, module));
-        }
-    }
-    if !file.draft.is_empty() && file.draft_module.is_none() {
-        return Err(CircuitError::Layout(
-            "`draft` blocks need a `draft_module` for their bindings".into(),
-        ));
-    }
-    if let Some(unused) = file.local_blocks.iter().find(|k| !used.contains(*k)) {
-        return Err(CircuitError::Layout(format!(
-            "block template `{unused}` is never used"
-        )));
-    }
-    Ok(out)
 }
 
 struct Builder<'a> {
@@ -183,6 +128,10 @@ struct Builder<'a> {
     /// 2026-09-29: `(edge, format, owning projection of a static scale)` to the edge holding
     /// it quantized to that format.
     quantized: BTreeMap<(usize, Format, Option<String>), usize>,
+    /// 2026-10-23: The rank a rank circuit is built for; `None` for the whole model.
+    par: Option<shard::Par<'a>>,
+    /// 2026-10-23: The current block's edges this rank does not hold (a rank circuit only).
+    absent: BTreeMap<String, shard::Absent>,
 }
 
 impl Builder<'_> {
@@ -207,6 +156,7 @@ impl Builder<'_> {
             (None, Section::Main) => (template.to_string(), None),
         };
         let first = self.circuit.nodes.len();
+        self.absent.clear();
         let mut local: BTreeMap<String, usize> = BTreeMap::new();
         let stream_in = match &tpl.stream_in {
             Some(name) => {
@@ -243,6 +193,9 @@ impl Builder<'_> {
             }
             self.node(template, &prefix, layer, module.as_deref(), nf, &mut local)?;
         }
+        if self.par.is_some() {
+            self.seal_boundary(template, &prefix, layer, tpl, &mut local)?;
+        }
         for out in &tpl.outputs {
             let name = out.edge();
             let e = *local.get(name).ok_or_else(|| {
@@ -273,7 +226,11 @@ impl Builder<'_> {
             }
             None => None,
         };
-        check_state_access(template, &self.circuit, first_state, first)?;
+        let idle = match self.par.is_some() {
+            true => self.drop_idle_states(first_state, first),
+            false => Vec::new(),
+        };
+        check_state_access(template, &self.circuit, first_state, first, &idle)?;
         self.circuit.blocks.push(BlockInstance {
             template: template.to_string(),
             layer,
@@ -316,6 +273,13 @@ impl Builder<'_> {
                 node: nf.id.clone(),
                 source,
             })?;
+        let out_shards = match self.par {
+            None => None,
+            Some(_) => match self.shard_node(template, prefix, layer, nf, &op, local)? {
+                shard::Run::Idle => return Ok(()),
+                shard::Run::Go(s) => Some(s),
+            },
+        };
         let id = format!("{prefix}.{}", nf.id);
         let mut inputs = Vec::with_capacity(nf.inputs.len());
         for name in &nf.inputs {
@@ -340,11 +304,12 @@ impl Builder<'_> {
             });
         }
         let formats = match nf.unquantized {
-            true => edges::unquantized(
-                &id,
-                &op,
-                inputs.first().map(|&x| self.circuit.edges[x].format),
-            )?,
+            true => {
+                let input = inputs.first().map(|&x| self.circuit.edges[x].format);
+                let bf16 = edges::unquantized(&id, &op, input)?;
+                let named = binding.first().and_then(|m| self.precision.named(&m.replace('*', "0")));
+                named.or(bf16)
+            }
             false => self.resolve(&id, &op, &binding, &inputs)?,
         };
         if let Some(f) = formats {
@@ -377,6 +342,9 @@ impl Builder<'_> {
             let e = self.edge(template, prefix, idx, ef)?;
             local.insert(ef.edge.clone(), e);
             outputs.push(e);
+        }
+        if let Some(shards) = out_shards {
+            self.record_shards(template, &outputs, shards)?;
         }
         if let OpKind::ActQuant(f) = op {
             for &o in &outputs {
@@ -471,8 +439,9 @@ impl Builder<'_> {
     }
 
     fn finish(self) -> Result<Circuit, CircuitError> {
-        for e in &self.circuit.edges {
-            if e.consumers.is_empty() && !e.is_output {
+        let idle = self.par.as_ref().map(|p| &p.idle_reads);
+        for (i, e) in self.circuit.edges.iter().enumerate() {
+            if e.consumers.is_empty() && !e.is_output && !idle.is_some_and(|r| r.contains(&i)) {
                 return Err(CircuitError::DanglingOutput(e.id.clone()));
             }
         }
@@ -489,7 +458,11 @@ fn dup(block: &str, name: &str) -> CircuitError {
 
 #[path = "instantiate/edges.rs"]
 mod edges;
+#[path = "instantiate/shard.rs"]
+mod shard;
+mod layout;
 mod states;
+use layout::{block_sequence, check_dims};
 use states::check_state_access;
 pub(crate) use states::state_decl;
 

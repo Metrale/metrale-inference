@@ -39,23 +39,15 @@
 //! Owner: model-arch, DeepSeek-V4.1.
 //! Invariants: none beyond the types.
 
-use std::sync::OnceLock;
-
 use anyhow::{Context, Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, GraphHandle};
 
-use super::step::{trace_hash, trace_on};
+use super::step::trace_hash;
 use super::step_seg_run::SAVE_N;
 use super::{DeepSeekV41Layer, V41LayerState};
 use crate::attn_v41::LayerRole;
 use crate::moe_v41::MoeV41;
 use metrale_model_layers::layer::ForwardContext;
-
-/// 2026-09-25: `METRALE_DS41_STEP_GRAPH=1`, read once.
-pub fn step_graph_on() -> bool {
-    static V: OnceLock<bool> = OnceLock::new();
-    *V.get_or_init(|| std::env::var("METRALE_DS41_STEP_GRAPH").is_ok_and(|v| v == "1"))
-}
 
 /// 2026-09-25: One captured segment. `end` is the layer whose attention input
 /// closes it (`n_layers` for the last one); layers below it are covered.
@@ -252,7 +244,7 @@ impl DeepSeekV41Layer {
                 })();
                 self.close_or_disable(gpu, &mut seg, cap, self.idx, cs, r);
             } else {
-                let arena = MoeV41::arena_of(&rt.lru.lock().unwrap());
+                let arena = MoeV41::arena_of(&rt.streamed()?.lru.lock().unwrap());
                 let save = seg.save[self.idx];
                 let fork = (seg.cap_side, seg.ev_fork, seg.ev_join);
                 let r = (|| -> Result<()> {
@@ -306,7 +298,7 @@ impl DeepSeekV41Layer {
             seg.launches += 1;
             let Some(k) = first_miss else {
                 seg.skip_until = end;
-                if trace_on() {
+                if self.rt.levers.trace {
                     // 2026-09-25: `METRALE_DS41_TRACE=1`: the highway after the
                     // segment, to diff against the eager trace's line for layer end-1.
                     gpu.synchronize(stream)?;
@@ -338,7 +330,7 @@ impl DeepSeekV41Layer {
         }
         // 2026-09-25: No graph yet: record from here on the recording stream
         // while this token runs eagerly on the compute stream.
-        let arena = MoeV41::arena_of(&rt.lru.lock().unwrap());
+        let arena = MoeV41::arena_of(&rt.streamed()?.lru.lock().unwrap());
         let save = seg.save[self.idx];
         let fork = (seg.cap_side, seg.ev_fork, seg.ev_join);
         let r = gpu
@@ -416,7 +408,7 @@ impl DeepSeekV41Layer {
     }
 
     fn log_step(&self, seg: &SegState, start_pos: usize) {
-        if step_log_on() {
+        if self.rt.levers.step_graph_log {
             tracing::info!(
                 "DS41 step graph pos {start_pos}: {} launches, {} miss falls so far",
                 seg.launches,
@@ -424,11 +416,4 @@ impl DeepSeekV41Layer {
             );
         }
     }
-}
-
-/// 2026-09-25: `METRALE_DS41_STEP_GRAPH_LOG=1`, read once: the running counts
-/// whenever the last segment replays without a miss, and a line per segment miss.
-pub(super) fn step_log_on() -> bool {
-    static V: OnceLock<bool> = OnceLock::new();
-    *V.get_or_init(|| std::env::var("METRALE_DS41_STEP_GRAPH_LOG").is_ok_and(|v| v == "1"))
 }

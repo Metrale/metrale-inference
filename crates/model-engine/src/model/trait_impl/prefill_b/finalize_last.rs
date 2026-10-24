@@ -9,6 +9,7 @@
 
 #![allow(unused_imports, dead_code, clippy::too_many_arguments)]
 
+use super::super::super::lm_head_vocab_tp::HeadRanks;
 use anyhow::Result;
 use metrale_cache::kv_cache::PagedKvCache;
 use metrale_gpu_runtime::gpu::DevicePtr;
@@ -62,7 +63,7 @@ impl TransformerModel {
         let hidden = self.buffers.hidden_states();
         let bs = kv_cache.block_size();
 
-        if std::env::var("METRALE_SSM_SAVE_DUMP").is_ok() {
+        if self.settings.telemetry.ssm_save_dump {
             self.ssm_pool.debug_state_checksum(
                 seq.slot_idx,
                 self.gpu.as_ref(),
@@ -125,7 +126,7 @@ impl TransformerModel {
         let eps = self.config.rms_norm_eps as f32;
         self.final_norm_apply(last_hidden, normed, 1, h as u32, eps, stream)?;
 
-        if std::env::var("METRALE_DIAG_GEMMA4").is_ok_and(|v| v == "1" || v == "true") {
+        if self.settings.telemetry.diag_gemma4 {
             self.gpu.synchronize(stream)?;
             let (vals, norm) = self.readback_bf16(normed, h.min(16))?;
             tracing::warn!(
@@ -134,13 +135,13 @@ impl TransformerModel {
             );
         }
 
-        if let Ok(dir) = std::env::var("METRALE_NEMO_DUMP")
+        if let Some(dir) = self.settings.telemetry.nemo_dump.as_deref()
             && !dir.is_empty()
         {
             self.gpu.synchronize(stream)?;
             let (vals, _) = self.readback_bf16(normed, h)?;
             let bytes: Vec<u8> = vals.iter().flat_map(|v| v.to_le_bytes()).collect();
-            std::fs::create_dir_all(&dir).ok();
+            std::fs::create_dir_all(dir).ok();
             std::fs::write(
                 std::path::Path::new(&dir).join("metrale_final_norm.bin"),
                 &bytes,
@@ -179,16 +180,16 @@ impl TransformerModel {
         // logits row: row 0 through `lm_head` (returning `decode_logits_ptr()`), other
         // rows through `lm_head_batched` at `logits_row * vocab_size` BF16 elements.
         let logits_ptr = if logits_row == 0 {
-            self.lm_head(normed, stream)?;
+            self.lm_head(normed, HeadRanks::Every, stream)?;
             self.decode_logits_ptr()
         } else {
             let v = self.config.vocab_size;
             let dst = self.buffers.logits().offset(logits_row * v * 2);
-            self.lm_head_batched(normed, 1, dst, stream)?;
+            self.lm_head_batched(normed, 1, dst, HeadRanks::Every, stream)?;
             dst
         };
 
-        if let Ok(dir) = std::env::var("METRALE_NEMO_DUMP")
+        if let Some(dir) = self.settings.telemetry.nemo_dump.as_deref()
             && !dir.is_empty()
         {
             self.gpu.synchronize(stream)?;
@@ -203,7 +204,7 @@ impl TransformerModel {
                 })
                 .collect();
             let lbytes: Vec<u8> = logit_vals.iter().flat_map(|v| v.to_le_bytes()).collect();
-            std::fs::create_dir_all(&dir).ok();
+            std::fs::create_dir_all(dir).ok();
             std::fs::write(
                 std::path::Path::new(&dir).join("metrale_logits.bin"),
                 &lbytes,
@@ -215,7 +216,7 @@ impl TransformerModel {
             tracing::info!("METRALE_NEMO_DUMP: top-10 logits = {top:?}");
         }
 
-        if std::env::var("METRALE_DIAG_GEMMA4").is_ok_and(|v| v == "1" || v == "true") {
+        if self.settings.telemetry.diag_gemma4 {
             self.gpu.synchronize(stream)?;
             let logits_ptr = self.buffers.logits();
             let n_logits = self.config.vocab_size;
@@ -301,7 +302,7 @@ impl TransformerModel {
                     seq.tail_checkpoint_tokens,
                     tokens.len(),
                     bs,
-                    super::exact_leaf::marconi_exact_enabled(),
+                    self.settings.server.marconi_exact,
                 )
         {
             // 2026-09-25: A checkpoint within two blocks of the prompt end already exists
@@ -323,7 +324,7 @@ impl TransformerModel {
                 super::super::super::block_mgmt::cache_acquires_refs(&acquired, kv_cache);
             }
         } else if self.ssm_snapshots.is_enabled() {
-            if std::env::var("METRALE_SSM_SAVE_DUMP").is_ok() {
+            if self.settings.telemetry.ssm_save_dump {
                 self.ssm_pool.debug_state_checksum(
                     seq.slot_idx,
                     self.gpu.as_ref(),

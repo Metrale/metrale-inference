@@ -85,14 +85,14 @@ pub(crate) const NAMES: [&str; NUM_PHASES] = [
 ];
 
 /// 2026-09-25: Per-phase microsecond accumulators. `SysTelemetry`
-/// (io/telemetry.rs) owns the one [`RunTiming::from_env`] builds.
+/// (io/telemetry.rs) owns the one the scheduler core arms from `SchedLevers::mtp_timing`.
 /// `GrammarState` (grammar/state.rs) records `GrammarFill` and `ForcedTok`
 /// into its own `timing`, which is always disarmed: its builder sets
 /// `Arc::default()`, and the only `with_timing` caller passes the same.
 #[derive(Debug)]
 pub struct RunTiming {
-    /// 2026-09-25: True when [`RunTiming::from_env`] saw
-    /// `METRALE_MTP_TIMING=1`. When false, `record` returns at once.
+    /// 2026-09-25: True when the run was built with `METRALE_MTP_TIMING` on
+    /// (`SchedLevers::mtp_timing`). When false, `record` returns at once.
     pub armed: bool,
     sum_us: [AtomicU64; NUM_PHASES],
     count: [AtomicU64; NUM_PHASES],
@@ -101,6 +101,14 @@ pub struct RunTiming {
     /// (0 = none yet). Written by the drop, read by [`StepTimer::new`] to
     /// record [`Phase::Gap`].
     last_step_end_us: AtomicU64,
+    /// 2026-10-11: The backend's host round-trip counts at the last summary, so each summary
+    /// reports per-step syncs, H2D and D2H copies (`metrale_gpu_runtime::host_sync_counts`).
+    host_counts: std::sync::Mutex<metrale_gpu_runtime::host_sync_counts::HostSyncCounts>,
+    /// 2026-10-11: Host syncs per phase: each `record` charges its phase the syncs since the
+    /// previous `record` (any phase), so a sync between two marks goes to the later one.
+    sync_sum: [AtomicU64; NUM_PHASES],
+    /// 2026-10-11: The backend's sync count at the last `record`.
+    last_syncs: AtomicU64,
     /// 2026-09-25: Origin of the gap clock. `Instant` cannot live in an
     /// atomic, so gap timestamps are micros since this anchor; only their
     /// difference is recorded.
@@ -108,10 +116,6 @@ pub struct RunTiming {
 }
 
 impl RunTiming {
-    pub fn from_env() -> Self {
-        Self::new(std::env::var("METRALE_MTP_TIMING").ok().as_deref() == Some("1"))
-    }
-
     pub fn new(armed: bool) -> Self {
         Self {
             armed,
@@ -119,6 +123,9 @@ impl RunTiming {
             count: [const { AtomicU64::new(0) }; NUM_PHASES],
             steps: AtomicU64::new(0),
             last_step_end_us: AtomicU64::new(0),
+            host_counts: std::sync::Mutex::new(metrale_gpu_runtime::host_sync_counts::snapshot()),
+            sync_sum: [const { AtomicU64::new(0) }; NUM_PHASES],
+            last_syncs: AtomicU64::new(metrale_gpu_runtime::host_sync_counts::snapshot().syncs),
             anchor: Instant::now(),
         }
     }
@@ -135,6 +142,9 @@ impl RunTiming {
         let us = u64::try_from(since.elapsed().as_micros()).unwrap_or(u64::MAX);
         self.sum_us[phase as usize].fetch_add(us, Ordering::Relaxed);
         self.count[phase as usize].fetch_add(1, Ordering::Relaxed);
+        let now = metrale_gpu_runtime::host_sync_counts::snapshot().syncs;
+        let prev = self.last_syncs.swap(now, Ordering::Relaxed);
+        self.sync_sum[phase as usize].fetch_add(now.saturating_sub(prev), Ordering::Relaxed);
     }
 
     pub(crate) fn sum_us(&self, phase: Phase) -> u64 {
@@ -186,6 +196,34 @@ pub(crate) fn step_done(timing: &RunTiming, step_start: Instant, seq_len: usize)
         let fires = cnt as f64 / SUMMARY_PERIOD as f64;
         let _ = write!(line, " {}={per_step_ms:.2}ms(x{fires:.1})", NAMES[i]);
     }
+    // 2026-10-11: Host syncs per step by phase (`sync_sum`), nonzero phases only.
+    let mut by_phase = String::new();
+    for i in 0..NUM_PHASES {
+        let n = timing.sync_sum[i].swap(0, Ordering::Relaxed);
+        if n > 0 {
+            let _ = write!(
+                by_phase,
+                " {}={:.1}",
+                NAMES[i],
+                n as f64 / SUMMARY_PERIOD as f64
+            );
+        }
+    }
+    let now = metrale_gpu_runtime::host_sync_counts::snapshot();
+    let d = {
+        let mut last = timing.host_counts.lock().unwrap_or_else(|e| e.into_inner());
+        let d = now.since(*last);
+        *last = now;
+        d
+    };
+    let per = |n: u64| n as f64 / SUMMARY_PERIOD as f64;
+    let _ = write!(
+        line,
+        " host_syncs/step={:.1} h2d/step={:.1} d2h/step={:.1} syncs_by_phase:{by_phase}",
+        per(d.syncs),
+        per(d.h2d),
+        per(d.d2h)
+    );
     tracing::info!("MTP verify timing [{SUMMARY_PERIOD} steps, seq_len={seq_len}]:{line}");
 }
 

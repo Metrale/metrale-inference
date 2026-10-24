@@ -1,34 +1,36 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: Lever resolution tests: the default and the spelling of every switch, driven through the production `from_values`.
+//! 2026-09-25: Lever resolution tests: the default and the spelling of every switch, driven
+//! through the production `from_settings` over settings resolved from a fixed map.
 //!
 //! Owner: model-layers ops.
 //! Invariants: none beyond the types.
 
 use super::*;
-// 2026-09-25: `resolve` is private to `model_levers`; this module is its child, so it can reach
-// `from_values`.
-use super::resolve::from_values;
-use std::collections::HashMap;
+use crate::lever_equivalence::settings_from;
 
 /// 2026-09-25: Resolve against a fixed map instead of the process environment. `set_var` is
-/// process-global and would race the other tests in this binary.
+/// process-global and would race the other tests in this binary. 2026-10-17: the map goes through
+/// `metrale_settings::resolve` (`MapEnv`), then `ModelLevers::from_settings`.
 fn resolve(values: &[(&str, &str)]) -> ModelLevers {
-    let values: HashMap<_, _> = values.iter().copied().collect();
-    from_values(
-        |name| values.get(name).map(|value| (*value).to_owned()),
-        |name| values.contains_key(name),
-        0,
-        crate::drafter_context::DrafterContext::BOTH,
-        // 2026-09-25: The compiled target's `[defaults] decode_split_silu`, fixed on here;
-        // `target_defaults_tests` checks the declarations.
-        true,
-    )
+    let s = settings_from(values).unwrap_or_else(|e| panic!("{values:?}: {e:?}"));
+    // 2026-09-25: The compiled target's `[defaults] decode_split_silu`, fixed on here;
+    // `target_defaults_tests` checks the declarations. No pre-rotated weights.
+    ModelLevers::from_settings(&s, true, false).expect("the levers resolve")
+}
+
+/// 2026-10-17: True when the settings resolve refuses `name=value`.
+fn rejected(name: &str, value: &str) -> bool {
+    settings_from(&[(name, value)]).is_err()
 }
 
 /// 2026-09-25: More lever tests, in a child module so they share `resolve`.
 #[path = "model_levers_hot_path_tests.rs"]
 mod hot_path_levers;
+
+/// 2026-10-17: Every lever `from_settings` reads, probed against the frozen old reader.
+#[path = "model_levers_legacy_tests.rs"]
+mod legacy;
 
 #[test]
 fn the_opt_out_lever_is_on_by_default_and_every_opt_in_is_off() {
@@ -60,6 +62,9 @@ fn the_opt_out_lever_is_on_by_default_and_every_opt_in_is_off() {
             ssm_persistent: true,
             moe_zero_intermediates: true,
             shared_w4a4: true,
+            // 2026-10-22: The GLM-5.3 new-sequence levers, default on since today.
+            glm_keep_slot_graphs: true,
+            glm_mtp_state_pool: true,
             max_decode_seqs: 1,
             drafter: crate::drafter_context::DrafterContext::BOTH,
             ..ModelLevers::default()
@@ -107,7 +112,76 @@ fn exact_one_opt_ins_map_to_their_own_fields() {
             "{name}"
         );
     }
-    assert!(!resolve(&[("METRALE_K4_DIAG", "true")]).k4_diag);
+    // 2026-10-17: A settings switch: `true` arms it too (it did not under the old `== "1"`).
+    assert!(resolve(&[("METRALE_K4_DIAG", "true")]).k4_diag);
+}
+
+/// 2026-10-14: The new-sequence levers are opt-in switches (2026-10-17: settings switches), each
+/// on its own field only,
+/// off by default. 2026-10-22: The two GLM-5.3 ones are on by default since today; `0`, `off`
+/// and `false` turn each off, on its own field only.
+#[test]
+fn new_sequence_levers_are_strict_opt_ins_on_their_own_fields() {
+    let cases: [(&str, fn(&mut ModelLevers) -> &mut bool, bool); 3] = [
+        ("METRALE_SEQ_ALLOC_ASYNC", |l| &mut l.seq_alloc_async, false),
+        (
+            "METRALE_GLM_KEEP_SLOT_GRAPHS",
+            |l| &mut l.glm_keep_slot_graphs,
+            true,
+        ),
+        (
+            "METRALE_GLM_MTP_STATE_POOL",
+            |l| &mut l.glm_mtp_state_pool,
+            true,
+        ),
+    ];
+    for (name, field, default) in cases {
+        assert_eq!(*field(&mut resolve(&[])), default, "{name} default");
+        for off in ["0", "off", "false"] {
+            let mut l = resolve(&[(name, off)]);
+            assert!(!*field(&mut l), "{name} armed at {off:?}");
+            *field(&mut l) = default;
+            assert_eq!(l, resolve(&[]), "{name}={off} moved another field");
+        }
+        let mut armed = resolve(&[(name, "1")]);
+        assert!(*field(&mut armed), "{name} did not arm at =1");
+        *field(&mut armed) = default;
+        assert_eq!(armed, resolve(&[]), "{name} moved another field");
+    }
+}
+
+#[test]
+fn new_sequence_readback_names_each_lever_with_its_own_state() {
+    // 2026-10-22: The two GLM-5.3 levers are on by default since today, so each is probed off.
+    let all_off = [
+        ("METRALE_GLM_KEEP_SLOT_GRAPHS", "0"),
+        ("METRALE_GLM_MTP_STATE_POOL", "0"),
+    ];
+    let off = resolve(&all_off).new_sequence_readback();
+    assert_eq!(
+        off,
+        "METRALE_SEQ_ALLOC_ASYNC=off METRALE_GLM_KEEP_SLOT_GRAPHS=off METRALE_GLM_MTP_STATE_POOL=off"
+    );
+    assert_eq!(
+        resolve(&[]).new_sequence_readback(),
+        "METRALE_SEQ_ALLOC_ASYNC=off METRALE_GLM_KEEP_SLOT_GRAPHS=on METRALE_GLM_MTP_STATE_POOL=on"
+    );
+    let l1 = resolve(&[all_off[0], all_off[1], ("METRALE_SEQ_ALLOC_ASYNC", "1")])
+        .new_sequence_readback();
+    assert_eq!(
+        l1,
+        "METRALE_SEQ_ALLOC_ASYNC=on METRALE_GLM_KEEP_SLOT_GRAPHS=off METRALE_GLM_MTP_STATE_POOL=off"
+    );
+    let l3 = resolve(&[all_off[1]]).new_sequence_readback();
+    assert_eq!(
+        l3,
+        "METRALE_SEQ_ALLOC_ASYNC=off METRALE_GLM_KEEP_SLOT_GRAPHS=on METRALE_GLM_MTP_STATE_POOL=off"
+    );
+    let l2 = resolve(&[all_off[0]]).new_sequence_readback();
+    assert_eq!(
+        l2,
+        "METRALE_SEQ_ALLOC_ASYNC=off METRALE_GLM_KEEP_SLOT_GRAPHS=off METRALE_GLM_MTP_STATE_POOL=on"
+    );
 }
 
 #[test]
@@ -140,12 +214,18 @@ fn truthy_opt_ins_map_independently_and_presence_is_distinct() {
         );
     }
     assert!(resolve(&[("METRALE_BF16_TC_PROJ", "0")]).bf16_tc_proj);
-    // 2026-09-25: `TQ_PLUS_WEIGHT_ROTATION` is value-gated (`1` or `true`, any case), unlike the
-    // presence-gated `METRALE_BF16_TC_PROJ` above.
-    assert!(!resolve(&[]).weight_pre_rotated);
-    assert!(resolve(&[("TQ_PLUS_WEIGHT_ROTATION", "1")]).weight_pre_rotated);
-    assert!(resolve(&[("TQ_PLUS_WEIGHT_ROTATION", "TRUE")]).weight_pre_rotated);
-    assert!(!resolve(&[("TQ_PLUS_WEIGHT_ROTATION", "0")]).weight_pre_rotated);
+    // 2026-10-17: `weight_pre_rotated` is the caller's (`TQ_PLUS_WEIGHT_ROTATION`, a foreign name
+    // with no settings row): `from_settings` carries it and nothing else moves.
+    let s = settings_from(&[]).unwrap();
+    assert!(
+        !ModelLevers::from_settings(&s, true, false)
+            .unwrap()
+            .weight_pre_rotated
+    );
+    let mut rotated = ModelLevers::from_settings(&s, true, true).unwrap();
+    assert!(rotated.weight_pre_rotated);
+    rotated.weight_pre_rotated = false;
+    assert_eq!(rotated, resolve(&[]));
 
     // 2026-09-25: The SSM decode levers differ in polarity: `ssm_ms_profile`, `ssm_detail_profile`
     // and `gdn_fused_conv` are `=1` opt-ins, `ssm_gemv_batch4` is on unless `=0`, and
@@ -187,14 +267,15 @@ fn kill_switches_and_zero_opt_outs_keep_their_distinct_polarities() {
 }
 
 #[test]
-fn externally_resolved_shadow_and_drafter_values_are_carried() {
-    let d = from_values(
-        |_| None,
-        |_| false,
-        7,
-        crate::drafter_context::DrafterContext::OFF,
-        true,
-    );
+fn shadow_topk_and_drafter_come_from_the_speculative_group() {
+    let d = resolve(&[
+        ("METRALE_MTP_SHADOW_TOPK", "7"),
+        ("METRALE_NO_MTP_DRAFTER_CONTEXT", "1"),
+    ]);
     assert_eq!(d.shadow_topk, 7);
     assert_eq!(d.drafter, crate::drafter_context::DrafterContext::OFF);
+    // 2026-10-17: Capped at 8; a negative value reads as off, as the old `usize` parse did.
+    assert_eq!(resolve(&[("METRALE_MTP_SHADOW_TOPK", "50")]).shadow_topk, 8);
+    assert_eq!(resolve(&[("METRALE_MTP_SHADOW_TOPK", "-3")]).shadow_topk, 0);
+    assert!(rejected("METRALE_MTP_SHADOW_TOPK", "many"));
 }

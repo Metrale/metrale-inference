@@ -23,6 +23,7 @@ mod paged;
 mod paged_attn;
 mod paged_attn_batched;
 mod paged_attn_fp8k;
+mod paged_attn_trellis;
 mod paged_attn_turbok;
 mod paged_mla;
 mod paged_oproj;

@@ -5,8 +5,9 @@
 //
 // Owner: gb10 kernels.
 // Invariants:
-// - in and out are [N, K] row-major; scale_inv is [ceil(N / block_n), sk] and is FP32 when
-//   scale_is_fp32 != 0, else BF16. Per-row and per-tensor scales are the cases
+// - in and out are [N, K] row-major; scale_inv is [ceil(N / block_n), sk], read by
+//   scale_kind: 0 = BF16, 1 = FP32, 2 = E8M0 (one byte, decoded by mx_block_scale<true>: 2^(b - 127),
+//   0 for the codes 0 and 255). Per-row and per-tensor scales are the cases
 //   (block_n, block_k) = (1, K) and (N, K) with sk = 1.
 // - One thread per element; host launches use grid (ceil(K / 64), ceil(N / 4), 1) and
 //   block (64, 4, 1). Out-of-range threads return.
@@ -18,6 +19,8 @@
 
 
 #include <cuda_bf16.h>
+
+#include "mx_block_scale.cuh"
 
 __device__ __constant__ float E4M3_LUT_DEQ[256] = {
     0.0f, 0.001953125f, 0.00390625f, 0.005859375f,
@@ -95,7 +98,7 @@ extern "C" __global__ void dequant_fp8_blockscaled_bf16(
     unsigned int block_n,
     unsigned int block_k,
     unsigned int sk,
-    unsigned int scale_is_fp32
+    unsigned int scale_kind
 ) {
     unsigned int k = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int n = blockIdx.y * blockDim.y + threadIdx.y;
@@ -106,7 +109,9 @@ extern "C" __global__ void dequant_fp8_blockscaled_bf16(
     unsigned int scale_offset = sn_idx * sk + sk_idx;
 
     float scale;
-    if (scale_is_fp32) {
+    if (scale_kind == 2u) {
+        scale = mx_block_scale<true>(((const unsigned char*)scale_inv)[scale_offset], 0.0f);
+    } else if (scale_kind == 1u) {
         scale = ((const float*)scale_inv)[scale_offset];
     } else {
         unsigned short raw = ((const unsigned short*)scale_inv)[scale_offset];

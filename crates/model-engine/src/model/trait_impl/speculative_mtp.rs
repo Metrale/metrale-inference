@@ -64,9 +64,30 @@ impl TransformerModel {
         // The command and its words go on the wire before this rank enters the drafter
         // forward, or the worker is still waiting for a command when rank 0 reaches its
         // first all-reduce.
-        if self.multi_rank_protocol_active()
-            && self.proposer.as_ref().is_some_and(|p| p.needs_comm())
-        {
+        // 2026-10-10: A collective propose (the tensor-parallel DFlash drafter) sends its code
+        // alone; the drafter sends the rest itself (`DraftProposer::collective_propose`).
+        let protocol_active = self.multi_rank_protocol_active();
+        let collective_propose = protocol_active
+            && self
+                .proposer
+                .as_ref()
+                .is_some_and(|p| p.collective_propose());
+        if collective_propose {
+            self.ep_broadcast_cmd_for_seq(
+                seq.slot_idx as u32,
+                metrale_model_layers::speculative::EP_CMD_DFLASH_PROPOSE,
+            )?;
+            // 2026-10-10: The drafter's own exchange carries every rank's readiness
+            // (`dflash_head/tp_propose.rs`).
+            return self.run_mtp_propose_inner(
+                token,
+                position,
+                num_drafts,
+                seq,
+                grammar_bitmask,
+                false,
+            );
+        } else if protocol_active && self.proposer.as_ref().is_some_and(|p| p.needs_comm()) {
             self.ep_broadcast_cmd_for_seq(
                 seq.slot_idx as u32,
                 metrale_model_layers::speculative::EP_CMD_MTP_PROPOSE,
@@ -84,62 +105,33 @@ impl TransformerModel {
                     .load(std::sync::atomic::Ordering::Relaxed) as u32,
             )?;
         }
-        self.run_mtp_propose_inner(token, position, num_drafts, seq, grammar_bitmask)
-    }
-
-    /// 2026-09-25: Batched cross-sequence propose. Target hiddens are read from the verify
-    /// stash rows (`stash_idx[i]`), not from `mtp_hidden_save`. `Ok(None)` tells the caller
-    /// to fall back to the per-sequence propose: no proposer, the draft-confidence clamp
-    /// armed, no stash, a sequence without proposer state, or `propose_batch` unsupported.
-    pub(super) fn run_mtp_propose_batched_dispatch(
-        &self,
-        tokens: &[u32],
-        positions: &[usize],
-        stash_idx: &[usize],
-        num_drafts: usize,
-        seqs: &mut [&mut SequenceState],
-        out_conf: Option<&mut Vec<Vec<f32>>>,
-    ) -> Result<Option<Vec<Vec<u32>>>> {
-        let proposer = match &self.proposer {
-            Some(p) => p.as_ref(),
-            None => return Ok(None),
-        };
-        if self.verify_hidden_stash.is_null() {
-            return Ok(None);
-        }
-        let stream = self.gpu.default_stream();
-        let ctx = self.mtp_propose_ctx();
-        // 2026-09-25: Drafter context on each sequence's first propose; returns without
-        // work on later calls.
-        for seq in seqs.iter_mut() {
-            self.ensure_drafter_context(proposer, seq, &ctx, stream);
-        }
-        let h = self.config.hidden_size;
-        let hiddens: Vec<metrale_gpu_runtime::gpu::DevicePtr> = stash_idx
-            .iter()
-            .map(|&i| self.verify_hidden_stash.offset(i * h * 2))
-            .collect();
-        let mut states: Vec<&mut dyn metrale_model_layers::speculative::ProposerState> = Vec::new();
-        for seq in seqs.iter_mut() {
-            match seq.proposer_state.as_mut() {
-                Some(s) => states.push(s.as_mut()),
-                None => return Ok(None),
-            }
-        }
-        proposer.propose_batch(
-            tokens,
-            &hiddens,
-            positions,
-            num_drafts,
-            &mut states,
-            &ctx,
-            stream,
-            out_conf,
-        )
+        self.run_mtp_propose_inner(token, position, num_drafts, seq, grammar_bitmask, false)
     }
 
     /// 2026-09-25: The `ForwardContext` of the batched MTP propose and the batched catch-up.
-    fn mtp_propose_ctx(&self) -> ForwardContext<'_> {
+    /// 2026-10-10: Worker side of `EP_CMD_DFLASH_PROPOSE` on the command slot's proposer state
+    /// (`None` when the slot has none): the proposer's collective propose with the
+    /// communicator (`DraftProposer::propose_follower`). An error is returned: the collective
+    /// could not complete on this rank.
+    pub(in crate::model) fn ep_worker_dflash_propose(
+        &self,
+        state: Option<&mut Box<dyn metrale_model_layers::speculative::ProposerState>>,
+    ) -> Result<()> {
+        let Some(proposer) = self.proposer.as_ref() else {
+            anyhow::bail!("EP_CMD_DFLASH_PROPOSE on a rank without a proposer");
+        };
+        let ctx = ForwardContext {
+            comm: self.comm_ref(),
+            ..self.mtp_propose_ctx()
+        };
+        let stream = self.gpu.default_stream();
+        match state {
+            Some(st) => proposer.propose_follower(Some(st.as_mut()), &ctx, stream),
+            None => proposer.propose_follower(None, &ctx, stream),
+        }
+    }
+
+    pub(super) fn mtp_propose_ctx(&self) -> ForwardContext<'_> {
         ForwardContext {
             buffers: &self.buffers,
             hc_row_offset: 0,
@@ -147,8 +139,10 @@ impl TransformerModel {
             config: &self.config,
             dispatch: &self.dispatch,
             moe_lora_route: self.decode_moe_route(),
+            ab_levers: metrale_model_layers::layer::AbLevers::NONE,
             derived: &self.derived,
             levers: &self.levers,
+            settings: &self.settings,
             stats: &self.stats,
             attn_metadata: None,
             profile: false,
@@ -171,7 +165,9 @@ impl TransformerModel {
         &self,
         slot_rows: &[(usize, usize)],
     ) -> Result<()> {
-        if !self.levers.mtp_kv_exact || self.verify_catchup_stash.is_null() {
+        if !(self.levers.mtp_kv_exact || self.levers.mtp_accepted_rows)
+            || self.verify_catchup_stash.is_null()
+        {
             return Ok(());
         }
         let cap = metrale_model_layers::layer::VERIFY_WY_TABLE_SEQS
@@ -201,7 +197,9 @@ impl TransformerModel {
         first_pos: &[usize],
         seqs: &mut [&mut SequenceState],
     ) -> Result<usize> {
-        if !self.levers.mtp_kv_exact || self.verify_catchup_stash.is_null() {
+        if !(self.levers.mtp_kv_exact || self.levers.mtp_accepted_rows)
+            || self.verify_catchup_stash.is_null()
+        {
             return Ok(0);
         }
         let Some(proposer) = self.proposer.as_ref().map(|p| p.as_ref()) else {

@@ -32,7 +32,7 @@ fn lines(text: &str, prefix: &str) -> Vec<String> {
 /// the policy derived from it, as `<local>: <pipeline>`.
 fn checkpoint_moe(name: &str, layer: usize) -> Vec<String> {
     let r = checkpoint_fixtures::ok(name);
-    let policy = derive_policy(&r.circuit, r.kv_cache).unwrap();
+    let policy = derive_policy(&r).unwrap();
     let need = Need::base(&r.circuit, &policy.settings, 1);
     let prefix = format!("l{layer}.moe_ffn.");
     r.circuit

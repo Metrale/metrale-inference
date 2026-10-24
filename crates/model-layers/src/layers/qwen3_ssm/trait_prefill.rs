@@ -124,7 +124,7 @@ impl Qwen3SsmLayer {
 
         // 2026-09-25: METRALE_DUMP_EXPERT_IDS=1: log the norm and first five
         // values of the last token's `hidden`, `out_proj_buf` and their sum.
-        if std::env::var("METRALE_DUMP_EXPERT_IDS").ok().as_deref() == Some("1") {
+        if ctx.levers.moe.dump_expert_ids {
             ctx.gpu.synchronize(stream)?;
             let offset = (num_tokens - 1) * h * 2;
             let mut buf_h = vec![0u8; h * 2];

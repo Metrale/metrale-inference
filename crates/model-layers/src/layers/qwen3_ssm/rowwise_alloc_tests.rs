@@ -89,6 +89,7 @@ macro_rules! fwd_ctx {
             dispatch: $dispatch,
             derived: $derived,
             levers: $levers,
+            settings: &crate::lever_equivalence::defaults(),
             stats: $stats,
             attn_metadata: None,
             decode_step: false,
@@ -102,6 +103,7 @@ macro_rules! fwd_ctx {
             routed_lora_layers: None,
             midchunk_capture: None,
             moe_lora_route: crate::layer::MoeLoraRoute::Fold,
+            ab_levers: crate::layer::AbLevers::NONE,
         }
     };
 }

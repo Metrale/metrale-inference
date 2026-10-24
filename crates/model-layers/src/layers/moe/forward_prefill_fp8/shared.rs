@@ -74,6 +74,7 @@ impl MoeLayer {
         ops::fp8_gemm_t_blockscaled(
             ctx.gpu,
             self.fp8_gemm_t_blockscaled_k,
+            ctx.levers.ops.fp8_blockscaled(),
             input_fp8,
             input_scale,
             sh.gate_proj.weight,
@@ -87,6 +88,7 @@ impl MoeLayer {
         ops::fp8_gemm_t_blockscaled(
             ctx.gpu,
             self.fp8_gemm_t_blockscaled_k,
+            ctx.levers.ops.fp8_blockscaled(),
             input_fp8,
             input_scale,
             sh.up_proj.weight,
@@ -140,6 +142,7 @@ impl MoeLayer {
         ops::fp8_gemm_t_blockscaled(
             ctx.gpu,
             self.fp8_gemm_t_blockscaled_k,
+            ctx.levers.ops.fp8_blockscaled(),
             down_in_fp8,
             down_in_scale,
             sh.down_proj.weight,
@@ -180,6 +183,7 @@ impl MoeLayer {
                 ops::w8a16_gemm_pipelined(
                     ctx.gpu,
                     self.w8a16_gemm_pipelined_k,
+                    ctx.levers.ops.w8a16.pipe128,
                     inp,
                     w,
                     sc,

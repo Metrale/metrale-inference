@@ -19,7 +19,11 @@ fn render_laguna_template(
         "/../../jinja-templates/laguna.jinja"
     ))
     .expect("bundled Laguna template must be present");
-    let env = crate::tokenizer::jinja_helpers::build_jinja_env(&raw).expect("template compiles");
+    let env = crate::tokenizer::jinja_helpers::build_jinja_env_with(
+        &raw,
+        crate::tokenizer::ToolJsonStyle::Compact,
+    )
+    .expect("template compiles");
     let tmpl = env.get_template("chat").unwrap();
     let messages = normalize_tool_call_arguments(messages);
     tmpl.render(minijinja::context! {

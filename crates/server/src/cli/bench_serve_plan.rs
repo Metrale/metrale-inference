@@ -94,22 +94,25 @@ impl ServePlan {
             &self.serve_env,
             &serve_env::process_levers(),
         )
+        .map_err(anyhow::Error::from)
     }
 }
 
 /// 2026-09-28: Read the serving endpoint's forward (`GET /forward`) into `resolved`
 /// (`record_serve::merge_live_forward`), refusing a server whose forward is not the one
-/// `requested` renders. Called once the endpoint serves.
+/// `requested` renders (unset: the one the server resolved). Called once the endpoint serves.
 pub async fn attach_live_forward(
     target: &metrale_bench::TargetEndpoint,
-    requested: crate::cli::flag_values::ForwardArg,
+    requested: Option<crate::cli::flag_values::ForwardArg>,
     resolved: &mut BTreeMap<String, String>,
 ) -> Result<()> {
     let doc = metrale_bench::http::get_json(target, "/forward", std::time::Duration::from_secs(10))
         .await?;
     let live: gate::record_serve::LiveForward =
         serde_json::from_value(doc).context("parsing /forward")?;
-    gate::record_serve::merge_live_forward(resolved, requested.name(), &live)
+    // 2026-10-23: An unset `--forward` is the server's to resolve; the record keeps what it runs.
+    let requested = requested.map_or(live.forward.as_str(), |f| f.name());
+    gate::record_serve::merge_live_forward(resolved, requested, &live)
         .map_err(|e| anyhow::anyhow!("{e}"))
 }
 

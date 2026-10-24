@@ -34,7 +34,8 @@ fn cfg() -> Glm5NextDsaConfig {
 fn the_layer_takes_the_vanilla_rmsnorm_not_the_plus_one_variant() {
     let src = include_str!("../layer.rs");
     assert!(
-        src.contains(r#"gpu.kernel("rms_norm_vanilla", "rms_norm_vanilla")"#),
+        include_str!("kernels.rs")
+            .contains(r#"gpu.kernel("rms_norm_vanilla", "rms_norm_vanilla")"#),
         "GLM uses x*rms*w; `rms_norm` applies x*rms*(1+w) and would shift every norm"
     );
     for (file, text) in [
@@ -42,6 +43,7 @@ fn the_layer_takes_the_vanilla_rmsnorm_not_the_plus_one_variant() {
         ("layer/decode_k.rs", include_str!("decode_k.rs")),
         ("layer/rows.rs", include_str!("rows.rs")),
         ("layer/workspace.rs", include_str!("workspace.rs")),
+        ("layer/kernels.rs", include_str!("kernels.rs")),
         ("layer/proj_gemm.rs", include_str!("proj_gemm.rs")),
     ] {
         assert!(
@@ -52,15 +54,15 @@ fn the_layer_takes_the_vanilla_rmsnorm_not_the_plus_one_variant() {
 }
 
 /// 2026-09-25: The indexer's `k_norm` is a LayerNorm with a bias: the layer launches the
-/// `k_norm` kernel handle and passes `k_norm_bias`.
+/// `k_norm` kernel handle and passes `k_norm_bias`. 2026-10-23: the launch is `k_norm_rows`
+/// (`row_ops.rs`), on the handle `indexer_kernels` resolves (`indexer_place.rs`).
 #[test]
 fn the_indexer_norm_passes_a_bias() {
-    let src = include_str!("../layer.rs");
     assert!(
-        src.contains("k_norm_bias"),
+        include_str!("row_ops.rs").contains(".arg_ptr(self.weights.k_norm_bias)"),
         "indexer.k_norm.bias is REQUIRED; a weight-only bind drops mean subtraction too"
     );
-    assert!(src.contains("self.select_kernels.k_norm"));
+    assert!(include_str!("indexer_place.rs").contains("k_norm: self.select_kernels.k_norm"));
 }
 
 /// 2026-09-25: Q reaches the decode kernel in latent space. A raw `q_b_proj` is a well-formed
@@ -78,10 +80,16 @@ fn q_is_absorbed_to_the_latent_width() {
 }
 
 /// 2026-09-25: `decode_k` rewinds an indexer cache that is ahead of the sequence (a rejected
-/// draft) and refuses one that is behind (rows never written).
+/// draft) and refuses one that is behind (rows never written). 2026-10-09: The guard moved to
+/// `layer/indexer_place.rs`; a paged cache behind its sequence adopts the KV blocks' rows
+/// (`state/tests.rs` checks both arms on a live state).
 #[test]
 fn a_lockstep_drift_is_refused_behind_and_rewound_ahead() {
-    let src = include_str!("../layer.rs");
+    let src = include_str!("indexer_place.rs");
+    assert!(
+        src.contains("Ordering::Less if st.cache() == IndexerCache::Paged"),
+        "only a PAGED cache may be behind; its rows are in the KV blocks"
+    );
     assert!(
         src.contains("must advance in lockstep"),
         "the drift guard must state why it exists"
@@ -111,7 +119,7 @@ fn the_indexer_rewind_only_shrinks() {
 /// one latent per token.
 #[test]
 fn k_and_v_are_the_same_latent_pool() {
-    let src = include_str!("../layer.rs");
+    let src = include_str!("attend_rows.rs");
     assert!(src.contains("v_cache: pool"));
     assert!(src.contains("K and V are the same latent"));
 }
@@ -156,7 +164,8 @@ fn the_indexer_checks_capacity_before_it_writes() {
 /// 2026-09-25: In `decode_a`, `verify_b`, `verify_c` and `verify_c2`, the first
 /// `check_replay_room` call comes before the first `launch_graph`, and `sync_replayed_step`
 /// comes after it. A replay writes indexer rows with no host code in the loop, so the room
-/// check has to run before the launch.
+/// check has to run before the launch. 2026-10-21: A launch is either call
+/// (`EarlyLaunch::launch_with` launches the graph early or plainly).
 #[test]
 fn every_graph_replay_checks_room_before_it_launches() {
     let paths: [(&str, &str); 4] = [
@@ -181,8 +190,10 @@ fn every_graph_replay_checks_room_before_it_launches() {
         let guard = src
             .find("layer.check_replay_room(")
             .unwrap_or_else(|| panic!("{name}: the replay branch must precheck capacity"));
-        let launch = src
-            .find("self.gpu.launch_graph(")
+        let launch = ["self.gpu.launch_graph(", "EarlyLaunch::launch_with("]
+            .iter()
+            .filter_map(|p| src.find(p))
+            .min()
             .unwrap_or_else(|| panic!("{name}: expected a graph replay"));
         assert!(
             guard < launch,
@@ -200,11 +211,48 @@ fn every_graph_replay_checks_room_before_it_launches() {
     }
 }
 
+/// 2026-10-21: A graph launched early on its side stream must have been captured behind the gate
+/// (its only ordering after the compute stream's work), so a file that launches through
+/// `EarlyLaunch::launch_with` captures only through `begin_capture_with`, with the same `early`.
+#[test]
+fn every_early_launched_graph_is_captured_behind_the_gate() {
+    let files: [(&str, &str); 2] = [
+        (
+            "verify_b",
+            include_str!("../../../../model-engine/src/model/trait_impl/verify_b.rs"),
+        ),
+        (
+            "mtp graph",
+            include_str!("../../glm5next_mtp_head/graph.rs"),
+        ),
+    ];
+    for (name, src) in files {
+        let launches = src.matches("EarlyLaunch::launch_with(early,").count();
+        let captures = src
+            .matches("EarlyLaunch::begin_capture_with(early,")
+            .count();
+        assert!(
+            launches >= 2,
+            "{name}: the replay and the first launch go early"
+        );
+        assert_eq!(captures, 1, "{name}: one capture, behind the gate");
+        assert!(
+            !src.contains(".begin_capture(stream)"),
+            "{name}: a capture without the gate"
+        );
+        assert!(
+            !src.contains(".launch_graph("),
+            "{name}: a launch beside the early one"
+        );
+    }
+}
+
 /// 2026-09-25: Both the composite `Glm5NextLayer`, which the loaded model holds, and
 /// `Glm5NextDsaLayer` implement `check_replay_room`.
 #[test]
 fn the_composite_layer_implements_the_room_check_too() {
-    let composite = include_str!("../../glm5next_layer/mod.rs");
+    // 2026-10-23: The composite's trait impls moved to `hooks.rs` (file-size split).
+    let composite = include_str!("../../glm5next_layer/hooks.rs");
     assert!(
         composite.contains("fn check_replay_room"),
         "the COMPOSITE layer must implement it — the inner impl is never reached"
@@ -222,7 +270,7 @@ fn the_composite_layer_implements_the_room_check_too() {
 fn the_replay_refusal_is_distinguishable_from_the_prefill_one() {
     for src in [
         include_str!("../layer.rs"),
-        include_str!("../../glm5next_layer/mod.rs"),
+        include_str!("../../glm5next_layer/hooks.rs"),
     ] {
         assert!(
             src.contains("DSA replay pre-check"),
@@ -309,48 +357,95 @@ fn only_a_multi_row_eager_prefill_takes_the_batched_selector() {
 }
 
 /// 2026-09-26: `forward_k` is `pub(in crate::glm5next_layer)`, so every caller is in a
-/// `glm5next_layer/` file. It has two call sites, both in `mod.rs`: the prefill sub-chunk
-/// loop (`is_prefill` true) and the speculative verify (`false`). A third caller in any
-/// module file fails this test and has to choose.
+/// `glm5next_layer/` file. It has two call sites: the prefill sub-chunk loop (`is_prefill`
+/// true; `steps/prefill_capture.rs` since 2026-10-11) and the speculative verify (`false`,
+/// `mod.rs`). A third caller in any module file fails this test and has to choose.
 #[test]
 fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
     let src = include_str!("../../glm5next_layer/mod.rs");
+    let prefill = include_str!("../../glm5next_layer/steps/prefill_capture.rs");
     let module = concat!(
         include_str!("../../glm5next_layer/mod.rs"),
+        include_str!("../../glm5next_layer/hooks.rs"),
+        include_str!("../../glm5next_layer/l2_warm.rs"),
         include_str!("../../glm5next_layer/levers.rs"),
         include_str!("../../glm5next_layer/profile.rs"),
         include_str!("../../glm5next_layer/state.rs"),
         include_str!("../../glm5next_layer/steps.rs"),
+        include_str!("../../glm5next_layer/steps/ab_levers.rs"),
+        include_str!("../../glm5next_layer/steps/ab_levers_tests.rs"),
         include_str!("../../glm5next_layer/steps/drafter.rs"),
         include_str!("../../glm5next_layer/steps/forward.rs"),
+        include_str!("../../glm5next_layer/steps/forward_pieces.rs"),
+        include_str!("../../glm5next_layer/steps/forward_sp.rs"),
+        include_str!("../../glm5next_layer/steps/forward_sp_pipe.rs"),
+        include_str!("../../glm5next_layer/steps/mhc_site.rs"),
+        include_str!("../../glm5next_layer/steps/mhc_slice.rs"),
+        include_str!("../../glm5next_layer/steps/mix.rs"),
+        include_str!("../../glm5next_layer/steps/mlp.rs"),
+        include_str!("../../glm5next_layer/steps/multi_seq.rs"),
+        include_str!("../../glm5next_layer/steps/prefill_capture.rs"),
+        include_str!("../../glm5next_layer/steps/prefill_spans.rs"),
+        include_str!("../../glm5next_layer/steps/reduce_post.rs"),
+        include_str!("../../glm5next_layer/steps/replay.rs"),
+        include_str!("../../glm5next_layer/steps/verify_multi.rs"),
         include_str!("../../glm5next_layer/types.rs"),
+        include_str!("../../glm5next_layer/wide_gemv.rs"),
     );
     assert_eq!(
         glm5next_layer_files(),
         [
+            "hooks.rs",
+            "l2_warm.rs",
             "levers.rs",
+            "levers_settings_tests.rs",
             "mod.rs",
             "profile.rs",
+            "profile_tests.rs",
             "state.rs",
             "steps.rs",
+            "steps/ab_levers.rs",
+            "steps/ab_levers_tests.rs",
             "steps/drafter.rs",
             "steps/forward.rs",
+            "steps/forward_pieces.rs",
+            "steps/forward_sp.rs",
+            "steps/forward_sp_pipe.rs",
+            "steps/mhc_site.rs",
+            "steps/mhc_slice.rs",
+            "steps/mix.rs",
+            "steps/mlp.rs",
+            "steps/multi_seq.rs",
+            "steps/prefill_capture.rs",
+            "steps/prefill_spans.rs",
+            "steps/reduce_post.rs",
+            "steps/replay.rs",
+            "steps/verify_multi.rs",
             "tests.rs",
             "types.rs",
+            "wide_gemv.rs",
         ],
         "a new glm5next_layer file must join the scanned `concat!` above"
     );
     assert_eq!(
         module.matches("self.forward_k(").count(),
-        2,
+        3,
         "a new forward_k caller must decide its own `is_prefill`, not inherit one"
     );
     assert!(
-        src.contains(
+        prefill.contains(
             "// This IS the prefill sub-chunk caller.
-                    true,"
+                        true,"
         ),
         "the prefill sub-chunk must pass is_prefill = true"
+    );
+    // 2026-10-14: The third caller, `METRALE_GLM_PREFILL_PIECE_ROWS`'s one-piece call.
+    assert!(
+        include_str!("../../glm5next_layer/steps/forward_pieces.rs").contains(
+            "// 2026-10-14: A one-piece call IS a prefill sub-chunk (`is_prefill`).
+                    true,"
+        ),
+        "a prefill piece must pass is_prefill = true"
     );
     assert!(
         src.contains("// A speculative verify, NOT a prefill sub-chunk"),
@@ -367,7 +462,8 @@ fn forward_k_has_two_callers_and_the_verify_one_is_not_prefill() {
 /// token across a slice boundary differed, by up to 2 BF16 ulp.
 #[test]
 fn expand_selection_clamps_select_k_to_the_row() {
-    let src = include_str!("../../../../../kernels/gb10/common/dsa_indexer.cu");
+    // 2026-10-09: The body moved to dsa_indexer_body.cuh, which both entries use.
+    let src = include_str!("../../../../../kernels/gb10/common/dsa_indexer_body.cuh");
     assert!(
         src.contains("const unsigned int row_pools = (unsigned int)(q_pos[r] + 1) / KP;"),
         "the row's own pool count must come from its own q_pos"

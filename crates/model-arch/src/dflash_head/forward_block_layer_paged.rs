@@ -66,6 +66,26 @@ pub(super) struct PagedLayerArgs {
     /// it reads each sequence's own KV pages, one launch per sequence. Attention reads
     /// no weights, so the per-sequence launches do not re-read any weight.
     pub seq_block_tables: Vec<DevicePtr>,
+    /// 2026-10-09: Per-sequence sliding-window argument of the indirect attention, `n_seq`
+    /// long (`attn_window_args`); 0 is no window.
+    pub attn_windows: Vec<u32>,
+}
+
+/// 2026-10-09: The indirect attention's `sliding_window` argument for a drafter trained with a
+/// `window`-token sliding window. The kernel masks key slot `k` for query row `r` when
+/// `(q_rope_pos + r) - k >= arg`, comparing the query's absolute position with the key's slot
+/// index. Context slot `i` holds position `position - ctx_count + i` (the ctx rows are
+/// contiguous and end right before the block), so the slot index trails the position by
+/// `position - ctx_count`; adding that offset to the window masks exactly the keys at least
+/// `window` positions behind the query. `None` (no trained window) gives 0, no mask.
+pub(super) fn attn_window_arg(window: Option<usize>, position: usize, ctx_count: u32) -> u32 {
+    match window {
+        Some(w) if w > 0 => {
+            let offset = position.saturating_sub(ctx_count as usize);
+            u32::try_from(w + offset).unwrap_or(u32::MAX)
+        }
+        _ => 0,
+    }
 }
 
 impl BlockDiffusionDraftHead {
@@ -185,7 +205,7 @@ impl BlockDiffusionDraftHead {
                 self.num_kv_heads as u32,
                 self.head_dim as u32,
                 16,
-                0,
+                args.attn_windows.get(i).copied().unwrap_or(0),
                 inv_sqrt_d,
                 stream,
             )?;

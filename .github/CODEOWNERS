@@ -23,6 +23,7 @@ kernels/                                     @tbraun96 @rsafier @SeedSource @The
 crates/kernels/                        @tbraun96 @rsafier @SeedSource @TheTom
 crates/model-layers/                         @tbraun96 @rsafier @SeedSource @TheTom
 crates/model-arch/                           @tbraun96 @rsafier @SeedSource @TheTom
+crates/gpu-examples/                         @tbraun96 @rsafier @SeedSource @TheTom
 crates/model-engine/                         @tbraun96 @rsafier @SeedSource @TheTom
 crates/model-weights/                        @tbraun96 @rsafier @SeedSource @TheTom
 crates/gpu-runtime/                          @tbraun96 @rsafier @SeedSource @TheTom
@@ -52,5 +53,7 @@ crates/storage/                              @tbraun96 @rsafier @SeedSource @The
 .github/dependabot.yml                       @tbraun96 @rsafier @SeedSource @TheTom
 docs/adr/                                    @tbraun96 @rsafier @SeedSource @TheTom
 Cargo.toml                                   @tbraun96 @rsafier @SeedSource @TheTom
+# The env-ban allowlist may only shrink (`cargo xtask env-ban`); a new entry needs owner review.
+xtask/env-ban-allow.txt                      @tbraun96 @rsafier @SeedSource @TheTom
 LICENSE-MIT                                  @tbraun96 @rsafier @SeedSource @TheTom
 LICENSE-APACHE                               @tbraun96 @rsafier @SeedSource @TheTom

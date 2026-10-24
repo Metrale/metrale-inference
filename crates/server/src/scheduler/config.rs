@@ -17,6 +17,9 @@ use crate::scheduling_policy::SchedulingPolicy;
 use crate::session_manager::SessionSsmManager;
 
 pub struct SchedulerConfig {
+    /// 2026-10-24: The `/v1/embeddings` job channel; `Some` only for a model whose
+    /// capabilities say it does not generate.
+    pub embed_rx: Option<tokio::sync::mpsc::Receiver<crate::scheduler::EmbedJob>>,
     pub eos_tokens: Vec<u32>,
     pub max_batch_size: usize,
     pub use_speculative: bool,
@@ -47,7 +50,7 @@ pub struct SchedulerConfig {
     pub grammar_engine: Option<GrammarEngine>,
     pub adaptive_sampling: bool,
     pub session_manager: SessionSsmManager,
-    pub spontaneous_think_budget: u32,
+    pub spontaneous_think_budget: Option<u32>,
     /// 2026-09-25: Per-token masks for this model's vocabulary, indexed by token id.
     pub vocab_masks: VocabMasks,
     /// 2026-09-25: This model's hard stops: two tokenizer-resolved token ids and the
@@ -69,4 +72,10 @@ pub struct SchedulerConfig {
     /// 2026-09-25: Fault injection for the pipelined decode lane; `PipelineFaults::NONE`
     /// when serving.
     pub pipeline_faults: super::PipelineFaults,
+    /// 2026-10-17: The stream-send deadline and diagnostic sink paths, resolved from the load's
+    /// settings.
+    pub run_io: crate::scheduler::run_io::RunIoSettings,
+    /// 2026-10-23: `METRALE_PAIRED_AB_TRAJ` (`forced_traj`): record or replay a token
+    /// trajectory; `None` when off. A replay's record is read by the host at serve start.
+    pub forced: Option<crate::scheduler::forced_traj::TrajMode>,
 }

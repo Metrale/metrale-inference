@@ -69,7 +69,8 @@ fn the_dense_ffn_levers_are_presence_gated_and_their_polarities_hold() {
 }
 
 /// 2026-09-25: The decode-step levers: `ssm_save_dump` is presence-gated, while `ep_graphs` and
-/// `gdn_decode_graph` accept only `1` or `true` (case-sensitive).
+/// `gdn_decode_graph` are switches. 2026-10-17: The switches read the settings `Switch` rule:
+/// `TRUE` now arms them and an empty value is rejected at resolve.
 #[test]
 fn the_decode_step_levers_keep_their_two_different_spellings() {
     let d = resolve(&[]);
@@ -82,7 +83,7 @@ fn the_decode_step_levers_keep_their_two_different_spellings() {
     assert!(resolve(&[("METRALE_SSM_SAVE_DUMP", "0")]).ssm_save_dump);
     assert!(resolve(&[("METRALE_SSM_SAVE_DUMP", "")]).ssm_save_dump);
 
-    // 2026-09-25: Truthy: `1` or `true`, nothing else.
+    // 2026-09-25: Truthy: `1` or `true`; `0` is off.
     for (name, read) in [
         (
             "METRALE_EP_GRAPHS",
@@ -95,21 +96,15 @@ fn the_decode_step_levers_keep_their_two_different_spellings() {
         assert!(read(&resolve(&[(name, "1")])), "{name} at =1");
         assert!(read(&resolve(&[(name, "true")])), "{name} at =true");
         assert!(!read(&resolve(&[(name, "0")])), "{name} armed at =0");
-        assert!(
-            !read(&resolve(&[(name, "")])),
-            "{name} is truthy-gated, not presence-gated"
-        );
-        // 2026-09-25: Case-sensitive: `TRUE` must not arm graph capture.
-        assert!(
-            !read(&resolve(&[(name, "TRUE")])),
-            "{name} must stay case-SENSITIVE: `TRUE` did not arm it before"
-        );
+        assert!(rejected(name, ""), "{name} is a switch, not presence-gated");
+        // 2026-10-17: Case-insensitive under the `Switch` rule: `TRUE` arms graph capture.
+        assert!(read(&resolve(&[(name, "TRUE")])), "{name} at =TRUE");
     }
     // 2026-09-25: For contrast, `METRALE_LORA_EAGER` is case-insensitive.
     assert!(resolve(&[("METRALE_LORA_EAGER", "TRUE")]).lora_eager);
 }
 
-/// 2026-09-25: The MoE-forward, MTP-drafter and FP8 attention levers: all ten are strict `=1`
+/// 2026-09-25: The MoE-forward, MTP-drafter and FP8 attention levers: all are strict `=1`
 /// opt-ins, off by default. `fp32_routing` is the last term of
 /// `MoeLayer::fp32_routing_active`, whose other four terms are weight and kernel conditions.
 #[test]
@@ -123,10 +118,15 @@ fn the_moe_forward_and_mtp_levers_are_strict_opt_ins() {
     assert!(!d.mtp_chain_postnorm);
     assert!(!d.mtp_target_postnorm);
     assert!(!d.mtp_kv_exact);
+    assert!(!d.mtp_accepted_rows);
+    assert!(!d.mtp_adopt_capture);
+    assert!(!d.mtp_zero_pos0);
+    assert!(!d.one_row_prefill);
+    assert!(!d.one_row_tail_decode);
     assert!(!d.moe_fp8_grouped_decode_target);
     assert!(!d.fp8_attn_m32);
 
-    let cases: [(&str, fn(&ModelLevers) -> bool); 10] = [
+    let cases: [(&str, fn(&ModelLevers) -> bool); 15] = [
         ("METRALE_FP32_ROUTING", |l| l.fp32_routing),
         ("METRALE_FP32_GATE", |l| l.fp32_gate),
         ("METRALE_FRANKENSTEIN_DECODE_VIA_PREFILL", |l| {
@@ -137,6 +137,11 @@ fn the_moe_forward_and_mtp_levers_are_strict_opt_ins() {
         ("METRALE_MTP_CHAIN_POSTNORM", |l| l.mtp_chain_postnorm),
         ("METRALE_MTP_TARGET_POSTNORM", |l| l.mtp_target_postnorm),
         ("METRALE_MTP_KV_EXACT", |l| l.mtp_kv_exact),
+        ("METRALE_MTP_ACCEPTED_ROWS", |l| l.mtp_accepted_rows),
+        ("METRALE_MTP_ADOPT_CAPTURE", |l| l.mtp_adopt_capture),
+        ("METRALE_MTP_ZERO_POS0", |l| l.mtp_zero_pos0),
+        ("METRALE_ONE_ROW_PREFILL", |l| l.one_row_prefill),
+        ("METRALE_ONE_ROW_TAIL_DECODE", |l| l.one_row_tail_decode),
         ("METRALE_FP8_MOE_GROUPED_DECODE", |l| {
             l.moe_fp8_grouped_decode_target
         }),
@@ -145,10 +150,9 @@ fn the_moe_forward_and_mtp_levers_are_strict_opt_ins() {
     for (name, read) in cases {
         assert!(read(&resolve(&[(name, "1")])), "{name} did not arm at =1");
         assert!(!read(&resolve(&[(name, "0")])), "{name} armed at =0");
-        assert!(
-            !read(&resolve(&[(name, "true")])),
-            "{name} is strict `1`, not truthy — that is how it was spelled"
-        );
+        // 2026-10-17: Was strict `1`; the `Switch` rule also arms it at `true`.
+        assert!(read(&resolve(&[(name, "true")])), "{name} at =true");
+        assert!(rejected(name, "garbage"), "{name} must reject garbage");
     }
     // 2026-09-25: The two FP32 levers resolve independently.
     assert!(!resolve(&[("METRALE_FP32_ROUTING", "1")]).fp32_gate);
@@ -158,10 +162,11 @@ fn the_moe_forward_and_mtp_levers_are_strict_opt_ins() {
 /// 2026-09-25: `ModelLevers::dflash_debug_dump_full` and metrale-model-arch's
 /// `DFlashLevers::debug_dump_full` resolve the same variable. `TransformerModel` holds the drafter
 /// as a `dyn DraftProposer` and cannot read its levers, so each struct carries its own copy. The
-/// check reads both resolution lines from source, because a runtime check would need `set_var`.
+/// check reads both resolution lines from source. 2026-10-17: Both now copy the one settings
+/// field `telemetry.dflash_debug_dump_full`, so the check is that each line reads that field.
 #[test]
 fn the_two_halves_of_the_dflash_dump_name_the_same_flag() {
-    const FLAG: &str = "METRALE_DFLASH_DEBUG_DUMP_FULL";
+    const FIELD: &str = ".dflash_debug_dump_full,";
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     for (rel, field) in [
         (
@@ -178,15 +183,12 @@ fn the_two_halves_of_the_dflash_dump_name_the_same_flag() {
             .lines()
             .find(|l| l.trim_start().starts_with(field))
             .unwrap_or_else(|| panic!("{rel} no longer resolves `{field}`"));
-        // 2026-09-25: Compare the quoted name exactly: `contains` would accept a longer name
-        // that has the flag as a prefix.
-        let named = line.split('"').nth(1).unwrap_or_else(|| {
-            panic!("{rel}: `{field}` names no quoted variable: {}", line.trim())
-        });
-        assert_eq!(
-            named, FLAG,
-            "{rel} resolves `{field}` from `{named}`, not `{FLAG}` — the two \
-             halves of the dump would no longer arm together"
+        // 2026-10-17: The leading dot rules out a longer field that has this name as a suffix.
+        assert!(
+            line.trim_end().ends_with(FIELD),
+            "{rel} resolves `{field}` from `{}`, not `{FIELD}` — the two halves of the dump \
+             would no longer arm together",
+            line.trim()
         );
     }
 }
@@ -238,10 +240,8 @@ fn the_moe_prefill_levers_keep_the_tri_state_distinguishable() {
         resolve(&[("METRALE_MOE_PREFILL_MAX_LOAD_FACTOR", "0")]).moe_prefill_max_load_factor,
         None
     );
-    assert_eq!(
-        resolve(&[("METRALE_MOE_PREFILL_MAX_LOAD_FACTOR", "x")]).moe_prefill_max_load_factor,
-        None
-    );
+    // 2026-10-17: An unparseable factor is rejected at resolve; it read as no cap before.
+    assert!(rejected("METRALE_MOE_PREFILL_MAX_LOAD_FACTOR", "x"));
 }
 
 /// 2026-09-25: The eight Nemotron prefill levers are presence-gated: `=0` arms an opt-in and does
@@ -325,11 +325,12 @@ fn the_batched_decode_levers_keep_their_neighbours_spellings() {
         ("METRALE_MS_PROFILE", |l: &ModelLevers| l.ms_profile),
     ] {
         assert!(read(&resolve(&[(name, "1")])), "{name} at =1");
-        assert!(!read(&resolve(&[(name, "true")])), "{name} is strict `1`");
+        // 2026-10-17: Was strict `1`; the `Switch` rule also arms it at `true`.
+        assert!(read(&resolve(&[(name, "true")])), "{name} at =true");
         assert!(!read(&resolve(&[(name, "0")])), "{name} at =0");
     }
 
-    // 2026-09-25: Truthy but case-sensitive: `true` arms, `TRUE` does not.
+    // 2026-09-25: Truthy: `1` and `true` arm. 2026-10-17: `TRUE` now arms too (`Switch` rule).
     for (name, read) in [
         (
             "METRALE_MLA_PERSEQ_FALLBACK",
@@ -339,10 +340,7 @@ fn the_batched_decode_levers_keep_their_neighbours_spellings() {
     ] {
         assert!(read(&resolve(&[(name, "1")])), "{name} at =1");
         assert!(read(&resolve(&[(name, "true")])), "{name} at =true");
-        assert!(
-            !read(&resolve(&[(name, "TRUE")])),
-            "{name} must stay case-SENSITIVE"
-        );
+        assert!(read(&resolve(&[(name, "TRUE")])), "{name} at =TRUE");
         assert!(!read(&resolve(&[(name, "0")])), "{name} at =0");
     }
 

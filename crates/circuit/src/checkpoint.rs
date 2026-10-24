@@ -14,13 +14,15 @@
 //! - Precision comes from config.json's own `quantization_config` when it has one, else from
 //!   the sidecar `hf_quant_config.json` (the serve rule, `merge_sidecar_quant_config`).
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
 
-use metrale_config::DeclaredPrecisionPlan;
+use alloc::collections::BTreeMap;
+
+use metrale_precision::DeclaredPrecisionPlan;
 use serde_json::Value;
 
 use crate::circuit_toml::CircuitError;
-use crate::config_map::{ConfigMap, ConfigMapError, MappedConfig, map_config};
+use crate::config_map::{ConfigMap, ConfigMapError, MappedConfig, PolicyDefault, map_config};
 use crate::declared_precision::DeclaredPrecision;
 use crate::format::{Format, Scale};
 use crate::instantiate::instantiate;
@@ -57,7 +59,8 @@ pub enum ServePrecision {
 /// 2026-09-30: A checkpoint resolved to its circuit.
 #[derive(Debug, Clone)]
 pub struct ResolvedCheckpoint {
-    /// 2026-09-30: The circuit arch (`qwen3_5`, `qwen3_6_moe`, `nemotron_h`, `dense_gqa`).
+    /// 2026-09-30: The circuit arch (`qwen3_5`, `qwen3_6_moe`, `nemotron_h`, `dense_gqa`,
+    /// 2026-10-08: `glm5_next`, 2026-10-18: `deepseek_v41`).
     pub arch: String,
     /// 2026-09-30: The config's top-level `model_type`.
     pub model_type: String,
@@ -70,6 +73,9 @@ pub struct ResolvedCheckpoint {
     pub kv_cache: Option<Format>,
     /// 2026-09-30: The instantiated circuit.
     pub circuit: Circuit,
+    /// 2026-10-22: The code defaults of the arch's own policy settings (its config map's
+    /// `[policy]`), by setting.
+    pub policy_defaults: BTreeMap<String, PolicyDefault>,
 }
 
 /// 2026-09-30: Why a checkpoint has no circuit.
@@ -117,11 +123,15 @@ struct Arch {
 
 macro_rules! circuits_file {
     ($f:literal) => {
-        include_str!(concat!("../../../kernels/circuits/", $f))
+        include_str!(concat!(
+            env!("METRALE_KERNEL_TREE_ROOT"),
+            "/kernels/circuits/",
+            $f
+        ))
     };
 }
 
-const ARCHES: [Arch; 4] = [
+const ARCHES: [Arch; 6] = [
     Arch {
         circuit: circuits_file!("qwen3_5.toml"),
         config_map: circuits_file!("qwen3_5.config.toml"),
@@ -138,10 +148,39 @@ const ARCHES: [Arch; 4] = [
         circuit: circuits_file!("dense_gqa.toml"),
         config_map: circuits_file!("dense_gqa.config.toml"),
     },
+    Arch {
+        circuit: circuits_file!("glm5_next.toml"),
+        config_map: circuits_file!("glm5_next.config.toml"),
+    },
+    Arch {
+        circuit: circuits_file!("deepseek_v41.toml"),
+        config_map: circuits_file!("deepseek_v41.config.toml"),
+    },
 ];
 
 /// 2026-09-30: The block libraries the embedded circuits include.
-const BLOCKS: [(&str, &str); 1] = [("qwen3_hybrid", circuits_file!("blocks/qwen3_hybrid.toml"))];
+const BLOCKS: [(&str, &str); 8] = [
+    ("qwen3_hybrid", circuits_file!("blocks/qwen3_hybrid.toml")),
+    ("glm5_next_kda", circuits_file!("blocks/glm5_next_kda.toml")),
+    ("glm5_next_dsa", circuits_file!("blocks/glm5_next_dsa.toml")),
+    ("glm5_next_ffn", circuits_file!("blocks/glm5_next_ffn.toml")),
+    (
+        "deepseek_v41_attn",
+        circuits_file!("blocks/deepseek_v41_attn.toml"),
+    ),
+    (
+        "deepseek_v41_csa",
+        circuits_file!("blocks/deepseek_v41_csa.toml"),
+    ),
+    (
+        "deepseek_v41_hca",
+        circuits_file!("blocks/deepseek_v41_hca.toml"),
+    ),
+    (
+        "deepseek_v41_ffn",
+        circuits_file!("blocks/deepseek_v41_ffn.toml"),
+    ),
+];
 
 /// 2026-09-30: The embedded config maps, parsed.
 pub fn config_maps() -> Result<Vec<ConfigMap>, ConfigMapError> {
@@ -168,7 +207,7 @@ pub fn resolve_checkpoint(
     serve: &ServePrecision,
 ) -> Result<ResolvedCheckpoint, CheckpointError> {
     let config = parse_config(config_json)?;
-    let (i, mapped) = map_checkpoint_value(&config)?;
+    let (i, mapped, policy_defaults) = map_checkpoint_value(&config)?;
     let qc = quantization_config(&config, quant)?;
     let plan = match &qc {
         Some(qc) => DeclaredPrecisionPlan::from_quantization_config(qc)
@@ -200,8 +239,11 @@ pub fn resolve_checkpoint(
             circuit
         }
         ServePrecision::Policy { tier, caps, engine } => {
-            let policy =
-                metrale_config::WeightQuantPolicy::new(tier_named(tier)?, &plan, caps_named(caps)?);
+            let policy = metrale_precision::WeightQuantPolicy::new(
+                tier_named(tier)?,
+                &plan,
+                caps_named(caps)?,
+            );
             instantiate(
                 text,
                 &BLOCKS,
@@ -217,6 +259,7 @@ pub fn resolve_checkpoint(
         params: mapped.params,
         kv_cache,
         circuit,
+        policy_defaults,
     })
 }
 
@@ -234,7 +277,10 @@ fn parse_config(config_json: &str) -> Result<Value, CheckpointError> {
 }
 
 /// 2026-09-30: The index of the arch whose map serves `config`'s model type, and the mapping.
-fn map_checkpoint_value(config: &Value) -> Result<(usize, MappedConfig), CheckpointError> {
+/// 2026-10-22: Also the map's `[policy]` code defaults.
+fn map_checkpoint_value(
+    config: &Value,
+) -> Result<(usize, MappedConfig, BTreeMap<String, PolicyDefault>), CheckpointError> {
     let model_type = config
         .get("model_type")
         .and_then(Value::as_str)
@@ -256,7 +302,7 @@ fn map_checkpoint_value(config: &Value) -> Result<(usize, MappedConfig), Checkpo
             served: served.join(", "),
         });
     };
-    Ok((i, map_config(map, config)?))
+    Ok((i, map_config(map, config)?, map.policy_defaults().clone()))
 }
 
 /// 2026-09-30: The checkpoint's `quantization_config`: config.json's own, else the sidecar's.

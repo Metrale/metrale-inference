@@ -56,14 +56,9 @@ impl Qwen3SsmLayer {
     /// Only with `METRALE_GDN_FUSED_VERIFY=1` and both handles linked; only
     /// `kernels/gb10/common/gdn_verify_fused_k2.cu` defines them. The
     /// `gdn_verify_fused_microtest` example checks cos >= 0.99999 against the per-token
-    /// path, not bitwise equality.
-    pub(super) fn fused_verify_k2_enabled(&self) -> bool {
-        self.gdn_verify_fused_conv_k2_k.0 != 0
-            && self.gdn_verify_fused_norm_k2_k.0 != 0
-            && matches!(
-                std::env::var("METRALE_GDN_FUSED_VERIFY").ok().as_deref(),
-                Some("1")
-            )
+    /// path, not bitwise equality. 2026-10-17: `on` is `SsmLevers::fused_verify`.
+    pub(super) fn fused_verify_k2_enabled(&self, on: bool) -> bool {
+        self.gdn_verify_fused_conv_k2_k.0 != 0 && self.gdn_verify_fused_norm_k2_k.0 != 0 && on
     }
 
     /// 2026-09-25: Conv1d + L2 norm + GDN over the `num_tokens` rows of one sequence. Arms,
@@ -237,7 +232,7 @@ impl Qwen3SsmLayer {
         } else if num_tokens == 2 {
             // 2026-09-25: K = 2: conv1d + L2 norm for both rows, then one
             // `gated_delta_rule_wy2` launch (or its twin, `wy2_kernel`).
-            if self.fused_verify_k2_enabled() {
+            if self.fused_verify_k2_enabled(ctx.levers.ssm.fused_verify) {
                 // 2026-09-25: One launch writes both conv rows and conv intermediate 0; the
                 // window after row 1 stays in `conv_state`.
                 ops::gdn_verify_fused_conv_k2(

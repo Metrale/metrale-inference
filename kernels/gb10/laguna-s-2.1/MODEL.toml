@@ -87,7 +87,6 @@ enable_think_loop_watchdog = false
 
 
 
-honor_eos_inside_thinking = true
 # 2026-09-25: confidence_early_stop = false stops F2ConfidenceEarlyStop from arming a forced
 # `</think>`; rollback_resteer = false makes the decode-time rollback decline
 # (scheduler/rollback.rs). Measured 2026-07-22: F2ConfidenceEarlyStop fired on "explain the

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: Tests for the drafter tensor-core GEMV routing and its kill-switch rule.
+//! 2026-09-25: Tests for the drafter tensor-core GEMV routing.
 //!
 //! Owner: model-layers ops.
 //! Invariants: none beyond the types.
@@ -23,22 +23,6 @@ const DRAFTER_27B: [(u32, u32); 8] = [
 ];
 
 const ALL: [bool; 3] = [true, true, true];
-
-#[test]
-fn ships_on_and_any_non_empty_kill_value_turns_it_off() {
-    use std::ffi::OsStr;
-    assert!(mtp_tc_from(None), "unset is ON");
-    assert!(mtp_tc_from(Some(OsStr::new(""))), "exported-empty is ON");
-    assert!(!mtp_tc_from(Some(OsStr::new("1"))), "1 kills");
-    assert!(
-        !mtp_tc_from(Some(OsStr::new("0"))),
-        "0 kills too (presence rule)"
-    );
-    assert!(
-        !mtp_tc_from(Some(OsStr::new("true"))),
-        "any non-empty value kills"
-    );
-}
 
 #[test]
 fn every_drafter_shape_routes_to_the_narrowest_entry() {

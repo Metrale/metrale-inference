@@ -22,7 +22,7 @@ use super::chat_thinking::ThinkingRequest;
 const MAX_ERROR_BODY: usize = 64 * 1024;
 
 /// 2026-09-26: Clocks and counts for one reply. `first_any` is the first
-/// non-empty `reasoning_content` or `content` delta (the TTFT); `first_answer`
+/// non-empty reasoning or `content` delta (the TTFT); `first_answer`
 /// is the first non-empty `content` delta.
 #[derive(Default)]
 struct Clocks {
@@ -146,7 +146,7 @@ pub(super) async fn stream_chat(
                     }
                     // 2026-09-26: `error_message_from_response` takes the whole
                     // response, headers included, and de-chunks the body itself.
-                    let msg = metrale_bench::http::error_message_from_response(&buf)
+                    let msg = metrale_host_probe::http_wire::error_message_from_response(&buf)
                         .map(|m| format!("{status} — {m}"))
                         .unwrap_or(status);
                     let _ = tx.send(ChatDelta::Error(msg));
@@ -176,8 +176,11 @@ pub(super) async fn stream_chat(
             };
             let delta = &v["choices"][0]["delta"];
             // 2026-09-26: A delta carrying both fields is forwarded reasoning
-            // first.
-            if let Some(text) = nonempty(&delta["reasoning_content"]) {
+            // first. 2026-10-14: the reasoning is `reasoning_content`, or
+            // `reasoning` from a server on vLLM's wire (GLM).
+            if let Some(text) =
+                nonempty(&delta["reasoning_content"]).or_else(|| nonempty(&delta["reasoning"]))
+            {
                 let now = Instant::now();
                 c.first_any.get_or_insert(now);
                 c.first_reasoning.get_or_insert(now);

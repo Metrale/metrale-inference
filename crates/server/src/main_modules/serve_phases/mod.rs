@@ -9,32 +9,38 @@
 mod build;
 pub(crate) mod config;
 mod dflash_gamma;
+mod embedding;
 pub(crate) mod expert_tables;
 mod forward;
 pub(crate) mod fp8_kv_scale_source;
 mod kernel_gate;
 pub(crate) mod kv_cache;
+pub(crate) mod load_levers;
 pub(crate) mod preflight;
 mod runtime;
 mod tokenizer_runtime;
 mod topology;
+pub(crate) mod wake_keeper;
 mod weights;
 
+pub(crate) use build::lever_settings;
 pub(super) use build::{
     build_high_speed_swap_config, build_model, build_prefix_cache, maybe_run_ep_worker,
     resolve_swap_space_gb, validate_head_high_speed_swap,
 };
 pub(super) use config::{
-    apply_model_default_num_drafts, cap_vocab_size_to_tokenizer, load_model_config,
-    merge_sidecar_quant_config, publish_copy_tier, publish_draft_confidence_stop,
-    publish_mtp_k_ladder, publish_mtp_max_seqs, resolve_model_dir,
+    apply_model_default_num_drafts, cap_vocab_size_to_tokenizer, fill_engram_token_map,
+    load_model_config, merge_sidecar_quant_config, publish_copy_tier,
+    publish_draft_confidence_stop, publish_mtp_k_ladder, publish_mtp_max_seqs, resolve_model_dir,
 };
 pub(crate) use dflash_gamma::{apply_dflash_gamma, model_default_drafter};
+pub(crate) use embedding::{embed_endpoint, load_embedding_prompts};
 pub(crate) use forward::{circuit_target, forward_select};
 pub(super) use kernel_gate::audit_and_gate;
 pub(super) use kv_cache::{
     KvCacheConfig, PrefillBudget, resolve_kv_cache_config, resolve_prefill_budget,
 };
+pub(crate) use load_levers::LoadLevers;
 pub(super) use preflight::{
     PostLoadInputs, ReservePreflight, init_gpu_backend, post_load_memory_audit, preflight_reserve,
 };
@@ -43,7 +49,7 @@ pub(super) use runtime::{
     log_response_store_audit, open_dump_writer, resolve_model_name, resolve_tool_call_parser,
 };
 pub(super) use tokenizer_runtime::{TokenizerRuntime, resolve_tokenizer_runtime};
-pub(super) use topology::{Topology, init_nccl_comm, resolve_topology};
+pub(super) use topology::{Topology, ctrl_port, init_ctrl_comm, init_nccl_comm, resolve_topology};
 pub(super) use weights::{
     LoraAdapterState, load_dflash_drafter, load_lora_adapters, load_weight_store,
 };

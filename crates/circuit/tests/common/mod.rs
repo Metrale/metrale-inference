@@ -155,18 +155,13 @@ pub fn target_modules(instance: &Instance) -> BTreeMap<String, String> {
         .collect()
 }
 
-fn names_word(text: &str, word: &str) -> bool {
-    text.match_indices(word).any(|(at, _)| {
-        let ok = |c: Option<char>| c.is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'));
-        ok(text[..at].chars().next_back()) && ok(text[at + word.len()..].chars().next())
-    })
-}
-
 /// 2026-09-28: Whether `k` is compiled into a target whose modules are `modules`.
+/// 2026-10-22: Named as the hardware availability names it (pasted names included), not by a
+/// copy of its word match.
 pub fn present(modules: &BTreeMap<String, String>, k: &KernelId) -> bool {
     modules
         .get(&k.module)
-        .is_some_and(|t| names_word(t, &k.func))
+        .is_some_and(|t| metrale_circuit::hardware::avail::names_kernel(t, &k.func))
 }
 
 /// 2026-09-28: The kernels of `rules` the instance's target compiles.

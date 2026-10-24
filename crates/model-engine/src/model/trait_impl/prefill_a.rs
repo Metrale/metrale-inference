@@ -9,6 +9,7 @@
 
 #![allow(unused_imports, dead_code, clippy::too_many_arguments)]
 
+use super::super::lm_head_vocab_tp::HeadRanks;
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -118,7 +119,7 @@ impl TransformerModel {
             self.prefix_cache.as_ref(),
             self.gpu.as_ref(),
             stream,
-            self.levers.kv_poison,
+            self.prefill_block_fill(),
         )?;
 
         // 2026-09-25: Marconi: restore an SSM snapshot and skip the cached prefix.
@@ -360,6 +361,7 @@ impl TransformerModel {
             dispatch: &self.dispatch,
             derived: &self.derived,
             levers: &self.levers,
+            settings: &self.settings,
             stats: &self.stats,
             attn_metadata: Some(attn_metadata),
             profile: self.profile,
@@ -370,15 +372,14 @@ impl TransformerModel {
             // recurrence; the field's doc in layer.rs gives the reason.
             gdn_exact_replay: marconi_skip,
             gdn_write_on_accept: false,
-            // 2026-09-25: Hash-MoE token IDs for the processed tokens, uploaded
-            // above.
+            // 2026-09-25: Hash-MoE token IDs for the processed tokens, uploaded above.
             token_ids: Some(self.buffers.token_ids()),
             host_token_ids: None,
-            // 2026-09-25: `Some` only when the request routes to a non-active
-            // adapter slot.
+            // 2026-09-25: `Some` only when the request routes to a non-active adapter slot.
             routed_lora_layers: self.routed_slot_layers(seq.adapter_slot),
             midchunk_capture: None,
             moe_lora_route: self.moe_lora_route(seq.adapter_slot),
+            ab_levers: metrale_model_layers::layer::AbLevers::NONE,
         };
 
         // 2026-09-25: 4. Forward through all layers. On a Marconi hit the KV
@@ -476,7 +477,7 @@ impl TransformerModel {
         self.final_norm_apply(last_hidden, normed, 1, h as u32, eps, stream)?;
 
         // 2026-09-25: 6. LM head on the last token.
-        self.lm_head(normed, stream)?;
+        self.lm_head(normed, HeadRanks::Every, stream)?;
 
         // 2026-09-25: 7. Update the sequence state.
         seq.tokens.extend_from_slice(tokens);

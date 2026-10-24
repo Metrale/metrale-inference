@@ -14,7 +14,7 @@ use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, GraphHandle};
 
 use std::sync::atomic::Ordering;
 
-use super::step::{diag_on, diag_rms_bf16};
+use super::step::diag_rms_bf16;
 use super::{Baked, DeepSeekV41Layer, LayerGraphs, V41LayerState};
 use crate::attn_v41::{AttnV41, AttnV41LayerState};
 use crate::moe_v41::MoeV41;
@@ -199,7 +199,7 @@ impl DeepSeekV41Layer {
         let streams = ctx.buffers.hc_streams();
         let normed = ctx.buffers.norm_output();
         let h = rt.hidden;
-        let diag = diag_on();
+        let diag = self.rt.levers.diag;
         let V41LayerState {
             attn: st_attn,
             graphs,
@@ -269,6 +269,7 @@ impl DeepSeekV41Layer {
                 normed,
                 1,
                 start_pos,
+                ctx.comm,
                 stream,
             )?;
             // 2026-09-25: It wrote pos / head_pos / idx_dev for itself.
@@ -298,12 +299,13 @@ impl DeepSeekV41Layer {
         drop(attn);
 
         let stage = {
-            let mut lru = rt.lru.lock().unwrap();
+            let st = rt.streamed()?;
+            let mut lru = st.lru.lock().unwrap();
             moe.stage_m1(
                 gpu,
                 &self.moe_w,
                 &mut lru,
-                &*rt.slices,
+                &*st.slices,
                 rt.reader_threads,
                 self.next_router.as_ref(),
                 normed,
@@ -406,7 +408,7 @@ impl DeepSeekV41Layer {
     /// 2026-09-25: The per-step diagnostic line (`METRALE_DS41_DIAG=1`), from
     /// the last layer.
     pub(super) fn step_line(&self, m: usize, start_pos: usize, how: &str) {
-        if !diag_on() {
+        if !self.rt.levers.diag {
             return;
         }
         let rt = &self.rt;
@@ -420,9 +422,12 @@ impl DeepSeekV41Layer {
         // 2026-09-25: One guard at a time: two `lru.lock()` temporaries in a
         // single statement deadlock on the std Mutex (the first guard lives to
         // the end of the statement).
-        let (resident, n_slots) = {
-            let lru = rt.lru.lock().unwrap();
-            (lru.resident(), lru.n_slots())
+        let (resident, n_slots) = match rt.streamed() {
+            Ok(st) => {
+                let lru = st.lru.lock().unwrap();
+                (lru.resident(), lru.n_slots())
+            }
+            Err(_) => (0, 0),
         };
         let attn_ms = *rt.step_attn_ms.lock().unwrap();
         let engram_ms = *rt.step_engram_ms.lock().unwrap();

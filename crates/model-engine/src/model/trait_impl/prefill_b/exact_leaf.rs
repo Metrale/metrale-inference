@@ -54,12 +54,6 @@ pub fn exact_leaf(
     }
 }
 
-/// 2026-09-25: `METRALE_MARCONI_EXACT=1` enables the exact full-prompt snapshot shortcut.
-/// This is the only reader of that variable.
-pub fn marconi_exact_enabled() -> bool {
-    std::env::var("METRALE_MARCONI_EXACT").as_deref() == Ok("1")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

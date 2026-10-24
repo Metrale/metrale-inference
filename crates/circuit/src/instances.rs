@@ -12,9 +12,12 @@
 //! - Every policy setting is stated; nothing is filled from an engine default.
 //! - `layer_kinds` spells one letter per layer: `G` a GatedDeltaNet (linear attention) layer,
 //!   `A` a full-attention layer, `M` a Mamba2 layer, `E` a MoE-only layer (the Nemotron-H
-//!   hybrid-pattern letters); whitespace is ignored.
+//!   hybrid-pattern letters); 2026-10-08: `S` a sparse-attention layer (GLM-5 DSA); whitespace
+//!   is ignored.
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 
@@ -23,6 +26,20 @@ use crate::fuser::Policy;
 use crate::ir::{ArchShape, LayerKind};
 use crate::precision::LinearFormats;
 use crate::rules::Mode;
+
+/// 2026-10-23: A multi-device deployment: N (the device count, the recipe's `--tp-size`) and the
+/// degree each part of the circuit's `[parallel]` spec runs at ([`crate::parallel::place`] checks
+/// them against the spec: every part stated, each within its bounds and N).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Deployment {
+    /// 2026-10-23: N.
+    pub ranks: u64,
+    /// 2026-10-23: Part to its degree.
+    pub degree: BTreeMap<String, u64>,
+    /// 2026-10-23: Where the recipe sets them (file:line), so the deployment is checkable.
+    pub why: String,
+}
 
 /// 2026-09-28: One recipe's circuit instance.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +69,9 @@ pub struct Instance {
     /// 2026-09-30: The batched-verify row tables that have a plan. An instance with none is
     /// not served a batched verify by the executor: each sequence verifies alone.
     pub verify_batch: Vec<crate::runs::RowTable>,
+    /// 2026-10-23: The deployment the recipe serves over several devices (`[instance.parallel]`);
+    /// `None` for one device.
+    pub parallel: Option<Deployment>,
 }
 
 impl Instance {
@@ -88,7 +108,7 @@ impl Instance {
 }
 
 /// 2026-09-28: An instance's source of linear formats.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum PrecisionSpec {
     /// 2026-09-28: A stated table, `kernels/circuits/precision/<name>.toml`.
     Table(String),
@@ -114,6 +134,18 @@ impl PrecisionSpec {
             PrecisionSpec::Policy {
                 checkpoint_plan, ..
             } => checkpoint_plan,
+        }
+    }
+
+    /// 2026-10-22: A one-word label: the table's name, or `<plan>:<tier>` for a policy.
+    pub fn label(&self) -> String {
+        match self {
+            PrecisionSpec::Table(n) => n.clone(),
+            PrecisionSpec::Policy {
+                checkpoint_plan,
+                tier,
+                ..
+            } => format!("{checkpoint_plan}:{tier}"),
         }
     }
 }
@@ -157,6 +189,8 @@ struct InstanceFile {
     plans: BTreeMap<String, Vec<u64>>,
     #[serde(default)]
     verify_batch: Vec<String>,
+    /// 2026-10-23: Absent for a single-device serve.
+    parallel: Option<Deployment>,
 }
 
 #[derive(Deserialize)]
@@ -231,7 +265,13 @@ pub fn parse_instances(text: &str) -> Result<Vec<Instance>, InstanceError> {
                 'A' => LayerKind::FullAttention,
                 'M' => LayerKind::Mamba,
                 'E' => LayerKind::Moe,
-                other => return Err(field(format!("layer kind `{other}` is not G, A, M or E"))),
+                'S' => LayerKind::SparseAttention,
+                'W' => LayerKind::SlidingAttention,
+                other => {
+                    return Err(field(format!(
+                        "layer kind `{other}` is not G, A, M, E, S or W"
+                    )));
+                }
             });
         }
         let mut plans = BTreeMap::new();
@@ -278,6 +318,14 @@ pub fn parse_instances(text: &str) -> Result<Vec<Instance>, InstanceError> {
                 }
             }
         };
+        if let Some(p) = &f.parallel
+            && p.ranks < 2
+        {
+            return Err(field(format!(
+                "parallel: {} ranks (a multi-device deployment has at least 2)",
+                p.ranks
+            )));
+        }
         out.push(Instance {
             recipe: f.recipe.clone(),
             checkpoint: f.checkpoint,
@@ -296,6 +344,7 @@ pub fn parse_instances(text: &str) -> Result<Vec<Instance>, InstanceError> {
             },
             plans,
             verify_batch,
+            parallel: f.parallel.clone(),
         });
     }
     Ok(out)

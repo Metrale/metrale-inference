@@ -8,7 +8,8 @@
 //!   the pool is zeroed before packing, so the pad rows of A and pad columns of B are zero
 //!   (`lora/loading.rs`).
 //! - The launchers here only launch kernels: they allocate nothing and do not synchronize.
-//! - `apply_lora_delta` returns without launching when `METRALE_LORA_NO_APPLY=1`.
+//! - `apply_lora_delta` returns without launching when `METRALE_LORA_NO_APPLY` is on
+//!   ([`LoraLevers::no_apply`]).
 
 use anyhow::Result;
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
@@ -44,11 +45,31 @@ pub struct LoraKernels {
     /// launcher in `moe_lora_grouped.rs` then returns an error rather than launching.
     pub moe_gather_shrink_k: KernelHandle,
     pub moe_gather_expand_fold_k: KernelHandle,
+    /// 2026-10-17: The levers [`apply_lora_delta`] runs under, resolved once at startup.
+    pub levers: LoraLevers,
+}
+
+/// 2026-10-17: The levers of [`apply_lora_delta`] (`OpsLevers::lora`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LoraLevers {
+    /// 2026-09-25: `METRALE_LORA_NO_APPLY`: keep the adapter resident but skip every
+    /// [`apply_lora_delta`]. A measurement lever that separates the cost of applying an adapter
+    /// from the cost of having one loaded; the output is the base model's while it is on.
+    pub no_apply: bool,
+    /// 2026-09-25: `METRALE_LORA_GEMV_MAX_M`: the row count at or below which
+    /// [`apply_lora_delta`] runs `m` single-row GEMV deltas instead of one GEMM. `dense_gemm_tc`
+    /// tiles 16 rows (`TC_TM` in dense_gemm_tc.cu) and reads all of B whatever `m` is, so a small
+    /// `m` pays full B traffic for a partly empty tile.
+    pub gemv_max_m: u32,
+    /// 2026-09-25: `METRALE_LORA_EXPERT_MAX_TOKENS`: the row capacity of a MoE layer's LoRA
+    /// apply scratch (`moe/lora.rs`).
+    pub expert_max_tokens: u32,
 }
 
 impl LoraKernels {
-    pub fn new(gpu: &dyn GpuBackend) -> Result<Self> {
+    pub fn new(gpu: &dyn GpuBackend, levers: LoraLevers) -> Result<Self> {
         Ok(Self {
+            levers,
             gemv_k: gpu.kernel("gemv", "dense_gemv_bf16")?,
             gemm_tc_k: crate::layers::try_kernel(gpu, "gemm_tc", "dense_gemm_tc"),
             gemm_tc_acc_k: crate::layers::try_kernel(gpu, "gemm_tc", "dense_gemm_tc_scaled_acc"),
@@ -154,44 +175,13 @@ pub struct LoraFfnWeights {
     pub kernels: LoraKernels,
 }
 
-/// 2026-09-25: `METRALE_LORA_NO_APPLY` equal to `"1"`, read once per process: keep the adapter
-/// resident but skip every [`apply_lora_delta`]. A measurement lever that separates the cost of
-/// applying an adapter from the cost of having one loaded; the output is the base model's while
-/// it is set.
-pub fn lora_no_apply() -> bool {
-    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *V.get_or_init(|| std::env::var("METRALE_LORA_NO_APPLY").as_deref() == Ok("1"))
-}
-
-/// 2026-09-25: Row count at or below which [`apply_lora_delta`] runs `m` single-row GEMV deltas
-/// instead of one GEMM: `METRALE_LORA_GEMV_MAX_M`, read once per process, default 48 when unset
-/// or unparsable. `dense_gemm_tc` tiles 16 rows (`TC_TM` in dense_gemm_tc.cu) and reads all of B
-/// whatever `m` is, so a small `m` pays full B traffic for a partly empty tile.
-pub fn lora_gemv_max_m() -> u32 {
-    static V: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    *V.get_or_init(|| {
-        std::env::var("METRALE_LORA_GEMV_MAX_M")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(48)
-    })
-}
-
-/// 2026-09-25: `METRALE_LORA_NO_FFN` equal to `"1"`, read once per process: the dense-FFN
-/// (`dense_ffn.rs`) and GDN out_proj (`qwen3_ssm/lora.rs`) skip their deltas, and the attention
-/// deltas still apply. A measurement lever; the output is wrong while it is set.
-pub fn lora_no_ffn() -> bool {
-    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *V.get_or_init(|| std::env::var("METRALE_LORA_NO_FFN").as_deref() == Ok("1"))
-}
-
 /// 2026-09-25: `base_out[m, n_out] += scale * (x[m, k_in] @ a^T) @ b^T` for one [`LoraPair`].
 ///
 /// `x` rows must be contiguous with stride `k_in * 2` bytes and `base_out` rows with stride
 /// `n_out * 2` bytes; a strided caller loops with `m = 1` on offset pointers. `lora_xa` must hold
 /// `m * max_rank` BF16 and `lora_delta` `m * n_out` BF16.
 ///
-/// Paths: `m == 1` runs two GEMVs; `1 < m <= lora_gemv_max_m()` runs one single-row delta per
+/// Paths: `m == 1` runs two GEMVs; `1 < m <= gemv_max_m` runs one single-row delta per
 /// row; larger `m` runs the tensor-core GEMMs, with the fused expand-and-fold when both
 /// `gemm_tc` handles resolved, and `dense_gemm` when `gemm_tc` is missing. Every unfused path
 /// ends with `bf16_scaled_add`.
@@ -207,12 +197,12 @@ pub fn apply_lora_delta(
     lora_delta: DevicePtr, // 2026-09-25: scratch of at least m * n_out BF16
     stream: u64,
 ) -> Result<()> {
-    if lora_no_apply() {
+    if kernels.levers.no_apply {
         return Ok(());
     }
     // 2026-09-25: Small m: one single-row delta per row. Rows are contiguous by this function's
     // contract, so a row is a pointer offset.
-    if m > 1 && m <= lora_gemv_max_m() {
+    if m > 1 && m <= kernels.levers.gemv_max_m {
         for row in 0..m {
             let x_row = DevicePtr(x.0 + (row as u64) * (pair.k_in as u64) * 2);
             let out_row = DevicePtr(base_out.0 + (row as u64) * (pair.n_out as u64) * 2);

@@ -269,7 +269,7 @@ impl Qwen3AttentionLayer {
             mla_cache_dim,
             mla_cache_dim,
             stream,
-            ctx.graph_capture,
+            ctx,
         )?;
 
         // 2026-09-25: Causal flash attention on the expanded Q, K and V.
@@ -282,6 +282,7 @@ impl Qwen3AttentionLayer {
         };
         ops::prefill_attention(
             ctx.gpu,
+            ctx.levers.ops.attn_512_tc,
             prefill_k,
             qg_out,
             k_contiguous,

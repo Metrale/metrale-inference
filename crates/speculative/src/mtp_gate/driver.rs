@@ -8,6 +8,7 @@
 //! Invariants: none beyond the types.
 
 use super::*;
+use metrale_settings::groups::device_drafter::DrafterSettings;
 
 impl MtpGate {
     /// 2026-09-25: For the scheduler snapshot: the mode (`Probing` during a
@@ -31,12 +32,14 @@ impl MtpGate {
     }
 
     /// 2026-09-25: Starts in Mtp mode. `num_drafts` is only logged;
-    /// arbitration does not model the draft count.
-    pub fn new(num_drafts: usize) -> Self {
-        // 2026-09-25: Read once here: `event_interval` reads them on every
-        // recorded step.
-        let reprobe = reprobe_tokens();
-        let refresh = serial_refresh_tokens();
+    /// arbitration does not model the draft count. The probe and refresh
+    /// intervals are `d.mtp_gate_reprobe` and `d.mtp_gate_refresh`: tokens
+    /// between MTP probes in Serial mode, and between serial-estimate refreshes
+    /// in Mtp mode (2026-09-26: per sequence of the batch-width bucket, so the
+    /// refresh comes after the same number of steps at every width,
+    /// `event_interval`).
+    pub fn with_settings(num_drafts: usize, d: &DrafterSettings) -> Self {
+        let (reprobe, refresh) = (d.mtp_gate_reprobe, d.mtp_gate_refresh);
         tracing::info!(
             "MTP gate: throughput-arbitrated (K={num_drafts}); window={WINDOW_STEPS} steps, \
              dwell={SWITCH_DWELL_WINDOWS}, reprobe={reprobe} tok, refresh={refresh} tok",

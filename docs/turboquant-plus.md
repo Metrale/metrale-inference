@@ -122,7 +122,7 @@ git clone <metrale-repo> && cd metrale
 git checkout feature/tq-plus-clean   # or whichever branch carries the integration
 
 docker build -f docker/gb10/Dockerfile -t metrale-inference-gb10-tqplus .
-# ~8 min cold (cargo build --release -p metrale-server inside builder stage)
+# ~8 min cold (cargo build --release -p met inside builder stage)
 ```
 
 ### 2. Run per-dtype

@@ -17,7 +17,9 @@
 //! - On the class a model's golden plans were written for, with its own kernel target, the
 //!   plan equals the golden plan (crates/server/src/cli/circuit_hw_tests.rs holds it).
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use super::avail::{Availability, availability, check_build, kernel_status, without_fp4_kernel};
 use super::class::{ClassInfo, ClassRules, chain, class_families, class_rules, planning_chain};
@@ -26,7 +28,7 @@ use super::estimate::{DeviceRoofline, device_roofline};
 use super::exec::{Exec, fp4_fallback, node_exec};
 use super::sources::{ClassSources, KernelTree};
 use super::{HwError, ModelUnderPlan};
-use crate::fuser::{FuseError, FusionPlan, fuse};
+use crate::fuser::{FuseError, FusionPlan, Match, fuse_seeded};
 use crate::ir::{Circuit, NodeIdx};
 use crate::rules::{KernelId, Mode, Numerics, PatternOp, Repeat, Rule};
 use crate::runtime::RuntimeRoute;
@@ -197,7 +199,7 @@ pub fn resolve(
     let rules = class_rules(repo, &device.class)?;
     let sources = tree
         .class_sources(&device.class, &model.kernel_model, &model.kernel_quant)
-        .map_err(HwError::Class)?;
+        .map_err(|e| HwError::Class(e.to_string()))?;
     let rule_list: &[Rule] = match &rules {
         ClassRules::Rules { rules, .. } => rules,
         ClassRules::None => &[],
@@ -289,25 +291,33 @@ fn placeholder(op: &crate::ir::OpKind, input: Option<crate::format::Format>) -> 
             roles: BTreeSet::new(),
             layer_kind: None,
             local: None,
+            block: None,
             weight: None,
             input,
             writes: None,
             keep: false,
+            elides: false,
             stored: false,
             sibling: false,
             holds: None,
             steps: BTreeMap::new(),
+            params: BTreeMap::new(),
+            ranks: None,
         }],
         kernels: Vec::new(),
         repeat: Repeat::Once,
         copies: None,
+        comm: Vec::new(),
         emitter: NOVEL_EMITTER.to_string(),
         rows: (1, u64::MAX),
         modes: Mode::ALL.into_iter().collect(),
         requires: BTreeSet::new(),
+        dims: BTreeMap::new(),
         when: Default::default(),
         numerics: Numerics::Reference,
         runs: Vec::new(),
+        path: None,
+        sm_budget: None,
         priority: i64::MIN,
         cite: "no rule of this class covers the op on this device".into(),
     }
@@ -321,13 +331,13 @@ pub fn fuse_on(
     policy: &crate::fuser::Policy,
     run: Run,
 ) -> Result<Planned, HwError> {
-    let mut primary = fuse_arm(r, circuit, policy, run)?;
+    let mut primary = fuse_arm(r, circuit, policy, run, &[])?;
     for route in r
         .route_list()
         .iter()
         .filter(|x| x.applies(policy, run.mode, run.rows))
     {
-        let planned = fuse_arm(r, circuit, &route.policy(policy), run)?;
+        let planned = fuse_arm(r, circuit, &route.policy(policy), run, &[])?;
         if planned.plan.digest != primary.plan.digest {
             primary.routes.push(RoutePlan {
                 route: route.clone(),
@@ -338,22 +348,36 @@ pub fn fuse_on(
     Ok(primary)
 }
 
+/// 2026-10-23: The primary arm of [`fuse_on`] with `seed`'s groups formed first
+/// ([`crate::fuser::fuse_seeded`]); no runtime route is planned. A seed whose rule this arm
+/// refuses is an error, never dropped.
+pub fn fuse_primary_seeded(
+    r: &Resolved,
+    circuit: &Circuit,
+    policy: &crate::fuser::Policy,
+    run: Run,
+    seed: &[Match],
+) -> Result<Planned, HwError> {
+    fuse_arm(r, circuit, policy, run, seed)
+}
+
 fn fuse_arm(
     r: &Resolved,
     circuit: &Circuit,
     policy: &crate::fuser::Policy,
     run: Run,
+    seed: &[Match],
 ) -> Result<Planned, HwError> {
     let mut rules: Vec<Rule> = r.rule_list().to_vec();
     let mut refused = Vec::new();
     loop {
-        match fuse(
+        match fuse_seeded(
             circuit,
             &rules,
             &r.availability.kernels,
             policy,
-            run.mode,
-            run.rows,
+            (run.mode, run.rows),
+            seed,
         ) {
             Ok(plan) => {
                 let pipelines = match crate::pipeline::check_plan(
@@ -421,6 +445,9 @@ fn fuse_arm(
 
 /// 2026-09-30: The runs every hardware report shows: decode at C=1, and multi-sequence decode at
 /// C=16 and C=128.
+/// 2026-10-22: And the verify of one draft at C=1 (two rows), the step every speculative recipe
+/// runs instead of decode n=1. It comes last, so the decode and multi-sequence tables keep the
+/// positions the matrix summary reads (C1 = 0, C16 = 1, C128 = 2).
 pub fn report_runs() -> Vec<Run> {
     vec![
         Run {
@@ -434,6 +461,10 @@ pub fn report_runs() -> Vec<Run> {
         Run {
             mode: Mode::MultiSeq,
             rows: 128,
+        },
+        Run {
+            mode: Mode::Verify,
+            rows: 2,
         },
     ]
 }

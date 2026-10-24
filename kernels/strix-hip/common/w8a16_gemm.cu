@@ -2,7 +2,7 @@
 // forked-from: kernels/gb10/common/w8a16_gemm.cu (2026-09-24; 364 of 319 lines differ, see kernels/FORKS.md)
 
 // 2026-09-25: W8A16 GEMM for HIP on gfx1151: FP8 E4M3 weights dequantised to
-// BF16 while staging, then a BF16 WMMA 16x16x16 GEMM, plus a standalone dequant.
+// BF16 while staging, then a BF16 WMMA 16x16x16 GEMM.
 //
 // Owner: strix-hip kernels.
 // Invariants:
@@ -289,31 +289,4 @@ extern "C" __global__ void w8a16_gemm(
     w8a16_wmma_compute(smem_A[(num_tiles - 1) & 1], smem_B[(num_tiles - 1) & 1], acc, warp_m_offset, lane_id);
 
     w8a16_wmma_store(C, acc, cta_m, cta_n, warp_m_offset, lane_id, M, N);
-}
-
-/// 2026-09-25: Standalone dequant of B[N, K] E4M3 to BF16 [N, K], no WMMA; one
-/// byte per thread.
-extern "C" __global__ void w8a16_dequant(
-    const unsigned char* __restrict__ B,
-    const float* __restrict__ block_scale,
-    __nv_bfloat16* __restrict__ B_bf16,
-    unsigned int K,
-    unsigned int N
-) {
-    unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned int total = N * K;
-    if (idx >= total) return;
-
-    unsigned int n = idx / K;
-    unsigned int k = idx % K;
-
-    unsigned char weight_byte = B[idx];
-
-    unsigned int k_blocks = K / FP8_BLOCK;
-    unsigned int n_block = n / FP8_BLOCK;
-    unsigned int k_block = k / FP8_BLOCK;
-    float scale = block_scale[n_block * k_blocks + k_block];
-
-    float val = E4M3_LUT[weight_byte] * scale;
-    B_bf16[idx] = __float2bfloat16(val);
 }

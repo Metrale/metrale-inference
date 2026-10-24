@@ -9,27 +9,70 @@
 #![allow(clippy::doc_lazy_continuation)]
 #![allow(clippy::doc_overindented_list_items)]
 
-//! 2026-09-26: Library target of metrale-server: the modules that the
-//! integration tests, the `k3_tokenizer_check` example and
-//! `cargo test -p metrale-server --lib` use without building the `met` binary.
+//! 2026-09-26: Library target of met.
+//!
+//! 2026-10-24: Every module of `met`. The binary (crates/met) is a `main` that hands
+//! [`serve_main`] the kernel registry and kernel tree it embeds ([`embedded::Embedded`]), so
+//! this crate does not depend on the crates that compile or pack the kernels, and a kernel
+//! edit relinks the binary without recompiling it.
 //!
 //! Owner: server.
-//! Invariants: every module declared here is also declared in `main.rs`.
+//! Invariants: none beyond the types.
 
-pub mod tokenizer;
-
-// 2026-09-26: The tokenizer tests use `reasoning_parser::ReasoningFormat`, so
-// a `--lib` build needs it; its only in-crate dependency is `tokenizer`.
-pub mod reasoning_parser;
-
-// 2026-09-26: Declared here as well as in `main.rs` so their unit tests run
-// under `--lib`. `rate_limiter` calls `env_config::parse_min`, so
-// `env_config` has to be here too.
-#[path = "auth.rs"]
+mod adaptive_sampler;
+mod anthropic;
+mod api;
 pub mod auth;
-#[path = "env_config.rs"]
+mod citation;
+mod citation_structured;
+mod cli;
+mod conversation_store;
+mod disk_guard;
 pub mod env_config;
-#[path = "rate_limiter.rs"]
+mod error_hints;
+pub mod grammar;
+mod halluc_probe;
+mod hint_injector;
+mod identity;
+mod ids;
+mod ir;
+#[cfg(test)]
+mod lever_equivalence;
+mod lever_value;
+mod llmlingua;
+mod lookback_lens;
+mod loop_detector;
+mod loop_simhash;
+mod lqer;
+mod main_modules;
+pub mod metrics;
+mod model_download;
+mod model_resolver;
+mod moe_quality;
+mod openai;
 pub mod rate_limiter;
-#[path = "refusal.rs"]
+pub mod reasoning_parser;
+pub mod recipe;
 pub mod refusal;
+mod request_dumper;
+mod response_store;
+mod retrieval_heads;
+mod scheduler;
+mod scheduling_policy;
+mod session_manager;
+mod symbol_trie;
+pub mod tokenizer;
+mod tool_arg_dedup;
+pub mod tool_parser;
+mod tool_rag;
+mod tscg;
+pub mod tui;
+
+pub mod embedded;
+mod serve_main;
+
+pub use serve_main::serve_main;
+
+pub(crate) use crate::main_modules::AppState;
+
+pub type ModelBehavior = metrale_kernel_set::ModelBehavior;

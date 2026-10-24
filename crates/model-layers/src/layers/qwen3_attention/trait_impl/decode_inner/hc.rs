@@ -49,8 +49,7 @@ impl Qwen3AttentionLayer {
         // 2026-09-25: Opt-in (`METRALE_DIAG_V4_ALL_LAYERS`), never during capture:
         // `diag_norm` synchronises and copies to the host and ignores the
         // errors, so inside a capture it would invalidate the graph silently.
-        let diag_all =
-            std::env::var("METRALE_DIAG_V4_ALL_LAYERS").is_ok_and(|v| v == "1" || v == "true");
+        let diag_all = self.levers.diag_v4_all_layers;
         let diag_this = diag_all && !ctx.graph_capture;
 
         // 2026-09-25: The first model layer expands the single stream into
@@ -70,6 +69,7 @@ impl Qwen3AttentionLayer {
 
         ops::hc_pre_site(
             ctx.gpu,
+            ctx.levers.ops.hc,
             self.hc_pre_k,
             hc_streams,
             &hc.attn,
@@ -176,6 +176,7 @@ impl Qwen3AttentionLayer {
             if is_last_layer && let Some(ref head) = hc.head {
                 ops::hc_head_site(
                     ctx.gpu,
+                    ctx.levers.ops.hc,
                     self.hc_head_k,
                     hc_streams,
                     head,
@@ -226,6 +227,7 @@ impl Qwen3AttentionLayer {
 
         ops::hc_pre_site(
             ctx.gpu,
+            ctx.levers.ops.hc,
             self.hc_pre_k,
             hc_streams,
             &hc.ffn,
@@ -333,6 +335,7 @@ impl Qwen3AttentionLayer {
         if is_last_layer && let Some(ref head) = hc.head {
             ops::hc_head_site(
                 ctx.gpu,
+                ctx.levers.ops.hc,
                 self.hc_head_k,
                 hc_streams,
                 head,

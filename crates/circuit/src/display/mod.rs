@@ -12,6 +12,8 @@
 //! - A materialised edge is never drawn inside a fused frame: inside a frame every hand-off is
 //!   on-chip, and what the kernel also writes is named on the frame's bottom edge.
 
+use crate::prelude::*;
+
 use crate::fuser::FusionPlan;
 use crate::ir::Circuit;
 

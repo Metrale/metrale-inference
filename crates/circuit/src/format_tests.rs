@@ -19,6 +19,7 @@ fn every_spelling_round_trips() {
         "fp8/g128",
         "fp8/block128x128",
         "nvfp4/g16",
+        "mxfp4/g32",
     ] {
         let f = Format::parse(s).unwrap_or_else(|e| panic!("{s}: {e}"));
         assert_eq!(f.name(), s);
@@ -37,6 +38,8 @@ fn malformed_spellings_are_refused() {
         "fp8/block0x128",
         "nvfp4/16",
         "nvfp4/g",
+        "mxfp4/32",
+        "mxfp4/g0",
         "fp16",
         "fp8/token ",
     ] {
@@ -50,6 +53,7 @@ fn weight_layouts_are_not_edge_formats() {
     assert!(!Format::parse("fp8/block128x128").unwrap().is_edge_format());
     assert!(Format::parse("fp8/token").unwrap().is_edge_format());
     assert!(Format::parse("nvfp4/g16").unwrap().is_edge_format());
+    assert!(Format::parse("mxfp4/g32").unwrap().is_edge_format());
 }
 
 #[test]
@@ -87,6 +91,7 @@ fn nvfp4_activations_carry_a_global_per_row_and_weights_one_per_tensor() {
 #[test]
 fn a_dim_off_the_scale_group_has_no_size() {
     assert_eq!(Format::Nvfp4 { group: 16 }.bytes(1, 24), None);
+    assert_eq!(Format::Mxfp4 { group: 32 }.bytes(1, 48), None);
     assert_eq!(
         Format::Fp8E4m3 {
             scale: Scale::Group(128)
@@ -95,4 +100,14 @@ fn a_dim_off_the_scale_group_has_no_size() {
         None
     );
     assert_eq!(Format::Bf16.bytes(u64::MAX, 2), None);
+}
+
+/// 2026-10-18: MXFP4 (OCP MX v1.0) packs E2M1 pairs with one E8M0 byte per 32 values and no
+/// global, so a weight and an activation of the same shape take the same bytes.
+#[test]
+fn mxfp4_counts_packed_values_and_one_scale_byte_per_group_with_no_global() {
+    let f = Format::Mxfp4 { group: 32 };
+    assert_eq!(f.bytes(1, 4096), Some(2048 + 128));
+    assert_eq!(f.bytes(8, 4096), Some(8 * (2048 + 128)));
+    assert_eq!(f.weight_bytes(2304, 4096), f.bytes(2304, 4096));
 }

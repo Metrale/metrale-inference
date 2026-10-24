@@ -50,6 +50,7 @@ use std::path::{Path, PathBuf};
 
 use super::{WeightDtype, WeightStore, WeightTensor, check_oom_guard, evict_page_cache};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
+use metrale_settings::groups::device_weights::WeightsSettings;
 
 /// Locate the backbone GGUF weight file in `dir`. Returns the
 /// lexicographically-first non-mmproj `*.gguf` (also the first shard,
@@ -70,24 +71,6 @@ pub fn find_gguf(dir: &Path) -> Option<PathBuf> {
         .find(|p| !sidecar::is_mmproj(p))
         .cloned()
         .or_else(|| candidates.into_iter().next())
-}
-
-/// True when the native keep-packed Q2_0 decode path is enabled
-/// (`METRALE_GGUF_NATIVE_Q2=1`). Off by default: the loader dequants every id-42
-/// tensor to BF16 exactly as before, so the default path is byte-identical.
-/// When on, the "big" transform-free FFN projections (see
-/// [`names::is_keep_packed_proj`]) are uploaded as raw `block_q2_0` blocks and
-/// tagged [`WeightDtype::PackedQ2_0`] for in-kernel dequant at decode.
-fn native_q2_enabled() -> bool {
-    std::env::var("METRALE_GGUF_NATIVE_Q2").ok().as_deref() == Some("1")
-}
-
-/// The id-42 PrismML group size, from `METRALE_GGUF_Q2_GROUP` (default 128).
-fn q2_group_usize() -> usize {
-    match std::env::var("METRALE_GGUF_Q2_GROUP").ok().as_deref() {
-        Some("64") => 64,
-        _ => 128,
-    }
 }
 
 /// Map a group size to the container's `Q2Group` (for on-disk byte sizing).
@@ -113,32 +96,29 @@ pub struct GgufLoader {
     pub num_experts: usize,
     /// Override for the peak-memory multiplier in the pre-flight OOM check.
     pub peak_memory_multiplier: Option<f64>,
-}
-
-impl Default for GgufLoader {
-    fn default() -> Self {
-        Self::new()
-    }
+    /// 2026-10-17: The run-time levers: the native Q2_0 path (`gguf_native_q2`: the big
+    /// transform-free FFN projections stay raw `block_q2_0`, tagged
+    /// [`WeightDtype::PackedQ2_0`] for in-kernel dequant at decode; off, every id-42 tensor is
+    /// dequantized to BF16), the id-42 group size, the CPU-dequant pin and the DeepSeek-V4.1
+    /// K-quant residency.
+    pub settings: WeightsSettings,
 }
 
 impl GgufLoader {
-    /// Create a loader with no expert parallelism (loads all tensors).
-    pub fn new() -> Self {
-        Self {
-            ep_rank: 0,
-            ep_world_size: 1,
-            num_experts: 0,
-            peak_memory_multiplier: None,
-        }
-    }
-
-    /// Create a loader with EP-aware expert filtering.
-    pub fn with_ep(ep_rank: usize, ep_world_size: usize, num_experts: usize) -> Self {
+    /// 2026-10-17: A loader over `settings`, with EP-aware expert filtering when
+    /// `ep_world_size > 1` (`0, 1, 0` loads every tensor).
+    pub fn with_settings(
+        ep_rank: usize,
+        ep_world_size: usize,
+        num_experts: usize,
+        settings: WeightsSettings,
+    ) -> Self {
         Self {
             ep_rank,
             ep_world_size,
             num_experts,
             peak_memory_multiplier: None,
+            settings,
         }
     }
 
@@ -271,9 +251,9 @@ impl super::WeightLoader for GgufLoader {
             .with_context(|| format!("No .gguf file found in {}", model_dir.display()))?;
         tracing::info!("Loading GGUF weights from {}", path.display());
 
-        let force_cpu = std::env::var("METRALE_GGUF_FORCE_CPU").ok().as_deref() == Some("1");
-        let native_q2 = native_q2_enabled();
-        let q2_group = q2_group_usize();
+        let force_cpu = self.settings.gguf_force_cpu;
+        let native_q2 = self.settings.gguf_native_q2;
+        let q2_group = self.settings.q2_group;
         let q2_variant = q2_group_variant(q2_group);
         if native_q2 {
             tracing::info!(
@@ -430,6 +410,7 @@ impl super::WeightLoader for GgufLoader {
         check_oom_guard(gpu, oom_reserve_bytes, "weight loading (GGUF)")?;
         tracing::info!("Loaded {} weight tensors (GGUF → BF16)", weights.len());
         let mut store = WeightStore::from_map(weights);
+        store.record_weights_settings(self.settings.clone());
         for (name, t) in deferred {
             store.defer(name, t);
         }

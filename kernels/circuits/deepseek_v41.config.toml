@@ -1,0 +1,119 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-18: config.json -> the `deepseek_v41` circuit's arch shape (DeepSeek-V4.1-Flash):
+# sliding-window plus compressed sparse latent attention under hyper-connections, Engram, a
+# routed MoE with one shared expert, and draft layers the circuit does not model.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/config_map.rs).
+# Invariants:
+# - Every key the checkpoint carries is classified: a dim, a param, a required value, a nested
+#   object, or ignorable with its reason. Any other key is refused.
+# - The model reads `text_config`; the top level holds the multimodal wrapper, the token ids and
+#   the quantization block.
+# - Layer kinds come from `compress_ratios`: 0 is a sliding-window layer, 2 (CSA) and 1 (HCA) are
+#   sparse layers. Its trailing `num_nextn_predict_layers` entries are the draft layers and are
+#   dropped. `csa_ratio` and `hca_ratio` are the only ratios the values admit; `late_first` is
+#   the first ratio-1 layer, and every text layer from it on must be ratio 1.
+# - The circuit's `[layout.at]` names the source, re-index and Engram layers, so the config's
+#   layer-id lists are required to be exactly those; a checkpoint that moves one is refused.
+# - `engram_cols` = (engram_max_ngram_size - 1) * engram_n_heads, both required at the values
+#   that give 24.
+
+schema = 1
+arch = "deepseek_v41"
+model_types = ["deepseek_v41"]
+nest = "text_config"
+
+[root]
+model_type = "ignore"
+architectures = { ignore = "the HF class name; model_type selects the circuit" }
+transformers_version = "ignore"
+dtype = { ignore = "the storage dtype of unquantized tensors; the load plan reads each tensor's own" }
+quantization_config = { ignore = "read by the precision plan (DeclaredPrecisionPlan)" }
+vision_config = { ignore = "the vision tower is outside the text circuit (LIFECYCLE-DESIGN.md 13)" }
+image_token_id = { ignore = "multimodal token ids; outside the text circuit" }
+bos_token_id = { ignore = "tokenizer ids" }
+eos_token_id = { ignore = "tokenizer ids; the serving metadata reads them" }
+pad_token_id = { ignore = "tokenizer ids" }
+
+[layers]
+count = "num_hidden_layers"
+sources = [
+  { key = "compress_ratios", draft_tail = "num_nextn_predict_layers", values = { "0" = "sliding_attention", "1" = "deepseek_sparse_attention", "2" = "deepseek_sparse_attention" } },
+]
+
+[dims]
+hidden = "hidden_size"
+vocab = "vocab_size"
+hc = "hc_mult"
+q_heads = "num_attention_heads"
+q_lora = "q_lora_rank"
+head_dim = "head_dim"
+rope_dim = "qk_rope_head_dim"
+o_groups = "o_groups"
+o_lora = "o_lora_rank"
+window = "sliding_window"
+# 2026-10-18: The only ratios the layer source admits (the CSA pool and the per-token HCA rows).
+csa_ratio = { const = 2 }
+hca_ratio = { const = 1 }
+late_first = { first_index = { key = "compress_ratios", value = 1, run_to = "num_hidden_layers" } }
+index_heads = "index_n_heads"
+index_head_dim = "index_head_dim"
+index_topk = "index_topk"
+experts = "n_routed_experts"
+top_k = "num_experts_per_tok"
+moe_inter = "moe_intermediate_size"
+# 2026-10-18: One shared expert of the routed width (`n_shared_experts` is required to be 1).
+shared_inter = "moe_intermediate_size"
+engram_cols = { const = 24 }
+engram_head_dim = "engram_head_dim"
+
+[keys]
+model_type = "ignore"
+bos_token_id = { ignore = "tokenizer ids" }
+eos_token_id = { ignore = "tokenizer ids; the serving metadata reads them" }
+pad_token_id = { ignore = "tokenizer ids" }
+initializer_range = { ignore = "training initialisation" }
+attention_dropout = { ignore = "training only" }
+use_cache = { ignore = "an HF generate flag" }
+max_position_embeddings = { param = true }
+num_key_value_heads = { require = 1, why = "the circuit's attention has one latent KV head shared by every query head" }
+hidden_act = { require = "silu", why = "the circuit's FFNs are SiLU-gated" }
+attention_bias = { require = false, why = "the circuit's projections have no bias" }
+tie_word_embeddings = { require = false, why = "the head is not tied to the embedding" }
+rms_norm_eps = { param = true }
+swiglu_limit = { param = true }
+rope_theta = { param = true }
+compress_rope_theta = { param = true }
+rope_scaling = { param = "rope_scaling", object = { rope_type = { param = true, require = "yarn", why = "the circuit's RoPE params are YaRN's" }, factor = "param", beta_fast = "param", beta_slow = "param", original_max_position_embeddings = "param" } }
+scoring_func = { require = "sqrtsoftplus", why = "the circuit's routing scores with sqrt(softplus) and a correction bias" }
+topk_method = { require = "noaux_tc", why = "the circuit's top-k ranks score + e_score_correction_bias" }
+norm_topk_prob = { param = true, require = true, why = "the circuit's top-k renormalises the selected weights" }
+routed_scaling_factor = { param = true }
+n_shared_experts = { require = 1, why = "the circuit has one shared expert of moe_intermediate_size" }
+hc_sinkhorn_iters = { param = true }
+hc_eps = { param = true }
+kv_source_layer_ids = { require = [[2, 8, 14, 20]], why = "the circuit's [layout.at] places the compressed-KV sources at these layers" }
+index_source_layer_ids = { require = [[2, 8, 14, 20, 24, 28, 32, 36]], why = "the circuit's [layout.at] places the indexers at these layers" }
+candidate_source_layer_id = { require = 20, why = "the circuit's re-index layers read layer 20's keys" }
+candidate_topk_blocks = { param = true }
+candidate_block_size = { param = true }
+engram_layer_ids = { require = [[1, 14]], why = "the circuit's [layout.at] places Engram before these layers" }
+engram_max_ngram_size = { require = 4, why = "engram_cols is (4 - 1) * 8 in the circuit" }
+engram_n_heads = { require = 8, why = "engram_cols is (4 - 1) * 8 in the circuit" }
+engram_num_embeddings = { param = true }
+engram_vocab_size = { param = true }
+engram_pad_token_id = { param = true }
+engram_compressed_vocab_size = { param = true }
+num_nextn_predict_layers = { ignore = "the draft-layer count; the layer source drops that many trailing ratios, and the circuit models no draft layer" }
+dspark_block_size = { ignore = "the DSpark drafter; the circuit models no draft layer" }
+dspark_noise_token_id = { ignore = "the DSpark drafter; the circuit models no draft layer" }
+dspark_target_layer_ids = { ignore = "the DSpark drafter; the circuit models no draft layer" }
+dspark_markov_rank = { ignore = "the DSpark drafter; the circuit models no draft layer" }
+dspark_n_routed_experts = { ignore = "the DSpark drafter; the circuit models no draft layer" }
+dspark_num_experts_per_tok = { ignore = "the DSpark drafter; the circuit models no draft layer" }
+
+# 2026-10-23: The engine code default of each setting a rule over this circuit reads.
+[policy]
+final_norm_vanilla = { value = "on", why = "deepseek_v41 is listed: crates/model-layers/src/lib.rs:53-66 (ships_vanilla_norm_weights by model_type), read at crates/model-engine/src/model/impl_a1.rs:88-94 (rms_norm_kernel, the final norm only, impl_a3_norm.rs:23-50)" }
+glm_mtp_device_step = { value = "off", why = "only GLM-5's MTP proposer drafts on the device (crates/model-arch/src/glm5next_mtp_head/proposer.rs:245; the trait default, crates/model-layers/src/speculative.rs:303)" }

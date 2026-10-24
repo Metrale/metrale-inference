@@ -51,7 +51,7 @@ fn backfill_fills_omitted_subagent_type_with_valid_agent() {
         "omitted subagent_type must be filled with a valid agent, not empty"
     );
     assert!(
-        validate_single_tool_call(&calls[0], std::slice::from_ref(&tool)).is_ok(),
+        validate_single_tool_call(&calls[0], std::slice::from_ref(&tool), false).is_ok(),
         "the repaired call must validate"
     );
 }

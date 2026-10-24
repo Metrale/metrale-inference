@@ -311,7 +311,7 @@ pub(super) async fn completions_stream(
         p,
         std::sync::Arc::new(prompt_tokens),
         session_hash,
-        state.request_deadline(None),
+        state.request_deadline(req.timeout),
         token_tx,
     );
 
@@ -360,6 +360,9 @@ pub(super) async fn completions_stream(
                 )]
             }
             StreamEvent::Token(tok) | StreamEvent::TokenWithLogprobs(tok, _) => {
+                // 2026-10-20: The token's text offset in the full stream, for
+                // the per-chunk `logprobs.text_offset`.
+                let offset_before = content_decoded.len();
                 all_toks.push(tok);
                 content_decoded.push_str(&state.tokenizer.incremental_decode(
                     &all_toks,
@@ -374,7 +377,23 @@ pub(super) async fn completions_stream(
                     emitted = stable_end;
                     d
                 };
-                let chunk = CompletionChunk::text_chunk(&model, &id, delta);
+                let mut chunk = CompletionChunk::text_chunk(&model, &id, delta);
+                // 2026-10-20: The scheduler computed this token's logprobs
+                // (it only sends `TokenWithLogprobs` when the request asked
+                // for them); attach them instead of dropping them.
+                if let StreamEvent::TokenWithLogprobs(_, lp) = &event {
+                    let decode = |id: u32| state.tokenizer.decode(&[id]).unwrap_or_default();
+                    let mut lps = super::completions_logprobs::build_completion_logprobs(
+                        &decode,
+                        false,
+                        &[],
+                        &[],
+                        &[tok],
+                        std::slice::from_ref(lp),
+                    );
+                    lps.text_offset[0] = offset_before;
+                    chunk.choices[0].logprobs = Some(lps);
+                }
                 vec![Ok(
                     Event::default().data(serde_json::to_string(&chunk).unwrap_or_default())
                 )]

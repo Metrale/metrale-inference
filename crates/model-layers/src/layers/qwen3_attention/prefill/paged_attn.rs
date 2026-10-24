@@ -58,6 +58,9 @@ impl Qwen3AttentionLayer {
         ctx: &ForwardContext,
         args: &mut PagedAttnArgs,
     ) -> Result<PagedAttnOutcome> {
+        if let Some(t) = &self.trellis {
+            return self.prefill_attention_paged_trellis(t, kv_cache, ctx, args);
+        }
         let PagedAttnArgs {
             q_contiguous,
             k_contiguous: _,
@@ -89,6 +92,7 @@ impl Qwen3AttentionLayer {
         if hd > 256 && self.prefill_attn_512_k.0 != 0 && seq_len_start == 0 {
             ops::prefill_attention(
                 ctx.gpu,
+                ctx.levers.ops.attn_512_tc,
                 self.prefill_attn_512_k,
                 q_contiguous,
                 args.k_contiguous,

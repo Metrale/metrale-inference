@@ -2,11 +2,15 @@
 resolver = "2"
 members = [
     "crates/core",
+    "crates/error",
     "crates/config",
     "crates/closure",
     "crates/circuit",
     "crates/governance",
     "crates/kernels",
+    "crates/kernel-set",
+    "crates/target-defaults",
+    "crates/kernel-root",
     "crates/kernel-tree",
     "crates/gpu-sys",
     "crates/telemetry",
@@ -20,19 +24,43 @@ members = [
     "crates/model-weights",
     "crates/model-layers",
     "crates/model-arch",
+    "crates/gpu-examples",
     "crates/model-engine",
     "crates/speculative",
     "crates/bench",
     "crates/server",
+    "crates/met",
+    "xtask",
+    "crates/abstract-io",
+    "crates/io-hosts/mem",
+    "crates/io-hosts/std",
+    "crates/io-hosts/fs-repo",
+    "crates/settings",
+    "crates/serve-identity",
+    "crates/kv-codec",
+    "crates/kv-tq128",
+    "crates/host-probe",
+    "crates/blueprint",
+    "crates/blueprint-trust",
+    "crates/blueprint-sign",
+    "crates/precision",
+    "crates/kernel-target",
+    "crates/kzx",
+    "crates/seal",
+    "crates/stats",
+    "crates/power",
+    "crates/io-hosts/power",
+    "crates/latlas-pack",
+    "crates/io-hosts/kg",
+    "crates/kg-mcp",
 ]
 
-# AMD/SCALE + native-HIP: the vendored cudarc 0.19.2 is byte-identical to
-# crates.io except its driver `Lib` loader resolves CUDA-driver symbols that
-# don't exist on SCALE/gfx1151 (e.g. cuArrayGetMemoryRequirements) to a
-# `__metrale_missing_cuda_sym` stub instead of panicking at init. On NVIDIA all
-# symbols resolve normally, so the patch is a no-op there (same version).
-[patch.crates-io]
-cudarc = { path = "vendor/cudarc" }
+# 2026-10-17: A bare `cargo build` builds `met` only; CI and scripts name `--workspace` or `-p`.
+default-members = ["crates/met"]
+
+# 2026-10-17: The vendored cudarc fork is a dependency, not a member: workspace-wide fmt, clippy
+# and tests do not run over vendored code.
+exclude = ["vendor/cudarc"]
 
 [workspace.package]
 version = "1.0.0-beta-preview"
@@ -46,51 +74,204 @@ documentation = "https://book.dev.metrale.ai"
 keywords = ["llm", "inference", "cuda", "blackwell", "gpu"]
 categories = ["science", "command-line-utilities"]
 
+# 2026-10-17: Every dependency is declared here once, as `{ version, default-features = false }`,
+# and nothing else. A member names it as `name = { workspace = true, features = [...] }` and lists
+# every feature it builds with, defaults included, so each crate compiles only what it asks for.
+# No member writes its own `version`, `path` or `default-features`.
 [workspace.dependencies]
 # CUDA FFI.
 # Metrale Engine only ever touches the `driver` + `nvrtc` backends (the vendored crate
 # also keeps `runtime` available for completeness). default-features=false drops
 # cudarc's default cublas/cublaslt/curand/runtime/etc. so the never-compiled
 # backends carry no weight; their generated `sys/mod.rs` FFI bindings have been
-# removed from `vendor/cudarc` entirely. `fallback-dynamic-loading` is required:
+# removed from `vendor/cudarc` entirely. The members that use it (core, gpu-runtime)
+# name `std`, `driver`, `nvrtc`, `fallback-dynamic-loading` and
+# `cuda-version-from-build-system`. `fallback-dynamic-loading` is required:
 # cudarc's build.rs derives the `dynamic-loading` cfg from it.
-cudarc = { version = "0.19", default-features = false, features = [
-    "std",
-    "driver",
-    "nvrtc",
-    "fallback-dynamic-loading",
-    "cuda-version-from-build-system",
-] }
+# 2026-10-17: The fork is published as `metrale-cudarc` (a `[patch]` does not reach published
+# crates) and is used under the name `cudarc`. Its changes from upstream 0.19.2:
+# `result::ctx::stream_priority_range`, `result::stream::create_with_priority` and
+# `CudaContext::new_stream_with_priority`; `CudaModule::cu_module_raw`; and the driver `Lib` loader
+# resolves a CUDA-driver symbol the runtime lacks (SCALE/gfx1151, e.g.
+# cuArrayGetMemoryRequirements) to a `__metrale_missing_cuda_sym` stub instead of panicking at init.
+cudarc = { package = "metrale-cudarc", path = "vendor/cudarc", version = "0.19.2", default-features = false }
 
-# Serialization (HF config.json)
-serde = { version = "1", features = ["derive"] }
-# `preserve_order`: keep JSON object keys in insertion/declaration order
-# (IndexMap, not BTreeMap). Required so `serde_json::to_value(ToolDefinition)`
-# and the nested `parameters` JSON-schema Value match transformers'
-# `tojson` (= `json.dumps(sort_keys=False)`) key order in the `<tools>`
-# prompt block. See crates/server/src/tokenizer/jinja_helpers.rs.
-serde_json = { version = "1", features = ["preserve_order"] }
+# Serialization (HF config.json). `serde_json`'s `preserve_order` (IndexMap key order) is named
+# by the members that rely on it; see crates/server/Cargo.toml for why the server needs it.
+serde = { version = "1", default-features = false }
+serde_json = { version = "1", default-features = false }
 
 # Error handling
-thiserror = "2"
-anyhow = "1"
+thiserror = { version = "2", default-features = false }
+anyhow = { version = "1", default-features = false }
 # Stable content hashing for kernel-closure provenance. `DefaultHasher` is
 # explicitly NOT stable across Rust releases, and this hash is persisted in
 # committed gate records — it has to mean the same thing next year.
-sha2 = "0.11"
+sha2 = { version = "0.11", default-features = false }
 
 # Synchronization — parking_lot Mutex/RwLock are faster than std::sync,
 # don't poison, and `.lock()` returns the guard directly (no Result).
 # Already a transitive dep of several crates so this adds no binary
 # overhead — just standardizes the API across the workspace.
-parking_lot = "0.12"
+parking_lot = { version = "0.12", default-features = false }
 
-# Workspace crates
-# metrale-core: `default-features = false` so each consumer crate forwards the
-# right backend feature explicitly (cuda or metal). Without this, every
-# member would silently pull in cudarc via metrale-core's `cuda` default.
-metrale-core = { path = "crates/core", default-features = false }
-metrale-kernels = { path = "crates/kernels" }
+# External crates, alphabetical.
+# 2026-10-22: AES-256-GCM for sealed kernels (metrale-seal); the aead 0.6 / cipher 0.5
+# generation that matches digest 0.11, so no second sha2 enters a core crate.
+aes-gcm = { version = "0.11", default-features = false }
+ahash = { version = "0.8", default-features = false }
+axum = { version = "0.8", default-features = false }
+base64 = { version = "0.23", default-features = false }
+bitvec = { version = "1", default-features = false }
+cc = { version = "1", default-features = false }
+clap = { version = "4", default-features = false }
+criterion = { version = "0.8", default-features = false }
+crossterm = { version = "0.28", default-features = false }
+dispatch2 = { version = "0.3", default-features = false }
+# 2026-10-22: The Ed25519 half of the blueprint hybrid signature. 2.2, as metrale-auth runs it, so
+# both repos share one lock line; no default features keeps it no_std for the core crates.
+ed25519-dalek = { version = "2.2", default-features = false }
+flate2 = { version = "1.1", default-features = false }
+futures = { version = "0.3", default-features = false }
+getrandom = { version = "0.4", default-features = false }
+half = { version = "2", default-features = false }
+# 2026-10-22: HKDF-SHA-256 (RFC 5869) for sealed kernels (metrale-seal); hmac 0.13 + digest 0.11.
+hkdf = { version = "0.13", default-features = false }
+http-body = { version = "1", default-features = false }
+hyper = { version = "1", default-features = false }
+hyper-util = { version = "0.1", default-features = false }
+image = { version = "0.25", default-features = false }
+io-uring = { version = "0.7", default-features = false }
+# 2026-10-17: latticedb-core is published on crates.io (0.3.4 = lattice-db main e94ccad); the
+# package is named `latticedb-core` and its lib target `lattice_core`, so `package` is required.
+# 2026-10-23: pinned exactly: 0.3.4 is main e94ccad, which carries 95b9ade (a search after a
+# delete never returns the deleted point; textstore.rs tests it). The acid branch lacks it.
+lattice-core = { version = "=0.3.4", package = "latticedb-core", default-features = false }
+# 2026-10-23: LatticeDB's durable `DiskStorage` (WAL + pages) under the knowledge graph's derived
+# store (metrale-kg-mcp); the same 0.3.4 as lattice-core. Library target `lattice_storage`.
+lattice-storage = { version = "=0.3.4", package = "latticedb-storage", default-features = false }
+lazy_static = { version = "1", default-features = false }
+libc = { version = "0.2", default-features = false }
+libloading = { version = "0.9", default-features = false }
+memmap2 = { version = "0.9", default-features = false }
+# 2026-10-22: Pure-Rust no_std deflate for `.kbp` bodies and inline kernel payloads.
+miniz_oxide = { version = "0.8", default-features = false }
+# 2026-10-22: ML-KEM-768 (FIPS 203) for sealed kernels (metrale-seal), the KKB1 envelope's pin;
+# `hazmat` exposes deterministic encapsulation so randomness enters as a value.
+ml-kem = { version = "0.3.2", default-features = false }
+# 2026-10-22: ML-DSA (FIPS 204), exactly the version and features metrale-auth signs with.
+ml-dsa = { version = "=0.1.1", default-features = false }
+# 2026-09-30: Exactly 2.21.0. 2.22 changed how `none` and booleans render through `|string`
+# (to `None`/`True`/`False`), which changes the tool-call argument text inside the prompt the
+# model reads; `tokenizer::tests::qwen_dense_parity` pins today's rendering and fails on 2.24.
+# Raising it is a prompt-content change that needs its own certification, not a version bump
+# (Dependabot ignores it in .github/dependabot.yml).
+# 2026-10-22: no_std float functions (metrale-circuit's roofline `pow`).
+libm = { version = "0.2", default-features = false }
+minijinja = { version = "=2.21.0", default-features = false }
+objc2 = { version = "0.6", default-features = false }
+# 2026-10-22: The canonical, deterministic `.kbp` body encoding (serde, no_std).
+postcard = { version = "1", default-features = false }
+objc2-foundation = { version = "0.3", default-features = false }
+objc2-metal = { version = "0.3", default-features = false }
+prometheus = { version = "0.14", default-features = false }
+rand = { version = "0.9", default-features = false }
+rand_chacha = { version = "0.9", default-features = false }
+rand_distr = { version = "0.5", default-features = false }
+ratatui = { version = "0.29", default-features = false }
+rayon = { version = "1.12", default-features = false }
+# 2026-10-23: The MCP server SDK under metrale-kg-mcp (design: rmcp 0.16, stdio transport).
+rmcp = { version = "0.16", default-features = false }
+regex = { version = "1.13", default-features = false }
+# 2026-10-22: The regex engines under `regex`, used directly where a no_std crate matches
+# (metrale-precision's `re:` targets); same version as `regex` resolves.
+regex-automata = { version = "0.4", default-features = false }
+ring = { version = "0.17", default-features = false }
+safetensors = { version = "0.8", default-features = false }
+socket2 = { version = "0.6", default-features = false }
+stats_alloc = { version = "=0.1.10", default-features = false }
+tempfile = { version = "3", default-features = false }
+tokenizers = { version = "0.23", default-features = false }
+tokio = { version = "1", default-features = false }
+tokio-stream = { version = "0.1", default-features = false }
+toml = { version = "1.1", default-features = false }
+tower = { version = "0.5", default-features = false }
+tower-http = { version = "0.7", default-features = false }
+tracing = { version = "0.1", default-features = false }
+tracing-subscriber = { version = "0.3", default-features = false }
+tui-textarea = { version = "0.7", default-features = false }
+unicode-width = { version = "0.2", default-features = false }
+# 2026-10-22: Wipes key seeds held in memory by the blueprint signer.
+zeroize = { version = "1.8", default-features = false }
+ureq = { version = "3", default-features = false }
+# 2026-10-22: The X25519 half of the sealed-kernel hybrid KEM (metrale-seal). 2.0.1, on the
+# curve25519-dalek 4 that ed25519-dalek 2.2 already uses (one lock line; 3.0 needs dalek 5).
+x25519-dalek = { version = "2.0.1", default-features = false }
+
+# Workspace crates, alphabetical. `default-features = false` so each consumer forwards the
+# backend feature (cuda or metal) explicitly; otherwise every member would silently pull in
+# cudarc through a `cuda` default.
+# 2026-10-17: `version` is required to publish a crate whose dependencies are path dependencies;
+# it must equal `[workspace.package] version` above.
+met = { path = "crates/met", version = "1.0.0-beta-preview", default-features = false }
+metrale-abstract-io = { path = "crates/abstract-io", version = "1.0.0-beta-preview", default-features = false }
+metrale-blueprint = { path = "crates/blueprint", version = "1.0.0-beta-preview", default-features = false }
+metrale-blueprint-sign = { path = "crates/blueprint-sign", version = "1.0.0-beta-preview", default-features = false }
+metrale-blueprint-trust = { path = "crates/blueprint-trust", version = "1.0.0-beta-preview", default-features = false }
+metrale-bench = { path = "crates/bench", version = "1.0.0-beta-preview", default-features = false }
+metrale-cache = { path = "crates/cache", version = "1.0.0-beta-preview", default-features = false }
+metrale-circuit = { path = "crates/circuit", version = "1.0.0-beta-preview", default-features = false }
+metrale-closure = { path = "crates/closure", version = "1.0.0-beta-preview", default-features = false }
+metrale-comm = { path = "crates/comm", version = "1.0.0-beta-preview", default-features = false }
+metrale-config = { path = "crates/config", version = "1.0.0-beta-preview", default-features = false }
+metrale-core = { path = "crates/core", version = "1.0.0-beta-preview", default-features = false }
+metrale-error = { path = "crates/error", version = "1.0.0-beta-preview", default-features = false }
+metrale-governance = { path = "crates/governance", version = "1.0.0-beta-preview", default-features = false }
+metrale-gpu-runtime = { path = "crates/gpu-runtime", version = "1.0.0-beta-preview", default-features = false }
+metrale-gpu-sys = { path = "crates/gpu-sys", version = "1.0.0-beta-preview", default-features = false }
+metrale-grammar = { path = "crates/grammar", version = "1.0.0-beta-preview", default-features = false }
+metrale-host-probe = { path = "crates/host-probe", version = "1.0.0-beta-preview", default-features = false }
+metrale-io-host-mem = { path = "crates/io-hosts/mem", version = "1.0.0-beta-preview", default-features = false }
+metrale-io-host-fs-repo = { path = "crates/io-hosts/fs-repo", version = "1.0.0-beta-preview", default-features = false }
+metrale-io-host-std = { path = "crates/io-hosts/std", version = "1.0.0-beta-preview", default-features = false }
+metrale-io-host-power = { path = "crates/io-hosts/power", version = "1.0.0-beta-preview", default-features = false }
+metrale-io-host-kg = { path = "crates/io-hosts/kg", version = "1.0.0-beta-preview", default-features = false }
+metrale-kernel-root = { path = "crates/kernel-root", version = "1.0.0-beta-preview", default-features = false }
+metrale-kernel-tree = { path = "crates/kernel-tree", version = "1.0.0-beta-preview", default-features = false }
+metrale-kernels = { path = "crates/kernels", version = "1.0.0-beta-preview", default-features = false }
+metrale-kernel-set = { path = "crates/kernel-set", version = "1.0.0-beta-preview", default-features = false }
+metrale-latlas-pack = { path = "crates/latlas-pack", version = "1.0.0-beta-preview", default-features = false }
+# 2026-10-23: Latlas (Avarok-Cybersecurity/latlas): the generic graph+vector core metrale-kg runs on
+# (DESIGN-latlas.md §5.3, K1). Pinned to one rev of the private repo; bump all eight together.
+latlas-adapters = { git = "https://github.com/Avarok-Cybersecurity/latlas", rev = "d840a5dbebc245399a330738655fd8137044a5ad", default-features = false }
+latlas-check = { git = "https://github.com/Avarok-Cybersecurity/latlas", rev = "d840a5dbebc245399a330738655fd8137044a5ad", default-features = false }
+latlas-cli = { git = "https://github.com/Avarok-Cybersecurity/latlas", rev = "d840a5dbebc245399a330738655fd8137044a5ad", default-features = false }
+latlas-core = { git = "https://github.com/Avarok-Cybersecurity/latlas", rev = "d840a5dbebc245399a330738655fd8137044a5ad", default-features = false }
+latlas-error = { git = "https://github.com/Avarok-Cybersecurity/latlas", rev = "d840a5dbebc245399a330738655fd8137044a5ad", default-features = false }
+latlas-host-native = { git = "https://github.com/Avarok-Cybersecurity/latlas", rev = "d840a5dbebc245399a330738655fd8137044a5ad", default-features = false }
+latlas-index = { git = "https://github.com/Avarok-Cybersecurity/latlas", rev = "d840a5dbebc245399a330738655fd8137044a5ad", default-features = false }
+latlas-ports = { git = "https://github.com/Avarok-Cybersecurity/latlas", rev = "d840a5dbebc245399a330738655fd8137044a5ad", default-features = false }
+metrale-model-arch = { path = "crates/model-arch", version = "1.0.0-beta-preview", default-features = false }
+metrale-model-engine = { path = "crates/model-engine", version = "1.0.0-beta-preview", default-features = false }
+metrale-model-layers = { path = "crates/model-layers", version = "1.0.0-beta-preview", default-features = false }
+metrale-model-weights = { path = "crates/model-weights", version = "1.0.0-beta-preview", default-features = false }
+metrale-sampling = { path = "crates/sampling", version = "1.0.0-beta-preview", default-features = false }
+metrale-scheduler = { path = "crates/scheduler", version = "1.0.0-beta-preview", default-features = false }
+metrale-seal = { path = "crates/seal", version = "1.0.0-beta-preview", default-features = false }
+metrale-serve-identity = { path = "crates/serve-identity", version = "1.0.0-beta-preview", default-features = false }
+metrale-server = { path = "crates/server", version = "1.0.0-beta-preview", default-features = false }
+kzx = { path = "crates/kzx", version = "0.1.0", default-features = false }
+metrale-kv-codec = { path = "crates/kv-codec", version = "1.0.0-beta-preview", default-features = false }
+metrale-power = { path = "crates/power", version = "1.0.0-beta-preview", default-features = false }
+metrale-precision = { path = "crates/precision", version = "1.0.0-beta-preview", default-features = false }
+metrale-kernel-target = { path = "crates/kernel-target", version = "1.0.0-beta-preview", default-features = false }
+metrale-kv-tq128 = { path = "crates/kv-tq128", version = "1.0.0-beta-preview", default-features = false }
+metrale-settings = { path = "crates/settings", version = "1.0.0-beta-preview", default-features = false }
+metrale-speculative = { path = "crates/speculative", version = "1.0.0-beta-preview", default-features = false }
+metrale-stats = { path = "crates/stats", version = "1.0.0-beta-preview", default-features = false }
+metrale-storage = { path = "crates/storage", version = "1.0.0-beta-preview", default-features = false }
+metrale-target-defaults = { path = "crates/target-defaults", version = "1.0.0-beta-preview", default-features = false }
+metrale-telemetry = { path = "crates/telemetry", version = "1.0.0-beta-preview", default-features = false }
 
 # W7: the `[patch.crates-io] xgrammar-rs` entry was removed — Metrale Engine now
 # depends on the pure-Rust `crates/grammar` crate directly (no FFI,
@@ -114,3 +295,21 @@ doc_overindented_list_items = "allow"
 type_complexity = "allow"
 ptr_arg = "allow"
 if_same_then_else = "allow"
+
+# 2026-10-17: Line tables keep backtraces readable at a fraction of full debug info's
+# compile and link cost. `release` is untouched: it is the parity reference.
+[profile.dev]
+debug = "line-tables-only"
+
+# 2026-10-22: kzx is a bit-level context-mixing coder: unoptimized it decodes a full kernel
+# payload in minutes, not seconds, so dev and test builds (met's blueprint tests open GLM's
+# 71 MB full file) optimize it. Codegen only: its output is identical at every opt level.
+[profile.dev.package.kzx]
+opt-level = 3
+
+# 2026-10-17: Release codegen for the edit-run loop: incremental, many codegen units.
+# Opt-in by name (`--profile iter`); never used for gate, certify or release builds.
+[profile.iter]
+inherits = "release"
+incremental = true
+codegen-units = 256

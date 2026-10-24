@@ -16,7 +16,9 @@
 //! - The rule set is attested by `rules_digest` and by the closure hash, which covers
 //!   FUSIONS.toml as a config.
 
-use std::fmt::Write as _;
+use crate::prelude::*;
+
+use core::fmt::Write as _;
 
 use sha2::{Digest, Sha256};
 
@@ -50,12 +52,13 @@ pub fn canonical(circuit: &Circuit, plan: &FusionPlan) -> String {
             .collect();
         let _ = writeln!(
             s,
-            "group {i} kernels=[{}] repeat={}{} emitter={} numerics={:?} nodes=[{}]",
+            "group {i} kernels=[{}] repeat={}{}{} emitter={} numerics={:?} nodes=[{}]",
             kernels.join(","),
             g.repeat.name(),
             g.copies
                 .map(|c| format!(" copies={}", c.name()))
                 .unwrap_or_default(),
+            comm_text(&g.comm),
             g.emitter,
             g.numerics,
             nodes.join(",")
@@ -108,6 +111,19 @@ fn hex(bytes: &[u8]) -> String {
 /// 2026-09-28: Lower-case hex SHA-256 of [`canonical`].
 pub fn plan_digest(circuit: &Circuit, plan: &FusionPlan) -> String {
     hex(&Sha256::digest(canonical(circuit, plan).as_bytes()))
+}
+
+/// 2026-10-23: ` comm=[api:kernel@at,...]`, or nothing for a group without collectives, so every plan
+/// without one keeps its digest.
+fn comm_text(comm: &[crate::rules::CommLaunch]) -> String {
+    if comm.is_empty() {
+        return String::new();
+    }
+    let parts: Vec<String> = comm
+        .iter()
+        .map(|c| format!("{}:{}@{}", c.api.name(), c.kernel, c.at))
+        .collect();
+    format!(" comm=[{}]", parts.join(","))
 }
 
 /// 2026-09-28: Lower-case hex SHA-256 of the FUSIONS.toml text the rules came from.

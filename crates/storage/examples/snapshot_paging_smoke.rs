@@ -123,7 +123,7 @@ fn decode_isolation_main(addr: &str, blob: usize, slots: usize, n: u64) -> anyho
     // 2026-09-25: The formula of `derive_decode_ns_salted`
     // (metrale-model-engine ssm_tier/fingerprint.rs) without its zero fallbacks:
     // ns = mix64(mix64(fp, DECODE_DOMAIN), salt), wire key = mix64(key, ns).
-    // The literal equals `metrale_kernels::DECODE_DOMAIN`, which this crate
+    // The literal equals `metrale_core::decode_ring::DECODE_DOMAIN`, which this crate
     // cannot import (no metrale-kernels dependency).
     const DECODE_DOMAIN_LIT: u64 = 0xD3C0_DE12_A5B6_C7D8;
     const FP: u64 = 0xFEED_FACE_CAFE_BEEF;
@@ -213,14 +213,19 @@ fn kv_main(addr: &str, blob: usize, slots: usize, n: u64, mode: &str) -> anyhow:
     assert_eq!(layout.block_bytes() as usize, blob);
     let arena_bytes = (slots * blob) as u64;
     let fp: u64 = 0xFEED_FACE_CAFE_BEEF;
+    // 2026-10-18: The smoke writes and reads its own tagged bytes in no codec, so one fixed
+    // codec salt names that single format.
+    let codec_salt: u64 = 0x5EED_C0DE_C5A1_7001;
+    let links = metrale_storage::legacy_env::storage_links();
     let connect = |salt: u64| -> anyhow::Result<KvPagingBackend> {
         KvPagingBackend::connect(
             addr,
             layout,
             KvPagingConnect {
                 arena_bytes,
-                ns: derive_kv_ns(fp, &layout, 2, 16, 128, salt),
+                ns: derive_kv_ns(fp, &layout, 2, 16, 128, salt, codec_salt),
             },
+            &links,
         )
     };
     let pat = |b: u32, tag: u8| -> Vec<u8> {

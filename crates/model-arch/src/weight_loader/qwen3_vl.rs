@@ -28,11 +28,11 @@ use metrale_model_layers::weight_map::{
 pub struct Qwen3VLWeightLoader;
 
 impl ModelWeightLoader for Qwen3VLWeightLoader {
-    fn supports_tp(&self) -> bool {
+    fn tp_support(&self) -> metrale_config::TpSupport {
         // 2026-09-25: Q/K/V are sharded column-parallel and O row-parallel
         // (`load_qkvo_tp`, `shard_quantized_nvfp4`); q_norm/k_norm, the MoE and
         // the vision encoder are loaded whole on every rank.
-        true
+        metrale_config::TpSupport::Even
     }
 
     fn load_layers(
@@ -41,6 +41,7 @@ impl ModelWeightLoader for Qwen3VLWeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         layer_kv_dtypes: &[KvCacheDtype],
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
         let mut layers: Vec<Box<dyn TransformerLayer>> =
             Vec::with_capacity(config.num_hidden_layers);
@@ -56,7 +57,7 @@ impl ModelWeightLoader for Qwen3VLWeightLoader {
         // 2026-09-25: Whether to build the MoE prefill copies, decided once for
         // every layer: `moe_prefill_copies_fit` reads free memory, which
         // shrinks as layers load.
-        let moe_prefill_copies = super::moe_prefill_copies_fit(config, gpu);
+        let moe_prefill_copies = super::moe_prefill_copies_fit(config, gpu, lc.settings);
         let absmax_k = gpu.kernel("quantize_nvfp4", "nvfp4_global_absmax")?;
         let quantize_k = gpu.kernel("quantize_nvfp4", "quantize_bf16_to_nvfp4")?;
         let stream = gpu.default_stream();
@@ -145,6 +146,7 @@ impl ModelWeightLoader for Qwen3VLWeightLoader {
                 layer_kv_dtypes[i],
                 config.fp8_kv_calibration_tokens,
                 config,
+                lc,
             )?));
 
             if (i + 1) % 10 == 0 {

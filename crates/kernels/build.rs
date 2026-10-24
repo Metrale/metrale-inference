@@ -6,8 +6,9 @@
 //! Invariants:
 //! - Both paths, the skip stub (`METRALE_SKIP_BUILD`, or macOS without an
 //!   explicit `METRALE_TARGET_HW`) and the compiling build, write
-//!   `target_ptx.rs` with `TARGET_DEFAULTS` and `TARGET_SM_COUNT` appended and
-//!   emit `METRALE_KERNEL_SET_HASH` over that file's content.
+//!   `target_ptx.rs` and emit `METRALE_KERNEL_SET_HASH` over that file's content followed
+//!   by the target-defaults text (`metrale_closure::hardware_defaults::generated_literal`),
+//!   which metrale-target-defaults compiles.
 //! - A failed kernel compile panics the build, after every compile job has run.
 
 use std::collections::HashMap;
@@ -23,21 +24,21 @@ struct CompileJob {
     out_file: std::path::PathBuf,
     /// 2026-09-25: The layer directory that resolved the source, passed as
     /// `-I` so a quoted include that escapes the stage still resolves.
-    /// `gb10/deepseek-v4-flash/nvfp4/kquant_moe.cu` includes
-    /// `../../../gb10/qwen3.6-27b/nvfp4/q4k_vendor/*.cuh`, a path that only
+    /// `gb10/glm-5.3-flash/nvfp4/dflash_fp8_gemm.cu` includes
+    /// `../../../gb10/qwen3.6-27b/nvfp4/w4a16_gemm.cu`, a path that only
     /// resolves from a directory three levels below `kernels/`.
     include_dir: std::path::PathBuf,
 }
 
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    // 2026-09-25: Two levels up from `crates/kernels`. Resolved before the skip
-    // branch because `target_defaults_literal` runs on both paths.
-    let workspace_root_owned = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
-        .parent()
-        .and_then(|p| p.parent())
-        .expect("crates/kernels is two levels below the workspace root")
-        .to_path_buf();
+    // 2026-10-17: The directory holding `kernels/`, from metrale-kernel-root's `links`
+    // metadata: the repository root in a checkout, that crate's own directory once published.
+    // Resolved before the skip branch because `target_defaults_literal` runs on both paths.
+    let workspace_root_owned = PathBuf::from(
+        env::var("DEP_METRALE_KERNEL_TREE_ROOT")
+            .expect("DEP_METRALE_KERNEL_TREE_ROOT: metrale-kernel-root is a dependency"),
+    );
 
     println!("cargo:rerun-if-env-changed=METRALE_SKIP_BUILD");
     // 2026-09-25: Without these, cargo reuses the previous build-script output
@@ -50,6 +51,14 @@ fn main() {
     // `build_target::NvidiaTarget::compile`, for kernel bisection (e.g.
     // `-DMETRALE_FAST_SOFTMAX_EXP=1`, an `#ifdef` in prefill_paged_compute.cuh).
     println!("cargo:rerun-if-env-changed=METRALE_EXTRA_NVCC_FLAGS");
+    // 2026-10-17: The other compile inputs read from the environment:
+    // `NvidiaTarget::argv` reads METRALE_KERNEL_NO_STRICT, `find_cuda_dir`
+    // reads CUDA_HOME; the PTX cache switch, its cap and the `NVCC_*` set
+    // come from `build_ptx_cache::emit_env_rerun`.
+    println!("cargo:rerun-if-env-changed=METRALE_KERNEL_NO_STRICT");
+    println!("cargo:rerun-if-env-changed=CUDA_HOME");
+    println!("cargo:rerun-if-env-changed={}", build_image::IMAGE_ENV);
+    build_ptx_cache::emit_env_rerun();
     // 2026-09-25: Skip the kernel build on macOS unless `METRALE_TARGET_HW` is
     // set: the default `gb10` target needs nvcc, which a Mac does not have.
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
@@ -65,7 +74,7 @@ fn main() {
     }
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let workspace_root = manifest_dir.parent().unwrap().parent().unwrap();
+    let workspace_root = workspace_root_owned.as_path();
 
     let targets = resolve_targets(workspace_root);
 
@@ -99,6 +108,8 @@ fn main() {
     let compute_target = resolve_compute_target(vendor_str);
     let output_ext = compute_target.output_extension();
     let uses_cuda_api = compute_target.uses_cuda_module_api();
+    // 2026-10-17: `None` unless METRALE_PTX_CACHE=1; see `build_ptx_cache`.
+    let ptx_cache = build_ptx_cache::PtxCache::from_env(&out_dir, compute_target.as_ref());
 
     let mut all_target_modules: Vec<Vec<(String, String)>> = Vec::new();
     // 2026-09-25: Per target, the (module, kernel) pairs its leaf-role files
@@ -162,7 +173,7 @@ fn main() {
     // <quant>/`, each holding the files its layer resolves to, so a source a
     // directory `use`s compiles with that directory's headers beside it.
     let stage_root = out_dir.join("stage");
-    build_stage::reset(&stage_root);
+    build_stage::reset(&stage_root, ptx_cache.as_ref().map(|c| c.root()));
     let mut staged: Vec<build_stage::Staged> = Vec::new();
 
     for (idx, target) in targets.iter().enumerate() {
@@ -221,6 +232,7 @@ fn main() {
 
     build_plan::run_plan(
         compute_target.as_ref(),
+        ptx_cache.as_ref(),
         &compile_jobs,
         &copy_jobs,
         is_hip,
@@ -408,12 +420,6 @@ mod build_arch;
 #[path = "build_flags.rs"]
 mod build_flags;
 
-// 2026-09-25: The per-target serving defaults (`[defaults]` in HARDWARE.toml) and the
-// `[hardware] sm_count`. Same reason for its own file:
-// `tests/target_defaults.rs` compiles it against the real kernels/ tree.
-#[path = "build_defaults.rs"]
-mod build_defaults;
-
 // 2026-09-25: The one summary line a build prints per kernel target. Same reason for its
 // own file: `tests/build_summary.rs` compiles it directly.
 #[path = "build_summary.rs"]
@@ -424,6 +430,11 @@ mod build_codegen;
 
 #[path = "build_target.rs"]
 mod build_target;
+
+// 2026-10-24: The NVIDIA image (fatbin or PTX) `METRALE_KERNEL_IMAGE` selects. Its own file
+// so `tests/kernel_image.rs` compiles the same code.
+#[path = "build_image.rs"]
+mod build_image;
 use build_target::resolve_compute_target;
 
 #[path = "build_diagnose.rs"]
@@ -452,3 +463,7 @@ use build_hip::{build_hip_shim_windows, hip_mirror_source};
 // beside the headers of the directory that uses it.
 #[path = "build_stage.rs"]
 mod build_stage;
+
+// 2026-10-17: The opt-in content-hashed PTX cache (METRALE_PTX_CACHE=1).
+#[path = "build_ptx_cache.rs"]
+mod build_ptx_cache;

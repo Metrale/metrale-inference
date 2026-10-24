@@ -6,7 +6,7 @@
 //! Owner: bench gate.
 //! Invariants: none beyond the types.
 //!
-//! `metrale-server`'s `cli::hermetic` re-exports `CLOSED_KEYS` and expands a requested
+//! `met`'s `cli::hermetic` re-exports `CLOSED_KEYS` and expands a requested
 //! `hermetic=true` into these keys. `gate::bench` refuses a BENCH.toml entry that pins
 //! `hermetic=true` without them, because `scoring::check_record` also fails a record
 //! whose serve overrides hold a key the baseline does not pin.

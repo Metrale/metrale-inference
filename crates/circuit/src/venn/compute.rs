@@ -13,12 +13,16 @@
 //! - A kernel's unit is its `kernel_compute` entry, else its family's. A family whose points
 //!   state different units names every kernel's unit, so no kernel's unit is inferred.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use crate::rules::KernelId;
 
 /// 2026-10-02: Where a kernel's arithmetic runs.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum ComputeUnit {
     /// 2026-10-02: Tensor cores, issuing `atom` (e.g. `mma.sync.m16n8k32.e4m3`).
     TensorCore {

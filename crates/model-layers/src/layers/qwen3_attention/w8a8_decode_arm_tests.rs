@@ -57,6 +57,10 @@ fn layer(gpu: &MockGpuBackend, o_nvfp4: bool) -> Qwen3AttentionLayer {
         KvCacheDtype::Bf16,
         0,
         &config,
+        crate::load_context::LoadContext {
+            settings: &crate::lever_equivalence::defaults(),
+            levers: &crate::layers::ops::ModelLevers::defaults(),
+        },
     )
     .unwrap()
 }

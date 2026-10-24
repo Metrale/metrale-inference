@@ -5,7 +5,9 @@
 //! Owner: metrale-circuit.
 //! Invariants: see [`crate::config_map`]; the first failure is returned.
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
@@ -108,6 +110,16 @@ fn uint(key: &str, v: &Value) -> Result<u64, ConfigMapError> {
     })
 }
 
+/// 2026-10-22: [`uint`] as an index; refused where it exceeds this target's `usize` (BU64).
+fn index(key: &str, v: &Value) -> Result<usize, ConfigMapError> {
+    usize::try_from(uint(key, v)?).map_err(|_| {
+        ConfigMapError::Json(format!(
+            "`{key}` = {} exceeds this target's index range",
+            json(v)
+        ))
+    })
+}
+
 fn layers<'a>(
     map: &ConfigMap,
     fields: &BTreeMap<&'a str, &'a Value>,
@@ -118,7 +130,7 @@ fn layers<'a>(
         .get_key_value(l.count.as_str())
         .ok_or_else(|| missing(map, &l.count))?;
     consumed.insert(count_key);
-    let count = uint(&l.count, count_v)? as usize;
+    let count = index(&l.count, count_v)?;
     let kind = |name: &str, key: &str| {
         LayerKind::parse(name).ok_or_else(|| {
             ConfigMapError::Schema(format!("`{key}` maps to unknown layer kind `{name}`"))
@@ -142,10 +154,27 @@ fn layers<'a>(
             let keys: Vec<&str> = l.sources.iter().map(|s| s.key.as_str()).collect();
             return Err(missing(map, &keys.join(" | ")));
         }
-        ([(src, key, v)], None) => from_source(src, key, v)?
-            .into_iter()
-            .map(|n| kind(&n, key))
-            .collect::<Result<_, _>>()?,
+        ([(src, key, v)], None) => {
+            let mut names = from_source(src, key, v)?;
+            if let Some(tail_key) = &src.draft_tail {
+                let tail = fields
+                    .get(tail_key.as_str())
+                    .ok_or_else(|| missing(map, tail_key))
+                    .and_then(|t| index(tail_key, t))?;
+                if names.len() != count + tail {
+                    return Err(ConfigMapError::Refused {
+                        key: key.to_string(),
+                        value: format!("{} entries", names.len()),
+                        why: format!("{count} text layers + {tail} draft layers (`{tail_key}`)"),
+                    });
+                }
+                names.truncate(count);
+            }
+            names
+                .into_iter()
+                .map(|n| kind(&n, key))
+                .collect::<Result<_, _>>()?
+        }
         _ => {
             let keys: Vec<&str> = present.iter().map(|(_, k, _)| *k).collect();
             return Err(ConfigMapError::Refused {
@@ -174,8 +203,13 @@ fn from_source(src: &LayerSource, key: &str, v: &Value) -> Result<Vec<String>, C
     if let Some(list) = v.as_array() {
         list.iter()
             .map(|e| {
-                let s = e.as_str().unwrap_or_default();
-                src.values.get(s).cloned().ok_or_else(|| {
+                // 2026-10-18: An integer entry is keyed by its decimal text.
+                let s = match (e.as_str(), e.as_u64()) {
+                    (Some(s), _) => s.to_string(),
+                    (None, Some(n)) => n.to_string(),
+                    (None, None) => String::new(),
+                };
+                src.values.get(&s).cloned().ok_or_else(|| {
                     refuse(
                         json(e),
                         format!(
@@ -226,11 +260,50 @@ fn dims<'a>(
                 or_div: None,
                 default: None,
                 allowed: None,
+                first_index: None,
             },
             DimRule::Full(f) => f.clone(),
         };
         if let Some(c) = full.constant {
             out.insert(name.clone(), c);
+            continue;
+        }
+        if let Some(fi) = &full.first_index {
+            let list = fields
+                .get(fi.key.as_str())
+                .ok_or_else(|| missing(map, &fi.key))?;
+            let entries = list
+                .as_array()
+                .ok_or_else(|| ConfigMapError::Json(format!("`{}` is not a list", fi.key)))?;
+            let at = entries
+                .iter()
+                .position(|e| e.as_u64() == Some(fi.value))
+                .ok_or_else(|| ConfigMapError::Refused {
+                    key: fi.key.clone(),
+                    value: json(list),
+                    why: format!(
+                        "dim `{name}` is the first entry equal to {}; none is",
+                        fi.value
+                    ),
+                })?;
+            if let Some(end_key) = &fi.run_to {
+                let end = fields
+                    .get(end_key.as_str())
+                    .ok_or_else(|| missing(map, end_key))
+                    .and_then(|v| index(end_key, v))?;
+                let run = entries.get(at..end).filter(|r| !r.is_empty());
+                if !run.is_some_and(|r| r.iter().all(|e| e.as_u64() == Some(fi.value))) {
+                    return Err(ConfigMapError::Refused {
+                        key: fi.key.clone(),
+                        value: json(list),
+                        why: format!(
+                            "entries {at}..`{end_key}` must all be {} (dim `{name}` starts one run)",
+                            fi.value
+                        ),
+                    });
+                }
+            }
+            out.insert(name.clone(), at as u64);
             continue;
         }
         let key = full

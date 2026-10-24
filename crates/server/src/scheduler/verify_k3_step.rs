@@ -56,8 +56,8 @@ pub fn step_verify_k3(
     // the workers run `decode_verify_graphed_k3` for the command above, so
     // the master runs it too and the collectives stay matched.
     let result_vec: Vec<u32> = if dflash_verify_raw_argmax && !model.is_ep() {
-        // 2026-09-25: one M=3 forward; it captures the DFlash hidden at
-        // row 0 (`Model::decode_and_verify_fused`).
+        // 2026-09-25: one M=3 forward; it captures the DFlash hidden of
+        // every row (`Model::decode_and_verify_fused`).
         match model.decode_and_verify_fused(&tokens_k3, &mut a.seq, 0) {
             Ok(r) => r,
             Err(e) => {
@@ -126,6 +126,16 @@ pub fn step_verify_k3(
     // 2026-09-25: per-position draft match, scored at both positions even
     // when draft 1 was rejected (see `stats.rs`).
     k3_record_positional(sched, drafts[0] == v0, drafts[1] == v1, a.seq.seq_len);
+    // 2026-10-11: Width-1 accept telemetry, as `verify_k4_step` records: the per-width
+    // `MTP accept n= k_drafts=` line and the rung's p1 see every serial arm, not only K=4.
+    sched.accept.record(
+        &sched.rung,
+        sched.levers.mtp_accept_debug,
+        1,
+        2,
+        drafts[0] == v0,
+        num_accepted,
+    );
 
     // 2026-09-25: `METRALE_MTP_REFEED_ACCEPTED`: ring the target's hidden for
     // each verify row `t` in `0..=num_accepted` under label `L+t+1`, where
@@ -167,6 +177,14 @@ pub fn step_verify_k3(
         tracing::error!("EP broadcast verify_k3 result: {e:#}");
         super::lifecycle::fail_sequence(a, format!("EP broadcast verify_k3 result: {e:#}"));
         return;
+    }
+
+    // 2026-10-09: On a DFlash serve the drafter context gets the verified rows
+    // `0..=num_accepted` at their own positions, as after a K=γ verify. The verify forward ran
+    // 3 rows past the pre-verify length.
+    if dflash_verify_raw_argmax {
+        let pre_verify_len = a.seq.seq_len.saturating_sub(3);
+        commit_verified_ctx(model, &mut a.seq, num_accepted, pre_verify_len, sched);
     }
 
     // 2026-09-25: debug level: this fires on every verify step.

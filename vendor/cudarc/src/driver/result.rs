@@ -474,6 +474,16 @@ pub mod ctx {
         unsafe { sys::cuCtxSetFlags(flags as u32).result() }
     }
 
+    /// The context's stream priority range as `(least, greatest)`; numerically lower is higher.
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__CTX.html#group__CUDA__CTX_1g137920ab61a71be6ce67605b9f294091)
+    pub fn stream_priority_range() -> Result<(i32, i32), DriverError> {
+        let mut least = 0;
+        let mut greatest = 0;
+        unsafe { sys::cuCtxGetStreamPriorityRange(&mut least, &mut greatest).result()? };
+        Ok((least, greatest))
+    }
+
     /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__CTX.html#group__CUDA__CTX_1g7a54725f28d34b8c6299f0c6ca579616)
     pub fn synchronize() -> Result<(), DriverError> {
         unsafe { sys::cuCtxSynchronize() }.result()
@@ -566,6 +576,22 @@ pub mod stream {
         let mut stream = MaybeUninit::uninit();
         unsafe {
             sys::cuStreamCreate(stream.as_mut_ptr(), kind.flags() as u32).result()?;
+            Ok(stream.assume_init())
+        }
+    }
+
+    /// Creates a stream with the specified kind and `priority` (see
+    /// [`super::ctx::stream_priority_range`]).
+    ///
+    /// See [cuda docs](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__STREAM.html#group__CUDA__STREAM_1g95c1a8c7c3dacb13091692dd9c7f7471)
+    pub fn create_with_priority(
+        kind: StreamKind,
+        priority: i32,
+    ) -> Result<sys::CUstream, DriverError> {
+        let mut stream = MaybeUninit::uninit();
+        unsafe {
+            sys::cuStreamCreateWithPriority(stream.as_mut_ptr(), kind.flags() as u32, priority)
+                .result()?;
             Ok(stream.assume_init())
         }
     }

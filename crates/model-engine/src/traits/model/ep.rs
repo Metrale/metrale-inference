@@ -12,6 +12,9 @@ use anyhow::Result;
 // 2026-09-26: Only the `ep_worker_step` doc link names it.
 #[cfg(doc)]
 use super::EpCommandFailed;
+// 2026-10-11: Only the `k2_fused_wire` doc link names it.
+#[cfg(doc)]
+use super::ModelDraft;
 
 /// 2026-09-26: The multi-rank (EP) command protocol.
 pub trait ModelEp {
@@ -31,6 +34,32 @@ pub trait ModelEp {
     /// turns off its single-GPU fused paths, the mixed forward among them. Default `false`.
     fn is_ep(&self) -> bool {
         false
+    }
+
+    /// 2026-10-19: Whether the rank's communicator is still usable. `false` after a transport
+    /// error or a completion timeout, until a reconnect: the scheduler then fails the request
+    /// instead of falling back, and stops serving (every later request would fail the same
+    /// way). Default `true` (a single-GPU model has no communicator to lose).
+    fn is_healthy(&self) -> bool {
+        true
+    }
+
+    /// 2026-10-21: `METRALE_GLM_EP_CTRL_COMM=1`: attach the control channel, whose communicator
+    /// the host bootstraps on the stream the model passes (`bootstrap(stream)`). Every rank calls
+    /// it once, after the model is built (the rank agreement) and before the first command.
+    /// Default: an error, since only a model that speaks the multi-rank protocol has one.
+    fn attach_ctrl_comm(
+        &self,
+        _bootstrap: &mut dyn FnMut(u64) -> Result<std::sync::Arc<dyn metrale_comm::CommBackend>>,
+    ) -> Result<()> {
+        anyhow::bail!("this model has no multi-rank control channel")
+    }
+
+    /// 2026-10-09: `Some(rows)` when `prefill_batch_chunk` can run on this multi-rank serve,
+    /// `rows` being the prompt rows one batched prefill step should carry; the scheduler batches
+    /// prefills under the multi-rank protocol only then (and with its lever on). Default `None`.
+    fn ep_prefill_batch_rows(&self) -> Option<usize> {
+        None
     }
 
     /// 2026-09-25: Send a command word to every worker rank. Default: `Ok(())`.
@@ -55,5 +84,46 @@ pub trait ModelEp {
     /// empty `Vec`.
     fn ep_broadcast_tokens(&self, _tokens: &[u32]) -> Result<Vec<u32>> {
         Ok(Vec::new())
+    }
+
+    /// 2026-10-11: Whether a K=2 MTP step runs the fused wire (`speculative::k2_wire`): one
+    /// announcement block, one verdict that also starts the workers' propose, and a propose
+    /// that sends nothing ([`ModelDraft::run_mtp_propose_announced`]). Default `false`.
+    fn k2_fused_wire(&self) -> bool {
+        false
+    }
+
+    /// 2026-10-11: Rank 0, fused wire: announce the 2-row verify of `tokens` in slot `seq_id`.
+    /// `flags.device_verdict` (`METRALE_GLM_MTP_DEVICE_STEP`, an identity-pick request): every rank
+    /// takes the verdict from its own device verdict and proposes at once, and rank 0's verdict
+    /// follows the propose ([`Self::ep_send_k2_verdict_after_propose`]). 2026-10-21:
+    /// `flags.screen_head`: the request allows the screened head; the model announces it only
+    /// when it has one. Default: an error, since only a model whose [`Self::k2_fused_wire`] is
+    /// true is asked.
+    fn ep_announce_k2_fused(
+        &self,
+        _seq_id: u32,
+        _tokens: [u32; 2],
+        _flags: metrale_model_layers::speculative::K2Flags,
+    ) -> Result<()> {
+        anyhow::bail!("this model has no fused K=2 wire")
+    }
+
+    /// 2026-10-11: Rank 0, a device-verdict K=2 step: send the host verdict after the propose,
+    /// without waiting, for the workers' cross-check. Default: an error, as above.
+    fn ep_send_k2_verdict_after_propose(
+        &self,
+        _verdict: metrale_model_layers::speculative::K2Verdict,
+    ) -> Result<()> {
+        anyhow::bail!("this model has no fused K=2 wire")
+    }
+
+    /// 2026-10-11: Rank 0, fused wire: send the verdict of the verify just announced. Default:
+    /// an error, as above.
+    fn ep_send_k2_verdict(
+        &self,
+        _verdict: metrale_model_layers::speculative::K2Verdict,
+    ) -> Result<()> {
+        anyhow::bail!("this model has no fused K=2 wire")
     }
 }

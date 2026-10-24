@@ -8,6 +8,7 @@
 //! Invariants: none beyond the types.
 
 use super::*;
+use metrale_settings::groups::device_drafter::MtpRungTuning;
 
 const P: RungParams = RungParams::DEFAULTS;
 
@@ -190,4 +191,62 @@ fn width_regime_flips_once_per_transition() {
     rung.note_width_regime(32, true, 32);
     assert_eq!(rung.width_flips(), base + 2);
     assert!(rung.width_engaged());
+}
+
+fn declared() -> DrafterSettings {
+    DrafterSettings::declared().expect("the declared drafter settings project")
+}
+
+/// 2026-10-17: No override is the compiled constants, adaptation on.
+#[test]
+fn declared_settings_are_the_compiled_constants() {
+    assert_eq!(RungParams::from_settings(&declared()), RungParams::DEFAULTS);
+}
+
+/// 2026-10-17: Each override lands in its own field, the EWMA weights capped at 1 and the probe
+/// interval truncated to whole flushes.
+#[test]
+fn overrides_land_in_their_fields_with_the_caps() {
+    let mut d = declared();
+    d.mtp_rung = MtpRungTuning {
+        enter: Some(1.5),
+        leave: Some(1.4),
+        alpha: Some(3.0),
+        alpha_slow: Some(0.25),
+        probe_ticks: Some(64.9),
+        p1_trigger: Some(0.2),
+    };
+    let p = RungParams::from_settings(&d);
+    assert_eq!(
+        p,
+        RungParams {
+            disabled: false,
+            enter: 1.5,
+            leave: 1.4,
+            alpha: 1.0,
+            alpha_slow: 0.25,
+            probe_ticks: 64,
+            p1_trigger: 0.2,
+        }
+    );
+}
+
+/// 2026-10-17: The static rung and an explicit ladder each pin the ladder on their own.
+#[test]
+fn the_static_rung_or_an_explicit_ladder_disables_adaptation() {
+    for (static_rung, ladder, disabled) in [
+        (false, false, false),
+        (true, false, true),
+        (false, true, true),
+        (true, true, true),
+    ] {
+        let mut d = declared();
+        d.mtp_static_rung = static_rung;
+        d.mtp_ladder_set = ladder;
+        assert_eq!(
+            RungParams::from_settings(&d).disabled,
+            disabled,
+            "static {static_rung}, ladder {ladder}"
+        );
+    }
 }

@@ -26,7 +26,7 @@ mod deepseek_v4;
 
 /// Run all model-agnostic + model-type-specific pre-flight checks.
 ///
-/// Called by `metrale-server/src/main.rs` immediately after the
+/// Called by `crates/server/src/main.rs` immediately after the
 /// `WeightStore` is populated and before `metrale_comm::NcclBackend::new`
 /// runs, so a bad checkpoint aborts rank 0 before rank 1 even connects.
 ///
@@ -51,7 +51,17 @@ pub fn preflight(
         );
         return Ok(());
     }
-    // Model-agnostic checks — driven purely by `store.names()` and
+    // 2026-10-24: An embedding model's text tower has no LM head and sits under its config's
+    // `weight_prefix`; `EmbedGpuModel::new` checks every tensor's presence, dtype and shape.
+    if config.embedding.is_some() {
+        tracing::info!(
+            "Pre-flight: embedding model — generic decoder checks skipped \
+             (weights validated in EmbedGpuModel::new)"
+        );
+        return Ok(());
+    }
+    // Model-agnostic checks — driven purely by `store.all_names()` (2026-10-16: resident AND
+    // deferred, so a defer hook such as METRALE_GLM_LAYER_STREAM hides nothing from them) and
     // `config` (which already carries the parsed `config.json` values).
     check_quant_method(config)?;
     deepseek_v4::check_native_dspark_checkpoint(store, config, use_speculative)?;
@@ -59,7 +69,7 @@ pub fn preflight(
     let max_layer_idx = check_layer_count(store, config)?;
     check_expert_count(store, config)?;
     check_correction_bias_shape(store, config)?;
-    check_qsa_kv_dtype(store.names(), kv_cache_dtype)?;
+    check_qsa_kv_dtype(store.all_names(), kv_cache_dtype)?;
 
     // If the checkpoint has layers beyond `config.num_hidden_layers` AND
     // the user asked for speculative decoding, warn/error about MTP
@@ -184,10 +194,10 @@ fn check_embedding_and_head(store: &WeightStore) -> Result<()> {
         "embed.weight",
     ];
     let has_embed = store
-        .names()
+        .all_names()
         .any(|n| EMBED_EXACTS.contains(&n) || EMBED_SUFFIXES.iter().any(|s| n.ends_with(s)));
     if !has_embed {
-        let sample: Vec<_> = store.names().take(20).collect();
+        let sample: Vec<_> = store.all_names().take(20).collect();
         bail!(
             "Pre-flight: no embedding tensor found (checked exact: {EMBED_EXACTS:?}, \
              suffixes: {EMBED_SUFFIXES:?}). Is this a language-model checkpoint? \
@@ -204,7 +214,7 @@ fn check_embedding_and_head(store: &WeightStore) -> Result<()> {
     //   `output.weight`        — Mistral consolidated
     //   `head.weight`          — DeepSeek-V4 / RedHatAI re-quant
     let has_head = store
-        .names()
+        .all_names()
         .any(|n| n.ends_with("lm_head.weight") || n == "output.weight" || n == "head.weight");
     if !has_head {
         tracing::info!("Pre-flight: no dedicated LM head tensor; assuming tied embeddings.");
@@ -223,7 +233,7 @@ fn check_embedding_and_head(store: &WeightStore) -> Result<()> {
 /// `.layers.N.` counts as evidence that layer N exists.
 fn check_layer_count(store: &WeightStore, config: &ModelConfig) -> Result<usize> {
     let mut observed: Vec<usize> = Vec::new();
-    for name in store.names() {
+    for name in store.all_names() {
         // Accept `*.layers.N.*` (HF-style with any prefix) AND
         // `layers.N.*` (Mistral consolidated checkpoints have no
         // leading `model.` / `backbone.` prefix).
@@ -287,7 +297,7 @@ fn check_expert_count(store: &WeightStore, config: &ModelConfig) -> Result<()> {
         return Ok(());
     }
     let mut max_expert: Option<usize> = None;
-    for name in store.names() {
+    for name in store.all_names() {
         // Patterns seen across supported MoE models:
         //   <prefix>.layers.{L}.block_sparse_moe.experts.{E}.w?.weight
         //   <prefix>.layers.{L}.mlp.experts.{E}.{up|down|gate}_proj.weight
@@ -386,19 +396,18 @@ fn check_mtp_consumability(config: &ModelConfig) -> Result<()> {
 /// any future family that uses the loss-free-balancing bias). The
 /// bias tensor name is `<moe-prefix>.e_score_correction_bias` and its
 /// shape must match `config.num_experts`. Discovery-based: we scan
-/// `store.names()` for ANY tensor ending in that suffix and validate
+/// `store.all_names()` for ANY tensor ending in that suffix and validate
 /// each one, so we don't need to know the MoE prefix
 /// (`block_sparse_moe` on MiniMax, `mlp` on DeepSeek V3, etc.).
 fn check_correction_bias_shape(store: &WeightStore, config: &ModelConfig) -> Result<()> {
     if config.num_experts == 0 {
         return Ok(());
     }
-    for name in store.names() {
+    for name in store.all_names() {
         if !name.ends_with(".e_score_correction_bias") && !name.ends_with(".correction_bias") {
             continue;
         }
-        let t = store.get(name)?;
-        let n_elems = t.num_elements();
+        let n_elems = store.element_count(name)?;
         // The bias is per ROUTER LOGIT, and a zero-expert model (LongCat)
         // scores `num_experts + zero_expert_num` of them — the identity
         // experts are selectable but have no FFN weights.
@@ -419,3 +428,6 @@ fn check_correction_bias_shape(store: &WeightStore, config: &ModelConfig) -> Res
 
 #[cfg(test)]
 mod qsa_kv_tests;
+
+#[cfg(test)]
+mod deferred_names_tests;

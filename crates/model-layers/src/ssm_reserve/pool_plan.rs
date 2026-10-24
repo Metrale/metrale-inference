@@ -170,6 +170,13 @@ pub fn recurrent_units(c: &ModelConfig) -> Result<(Vec<StateDecl>, UnitSource)> 
         );
         return Ok((decls, UnitSource::Circuit));
     }
+    Ok((transitional_units(c), UnitSource::Transitional))
+}
+
+/// 2026-09-30: The transitional h and conv declarations: `ModelConfig::ssm_h_state_bytes` and
+/// `ssm_conv_state_bytes` as FP32 elements. 2026-10-09: Split out of [`recurrent_units`] so a
+/// test can compare a circuit's declarations with them byte for byte.
+fn transitional_units(c: &ModelConfig) -> Vec<StateDecl> {
     let decl = |local: &str, bytes: usize, format, verify| StateDecl {
         id: format!("transitional.{local}"),
         local: local.to_string(),
@@ -182,23 +189,20 @@ pub fn recurrent_units(c: &ModelConfig) -> Result<(Vec<StateDecl>, UnitSource)> 
         verify: Some(verify),
         lifetime: metrale_circuit::state::Lifetime::Sequence,
     };
-    Ok((
-        vec![
-            decl(
-                "h",
-                c.ssm_h_state_bytes(),
-                StateFormat::Keyed("ssm_h_storage".into()),
-                VerifySteps::H,
-            ),
-            decl(
-                "conv",
-                c.ssm_conv_state_bytes(),
-                StateFormat::Fixed(StateDtype::F32),
-                VerifySteps::Conv,
-            ),
-        ],
-        UnitSource::Transitional,
-    ))
+    vec![
+        decl(
+            "h",
+            c.ssm_h_state_bytes(),
+            StateFormat::Keyed("ssm_h_storage".into()),
+            VerifySteps::H,
+        ),
+        decl(
+            "conv",
+            c.ssm_conv_state_bytes(),
+            StateFormat::Fixed(StateDtype::F32),
+            VerifySteps::Conv,
+        ),
+    ]
 }
 
 /// 2026-09-30: The SSM pool of one model, sized.
@@ -232,6 +236,17 @@ impl PoolPlan {
     /// 2026-09-30: The pool of `config` holding `counts`.
     pub fn new(config: &ModelConfig, counts: &PoolCounts, h_f16_pool: bool) -> Result<Self> {
         let (decls, source) = recurrent_units(config)?;
+        Self::from_units(config, &decls, source, counts, h_f16_pool)
+    }
+
+    /// 2026-10-09: The pool of `config` holding `counts`, sized from `decls`.
+    fn from_units(
+        config: &ModelConfig,
+        decls: &[StateDecl],
+        source: UnitSource,
+        counts: &PoolCounts,
+        h_f16_pool: bool,
+    ) -> Result<Self> {
         let find = |v: VerifySteps| {
             decls
                 .iter()
@@ -258,8 +273,10 @@ impl PoolPlan {
             kv: None,
             draft_kv: None,
         };
-        let layer = StatePlan::new(&decls, &inputs)?;
-        let unit = |d: &StateDecl, dtype: StateDtype| (d.elements * dtype.size()) as usize;
+        let layer = StatePlan::new(decls, &inputs)?;
+        let unit = |d: &StateDecl, dtype: StateDtype| -> Result<usize> {
+            Ok(usize::try_from(d.unit_bytes(dtype)?)?)
+        };
         let conv_dtype = match conv.format {
             StateFormat::Fixed(d) => d,
             StateFormat::Keyed(_) => bail!("the conv state's format is not fixed"),
@@ -267,9 +284,9 @@ impl PoolPlan {
         Ok(Self {
             source,
             layers,
-            h_f32_unit: unit(h, StateDtype::F32),
-            h_stored_unit: unit(h, storage),
-            conv_unit: unit(conv, conv_dtype),
+            h_f32_unit: unit(h, StateDtype::F32)?,
+            h_stored_unit: unit(h, storage)?,
+            conv_unit: unit(conv, conv_dtype)?,
             counts: counts.clone(),
             layer,
             h_id: h.id.clone(),
@@ -306,3 +323,7 @@ impl PoolPlan {
         self.layers * self.layer.bytes() as usize
     }
 }
+
+#[cfg(test)]
+#[path = "pool_plan_tests.rs"]
+mod tests;

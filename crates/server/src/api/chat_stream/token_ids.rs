@@ -33,6 +33,7 @@ mod tests {
             false,
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
             Vec::new(),
+            &crate::api::chat::levers::ChatLevers::OFF,
         );
         st.pending_token_ids = vec![7, 8, 9];
 

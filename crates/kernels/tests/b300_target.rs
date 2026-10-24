@@ -55,7 +55,7 @@ fn b300_build_identity_preserves_arch_specific_preflight() {
 
 /// 2026-09-25: b300 compiles a subset of gb10/common, so it inherits nothing
 /// and names each gb10 file it compiles in `b300/common/KERNEL.toml`
-/// `[sources] use`. Its own common/ holds only the four sources that differ
+/// `[sources] use`. Its own common/ holds only the three sources that differ
 /// from gb10's. With `inherits = "gb10"` every gb10/common kernel would join
 /// b300's module set, including the ones listed below that b300 leaves out.
 #[test]
@@ -75,7 +75,6 @@ fn b300_compiles_a_listed_subset_of_gb10_and_holds_only_its_divergences() {
         [
             "dsa_indexer.cu",
             "moe_shared_expert_fused.cu",
-            "moe_w4a16_grouped_gemm.cu",
             "w8a16_gemv_batch4.cu",
         ]
     );
@@ -148,7 +147,7 @@ fn every_kimi_quant_resolves_the_real_e8m0_kernel_dependency() {
         assert_eq!(
             modules["moe_w4a16_grouped_gemm"],
             root().join("gb10/deepseek-v4-flash/nvfp4/moe_w4a16_grouped_gemm.cu"),
-            "{quant}: the leaf's E8M0 GEMM wins over b300's own common/ copy"
+            "{quant}: the leaf's E8M0 GEMM is the source"
         );
         let source = std::fs::read_to_string(&modules["moe_w4a16_grouped_gemm"]).unwrap();
         assert!(source.contains("moe_w4a16_grouped_gemm_ptrtable_e8m0"));

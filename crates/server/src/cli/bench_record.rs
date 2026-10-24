@@ -41,6 +41,7 @@ pub(crate) async fn write_gate_record(
     dirty_at_start: Vec<String>,
     // 2026-09-26: `--output-image` target plus its parsed `--output-image-args`.
     card: Option<(String, BTreeMap<String, String>)>,
+    levers: &metrale_bench::levers::BenchLevers,
 ) -> Result<()> {
     // 2026-09-26: An incomplete run must not become a gate record, although
     // `headless::run_blocking` returns a RunRecord for a failed or cancelled
@@ -63,7 +64,7 @@ pub(crate) async fn write_gate_record(
     // 2026-09-26: The sha captured before the run, not HEAD now: HEAD may have
     // moved while the benchmark ran.
     let sha = sha_at_start;
-    if let Ok(now) = gate::git_sha(&root)
+    if let Ok(now) = gate::git_sha(&root, levers.gate_sha.as_deref())
         && now != sha
     {
         // 2026-09-26: Not fatal: the measurement belongs to `sha`; this only
@@ -79,7 +80,7 @@ pub(crate) async fn write_gate_record(
     let mut gate_record = gate::GateRecord::from_run(record, hardware, sha, dirty, recipe)?
         // 2026-09-26: What this binary's kernels were compiled from, baked at
         // build time rather than read from the tree now.
-        .with_closure(metrale_kernels::TARGET_CLOSURES)
+        .with_closure(crate::embedded::kernels().target_closures)
         .with_serve_resolved(serve_resolved)
         .with_serve_env(serve_env);
     if let Some(sha256) = served_recipe_sha256 {
@@ -90,7 +91,7 @@ pub(crate) async fn write_gate_record(
     // 2026-09-26: Sign it and print both filenames, so the operator commits the
     // `.sig` beside the `.json`. Signing is kept out of `write_record` so that
     // function's tests mint no keys.
-    let store = metrale_bench::artifacts::ArtifactStore::discover()?;
+    let store = metrale_bench::artifacts::ArtifactStore::discover(levers)?;
     let identity = gate::signing::load_or_create(store.root())?;
     let sig = gate::signing::sign_record(&identity, &path, &gate_record.git_sha)?;
     let fresh_signer = gate::signing::register(&root, &identity)?;

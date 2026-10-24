@@ -25,9 +25,10 @@ use super::block_mgmt::{
     apply_evicted_blocks, ensure_blocks_through_decode, ensure_blocks_through_prefill,
     extract_layer_refs, reuse_prefix_match_disk_ids,
 };
+use super::block_tables::BlockTables;
 use super::ssm_pool::SsmStatePool;
 use super::ssm_snapshot::SsmSnapshotPool;
-use super::types::{PinnedMetaStaging, TransformerModel};
+use super::types::TransformerModel;
 use crate::traits::{ChunkedPrefillPageMetadata, Model, SequenceState};
 use metrale_model_layers::layer::{
     AttnMetadataDev, ForwardContext, GdnPrefillBuffers, LayerState, SsmLayerState, TransformerLayer,
@@ -80,6 +81,9 @@ impl TransformerModel {
         vision_encoder: Option<metrale_model_layers::layers::VisionTower>,
         ssm_cache_slots: usize,
         ssm_checkpoint_interval: usize,
+        // 2026-10-17: Startup settings; `build_model` derived `levers` from them once.
+        settings: Arc<metrale_settings::InferenceServerSettings>,
+        mut levers: ops::ModelLevers,
     ) -> Result<Self> {
         // 2026-09-25: `rms_norm_kernel` is used only for `final_norm`, in
         // `final_norm_apply`.
@@ -112,20 +116,15 @@ impl TransformerModel {
             fill_slots_kernel,
             argmax_feed_kernel,
             feed_resolve_kernel,
-        } = kernels::resolve_model_kernels(&config, gpu.as_ref())?;
+        } = kernels::resolve_model_kernels(&config, gpu.as_ref(), &levers.ops, &settings)?;
         let profile = config.profile;
-        let profile_first = std::env::var("METRALE_PROFILE_FIRST").is_ok();
-
-        // 2026-09-25: A fresh `ModelLevers::from_env()`, not the process-cached
-        // `ModelLevers::get()`, so a second model built in the same process
-        // resolves its own levers. `max_decode_seqs` pins the split-K attention
-        // split count to the configured max batch, so a sequence's attention
-        // reduction does not depend on how many others share its batch.
-        let mut levers = ops::ModelLevers::from_env();
+        let profile_first = settings.telemetry.profile_first;
+        // 2026-09-25: `max_decode_seqs` pins the split-K attention split count to the configured
+        // max batch, so a sequence's attention reduction does not depend on its batch.
         levers.max_decode_seqs = (max_batch_size as u32).max(1);
 
         tracing::info!(
-            "TransformerModel: {} layers, vocab={}, hidden={}{}{}",
+            "TransformerModel: {} layers, vocab={}, hidden={}{}{}; new-sequence levers: {}",
             layers.len(),
             config.vocab_size,
             config.hidden_size,
@@ -135,6 +134,7 @@ impl TransformerModel {
             } else {
                 ""
             },
+            levers.new_sequence_readback(),
         );
 
         let (dflash_kgamma, draft_lm_head_nvfp4, has_mtp, mtp_quant_fwd, num_intermediates) =
@@ -154,8 +154,7 @@ impl TransformerModel {
             has_mtp,
             num_intermediates,
             num_drafts,
-            // 2026-09-25: h pools sized at 2 bytes per element
-            // (`--ssm-h-dtype f16-pool`).
+            // 2026-09-25: h pools sized at 2 bytes per element (`--ssm-h-dtype f16-pool`).
             metrale_model_layers::layers::qwen3_ssm::ssm_h_f16_pool_enabled(),
             // 2026-09-25: `--ssm-rollback-mode`; `Snapshot` unless the server
             // published another mode.
@@ -172,6 +171,7 @@ impl TransformerModel {
             max_batch_size,
             ssm_checkpoint_interval,
             &kv_cache,
+            &settings,
             gpu.as_ref(),
         )?;
 
@@ -230,7 +230,7 @@ impl TransformerModel {
             &config,
             &proposer,
             max_seq_len,
-            dflash_kgamma,
+            (dflash_kgamma > 0).then(|| metrale_model_arch::dflash_head::dflash_ctx_cap(&settings)),
             has_mtp,
             mtp_quant_fwd,
             &levers,
@@ -246,13 +246,13 @@ impl TransformerModel {
                 gpu.as_ref(),
             )?;
 
-        // 2026-09-25: One u32 for the EP command broadcast.
-        let ep_cmd_buf = gpu.alloc(4)?;
+        // 2026-09-25: The EP command broadcast; 2026-10-10: a whole v3 block (`ep_wire.rs`).
+        let ep_cmd_buf = gpu.alloc(metrale_model_layers::ep_wire::CMD_BLOCK_BYTES)?;
+        let device_argmax = super::device_argmax::DeviceArgmax::new(gpu.as_ref())?;
 
-        // 2026-09-25: Fixed-address buffer (CUDA-graph safe) for the batched
-        // decode MoE per-row adapter map, 4 bytes per batch row, uploaded each
-        // decode step. Allocated unconditionally because LoRA weights arrive
-        // after construction (`set_lora_weights`).
+        // 2026-09-25: Fixed-address buffer (CUDA-graph safe) for the batched decode MoE per-row
+        // adapter map, 4 bytes per batch row, uploaded each decode step. Allocated unconditionally
+        // because LoRA weights arrive after construction (`set_lora_weights`).
         let moe_row_adapter_buf = gpu.alloc(max_batch_size.max(1) * 4)?;
 
         // 2026-09-25: Secondary stream and its event, used by the asynchronous
@@ -268,16 +268,18 @@ impl TransformerModel {
         // wrong extent. `rank_agree::assert_ranks_agree` checks them before the
         // first token.
         if let Some(ref comm) = comm {
-            comm_setup::assert_rank_levers_agree(gpu.as_ref(), comm)?;
+            comm_setup::assert_rank_levers_agree(gpu.as_ref(), comm, &settings)?;
         }
 
         // 2026-09-25: At world size 2, register the reduce targets
         // (`moe_output`, `norm_output`, and `logits` for the vocab-parallel
         // lm_head) with the comm backend and give it the `bf16_add_inplace`
         // kernel for its send/recv path. Each step is best-effort: a failure is
-        // logged and construction continues.
+        // logged and construction continues. 2026-10-08: also at world size 3 and
+        // above, where it hands over `bf16_add_rank_sum` for the one-shot all-reduce
+        // (which refuses to run without it).
         if let Some(ref comm) = comm
-            && comm.world_size() == 2
+            && comm.world_size() >= 2
         {
             comm_setup::register_reduce_buffers(comm, &buffers, gpu.as_ref());
         }
@@ -292,18 +294,10 @@ impl TransformerModel {
                 feed_resolve_kernel,
                 gpu.as_ref(),
             )?;
-        let pinned_bytes = buffers.sizes().scratch.max(64 * 1024);
-        let pinned_ptr = gpu.alloc_host_pinned(pinned_bytes)?;
-        tracing::info!("Pinned metadata staging: {} KB", pinned_bytes / 1024);
         let max_batch_tokens = buffers.max_batch_tokens();
-        let pinned_staging = std::cell::UnsafeCell::new(PinnedMetaStaging {
-            ptr: pinned_ptr,
-            bytes: pinned_bytes,
-            positions: Vec::with_capacity(max_batch_tokens),
-            positions_h: Vec::with_capacity(max_batch_tokens),
-            positions_w: Vec::with_capacity(max_batch_tokens),
-            slots: Vec::with_capacity(max_batch_tokens),
-        });
+        let pinned_staging = kernels::alloc_pinned_staging(&buffers, gpu.as_ref())?;
+        // 2026-10-13: The batched decode/verify block tables, at a fixed address (`block_tables.rs`).
+        let block_tables = BlockTables::alloc(gpu.as_ref(), max_blocks_per_seq, &buffers)?;
 
         let AuxKernels {
             ssm_norm_k,
@@ -342,7 +336,7 @@ impl TransformerModel {
             // (`adopt_weight_store`).
             weight_store: None,
             config,
-            dispatch: metrale_model_layers::layers::ops::GemmDispatch::from_env(),
+            dispatch: metrale_model_layers::layers::ops::GemmDispatch::from_settings(&settings),
             derived: metrale_model_layers::layers::ops::DerivedWeights::new(),
             levers,
             stats: ops::ModelStats::new(),
@@ -400,11 +394,11 @@ impl TransformerModel {
             batch_decode_graphs: Mutex::new((HashMap::new(), 0)),
             suppress_graphs: std::sync::atomic::AtomicBool::new(
                 has_fp8_calibration
-                    || std::env::var("METRALE_DIAG_GEMMA4").is_ok_and(|v| v == "1" || v == "true")
+                    || settings.telemetry.diag_gemma4
                     // 2026-09-25: Eager decode, so `METRALE_DEBUG_SYNC_KERNELS` can
                     // synchronize after each launch and report an async fault at
                     // the kernel that caused it.
-                    || std::env::var("METRALE_DEBUG_NO_GRAPH").as_deref() == Ok("1"),
+                    || settings.telemetry.debug_no_graph,
             ),
             ssm_pool,
             ssm_snapshots,
@@ -429,6 +423,7 @@ impl TransformerModel {
             },
             mtp_prefill_capture_len: std::sync::atomic::AtomicUsize::new(0),
             mtp_prefill_capture_gen: std::sync::atomic::AtomicU64::new(0),
+            mtp_capture_record: parking_lot::Mutex::new(Default::default()),
             mtp_store_gen_seq: std::sync::atomic::AtomicU64::new(0),
             mtp_carry: parking_lot::Mutex::new(None),
             mtp_store_range: parking_lot::Mutex::new(
@@ -453,16 +448,20 @@ impl TransformerModel {
             // uploads the tables.
             verify_wy_cache: Mutex::new(None),
             verify_kgamma_graph: Mutex::new(std::collections::HashMap::new()),
+            replay_commit_graphs: Mutex::new(std::collections::HashMap::new()),
             fused_graph: Mutex::new(std::collections::HashMap::new()),
             prefix_cache,
             secondary_stream,
             secondary_event,
             snapshot_event,
             comm,
+            ctrl: std::sync::OnceLock::new(),
             ep_cmd_buf,
-            ep_protocol_v2: matches!(std::env::var("METRALE_EP_PROTOCOL").as_deref(), Ok("v2")),
+            ep_protocol_v2: metrale_model_layers::ep_wire::EpWire::get().has_seq_preamble(),
+            device_argmax,
             self_speculative,
             last_mtp_hidden_idx: std::sync::atomic::AtomicUsize::new(0),
+            mtp_hidden_live: std::sync::atomic::AtomicBool::new(false),
             vision_encoder,
             vision_embed_patches: Mutex::new(0),
             vision_image_grids: Mutex::new(Vec::new()),
@@ -478,6 +477,7 @@ impl TransformerModel {
             ssm_h_f16_scratch: std::sync::OnceLock::new(),
             ssm_norm_ptrs_buf: ssm_norm_ptrs,
             moe_row_adapter_buf,
+            block_tables,
             gdn_buf_qkv: gdn_qkv,
             gdn_buf_gate_beta: gdn_gate_beta,
             gdn_buf_out: gdn_out,
@@ -493,6 +493,8 @@ impl TransformerModel {
             overlay_route_slot: std::sync::atomic::AtomicI32::new(-1),
             decode_moe_route: std::sync::atomic::AtomicI32::new(1), // 2026-09-25: `MoeLoraRoute::Fold`
             circuit: parking_lot::RwLock::new(None),
+            engine: super::engine_levers::EngineLevers::from_settings(&settings)?,
+            settings,
         })
     }
 }

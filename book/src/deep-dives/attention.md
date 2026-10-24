@@ -13,8 +13,7 @@ Different kernel shapes:
 
 | Kernel | Source | Role |
 |---|---|---|
-| `attn_prefill_v47.cu` | prefill | Flash Attention v2, `cp.async` 2-stage pipeline, 16×8×16 BF16 MMA, 2 CTAs/SM |
-| `attn_prefill_fp8kv.cu` | prefill | Same structure, FP8 KV read path |
+| `attn_prefill.cu` | prefill | Flash-attention prefill over contiguous BF16 Q/K/V, 16×8×16 BF16 MMA, online softmax |
 | `paged_decode_attn_nvfp4.cu` | decode | Online softmax, split-K parallelism, NVFP4 K/V dequant at fragment boundary |
 | `paged_decode_attn_turbo3_128.cu` | decode | Optimised variant for `head_dim=128`, `turbo3` KV |
 | `reshape_and_cache.cu` | write | Per-token K/V write into paged cache |
@@ -119,7 +118,7 @@ For hybrid SSM+attention models, a matching "Marconi" SSM snapshot cache sits be
 
 ## Files to read
 
-- `kernels/gb10/common/attn_prefill_v47.cu` — the prefill kernel.
+- `kernels/gb10/common/attn_prefill.cu` — the prefill kernel.
 - `kernels/gb10/common/paged_decode_attn_*.cu` — decode kernel variants.
 - `kernels/gb10/common/reshape_and_cache*.cu`, `fused_k_norm_rope_cache.cu` — per-token KV write.
 - `crates/cache/src/kv_cache.rs`, `radix_tree.rs`, `crates/telemetry/src/prefix_cache.rs` — Rust side.

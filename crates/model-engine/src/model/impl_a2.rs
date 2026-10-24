@@ -37,7 +37,7 @@ use metrale_model_layers::speculative::DraftProposer;
 use metrale_model_layers::weight_map::{DenseWeight, MtpWeights, QuantizedWeight};
 
 impl TransformerModel {
-    pub(super) fn comm_ref(&self) -> Option<&dyn metrale_comm::CommBackend> {
+    pub(crate) fn comm_ref(&self) -> Option<&dyn metrale_comm::CommBackend> {
         self.comm.as_deref()
     }
 
@@ -143,13 +143,23 @@ impl TransformerModel {
     ///
     /// Command codes:
     /// - 0xFFFFFFE0: batched decode → `N`, `seq_ids[N]`, `tokens[N]`
-    /// - 0xFFFFFFF0: prefill chunk → chunk_len, chunk_start, full_len, then
+    /// - `EP_CMD_PREFILL_CHUNK`: prefill chunk → chunk_len, chunk_start, full_len, then
     ///   full_len tokens, then, only when the model has a vision tower, the
     ///   merged vision-row count and that many rows when it is non-zero
-    /// - 0xFFFFFFF1: alloc slot (frees any prior occupant, then allocates)
+    /// - `EP_CMD_ALLOC_SLOT`: alloc slot (frees any prior occupant, then allocates)
     /// - 0xFFFFFFF2/3/4: verify K=2/3/4 → K tokens, then the accept count
+    /// - 0xFFFFFFFC (`EP_CMD_VERIFY_K2_FUSED`): fused K=2 verify, the tokens in the v3 block,
+    ///   then a verdict that may start a propose (`speculative/k2_wire.rs`)
     /// - 0xFFFFFFF5 (`EP_CMD_MTP_PROPOSE`): last_token, position, num_drafts,
     ///   hidden_idx
+    /// - 0xFFFFFFF6 (`EP_CMD_VERIFY_KGAMMA`): DFlash K=γ verify → K, `tokens[K]`,
+    ///   then the committed row count
+    /// - 0xFFFFFFF9 (`EP_CMD_VERIFY_BATCH`, seq_id 0): batched DFlash verify → `n`, `k`,
+    ///   `slots[n]`, `tokens[n * k]`, then `committed[n]`
+    /// - 0xFFFFFFFA (`EP_CMD_PREFILL_SPANS`, seq_id 0): one chunk of each of `n` sequences in
+    ///   one multi-sequence prefill → `n`, the header, the prompts (`prefill_b/spans_wire.rs`)
+    /// - 0xFFFFFFE1 (`EP_CMD_DECODE_FED`): fed single-row decode → the 4-byte token from rank
+    ///   0's feed ids, or on the v3 wire the block's `arg` (`decode_fed_ep.rs`)
     /// - 0xFFFFFFF8 (`EP_CMD_DECODE_CKPT`): decode-time Marconi checkpoint →
     ///   `EP_CKPT_WORDS` words in one bulk broadcast
     /// - 0xFFFFFFFF: shutdown (seq_id is ignored)
@@ -159,8 +169,8 @@ impl TransformerModel {
         // head is gone and the worker must exit. An error while executing the
         // command is request-scoped, so it is tagged `EpCommandFailed` and the
         // worker loop keeps running.
-        let (seq_id, cmd) = self.ep_recv_seq_and_cmd(self.ep_protocol_v2)?;
-        self.ep_worker_execute(seq_id, cmd, slots)
+        let block = self.ep_recv_seq_and_cmd(self.ep_protocol_v2)?;
+        self.ep_worker_execute(block, slots)
             .map_err(|e| anyhow::Error::new(crate::traits::EpCommandFailed(e)))
     }
 
@@ -168,12 +178,14 @@ impl TransformerModel {
     /// error from here as `EpCommandFailed`.
     fn ep_worker_execute(
         &self,
-        seq_id: u32,
-        cmd: u32,
+        block: metrale_model_layers::ep_wire::CmdBlock,
         slots: &mut [Option<SequenceState>],
     ) -> Result<bool> {
+        let (seq_id, cmd) = (block.seq_id, block.cmd);
+        // 2026-10-10: Each command starts unarmed; only its own block arms the device argmax.
+        self.device_argmax.disarm();
         // 2026-09-25: Shutdown applies to the whole worker; seq_id is ignored.
-        if cmd == 0xFFFFFFFF {
+        if cmd == metrale_model_layers::ep_wire::EP_CMD_SHUTDOWN {
             return Ok(false);
         }
 
@@ -182,6 +194,32 @@ impl TransformerModel {
         // reads.
         if cmd == 0xFFFFFFE0 {
             return self.ep_worker_decode_batch(slots);
+        }
+        // 2026-10-09: Batched DFlash verify: the slots travel in its payload, as above.
+        if cmd == metrale_model_layers::speculative::EP_CMD_VERIFY_BATCH {
+            return self.ep_worker_verify_batch(slots);
+        }
+        // 2026-10-11: Batched MTP propose: the slots travel in its payload, as above.
+        if cmd == metrale_model_layers::speculative::EP_CMD_MTP_PROPOSE_BATCH {
+            return self.ep_worker_mtp_propose_batch(slots);
+        }
+        // 2026-10-09: Multi-sequence prefill: the slots travel in its payload, as above.
+        if cmd == crate::model::trait_impl::prefill_b::spans_wire::EP_CMD_PREFILL_SPANS {
+            return self.ep_worker_prefill_spans(slots);
+        }
+
+        // 2026-10-10: The tensor-parallel DFlash propose, before the generic slot checks: a
+        // rank without a valid slot or state must still join the propose's exchange (it
+        // reports itself not ready there), or rank 0 would wait for it.
+        if cmd == metrale_model_layers::speculative::EP_CMD_DFLASH_PROPOSE {
+            let slot_idx = seq_id as usize;
+            let state = slots
+                .get_mut(slot_idx)
+                .and_then(Option::as_mut)
+                .filter(|seq| !self.ep_protocol_v2 || seq.slot_idx == slot_idx)
+                .and_then(|seq| seq.proposer_state.as_mut());
+            self.ep_worker_dflash_propose(state)?;
+            return Ok(true);
         }
 
         let slot_idx = seq_id as usize;
@@ -198,7 +236,7 @@ impl TransformerModel {
         // fresh sequence. Under v2 its SSM-pool slot must equal `slot_idx`:
         // both ranks pop the same free list in the same order, and a mismatch
         // is an error rather than a silent KV mix-up.
-        if cmd == 0xFFFFFFF1 {
+        if cmd == metrale_model_layers::ep_wire::EP_CMD_ALLOC_SLOT {
             if let Some(mut old) = slots[slot_idx].take() {
                 self.free_sequence(&mut old)?;
             }
@@ -224,6 +262,16 @@ impl TransformerModel {
             )
         })?;
 
+        // 2026-10-10: A decode step rank 0 armed for the sharded device argmax
+        // (`device_argmax.rs`); only decode commands carry the flag.
+        if block.flags & metrale_model_layers::ep_wire::FLAG_DEVICE_ARGMAX != 0 {
+            self.arm_device_argmax_from_block(block.mask)?;
+        }
+        // 2026-10-11: The fused K=2 verify reads its tokens from the block itself.
+        if cmd == metrale_model_layers::speculative::EP_CMD_VERIFY_K2_FUSED {
+            self.ep_worker_verify_k2_fused(&block, seq, self.gpu.default_stream())?;
+            return Ok(true);
+        }
         self.ep_worker_dispatch_cmd(cmd, seq)
     }
 
@@ -234,7 +282,7 @@ impl TransformerModel {
         let stream = self.gpu.default_stream();
 
         match cmd {
-            0xFFFFFFF0 => {
+            metrale_model_layers::ep_wire::EP_CMD_PREFILL_CHUNK => {
                 // 2026-09-25: Prefill chunk: chunk_len, chunk_start, the full prompt
                 // length, then every prompt token in one bulk broadcast.
                 let chunk_len = self.ep_broadcast_u32(0)? as usize;
@@ -265,15 +313,7 @@ impl TransformerModel {
                 self.sync_secondary()?;
                 self.decode_verify_graphed(&[t0, t1], seq, stream)?;
                 let accepted = self.ep_broadcast_u32(0)?;
-                if accepted == 1 {
-                    self.start_checkpoint_async(seq)?;
-                    self.trim_proposer_state(seq, 1, 0)?;
-                } else {
-                    seq.seq_len -= 1;
-                    seq.tokens.pop();
-                    self.trim_proposer_state(seq, 0, 0)?;
-                    self.start_rollback_and_checkpoint_async(seq, 1)?;
-                }
+                self.ep_worker_k2_commit(seq, accepted == 1)?;
             }
             crate::model::trait_impl::decode_checkpoint::EP_CMD_DECODE_CKPT => {
                 // 2026-09-25: Rank 0 saved a decode-time Marconi checkpoint;
@@ -297,17 +337,7 @@ impl TransformerModel {
                 // 2026-09-25: Save the hidden row the head saved
                 // (`save_hidden_for_mtp`), so both ranks feed the drafter the same
                 // input and its all-reduce sums partials of one vector.
-                if let Err(e) = self.save_hidden_for_mtp(hidden_idx, stream) {
-                    tracing::warn!("EP worker save_hidden_for_mtp({hidden_idx}) failed: {e:#}");
-                }
-                if let Err(e) =
-                    self.run_mtp_propose_inner(last_token, position, num_drafts, seq, None)
-                {
-                    // 2026-09-25: A drafter error is logged, not returned: the
-                    // worker's drafts are discarded, and rank 0 decides what is
-                    // verified.
-                    tracing::warn!("EP worker MTP propose failed (continuing): {e:#}");
-                }
+                self.ep_worker_mtp_propose(seq, last_token, position, num_drafts, hidden_idx);
             }
             0xFFFFFFF3 => {
                 // 2026-09-25: Verify K=3: 3 tokens, verify, then num_accepted (0..=2).
@@ -369,6 +399,16 @@ impl TransformerModel {
                     }
                 }
             }
+            metrale_model_layers::speculative::EP_CMD_VERIFY_KGAMMA => {
+                // 2026-10-08: DFlash K=γ verify: K, the K tokens, the verify, then the committed
+                // row count (`verify_kgamma_ep.rs`).
+                self.ep_worker_verify_kgamma(seq, stream)?;
+            }
+            // 2026-10-10: A fed single-row decode (`decode_fed_ep.rs`): the token follows on the
+            // device.
+            crate::model::trait_impl::decode_fed_ep::EP_CMD_DECODE_FED => {
+                self.ep_worker_decode_fed(seq)?;
+            }
             token => {
                 self.decode(token, seq, stream)?;
             }
@@ -390,48 +430,29 @@ impl TransformerModel {
         let seq_ids = self.ep_broadcast_tokens(&vec![0u32; n])?;
         let tokens = self.ep_broadcast_tokens(&vec![0u32; n])?;
 
-        let mut seen = std::collections::HashSet::new();
-        for &id in &seq_ids {
-            let idx = id as usize;
-            if idx >= slots.len() {
-                anyhow::bail!(
-                    "ep_worker_decode_batch: seq_id {} exceeds slot capacity {}",
-                    id,
-                    slots.len(),
-                );
-            }
-            if !seen.insert(id) {
-                anyhow::bail!("ep_worker_decode_batch: duplicate seq_id {} in batch", id);
-            }
-        }
-
-        // 2026-09-25: Collect `(idx, &mut)` for the populated slots and take
-        // them out with `swap_remove`: indexing `slots[seq_ids[i]]` mutably in
-        // a loop does not borrow-check, since the compiler cannot prove the
-        // indices distinct.
-        let mut slot_refs: Vec<(usize, &mut SequenceState)> = slots
-            .iter_mut()
-            .enumerate()
-            .filter_map(|(i, opt)| opt.as_mut().map(|s| (i, s)))
-            .collect();
-
-        // 2026-09-25: Order the refs as the head's seq_ids, so batch row `i` is
-        // the same sequence on both ranks.
-        let mut refs: Vec<&mut SequenceState> = Vec::with_capacity(n);
-        for &id in &seq_ids {
-            let idx = id as usize;
-            let pos = slot_refs
-                .iter()
-                .position(|(i, _)| *i == idx)
-                .ok_or_else(|| {
-                    anyhow::anyhow!("ep_worker_decode_batch: slot {} not allocated", idx)
-                })?;
-            let (_, seq) = slot_refs.swap_remove(pos);
-            refs.push(seq);
-        }
+        let mut refs = crate::model::trait_impl::verify_batch_ep::ordered_slot_refs(
+            slots,
+            &seq_ids,
+            "ep_worker_decode_batch",
+        )?;
 
         let stream = self.gpu.default_stream();
         self.decode_batch_compute_main(&tokens, &mut refs, stream)?;
+        // 2026-10-11: Stash every decode row, slot j <- row j, as rank 0's batched bootstrap does
+        // (`mtp_bootstrap_step`) before its proposes, which name stash slots: without it this
+        // rank's half of the drafter's collectives read whatever the last batched verify left.
+        // Only for a proposer every rank runs (an EP-sharded MTP block).
+        if self
+            .proposer
+            .as_ref()
+            .is_some_and(|p| p.needs_comm() && !p.collective_propose())
+            && !self.verify_hidden_stash.is_null()
+            && n <= metrale_model_layers::layer::VERIFY_WY_TABLE_SEQS
+        {
+            use crate::traits::ModelDraft;
+            let rows: Vec<usize> = (0..n).collect();
+            self.stash_verify_hidden_rows(&rows, stream)?;
+        }
         Ok(true)
     }
 }

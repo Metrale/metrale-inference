@@ -18,6 +18,7 @@ use crate::weight_map::{DenseWeight, QuantizedWeight, SsmWeights};
 mod layer_struct;
 mod ple_seq;
 pub use layer_struct::Qwen3SsmLayer;
+pub use levers::SsmLevers;
 
 mod carry;
 pub use carry::carry_flush_kernel;
@@ -29,6 +30,7 @@ mod init;
 mod init_fp8;
 mod init_q2;
 mod kernel_select;
+mod levers;
 mod lora;
 mod prefill_out_w8a8;
 mod prefill_w8a8;

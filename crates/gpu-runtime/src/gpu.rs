@@ -12,7 +12,7 @@ use std::sync::atomic::Ordering;
 mod baseline;
 pub use baseline::{baseline_free_bytes, set_baseline_free_bytes};
 mod handles;
-pub use handles::{DevicePtr, GraphHandle, KernelArg, KernelHandle};
+pub use handles::{DevicePtr, GraphHandle, KernelArg, KernelHandle, Memcpy2d};
 
 pub use crate::gpu_args::pack_kernel_args;
 
@@ -64,6 +64,16 @@ pub trait GpuBackend: Send + Sync {
     /// 2026-10-02: Every live allocation on the ledger: its address, bytes and allocating call
     /// site (`file:line`); `None` (the default) on every backend but CUDA.
     fn live_allocations(&self) -> Option<Vec<(DevicePtr, usize, String)>> {
+        None
+    }
+
+    /// 2026-10-19: Name what the live allocation at base pointer `ptr` holds, for the ledger's
+    /// readers (the allocation digest). A no-op (the default) on a backend without a ledger.
+    fn label_alloc(&self, _ptr: DevicePtr, _label: &str) {}
+
+    /// 2026-10-19: The label [`GpuBackend::label_alloc`] gave the allocation at `ptr`; `None`
+    /// (the default) on a backend without a ledger.
+    fn alloc_label(&self, _ptr: DevicePtr) -> Option<String> {
         None
     }
 
@@ -145,6 +155,15 @@ pub trait GpuBackend: Send + Sync {
             .map(|&i| &storage[i] as *const u64 as *mut std::ffi::c_void)
             .collect();
         self.launch(func, grid, block, shared_mem, stream, &mut params)
+    }
+
+    /// 2026-10-21: From now on, launch every kernel whose entry waits on its grid dependencies
+    /// (`griddepcontrol.wait`) with programmatic stream serialization, so it may start while its
+    /// predecessor on the stream finishes; under capture the edge becomes programmatic. One-way.
+    /// Returns whether this backend launches that way; the default (no such launch) returns
+    /// false and every launch stays fully serialised.
+    fn enable_programmatic_launches(&self) -> Result<bool> {
+        Ok(false)
     }
 
     /// 2026-09-25: Whether `stream` is inside an active CUDA-graph capture. Check
@@ -274,10 +293,21 @@ pub trait GpuBackend: Send + Sync {
         self.copy_d2d(src, dst, bytes)
     }
 
+    /// 2026-10-17: One pitched device-to-device copy (`copy`) enqueued on `stream` as a single
+    /// driver operation. A backend without one returns `NotImplemented`; callers that need the
+    /// copy either way use `copy_d2d_2d_async`.
+    fn memcpy_2d_async(&self, _copy: Memcpy2d, _stream: u64) -> metrale_error::Result<()> {
+        Err(metrale_error::error!(
+            metrale_error::ErrorCode::NotImplemented,
+            "memcpy_2d_async",
+            std::any::type_name::<Self>()
+        ))
+    }
+
     /// 2026-09-25: Pitched device-to-device copy: `height` rows of `width_bytes`,
     /// source rows `src_pitch` apart and destination rows `dst_pitch` apart. The
-    /// default loops `copy_d2d_async` per row; the CUDA backend issues one
-    /// `cudaMemcpy2DAsync`.
+    /// default loops `copy_d2d_async` per row; the CUDA backend (outside SCALE)
+    /// issues one `memcpy_2d_async`.
     #[allow(clippy::too_many_arguments)]
     fn copy_d2d_2d_async(
         &self,
@@ -366,6 +396,13 @@ pub trait GpuBackend: Send + Sync {
         Ok(0)
     }
 
+    /// 2026-10-14: Create a stream at the context's greatest priority, for short work that must
+    /// not queue behind a high-priority process stream's kernel waves (`create_stream` makes
+    /// side streams at the least). A backend without stream priorities makes a plain stream.
+    fn create_stream_greatest_priority(&self) -> Result<u64> {
+        self.create_stream()
+    }
+
     /// 2026-09-25: Make the backend's CUDA context current on this thread. Call it
     /// on any thread other than the one that built the backend before using the
     /// GPU. The default does nothing.
@@ -388,6 +425,17 @@ pub trait GpuBackend: Send + Sync {
     /// not block.
     fn stream_wait_event(&self, _stream: u64, _event: u64) -> Result<()> {
         Ok(())
+    }
+
+    /// 2026-10-21: As `stream_wait_event`, but under capture an external wait node (CUDA
+    /// `CU_EVENT_WAIT_EXTERNAL`) on the event's record at launch time (`early_launch.rs`).
+    fn stream_wait_event_external(&self, stream: u64, event: u64) -> Result<()> {
+        self.stream_wait_event(stream, event)
+    }
+
+    /// 2026-10-21: A stream at `like`'s priority. The default is `create_stream`.
+    fn create_stream_like(&self, _like: u64) -> Result<u64> {
+        self.create_stream()
     }
 
     /// 2026-09-25: Block the host until the work recorded before `event` has
@@ -445,7 +493,8 @@ pub trait GpuBackend: Send + Sync {
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod mock;
-
+#[cfg(any(test, feature = "test-utils"))]
+pub mod recording;
 #[cfg(test)]
 #[path = "gpu_tests.rs"]
 mod tests;

@@ -36,7 +36,6 @@ const TILED_ENTRIES: &[&str] = &[
     "w4a16_gemm_t_m128_v3",
     "w4a16_gemm_t_m128_bf16",
     "w4a16_gemm_t_m128_bf16_v2",
-    "w4a16_gemm_t_m64_bf16",
     "moe_w4a16_grouped_gemm_ptrtable",
     "moe_w4a16_grouped_gemm_ptrtable_k32",
     "moe_w4a16_grouped_gemm_ptrtable_m256",

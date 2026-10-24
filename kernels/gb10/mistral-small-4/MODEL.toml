@@ -96,7 +96,7 @@ moe_w4a16_down_t_k64_fp4 = "FP4 down-projection twin; forward_prefill_routed gat
 [expected_absent.mla_paged_decode]
 mla_paged_decode_nvfp4 = """
 DeepSeek-V4-Flash's compressed 576-dim MLA decode arm. Fires only under
-KvCacheDtype::Nvfp4 with an MLA-rope config (run_paged_decode.rs:53);
+KvCacheDtype::Nvfp4 with an MLA-rope config (decode/kv_exec.rs:173-174);
 this model REQUIRES bf16 KV (the FP8/NVFP4 KV breaks the MLA latent —
 deployment guide), and the kernel ships only in deepseek-v4-flash's PTX
 set. Unreachable as served."""

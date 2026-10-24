@@ -374,15 +374,12 @@ fn parse_target_modules(v: &serde_json::Value) -> Result<(Vec<String>, Option<St
 /// load an adapter that names target modules the engine cannot apply, skipping those.
 ///
 /// `metrale_model_layers::lora::env` re-exports this function; it is defined in this crate
-/// because `validate_target_module` reads it at parse time.
+/// because `validate_target_module` reads it at parse time. 2026-10-17: LEGACY, read in
+/// [`crate::legacy_env`]; the resolved value is `model.lora_allow_partial`.
 ///
 /// Off by default: a partly applied adapter cannot be told apart from a bad one.
 pub fn allow_partial_targets() -> bool {
-    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *V.get_or_init(|| {
-        std::env::var("METRALE_LORA_ALLOW_PARTIAL")
-            .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-    })
+    crate::legacy_env::allow_partial_targets()
 }
 
 /// 2026-09-26: The name-level check of one `target_modules` entry, a bare name (`"k_proj"`)

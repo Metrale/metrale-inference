@@ -13,24 +13,85 @@
 //!   node index; a node with no outputs (the KV write) orders before later readers of its
 //!   inputs.
 
-use std::collections::{BTreeSet, VecDeque};
+use crate::prelude::*;
 
+use alloc::collections::{BTreeSet, VecDeque};
+
+use super::{AvailableKernels, Policy, applies, block_index, section_of};
 use crate::ir::{Circuit, Node, NodeIdx, OpKind};
-use crate::rules::{PatternOp, Rule};
+use crate::rules::{Mode, PatternOp, Rule};
+
+/// 2026-10-23: One place a rule matches: its id and the chain it forms, in pattern order.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Match {
+    /// 2026-10-23: Rule id.
+    pub rule: String,
+    /// 2026-10-23: Member nodes, in pattern order.
+    pub nodes: Vec<NodeIdx>,
+}
+
+/// 2026-10-23: Every match of every rule that may form a group of this plan, each formed over a
+/// circuit with no node claimed yet: the matches the greedy chooses among, in its own order
+/// (rule priority, then start node). The matcher is the fuser's own ([`Matcher::chain_at`]).
+pub fn match_instances(
+    circuit: &Circuit,
+    rules: &[Rule],
+    available: &AvailableKernels,
+    policy: &Policy,
+    (mode, rows): (Mode, u64),
+) -> Vec<Match> {
+    let (in_scope, block_of) = scope_of(circuit, mode);
+    let m = Matcher {
+        circuit,
+        in_scope: &in_scope,
+        block_of: &block_of,
+        oneshot: crate::collective::oneshot_max_bytes(policy)
+            .ok()
+            .flatten()
+            .map(|max| (rows, max)),
+    };
+    let free = vec![None; circuit.nodes.len()];
+    let mut out = Vec::new();
+    for rule in applicable_order(circuit, rules, available, policy, (mode, rows, None)) {
+        for s in (0..circuit.nodes.len()).filter(|&s| in_scope[s]) {
+            if let Some(nodes) = m.chain_at(rule, s, &free) {
+                out.push(Match {
+                    rule: rule.id.clone(),
+                    nodes,
+                });
+            }
+        }
+    }
+    out
+}
+
 
 /// 2026-10-01: Node `n` of `c` fits pattern element `p`: op (any listed linear role), local id,
 /// weight format, quantized input format and layer kind. The fuser matches chains with it, and
-/// the hardware planner asks which rules could run a node at all.
+/// the hardware planner asks which rules could run a node at all. 2026-10-08: And every param
+/// the element states, with the node's value.
 pub(crate) fn fits(c: &Circuit, p: &PatternOp, n: &Node) -> bool {
     let op = match n.op {
         OpKind::Linear(r) if !p.roles.is_empty() => p.roles.contains(&r),
         _ => p.op == n.op,
     };
     op && p.local.as_deref().is_none_or(|l| l == n.local)
+        && p.block.as_deref().is_none_or(|b| b == n.block)
         && p.weight.is_none_or(|w| n.weight == Some(w))
         && reads_quantized_as(c, p, n)
         && p.layer_kind
             .is_none_or(|k| n.layer.is_some_and(|i| c.layer_kinds[i] == k))
+        && p.params.iter().all(|(k, v)| n.params.get(k) == Some(v))
+        && p.ranks
+            .is_none_or(|r| group_size(n).is_some_and(|g| r.holds(g)))
+}
+
+/// 2026-10-23: The size of a collective's communicator group (its `group` param, the ranks
+/// comma-separated, as `instantiate::shard` writes it on every collective it derives).
+fn group_size(n: &Node) -> Option<u64> {
+    n.params
+        .get("group")
+        .and_then(|g| u64::try_from(g.split(',').count()).ok())
 }
 
 /// 2026-09-30: A node that reads a quantized activation (an `act_quant` output) matches only
@@ -50,10 +111,47 @@ fn reads_quantized_as(c: &Circuit, p: &PatternOp, n: &Node) -> bool {
     }
 }
 
+/// 2026-10-23: Whether each node is in `mode`'s section, and each node's block.
+pub(super) fn scope_of(circuit: &Circuit, mode: Mode) -> (Vec<bool>, Vec<usize>) {
+    let section = section_of(mode);
+    let block_of = block_index(circuit);
+    let in_scope = block_of
+        .iter()
+        .map(|&b| circuit.blocks[b].section == section)
+        .collect();
+    (in_scope, block_of)
+}
+
+/// 2026-10-23: The rules that may form a group of this plan, in the order the greedy tries
+/// them: priority, highest first, then id.
+pub(super) fn applicable_order<'a>(
+    circuit: &Circuit,
+    rules: &'a [Rule],
+    available: &AvailableKernels,
+    policy: &Policy,
+    (mode, rows, table): (Mode, u64, Option<&crate::runs::RowTable>),
+) -> Vec<&'a Rule> {
+    let mut order: Vec<&Rule> = rules
+        .iter()
+        .filter(|r| applies(r, available, policy, mode, rows))
+        .filter(|r| crate::rules::dims::all_hold(&r.dims, &circuit.dims) == Ok(true))
+        .filter(|r| {
+            r.runs.is_empty()
+                || table.is_some_and(|t| crate::runs::resolve_runs(t, &r.runs).is_some())
+        })
+        .collect();
+    order.sort_by(|a, b| b.priority.cmp(&a.priority).then_with(|| a.id.cmp(&b.id)));
+    order
+}
+
 pub(super) struct Matcher<'a> {
     pub circuit: &'a Circuit,
     pub in_scope: &'a [bool],
     pub block_of: &'a [usize],
+    /// 2026-10-23: `(plan rows, one-shot bound in bytes)`: a `one_shot` rule forms a group only
+    /// where its payload fits ([`crate::collective`]). `None` checks no payload: the probe that
+    /// asks whether a rule matches at all, before the fuser refuses an unstated bound.
+    pub oneshot: Option<(u64, u64)>,
 }
 
 impl Matcher<'_> {
@@ -93,7 +191,21 @@ impl Matcher<'_> {
                 .find(|&n| self.free(n, owner, &chain) && self.fits(p, &c.nodes[n]))?;
             chain.push(next);
         }
-        (self.outputs_legal(rule, &chain) && !self.needs_cycle(&chain)).then_some(chain)
+        (self.outputs_legal(rule, &chain) && !self.needs_cycle(&chain) && self.payload_fits(rule, s))
+            .then_some(chain)
+    }
+
+    /// 2026-10-23: A `one_shot` rule's payload at node `s` within the bound; any other rule, or
+    /// an unchecked matcher, passes.
+    fn payload_fits(&self, rule: &Rule, s: NodeIdx) -> bool {
+        use crate::collective::{CollectivePath, oneshot_fits, payload_bytes};
+        match (rule.path, self.oneshot) {
+            (Some(CollectivePath::OneShot), Some((rows, max))) => {
+                payload_bytes(self.circuit, &self.circuit.nodes[s], rows)
+                    .is_some_and(|b| oneshot_fits(b, max))
+            }
+            _ => true,
+        }
     }
 
     fn outputs_legal(&self, rule: &Rule, chain: &[NodeIdx]) -> bool {
@@ -104,7 +216,8 @@ impl Matcher<'_> {
                 || rule.pattern[j].keep
                 || c.nodes[m].outputs.iter().all(|&e| {
                     let edge = &c.edges[e];
-                    !edge.is_output && edge.consumers.iter().all(|x| chain.contains(x))
+                    (!edge.is_output || rule.pattern[j].elides)
+                        && edge.consumers.iter().all(|x| chain.contains(x))
                 })
         })
     }

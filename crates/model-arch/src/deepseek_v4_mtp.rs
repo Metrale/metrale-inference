@@ -123,6 +123,7 @@ impl DeepseekV4MtpHead {
             layer_dtypes: vec![],
             layer_dims: vec![],
             cache_blocks_per_seq: None,
+            v_block_bytes: None,
         };
         let mtp_num_blocks = max_seq_len / kv_config.block_size + 1;
         let kv_cache = PagedKvCache::new(kv_config, mtp_num_blocks, gpu)?;
@@ -302,6 +303,7 @@ impl DeepseekV4MtpHead {
             dispatch: ctx.dispatch,
             derived: ctx.derived,
             levers: ctx.levers,
+            settings: ctx.settings,
             stats: ctx.stats,
             attn_metadata: Some(mtp_meta),
             profile: ctx.profile,
@@ -318,6 +320,7 @@ impl DeepseekV4MtpHead {
             routed_lora_layers: None,
             midchunk_capture: None,
             moe_lora_route: metrale_model_layers::layer::MoeLoraRoute::Skip,
+            ab_levers: metrale_model_layers::layer::AbLevers::NONE,
         };
 
         // 2026-09-25: `decode_inner_hc` reads the streams from

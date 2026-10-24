@@ -147,6 +147,16 @@ pub fn per_token_group_quant_fp8(
         .launch(stream)
 }
 
+/// 2026-10-17: The resolved launch choices of [`fp8_gemm_t_blockscaled`]
+/// (`OpsLevers::fp8_blockscaled`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Fp8BlockscaledPlan {
+    /// 2026-09-27: The pipelined twin may launch (`OpsLevers::fp8_gemm_pipe`).
+    pub pipe: bool,
+    /// 2026-09-25: Log each new shape (`OpsLevers::gemm_shape_log`).
+    pub shape_log: bool,
+}
+
 /// 2026-09-25: W8A8 GEMM with per-token activation scales and per-block weight
 /// scales, applied in an FP32 epilogue per 128-element K-group:
 ///
@@ -162,6 +172,7 @@ pub fn per_token_group_quant_fp8(
 pub fn fp8_gemm_t_blockscaled(
     gpu: &dyn GpuBackend,
     kernel: KernelHandle,
+    plan: Fp8BlockscaledPlan,
     a_fp8: DevicePtr,
     a_scale: DevicePtr,
     b_fp8: DevicePtr,
@@ -172,8 +183,8 @@ pub fn fp8_gemm_t_blockscaled(
     k: u32,
     stream: u64,
 ) -> Result<()> {
-    super::log_gemm_shape(gpu, "fp8_gemm_t_blockscaled", m, n, k);
-    if let Some(pipe) = fp8_gemm_pipe_kernel(gpu, m, n, k)? {
+    super::log_gemm_shape(gpu, plan.shape_log, "fp8_gemm_t_blockscaled", m, n, k);
+    if let Some(pipe) = fp8_gemm_pipe_kernel(gpu, plan.pipe, m, n, k)? {
         // 2026-09-27: `fp8_gemm_blockscaled_pipe_128x64`: 128 x 64 tiles, 256 threads, SmemBytes<128, 64, 3>.
         const PIPE_SMEM: u32 = 3 * (128 + 64) * 64 + 3 * 128 * 4 + 128 * 4;
         return KernelLaunch::new(gpu, pipe)
@@ -213,14 +224,13 @@ pub fn fp8_gemm_t_blockscaled(
 /// handle is memoized in the backend's `OpCache`.
 fn fp8_gemm_pipe_kernel(
     gpu: &dyn GpuBackend,
+    pipe: bool,
     m: u32,
     n: u32,
     k: u32,
 ) -> Result<Option<KernelHandle>> {
     const MODULE: &str = "fp8_gemm_blockscaled_pipe";
-    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    let off = *OFF.get_or_init(|| std::env::var_os("METRALE_NO_FP8_GEMM_PIPE").is_some());
-    if off
+    if !pipe
         || m == 0
         || n == 0
         || !n.is_multiple_of(64)

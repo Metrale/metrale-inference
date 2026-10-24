@@ -22,6 +22,7 @@ use crate::scheduling_policy::{ActiveSeqTiming, PendingRequestInfo, SchedulingPo
 pub(super) fn install_high_speed_swap(
     model: &dyn Model,
     cfg: Option<metrale_storage::HighSpeedSwapConfig>,
+    replace: bool,
 ) {
     let Some(cfg) = cfg else { return };
     match model.high_speed_swap_dims() {
@@ -45,9 +46,9 @@ pub(super) fn install_high_speed_swap(
                 tracing::error!("--high-speed-swap install failed: {e:#}");
             } else {
                 tracing::info!("--high-speed-swap orchestrator installed on scheduler thread");
-                if std::env::var("METRALE_HIGH_SPEED_SWAP_REPLACE").is_ok() {
+                if replace {
                     tracing::warn!(
-                        "METRALE_HIGH_SPEED_SWAP_REPLACE=1: per-layer attention will route \
+                        "METRALE_HIGH_SPEED_SWAP_REPLACE is set: per-layer attention will route \
                          through HighSpeedSwap. UNTESTED on real models — requires real-load \
                          validation before production use."
                     );
@@ -338,3 +339,65 @@ pub(super) fn compact_survivors_into_range(io: &SchedIo, survivors: &mut [Active
 
 mod send;
 pub use send::*;
+
+/// 2026-10-20: Enforce the per-request deadline on parked requests: prefilling
+/// (mid-prefill), swapped (spilled to the pool), and preempted (re-prefill
+/// pending). `enforce_request_deadlines` walks only `active`, so a request
+/// that parked before its deadline with nothing checking it could hang past
+/// the deadline forever (a swapped request whose blocks never fit retries
+/// every tick; a preempted one waits for batch space).
+///
+/// Prefilling frees the device sequence and tells the worker to free+realloc
+/// its slot, as the promote error path does; swapped and preempted hold no
+/// device sequence, so only the spill entry (if any) and the sink are
+/// involved.
+pub(super) fn enforce_parked_deadlines(
+    model: &dyn Model,
+    io: &SchedIo,
+    spill: Option<&dyn crate::scheduler::io::SpillIo>,
+    prefilling: &mut Vec<PrefillInProgress>,
+    swapped: &mut Vec<SwappedSeq>,
+    preempted: &mut Vec<PreemptedSeq>,
+) {
+    let now = io.clock.now();
+    let overdue = |deadline: Option<std::time::Instant>, now: std::time::Instant| {
+        deadline.map(|d| d <= now).unwrap_or(false)
+    };
+    for idx in (0..prefilling.len()).rev() {
+        if !overdue(prefilling[idx].timeout_at, now) {
+            continue;
+        }
+        let mut p = prefilling.remove(idx);
+        tracing::warn!("Request TIMEOUT while prefilling: erroring the client");
+        send_error_to_sink(io, &mut p.sink, "request deadline exceeded during prefill");
+        let mut seq = p.seq;
+        if let Err(e) = model.free_sequence(&mut seq) {
+            tracing::error!("enforce_parked_deadlines: free_sequence (prefill): {e:#}");
+        }
+        if let Err(e) = model.ep_broadcast_cmd_for_seq(
+            seq.slot_idx as u32,
+            metrale_model_layers::ep_wire::EP_CMD_ALLOC_SLOT,
+        ) {
+            tracing::error!("enforce_parked_deadlines: ep_broadcast (prefill): {e:#}");
+        }
+    }
+    swapped.retain_mut(|s| {
+        if !overdue(s.timeout_at, now) {
+            return true;
+        }
+        tracing::warn!("Request TIMEOUT while swapped out: erroring the client");
+        send_error_to_sink(io, &mut s.sink, "request deadline exceeded while swapped out");
+        if let Some(spill) = spill {
+            let _ = spill.remove(s.swap_id);
+        }
+        false
+    });
+    preempted.retain_mut(|p| {
+        if !overdue(p.a.timeout_at, now) {
+            return true;
+        }
+        tracing::warn!("Request TIMEOUT while preempted: erroring the client");
+        send_error_to_sink(io, &mut p.a.sink, "request deadline exceeded while preempted");
+        false
+    });
+}

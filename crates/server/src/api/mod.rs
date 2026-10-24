@@ -17,6 +17,7 @@ pub mod completions;
 pub mod completions_exec;
 pub mod completions_logprobs;
 pub mod conversations;
+pub mod embeddings;
 pub mod inference_impl;
 pub mod inference_types;
 pub mod lora_control;
@@ -50,6 +51,7 @@ pub use conversations::{
     create_conversation, delete_conversation, delete_conversation_item, get_conversation,
     get_conversation_item, list_conversation_items, update_conversation,
 };
+pub use embeddings::{embeddings, refuse_generation_on_embedder};
 pub use inference_types::{
     GrammarSpec, InferenceRequest, InferenceResponse, StreamEvent, TokenLogprobs,
 };
@@ -59,7 +61,7 @@ pub use misc_handlers::{
     DetokenizeRequest, cancel_response, detokenize, forward, hardware, health, health_live, memory,
     metrics_handler, serve_config, tokenize,
 };
-pub use models::{embeddings_stub, get_model, list_models};
+pub use models::{get_model, list_models};
 pub use responses::responses_endpoint;
 pub use stored::{
     delete_stored_response, get_stored_completion, get_stored_response, list_response_input_items,

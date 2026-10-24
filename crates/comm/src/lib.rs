@@ -12,6 +12,7 @@
 
 use anyhow::Result;
 
+pub mod ar_path;
 // 2026-09-26: Gated on `nccl` because the bindings link libnccl. The release
 // targets built with `--features cuda` alone, such as the AMD SCALE one, have
 // no NCCL library.
@@ -23,6 +24,47 @@ mod collective_wait;
 pub mod nccl_backend;
 #[cfg(feature = "nccl")]
 pub use nccl_backend::NcclBackend;
+#[cfg(feature = "nccl")]
+pub use nccl_backend::{ALL_REDUCE_DTYPE_BYTES, CommLevers, required_model_recv_bytes};
+
+/// 2026-10-23: Bootstrap the multi-rank communicator of this build (NCCL) and return it as a
+/// [`CommBackend`], so a caller outside this crate names no vendor (VBOP). The arguments and
+/// errors are `NcclBackend::new`'s.
+#[cfg(feature = "nccl")]
+pub fn bootstrap(
+    rank: usize,
+    world_size: usize,
+    master_addr: &str,
+    master_port: u16,
+    stream: u64,
+    recv_capacity: usize,
+    levers: CommLevers<'_>,
+) -> Result<std::sync::Arc<dyn CommBackend>> {
+    let backend = NcclBackend::new(
+        rank,
+        world_size,
+        master_addr,
+        master_port,
+        stream,
+        recv_capacity,
+        levers,
+    )?;
+    Ok(std::sync::Arc::new(backend))
+}
+
+/// 2026-10-10: Where a one-shot exchange left the other ranks' BF16 partials
+/// ([`CommBackend::exchange_partials`]): rank `r != rank` at
+/// `recv + 2 * slot_elems * (r < rank ? r : r - 1)`, as many elements as were sent. The
+/// all-reduce result is the FP32 sum of all ranks' partials in rank order 0..world_size,
+/// rounded to BF16 once (the caller's own partial stands in for `rank`), which is what
+/// `bf16_add_rank_sum` computes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PeerPartials {
+    pub recv: u64,
+    pub slot_elems: usize,
+    pub world_size: usize,
+    pub rank: usize,
+}
 
 /// 2026-09-26: Collective and point-to-point operations on raw device
 /// pointers and byte counts. A pointer is a `u64` (a CUDA `CUdeviceptr`), so
@@ -44,6 +86,16 @@ pub trait CommBackend: Send + Sync {
     /// place.
     fn broadcast(&self, ptr: u64, bytes: usize, root: usize) -> Result<()>;
 
+    /// 2026-10-10: `broadcast`, submitted on the backend's stream without waiting for it to
+    /// complete: later work on that stream sees the bytes, and the host goes on at once. No
+    /// deadline applies; a failure surfaces at the next operation that waits. For the multi-rank
+    /// decode that runs ahead of the host (`METRALE_EP_DEVICE_FEED`), where waiting would hold
+    /// rank 0's host behind the step already in flight. The default waits (`broadcast`), which
+    /// satisfies the same ordering.
+    fn broadcast_enqueue(&self, ptr: u64, bytes: usize, root: usize) -> Result<()> {
+        self.broadcast(ptr, bytes, root)
+    }
+
     /// 2026-09-26: On a non-root rank, receive the first `u32` of the next
     /// worker command from `root`, the receive side of a 4-byte `broadcast`.
     /// Unlike `broadcast`, it may wait without a deadline, so an implementation
@@ -58,6 +110,28 @@ pub trait CommBackend: Send + Sync {
         self.broadcast(ptr, 4, root)
     }
 
+    /// 2026-10-10: `recv_command_u32` for a whole command block of `bytes` (the v3 wire's
+    /// `[seq_id, cmd, arg]`): the same wait without a deadline. The default refuses `root` and
+    /// otherwise calls `broadcast(ptr, bytes, root)`.
+    fn recv_command_block(&self, ptr: u64, bytes: usize, root: usize) -> Result<()> {
+        anyhow::ensure!(
+            self.rank() != root,
+            "idle command receive requires non-root rank"
+        );
+        self.broadcast(ptr, bytes, root)
+    }
+
+    /// 2026-10-10: `broadcast` for a rendezvous whose ranks may arrive far apart: the first
+    /// collective after each rank has built its model, whose ranks load different weight bytes
+    /// at different speeds (a three-rank GLM-5.3 serve measured 24 s between its first and last
+    /// rank, with the communicator's lazy connection setup on top, past `broadcast`'s 30 s
+    /// deadline: the workers gave up while rank 0 went on to serve). `NcclBackend` waits up to
+    /// its rendezvous deadline and keeps checking for transport errors meanwhile. The default
+    /// calls `broadcast`.
+    fn broadcast_rendezvous(&self, ptr: u64, bytes: usize, root: usize) -> Result<()> {
+        self.broadcast(ptr, bytes, root)
+    }
+
     /// 2026-09-26: A barrier across ranks. `NcclBackend` enqueues a zero-count
     /// all-reduce on its stream and returns without waiting for it.
     fn barrier(&self) -> Result<()>;
@@ -69,6 +143,58 @@ pub trait CommBackend: Send + Sync {
     fn all_reduce_async(&self, ptr: u64, bytes: usize, compute_stream: u64) -> Result<()> {
         let _ = compute_stream;
         self.all_reduce(ptr, bytes)
+    }
+
+    /// 2026-10-23: All-reduce on exactly `path`, the one a plan names
+    /// (`metrale_circuit::Group::path`): blocking like `all_reduce` without `compute_stream`,
+    /// ordered like `all_reduce_async` with it. A path this backend cannot run for `bytes` is
+    /// refused with CERF `CollectivePathRefused` (`ar_path::runnable`), never run as another. The
+    /// default refuses every path: a backend without paths executes no plan.
+    fn all_reduce_via(
+        &self,
+        path: metrale_circuit::CollectivePath,
+        ptr: u64,
+        bytes: usize,
+        compute_stream: Option<u64>,
+    ) -> Result<()> {
+        let _ = (ptr, compute_stream);
+        Err(metrale_error::error!(
+            metrale_error::ErrorCode::CollectivePathRefused,
+            path.name(),
+            bytes,
+            "this communicator executes no planned path"
+        )
+        .into())
+    }
+
+    /// 2026-10-23: The state this backend's collective paths depend on (`ar_path`), which a boot
+    /// checks each planned collective against once; `None` for a backend without paths. The
+    /// default returns `None`.
+    fn path_state(&self) -> Option<ar_path::PathState> {
+        None
+    }
+
+    /// 2026-10-10: The exchange of an all-reduce without its sum, so the caller's next kernel can
+    /// sum: send the BF16 partial of `bytes` at `ptr` to every peer and receive theirs, ordered
+    /// like `all_reduce_async` against `compute_stream` (`Some`) or like `all_reduce` on the
+    /// backend's own stream (`None`, the graph-capture path). Returns where the partials are;
+    /// `ptr` still holds this rank's partial. `Ok(None)` when the backend has no such path for
+    /// this payload: nothing was enqueued, and the caller all-reduces instead. The default
+    /// returns `Ok(None)`.
+    fn exchange_partials(
+        &self,
+        _ptr: u64,
+        _bytes: usize,
+        _compute_stream: Option<u64>,
+    ) -> Result<Option<PeerPartials>> {
+        Ok(None)
+    }
+
+    /// 2026-10-11: The largest payload in bytes the one-shot all-reduce takes (an FP32 sum of
+    /// the partials in rank order, one BF16 rounding, whatever the payload size); 0 when this
+    /// backend has none. The default returns 0.
+    fn oneshot_max_bytes(&self) -> usize {
+        0
     }
 
     /// 2026-09-26: Register a device buffer with the backend and return an
@@ -104,6 +230,11 @@ pub trait CommBackend: Send + Sync {
         // 2026-09-26: The default keeps no kernel.
     }
 
+    /// 2026-10-08: Give the backend the `bf16_add_rank_sum` kernel handle, which the one-shot
+    /// all-reduce at `world_size >= 2` (2026-10-16: was 3) needs. A no-op on backends without
+    /// that path.
+    fn set_rank_sum_kernel(&self, _handle: u64) {}
+
     /// 2026-09-26: Send `bytes` at `ptr` to `dest_rank`, enqueued on `stream`.
     /// Pairs with a `recv_from` of the same size on `dest_rank`.
     fn send_to(&self, ptr: u64, bytes: usize, dest_rank: usize, stream: u64) -> Result<()>;
@@ -131,6 +262,12 @@ pub trait CommBackend: Send + Sync {
     fn is_healthy(&self) -> bool {
         true
     }
+
+    /// 2026-10-21: Mark the communicator unhealthy without an error of its own, as a failure
+    /// would: every later operation is refused until a successful `attempt_reconnect`. For a
+    /// pair of communicators that must fail together (`METRALE_GLM_EP_CTRL_COMM`: the control
+    /// channel beside the data communicator). The default does nothing.
+    fn poison(&self) {}
 
     /// 2026-09-26: Replace a failed communicator. `NcclBackend` aborts it and
     /// repeats the TCP bootstrap, so every rank must call this at the same

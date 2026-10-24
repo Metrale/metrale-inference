@@ -20,7 +20,9 @@ use anyhow::{Context, Result, anyhow, bail};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_weights::weights::WeightStore;
 
-use metrale_model_layers::layers::ops::lora_delta::{LoraKernels, LoraPair, apply_lora_delta};
+use metrale_model_layers::layers::ops::lora_delta::{
+    LoraKernels, LoraLevers, LoraPair, apply_lora_delta,
+};
 use metrale_model_layers::weight_map::DenseWeight;
 
 /// 2026-09-25: The PEFT config fields read for the LoRA scaling (`r`,
@@ -50,7 +52,12 @@ impl NllbLora {
     /// 2026-09-25: Load a PEFT adapter directory (`adapter_config.json` and its
     /// safetensors) for NLLB. `max_rows` is the most rows one `apply` call
     /// accepts; the model passes `cache_rows`.
-    pub(super) fn load(dir: &Path, gpu: &dyn GpuBackend, max_rows: usize) -> Result<Self> {
+    pub(super) fn load(
+        dir: &Path,
+        gpu: &dyn GpuBackend,
+        max_rows: usize,
+        levers: LoraLevers,
+    ) -> Result<Self> {
         let raw = std::fs::read_to_string(dir.join("adapter_config.json"))
             .with_context(|| format!("reading {}/adapter_config.json", dir.display()))?;
         let peft: PeftCfg =
@@ -121,7 +128,7 @@ impl NllbLora {
             );
         }
 
-        let kernels = LoraKernels::new(gpu)?;
+        let kernels = LoraKernels::new(gpu, levers)?;
         let xa = gpu.alloc(max_rows * max_rank as usize * 2)?;
         let delta = gpu.alloc(max_rows * max_n_out * 2)?;
         tracing::info!(

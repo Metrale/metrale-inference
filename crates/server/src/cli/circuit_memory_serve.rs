@@ -4,7 +4,7 @@
 //! recipe plus `met serve` flags, through the serve's own parser and validation) and the counts
 //! the engine derives from them, each by the engine's own function: the SSM pool's unit counts
 //! (`ssm_reserve::pool_counts_with`), the MTP verify slots, the Marconi and decode-ring slots, the
-//! carried-state verify's slots, and the legacy buffer arena (`BufferSizes::from_config`).
+//! carried-state verify's slots, and the legacy buffer arena (`BufferSizes::from_config_with`).
 //!
 //! Owner: server CLI.
 //! Invariants:
@@ -240,13 +240,19 @@ pub(crate) fn engine_facts(
         args.ssm_cache_slots,
         ssm_reserve::prefix_caching_active(
             args.prefix_caching_enabled(),
-            config.kv_only_prefix_cache_is_safe(),
+            // 2026-10-17: The declared gate: the what-if is a serve of these flags, and the
+            // validation override and the indexer layout are env levers it does not read.
+            config.kv_only_prefix_cache_is_safe(metrale_config::PrefixCacheGate::DECLARED),
         ),
     )
     .slots;
-    let ring_slots = ssm_reserve::decode_rollback_ring_slots(
+    // 2026-10-17: The what-if's own `--ssm-decode-ring-slots` is the published depth, as
+    // `serve_flags` publishes it; the process-global cell belongs to a serve, not to this model.
+    let ring_slots = ssm_reserve::decode_rollback_ring_slots_given(
         config.num_ssm_layers(),
         args.speculative || args.dflash,
+        ssm_reserve::parse_decode_ring_slots(&args.ssm_decode_ring_slots)
+            .map_err(anyhow::Error::msg)?,
     )
     .slots;
     // 2026-10-02: The carried-state verify binds exactly when the reserve plans its stash
@@ -268,18 +274,27 @@ pub(crate) fn engine_facts(
         true => metrale_model_layers::layer::VERIFY_WY_TABLE_SEQS as u64,
         false => 0,
     };
+    // 2026-10-17: `None`: the what-if is a serve of these flags, and `METRALE_MAX_BATCH_TOKENS`
+    // lives in that serve's environment, not this tool's (it read the tool's own until now).
     let budget = crate::main_modules::serve_phases::kv_cache::resolve_prefill_budget(
         &args,
         ssm_prefill_chunk(&args, config),
+        None,
     );
     let m = budget.max_batch_tokens;
     let gdn = gdn_two_phase_bytes(config, m.min(args.max_seq_len));
-    let arena = metrale_gpu_runtime::buffers::BufferSizes::from_config(
+    let levers = metrale_gpu_runtime::buffers::ArenaLevers::from(
+        &metrale_settings::groups::device::DeviceSettings::try_from(
+            &crate::main_modules::serve_phases::lever_settings()?,
+        )?,
+    );
+    let arena = metrale_gpu_runtime::buffers::BufferSizes::from_config_with(
         config,
         m,
         args.max_seq_len,
         args.block_size,
         slots,
+        &levers,
     )
     .total_bytes()
         + gdn;

@@ -15,6 +15,11 @@ use super::types::TransformerModel;
 use metrale_model_layers::speculative::DraftProposer;
 
 impl TransformerModel {
+    /// 2026-10-10: `(rank, world)` of the communicator, `None` without one.
+    pub(crate) fn comm_rank_world(&self) -> Option<(usize, usize)> {
+        self.comm_ref().map(|c| (c.rank(), c.world_size()))
+    }
+
     /// 2026-09-25: Borrow the GPU backend. The factory uses it to build the
     /// proposers installed after construction and to read allocation reports.
     pub fn gpu_backend(&self) -> &dyn GpuBackend {
@@ -27,6 +32,18 @@ impl TransformerModel {
         &self.config
     }
 
+    /// 2026-10-17: Borrow the model levers (`ModelLevers::from_settings`, resolved once), for the
+    /// proposers installed after construction.
+    pub fn levers_ref(&self) -> &metrale_model_layers::layers::ops::ModelLevers {
+        &self.levers
+    }
+
+    /// 2026-10-17: Borrow the startup settings the model was built from, for the factory steps
+    /// that run after construction.
+    pub(crate) fn settings_ref(&self) -> &metrale_settings::InferenceServerSettings {
+        &self.settings
+    }
+
     /// 2026-09-25: Install a proposer built after construction (the
     /// DeepSeek-V4 or GLM-5.3 MTP head, or a DFlash drafter), replacing any
     /// MTP proposer `TransformerModel::new` built. It also shrinks the MTP
@@ -34,6 +51,27 @@ impl TransformerModel {
     ///
     /// It does not check flag combinations; clap rejects `--dflash` with
     /// `--speculative`.
+    /// 2026-10-09: Allocate the batched-verify hidden stash for a drafter installed after
+    /// construction on a target whose construction built no MTP proposer, so the stash
+    /// (`can_batch_verify_dispatch` requires it) was left NULL. GLM-5.3's MTP module is built
+    /// after construction and not at all under DFlash, so without this every GLM-5.3 DFlash
+    /// verify ran one sequence at a time. Only for a model whose layers all answer
+    /// `batch_verify_across_ranks` (GLM-5.3 today); every other model keeps the stash its
+    /// construction gave it. A no-op when the stash exists.
+    pub fn ensure_verify_hidden_stash(&mut self) -> anyhow::Result<()> {
+        if !self.verify_hidden_stash.is_null()
+            || self.layers.is_empty()
+            || !self.layers.iter().all(|l| l.batch_verify_across_ranks())
+        {
+            return Ok(());
+        }
+        self.verify_hidden_stash = self.gpu.alloc(
+            metrale_model_layers::layer::VERIFY_WY_TABLE_SEQS * self.config.hidden_size * 2,
+        )?;
+        tracing::info!("batched-verify hidden stash allocated for the installed drafter");
+        Ok(())
+    }
+
     pub fn set_dflash_proposer(&mut self, proposer: std::sync::Arc<dyn DraftProposer>) {
         if self.proposer.is_some() {
             tracing::info!("DFlash: replacing existing MTP proposer with BlockDiffusionDraftHead");
@@ -99,7 +137,7 @@ impl TransformerModel {
     /// recomputes the whole prompt. `METRALE_MLA_PREFIX_SKIP=1` makes it
     /// return false.
     pub(crate) fn mla_prefill_needs_full_recompute(&self) -> bool {
-        if std::env::var("METRALE_MLA_PREFIX_SKIP").as_deref() == Ok("1") {
+        if self.settings.cache.mla_prefix_skip {
             return false;
         }
         self.layers.iter().any(|l| l.uses_local_mla_prefill())

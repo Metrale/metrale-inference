@@ -43,13 +43,17 @@ pub(super) struct RingFit {
 /// `use_speculative` passed here must match the one `build_model` passes:
 /// `args.speculative || args.dflash`.
 ///
-/// `METRALE_SSM_RESERVE_RING_FULL` set to any value, `0` included, reserves
-/// `DECODE_ROLLBACK_RING_SLOTS` on a model with SSM layers whatever the
+/// `ring_full` (`METRALE_SSM_RESERVE_RING_FULL` set to any value, `0` included,
+/// resolved once in `LoadLevers`) reserves `DECODE_ROLLBACK_RING_SLOTS` on a model with SSM layers whatever the
 /// speculative flags; it changes the reserve only, not the allocation.
-pub(super) fn requested_slots(args: &cli::ServeArgs, config: &ModelConfig) -> usize {
-    if std::env::var("METRALE_SSM_RESERVE_RING_FULL").is_ok() {
+pub(super) fn requested_slots(
+    args: &cli::ServeArgs,
+    config: &ModelConfig,
+    ring_full: bool,
+) -> usize {
+    if ring_full {
         return if config.num_ssm_layers() > 0 {
-            metrale_kernels::DECODE_ROLLBACK_RING_SLOTS
+            metrale_core::decode_ring::DECODE_ROLLBACK_RING_SLOTS
         } else {
             0
         };

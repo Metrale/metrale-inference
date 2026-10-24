@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! 2026-09-25: `build_model`: loads the weights with the loader for the
-//! config's `model_type`, sizes and allocates the buffer arena and the KV
-//! cache, and assembles a `TransformerModel` with its optional MTP, DFlash and
-//! LoRA parts. NLLB / M2M-100 configs get an `NllbGpuModel` instead.
+//! 2026-09-25: `build_model`: loads the weights with the config's `model_type` loader, sizes and
+//! allocates the buffer arena and KV cache, and assembles a `TransformerModel` with its optional
+//! MTP, DFlash and LoRA parts. NLLB gets an `NllbGpuModel`, an embedder an `EmbedGpuModel`.
 //!
 //! Owner: metrale-model-engine.
 //! Invariants:
@@ -13,7 +12,6 @@
 use anyhow::Result;
 use metrale_cache::kv_cache::{KvCacheConfig, KvCacheDtype, PagedKvCache};
 use metrale_config::ModelConfig;
-use metrale_gpu_runtime::buffers::BufferArena;
 use metrale_gpu_runtime::gpu::GpuBackend;
 use metrale_model_weights::weights::WeightStore;
 use metrale_telemetry::prefix_cache::PrefixCache;
@@ -25,12 +23,16 @@ use crate::model::TransformerModel;
 use metrale_model_layers::layers::MtpQuantization;
 
 mod alloc_digest;
+mod arena;
+mod embed;
 mod kv_blocks;
 mod kv_budget;
 mod kv_sizing;
 mod kv_summary;
 mod mem_trace;
 mod mtp_modules;
+#[cfg(feature = "cuda")]
+mod nllb;
 mod proposers;
 pub mod slots;
 mod weights_prep;
@@ -74,61 +76,48 @@ pub fn build_model(
     // 2026-09-25: NLLB / M2M-100 PEFT LoRA adapter directory; `None` for the
     // base model.
     nllb_lora_dir: Option<std::path::PathBuf>,
+    // 2026-10-17: The startup settings; the model and its loader read every lever from them.
+    settings: std::sync::Arc<metrale_settings::InferenceServerSettings>,
 ) -> Result<slots::BuiltModel> {
-    // 2026-09-25: NLLB / M2M-100 is an encoder-decoder model, served by
-    // `NllbGpuModel` from the same `store`. This returns before
-    // `loader_for_config`, so the decoder-only loader never runs for it.
     #[cfg(feature = "cuda")]
-    if matches!(config.model_type.as_str(), "m2m_100" | "nllb") {
-        let (src, tgt) = nllb_lang.ok_or_else(|| {
-            anyhow::anyhow!(
-                "NLLB serving requires --src-lang and --tgt-lang (translation language pair)"
-            )
-        })?;
-        let lang = crate::model::nllb::NllbLang {
-            src_lang_id: src,
-            tgt_lang_id: tgt,
-            decoder_start_id: config.eos_token_id,
-            eos_id: config.eos_token_id,
-            pad_id: 1,
-        };
-        let nllb_slots = match slots.request {
-            slots::SlotRequest::Count(n) => n,
-            slots::SlotRequest::Auto => anyhow::bail!(
-                "--max-batch-size auto balances recurrent-state slots against the KV pool; \
-                 an encoder-decoder model has neither. Pass a count."
-            ),
-        };
-        let model = crate::model::nllb::NllbGpuModel::new(
+    if nllb::is_nllb(&config) {
+        return nllb::build(
             &config,
             &store,
             gpu,
-            lang,
+            nllb_lang,
             max_seq_len,
-            nllb_slots,
+            &slots.request,
             nllb_lora_dir.as_deref(),
-        )?;
-        return Ok(slots::BuiltModel {
-            max_batch_size: nllb_slots,
-            model: Box::new(model),
-            drafter_weights_sha256: None,
-        });
+            &settings,
+        );
+    } else if embed::is_embedding(&config) {
+        return embed::build(&config, store, gpu, max_batch_tokens, &slots.request);
     }
     #[cfg(not(feature = "cuda"))]
     let _ = (nllb_lang, nllb_lora_dir);
 
-    // 2026-09-25: Step 1: select the weight loader.
+    // 2026-09-25: Step 1: select the weight loader. 2026-10-17: The model levers are derived
+    // once here, for the loader and the model.
     let loader = loader_for_config(&config)?;
+    let levers = metrale_model_layers::layers::ops::ModelLevers::from_settings(
+        &settings,
+        metrale_model_layers::layers::ops::target_defaults::declared().decode_split_silu,
+        metrale_model_layers::layers::ops::ModelLevers::tq_plus_weight_rotation(),
+    )?;
+    let load_ctx = metrale_model_layers::load_context::LoadContext {
+        settings: &settings,
+        levers: &levers,
+    };
 
     // 2026-09-25: Free memory before the LoRA load and the buffer arena. The
     // baseline-free-bytes path of the KV budget subtracts the budget-time
     // sample from it to get what `build_model` itself allocated.
     let build_entry_free = gpu.free_memory().ok();
 
-    // 2026-09-25: LoRA adapters load before `BufferArena::new` and before the
-    // free-memory sample the KV budget is computed from, so their pool is
-    // counted as used. `config.adapter_max_rank` is set first because the
-    // buffer arena sizes the LoRA scratch from it.
+    // 2026-09-25: LoRA adapters load before `BufferArena::new` and before the free-memory sample
+    // the KV budget is computed from, so their pool is counted as used. `config.adapter_max_rank`
+    // is set first because the buffer arena sizes the LoRA scratch from it.
     let lora_weights: Option<metrale_model_layers::lora::LoraWeights> =
         if let Some(ref la) = lora_args {
             config.adapter_max_rank = la.max_lora_rank;
@@ -138,6 +127,7 @@ pub fn build_model(
                 gpu.as_ref(),
                 la.max_loras,
                 la.max_lora_rank,
+                metrale_model_layers::lora::ExpertLoraPolicy::from_settings(&settings),
             )?
         } else {
             None
@@ -155,17 +145,16 @@ pub fn build_model(
         layer_dtypes.clone()
     };
 
-    // 2026-09-25: Per-layer KV dims, from loaders whose layers differ in
-    // attention geometry (Gemma-4). The default is empty: every layer uses the
-    // global `num_kv_heads` and `head_dim`.
+    // 2026-09-25: Per-layer KV dims, from loaders whose layers differ in attention geometry
+    // (Gemma-4). The default is empty: every layer uses the global `num_kv_heads` and `head_dim`.
     config.kv_layer_dims = loader.kv_layer_dims(&config);
 
-    // 2026-09-25: `MemTrace` logs the free-memory change at each build step;
-    // the free_before/after pair adds a per-layer average for layer
-    // construction.
+    // 2026-09-25: `MemTrace` logs the free-memory change at each build step; the free_before/after
+    // pair adds a per-layer average for layer construction.
     let mut mem = MemTrace::new(gpu.as_ref());
     let free_before_layers = gpu.free_memory().unwrap_or(0);
-    let mut layers = loader.load_layers(&store, &config, gpu.as_ref(), &attn_layer_dtypes)?;
+    let mut layers =
+        loader.load_layers(&store, &config, gpu.as_ref(), &attn_layer_dtypes, load_ctx)?;
     let free_after_layers = gpu.free_memory().unwrap_or(0);
     tracing::info!(
         "Layer construction: {:.2} GB consumed ({:.2} GB free -> {:.2} GB free) \
@@ -184,7 +173,7 @@ pub fn build_model(
     // 2026-09-25: n-gram fused embedding: LongCat's loader builds one, the
     // default returns `None`. Sized for `max_batch_tokens`, the widest embed.
     let ngram_embed =
-        loader.load_ngram_embedding(&store, &config, gpu.as_ref(), max_batch_tokens)?;
+        loader.load_ngram_embedding(&store, &config, gpu.as_ref(), max_batch_tokens, load_ctx)?;
     let final_norm = loader.load_final_norm(&store, &config, gpu.as_ref())?;
     mem.mark("load_final_norm");
     let lm_head = loader.load_lm_head(&store, &config, gpu.as_ref())?;
@@ -206,15 +195,22 @@ pub fn build_model(
     };
     mem.mark("load_mtp_weights_multi");
 
-    // 2026-09-25: GLM-5.3 and DeepSeek-V4 have their own MTP modules, not the
-    // generic `MtpWeights`; each is loaded only with `--speculative`, and its
-    // proposer is built after the model (Steps 6b and 6c). The GLM-5.3 module
-    // (`layers.{num_hidden_layers}`) is loaded on every EP rank; the
+    // 2026-09-25: GLM-5.3 and DeepSeek-V4 have their own MTP modules, not the generic `MtpWeights`;
+    // each is loaded only with `--speculative`, and its proposer is built after the model (Steps 6b
+    // and 6c). The GLM-5.3 module (`layers.{num_hidden_layers}`) is loaded on every EP rank; the
     // DeepSeek-V4 module only on rank 0.
-    let glm_mtp_module =
-        mtp_modules::load_glm_mtp_module(&store, &config, gpu.as_ref(), use_speculative);
+    // 2026-10-08: Not with DFlash: its drafter replaces the MTP proposer
+    // (`install_dflash_drafter`), so a module built here would stay resident unused.
+    let glm_mtp_module = mtp_modules::load_glm_mtp_module(
+        &store,
+        &config,
+        gpu.as_ref(),
+        use_speculative && dflash_args.is_none(),
+        load_ctx,
+    );
     let glm_mtp_embed = embed;
     let glm_mtp_lm_head = lm_head;
+    let glm_mtp_target_final_norm = final_norm;
 
     let v4_mtp_module = mtp_modules::load_v4_mtp_module(
         &store,
@@ -222,12 +218,12 @@ pub fn build_model(
         gpu.as_ref(),
         &attn_layer_dtypes,
         use_speculative,
+        load_ctx,
     );
 
-    // 2026-09-25: `--speculative` with no MTP module bound by any of the three
-    // paths (generic, GLM-5.3, DeepSeek-V4). `detect_in_store` then tells a
-    // checkpoint without an MTP head (warn) from one whose head no loader bound
-    // (error).
+    // 2026-09-25: `--speculative` with no MTP module bound by any of the three paths (generic,
+    // GLM-5.3, DeepSeek-V4). `detect_in_store` then tells a checkpoint without an MTP head (warn)
+    // from one whose head no loader bound (error).
     if use_speculative
         && mtp_weights.is_empty()
         && glm_mtp_module.is_none()
@@ -239,23 +235,20 @@ pub fn build_model(
     let vision_encoder = loader.load_vision_encoder(&store, &config, gpu.as_ref())?;
     mem.mark("load_vision_encoder");
 
-    // 2026-09-25: When no vision encoder was bound, free the store's
-    // vision-tower tensors before the KV budget is computed. The decision keys
-    // off the bind result, not a model list, so an encoder that binds these
-    // pointers keeps them.
+    // 2026-09-25: When no vision encoder was bound, free the store's vision-tower tensors before
+    // the KV budget is computed. The decision keys off the bind result, not a model list, so an
+    // encoder that binds these pointers keeps them.
     if vision_encoder.is_none() {
         weights_prep::release_unbound_vision_tower(&mut store, gpu.as_ref(), &config)?;
     }
     mem.mark("vision reclaim");
 
-    // 2026-09-25: When the checkpoint's quantization config ignores the MTP
-    // weights (`mtp.fc.weight` or layer 0's q_proj), they stay BF16 whatever
-    // `--mtp-quantization` says.
+    // 2026-09-25: When the checkpoint's quantization config ignores the MTP weights
+    // (`mtp.fc.weight` or layer 0's q_proj), they stay BF16 whatever `--mtp-quantization` says.
     let effective_mtp_quant =
         mtp_modules::effective_mtp_quantization(&mtp_weights, &config, &store, mtp_quant)?;
 
-    // 2026-09-25: Step 3: LM-head quantization (NVFP4, FP8 or BF16) and the
-    // draft-only NVFP4 head for MTP, in lm_head_setup.rs.
+    // 2026-09-25: Step 3: LM-head quantization (NVFP4, FP8 or BF16), MTP draft head (lm_head_setup).
     let (lm_head_nvfp4, lm_head_fp8, mtp_lm_head_nvfp4) = super::lm_head_setup::setup_lm_heads(
         &store,
         &lm_head,
@@ -268,25 +261,36 @@ pub fn build_model(
     // embedding or lm_head tensor (`--spec-cost-model measured`'s drafter key).
     let drafter_weights_sha256 = store.drafter_weights_sha256(gpu.as_ref())?;
 
-    // 2026-10-01: Step 3a: the transposed twin of the NVFP4 LM head, built here rather than in
-    // `TransformerModel::new` so the KV sizing finds it on the allocation ledger.
+    // 2026-10-01: Step 3a: the NVFP4 head's transposed twin and (2026-10-21) the screened head's
+    // INT8 copy (`model/screen_head.rs`), both on the ledger before KV sizing.
     let lm_head_nvfp4_t =
-        crate::model::impl_a1::build_lm_head_nvfp4_t(&lm_head_nvfp4, &config, gpu.as_ref())?;
+        crate::model::build_lm_head_nvfp4_t(&lm_head_nvfp4, &config, &settings, gpu.as_ref())?;
+    let bf16_head = lm_head_nvfp4.is_none() && lm_head_fp8.is_none();
+    let screen_head = crate::model::build_screen_head(
+        gpu.as_ref(),
+        &settings,
+        &config,
+        &lm_head,
+        bf16_head,
+        comm.as_deref(),
+    )?;
+    mem.mark("screen_head");
 
-    // 2026-09-25: Copies (DenseWeight is `Copy`) of the embedding and the BF16
-    // LM head for the DeepSeek-V4 MTP proposer, taken before both move into
-    // `TransformerModel::new`.
+    // 2026-09-25: Copies (DenseWeight is `Copy`) of the embedding and the BF16 LM head for the
+    // DeepSeek-V4 MTP proposer, taken before both move into `TransformerModel::new`.
     let v4_mtp_embed = embed;
     let v4_mtp_lm_head = lm_head;
 
     // 2026-09-25: Step 3b: the post-load MoE prefill transpose for minimax_m2,
     // step3p7 and deepseek_v4 (m2_setup.rs); a no-op for other model types.
-    maybe_run_minimax_m2_moe_transpose(&config, gpu.as_ref(), &mut layers)?;
+    maybe_run_minimax_m2_moe_transpose(&config, gpu.as_ref(), &mut layers, &settings)?;
 
-    // 2026-09-25: Step 3c: the loader drops store tensors it has uploaded its
-    // own copies of (the default is a no-op). This runs after every `load_*`
-    // above and before the KV budget is computed, so the freed memory counts.
-    loader.prune_after_load(&mut store, &config, gpu.as_ref())?;
+    // 2026-09-25: Step 3c: the loader drops store tensors it has uploaded its own copies of (the
+    // default is a no-op), after every `load_*` above and before the KV budget, so it counts.
+    loader.prune_after_load(&mut store, &config, gpu.as_ref(), load_ctx)?;
+    if dflash_args.is_some() {
+        weights_prep::release_unused_glm_mtp_block(&mut store, gpu.as_ref(), &config)?;
+    }
     mem.mark("prune_after_load");
     tracing::info!(
         "WeightStore after prune: {} tensors, {:.3} GiB still resident",
@@ -294,15 +298,19 @@ pub fn build_model(
         store.resident_bytes() as f64 / (1024.0 * 1024.0 * 1024.0),
     );
 
-    // 2026-09-25: Step 4: the buffer arena. 2026-10-01: Sized for the slot ceiling (`auto` resolves
-    // after it, at KV sizing); the preflight sized the arena reserve for the same ceiling.
-    let buffers = BufferArena::new(
+    // 2026-09-25: Step 4: the buffer arena (`arena.rs`).
+    let arena_levers = metrale_gpu_runtime::buffers::ArenaLevers::from(
+        &metrale_settings::groups::device::DeviceSettings::try_from(&*settings)?,
+    );
+    let buffers = arena::buffer_arena(
         &config,
         max_batch_tokens,
         max_seq_len,
         kv_block_size,
         slots.request.ceiling(),
+        &arena_levers,
         gpu.as_ref(),
+        &settings,
     )?;
 
     // 2026-09-25: Step 5: size the KV cache. With MLA (`kv_lora_rank > 0`) it
@@ -331,22 +339,20 @@ pub fn build_model(
         layer_dtypes: layer_dtypes.clone(),
         layer_dims: config.kv_layer_dims.clone(),
         cache_blocks_per_seq: hss_cache_blocks_per_seq,
+        v_block_bytes: loader.kv_v_block_bytes(&config, kv_block_size, &settings)?,
     };
 
     if hss_cache_blocks_per_seq.is_some() {
         kv_summary::log_hss_kv_summary(&kv_config);
     }
-    // 2026-09-25: `total_memory × gpu_memory_utilization` is the budget for
-    // everything this process holds. The KV cache gets what is left of it
-    // after `used_so_far`, `inference_reserve` and the DFlash and MTP
-    // reserves, clamped to the free memory left after those reserves.
+    // 2026-09-25: `total_memory × gpu_memory_utilization` is the budget for everything this process
+    // holds. The KV cache gets what is left of it after `used_so_far`, `inference_reserve` and the
+    // DFlash and MTP reserves, clamped to the free memory left after those reserves.
     // 2026-10-01: Sized with the slot count (`kv_sizing.rs`).
     let gib = |b: usize| b as f64 / (1024.0 * 1024.0 * 1024.0);
-    // 2026-09-25: The DFlash drafter head allocates at Step 7, after this
-    // sizing, so its estimate is reserved here: drafter KV
-    // (max_seq_len × layers × 2 × kv_dim × BF16), fused KV, the hidden-state
-    // capture, FP8 weight mirrors (half the drafter store) and 300 MiB of
-    // scratch.
+    // 2026-09-25: The DFlash drafter head allocates at Step 7, after this sizing, so its estimate
+    // is reserved here: drafter KV (max_seq_len × layers × 2 × kv_dim × BF16), fused KV, the
+    // hidden-state capture, FP8 weight mirrors (half the drafter store) and 300 MiB of scratch.
     let dflash_reserve: usize =
         kv_budget::dflash_reserve_bytes(&dflash_args, &config, max_seq_len, gib);
     let sized = kv_sizing::size_kv(
@@ -365,13 +371,15 @@ pub fn build_model(
             kv_block_size,
             hss_cache_blocks_per_seq,
             gpu_memory_utilization,
+            levers: kv_sizing::KvPoolLevers::from_settings(&settings),
         },
         &slots,
     )?;
     let (max_batch_size, num_kv_blocks) = (sized.slots, sized.num_kv_blocks);
     let total_mem = gpu.total_memory()?;
     let total_budget = (total_mem as f64 * gpu_memory_utilization) as usize;
-    let kv_cache = PagedKvCache::new(kv_config, num_kv_blocks, gpu.as_ref())?;
+    let tuning = metrale_settings::groups::device_cache::CacheTuning::try_from(&*settings)?;
+    let kv_cache = PagedKvCache::with_tuning(kv_config, num_kv_blocks, gpu.as_ref(), &tuning)?;
 
     // 2026-09-25: Step 6: assemble the model. The DFlash drafter shares the
     // target's embedding and LM head, so their pointers are copied first.
@@ -414,19 +422,21 @@ pub fn build_model(
         vision_encoder,
         ssm_cache_slots,
         ssm_checkpoint_interval,
+        settings.clone(),
+        levers,
     )?;
 
-    // 2026-09-25: A Q6_K `lm_head.weight` in the store (a DeepSeek-V4.1 GGUF,
-    // kept Q6_K by the sidecar's `v41_kquant_resident_dtype`) is served by the
-    // K-quant GEMV in model/lm_head_q6k.rs.
+    // 2026-09-25: A Q6_K `lm_head.weight` in the store (a DeepSeek-V4.1 GGUF, kept Q6_K by the
+    // sidecar's `v41_kquant_resident_dtype`) is served by the K-quant GEMV in model/lm_head_q6k.rs.
     if store
         .get("lm_head.weight")
         .is_ok_and(|w| w.dtype == metrale_model_weights::weights::WeightDtype::Q6K)
     {
         model.set_lm_head_q6k(lm_head.weight)?;
     }
-    // 2026-09-28: Declared-W8A8 FP8 head (model/lm_head_fp8_rows.rs).
+    // 2026-09-28: Declared-W8A8 FP8 head (model/lm_head_fp8_rows.rs). 2026-10-21: The screen.
     model.install_declared_lm_head_w8a8()?;
+    model.install_screen_head(screen_head)?;
     // 2026-10-02: Declared-W4A16 NVFP4 head on the row tiles (model/lm_head_nvfp4_rows.rs).
     model.install_declared_lm_head_w4a16_rows()?;
 
@@ -449,7 +459,10 @@ pub fn build_model(
         glm_mtp_module,
         glm_mtp_embed,
         glm_mtp_lm_head,
+        glm_mtp_target_final_norm,
         max_seq_len,
+        max_batch_size,
+        &settings,
     );
 
     // 2026-09-25: Step 7: the DFlash drafter, which uses the target's
@@ -464,6 +477,7 @@ pub fn build_model(
         target_hidden_for_dflash,
         max_seq_len,
         max_batch_size,
+        &settings,
     )?;
 
     // 2026-09-25: Step 8: the n-gram embedding, and the LoRA adapters loaded

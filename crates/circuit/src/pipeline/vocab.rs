@@ -11,6 +11,8 @@
 //! - Projections (a linear of any role, the LM head, the router and both expert projections)
 //!   share one shape; the routed gate/up projection adds the row gather by expert id.
 
+use crate::prelude::*;
+
 use super::{Num, StepKind, Value};
 use crate::format::Format;
 use crate::ir::{LinearRole, OpKind};
@@ -39,6 +41,26 @@ const ATTENTION: &[StepKind] = &[
     StepKind::Softmax,
     StepKind::Accumulate,
 ];
+/// 2026-10-08: Latent attention: the query absorbed through `kv_b_proj` (a projection's act and
+/// weight), then attention over the latent cache.
+const LATENT_ATTENTION: &[StepKind] = &[
+    StepKind::Act,
+    StepKind::Weight,
+    StepKind::Cache,
+    StepKind::Scores,
+    StepKind::Softmax,
+    StepKind::Accumulate,
+];
+
+/// 2026-10-18: Latent sparse attention: the window ring it updates (a state at its declared
+/// format), then attention over the ring and the compressed rows, no weight. No `cache` step:
+/// neither side is held at `kv_cache_dtype`; both are states with fixed formats.
+const SPARSE_LATENT_ATTENTION: &[StepKind] = &[
+    StepKind::State,
+    StepKind::Scores,
+    StepKind::Softmax,
+    StepKind::Accumulate,
+];
 
 /// 2026-10-02: The steps of `op`'s pipeline, in order.
 pub fn steps_of(op: &OpKind) -> &'static [StepKind] {
@@ -57,15 +79,33 @@ pub fn steps_of(op: &OpKind) -> &'static [StepKind] {
         | OpKind::SigmoidGateMul
         | OpKind::GdnGates
         | OpKind::Rope
-        | OpKind::ActQuant(_) => COMPUTE,
-        OpKind::Copy | OpKind::Concat | OpKind::Split => &[StepKind::Move],
+        | OpKind::ActQuant(_)
+        | OpKind::SwigluClamp
+        | OpKind::LayerNorm
+        | OpKind::HcPre
+        | OpKind::HcPost
+        | OpKind::HcContract
+        | OpKind::MeanPool => COMPUTE,
+        OpKind::Copy | OpKind::Concat | OpKind::Split | OpKind::HcExpand => &[StepKind::Move],
         OpKind::KvWrite => &[StepKind::Cache],
         OpKind::PagedAttention => ATTENTION,
+        OpKind::MlaAttention => LATENT_ATTENTION,
+        // 2026-10-08: The pool tail is the state the compression updates; the selection's
+        // scores and top-k run at the reference FP32.
+        OpKind::KpoolCompress => RECURRENT,
+        OpKind::IndexSelect => &[StepKind::Scores, StepKind::Score],
         OpKind::Conv1dUpdate | OpKind::GdnRecurrence | OpKind::SsmUpdate => RECURRENT,
+        // 2026-10-18: The latent compression updates its run tail like the pool above; the
+        // latent sparse attention updates its window ring and reads the compressed cache.
+        OpKind::KvCompress => RECURRENT,
+        OpKind::LatentSparseAttention => SPARSE_LATENT_ATTENTION,
+        OpKind::EngramLookup => &[StepKind::Gather],
+        OpKind::EngramGate => COMPUTE,
         OpKind::StateSnapshot => &[StepKind::State],
         OpKind::TopK => &[StepKind::Score],
         OpKind::Blend => &[StepKind::Scatter, StepKind::Combine],
-        OpKind::EpReduce => &[StepKind::Reduce],
+        OpKind::EpReduce | OpKind::AllReduce => &[StepKind::Reduce],
+        OpKind::AllGather | OpKind::Broadcast => &[StepKind::Move],
         OpKind::Argmax => &[StepKind::Compare],
     }
 }
@@ -94,7 +134,8 @@ pub enum Shape {
     Num,
     /// 2026-10-02: [`Value::OptNum`].
     OptNum,
-    /// 2026-10-02: [`Value::Kv`].
+    /// 2026-10-02: [`Value::Kv`]. 2026-10-19: Or, for a spelling no codec pair has, the fixed
+    /// state dtype a cache write holds ([`cache_value`]).
     Kv,
     /// 2026-10-02: [`Value::State`].
     State,
@@ -145,6 +186,16 @@ fn num(s: &str) -> Result<Num, String> {
     Num::parse(s).ok_or_else(|| format!("`{s}` is no precision (bf16, f16, f32, e4m3, e2m1)"))
 }
 
+/// 2026-10-19: A cache step's value from its spelling: the codec pair a registered spelling names,
+/// else the fixed state dtype a write into a fixed-format state holds (DeepSeek-V4.1's packed `u8`
+/// latent and index rows), which no codec names.
+pub fn cache_value(text: &str) -> Result<Value, String> {
+    match crate::kv::parse_kv(text) {
+        Ok(pair) => Ok(Value::Kv(pair)),
+        Err(e) => StateDtype::parse(text).map(Value::State).ok_or(e),
+    }
+}
+
 /// 2026-10-02: Parse `text` as the value of step `k`.
 pub fn parse_value(k: StepKind, text: &str) -> Result<Value, String> {
     let fmt = |s: &str| Format::parse(s).map_err(|e| e.to_string());
@@ -173,12 +224,7 @@ pub fn parse_value(k: StepKind, text: &str) -> Result<Value, String> {
             "none" => Value::OptNum(None),
             other => Value::OptNum(Some(num(other)?)),
         },
-        Shape::Kv => {
-            if text.is_empty() || !text.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-                return Err(format!("`{text}` is no KV-cache dtype spelling"));
-            }
-            Value::Kv(text.to_string())
-        }
+        Shape::Kv => cache_value(text)?,
         Shape::State => Value::State(
             StateDtype::parse(text)
                 .ok_or_else(|| format!("`{text}` is no state dtype (f32, f16, bf16, fp8)"))?,

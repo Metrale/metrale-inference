@@ -30,6 +30,7 @@ use crate::dynamic::DynBenchmark;
 use crate::hardware::policy;
 use crate::hardware::report::HardwareStateReport;
 use crate::hardware::state::HardwareState;
+use crate::levers::BenchLevers;
 use crate::params::ParamValues;
 use crate::plugin::{PluginEvent, PluginHandle, TargetEndpoint};
 use crate::result::{BenchmarkResult, LogLine, RunStatus};
@@ -102,6 +103,8 @@ impl RunHandle {
 pub struct BenchmarkExecutor {
     runtime: tokio::runtime::Handle,
     artifacts: ArtifactStore,
+    /// 2026-10-17: The harness levers the binary resolved, handed to every run.
+    levers: Arc<BenchLevers>,
     /// 2026-09-26: The next run id for `PluginHandle`, counted from 1 and
     /// shared by every clone of this executor, so ids are unique among the
     /// runs one executor starts. See `PluginHandle::run_id`.
@@ -109,10 +112,15 @@ pub struct BenchmarkExecutor {
 }
 
 impl BenchmarkExecutor {
-    pub fn new(runtime: tokio::runtime::Handle, artifacts: ArtifactStore) -> Self {
+    pub fn new(
+        runtime: tokio::runtime::Handle,
+        artifacts: ArtifactStore,
+        levers: Arc<BenchLevers>,
+    ) -> Self {
         Self {
             runtime,
             artifacts,
+            levers,
             next_run_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),
         }
     }
@@ -150,6 +158,7 @@ impl BenchmarkExecutor {
             self.artifacts.clone(),
             event_tx.clone(),
             cancel.clone(),
+            self.levers.clone(),
         );
         let task = RunTask {
             descriptor,
@@ -191,6 +200,14 @@ struct RunTask {
 }
 
 impl RunTask {
+    /// 2026-10-17: The precheck switches from the resolved levers, with this run's ceilings.
+    fn policy_options(&self) -> policy::PolicyOptions {
+        policy::PolicyOptions {
+            ceilings: self.ceilings,
+            ..policy::PolicyOptions::from_levers(self.handle.levers())
+        }
+    }
+
     /// 2026-09-26: Run the coherence probe unless the policy is `Skip`. Any
     /// concern becomes a warning in the run log; nothing here stops the run.
     async fn probe_coherence(&self) {
@@ -228,8 +245,9 @@ impl RunTask {
             .ok()?;
         self.handle
             .info(format!("box state: {}", before.one_line()));
-        let report = HardwareStateReport::opened(sensitivity, before, self.ceilings);
-        if policy::PolicyOptions::from_env().kill_switch {
+        let options = self.policy_options();
+        let report = HardwareStateReport::opened(sensitivity, before, options);
+        if options.kill_switch {
             // 2026-09-26: Warned on every run while the kill switch is set, so
             // the run log of every number shows it.
             self.handle.warn(format!(
@@ -256,7 +274,7 @@ impl RunTask {
             return frame;
         };
         if let Ok(after) = tokio::task::spawn_blocking(HardwareState::collect).await {
-            report.close(after);
+            report.close(after, self.policy_options());
         }
         if let Some(post) = &report.postcheck {
             for concern in &post.concerns {

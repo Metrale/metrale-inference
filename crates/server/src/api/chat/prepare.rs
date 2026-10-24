@@ -13,7 +13,7 @@ use std::sync::Arc;
 use crate::AppState;
 use crate::ir::ChatRequest;
 
-use super::{msg_entry, template, thinking};
+use super::{media_limits, msg_entry, template, thinking};
 
 /// 2026-09-26: Outputs of [`prepare_chat_prompt`].
 pub(crate) struct PreparedChat {
@@ -67,6 +67,16 @@ pub(crate) fn prepare_chat_prompt(
 
     let _t_phase = std::time::Instant::now();
 
+    // 2026-10-08: Refused before `build_msg_entries` fetches or decodes any media.
+    if let Err(over) = media_limits::check_media_limits(&req.messages, state.media_limits) {
+        return Err(crate::api::compact::openai_error_response_with_param(
+            axum::http::StatusCode::BAD_REQUEST,
+            over.message,
+            Some(over.param),
+            None,
+        ));
+    }
+
     let msg_entry::BuildOut {
         messages,
         cwd_hint,
@@ -83,7 +93,7 @@ pub(crate) fn prepare_chat_prompt(
         &req.messages,
         tools_active,
         &state.chat,
-        state.tokenizer.uses_deepseek_v4_encoding(),
+        state.tokenizer.preserves_developer_role(),
     )?;
     let us_msg_entry = _t_phase.elapsed().as_micros();
 
@@ -91,7 +101,11 @@ pub(crate) fn prepare_chat_prompt(
     // explicit, the `--default-chat-template-kwargs` directive applies; when
     // that is unspecified too, `resolve_thinking` uses MODEL.toml
     // `[behavior].thinking_default`.
-    let mut thinking_directive = req.thinking;
+    let mut thinking_directive = thinking_kwarg_directive(
+        req.thinking,
+        req.template_thinking,
+        state.tokenizer.thinking_kwarg_is_directive(),
+    );
     if !thinking_directive.is_explicit() {
         thinking_directive = state.default_thinking;
     }
@@ -121,8 +135,11 @@ pub(crate) fn prepare_chat_prompt(
         // 2026-09-26: The request's `preserve_thinking` wins, then
         // `behavior.preserve_thinking` (MODEL.toml, overridden by
         // `--default-chat-template-kwargs`). `None` leaves the template
-        // variable undefined.
-        req.preserve_thinking.or(state.behavior.preserve_thinking),
+        // variable undefined. 2026-10-08: `thinking` is the request's alone.
+        crate::tokenizer::ThinkingVars {
+            preserve_thinking: req.preserve_thinking.or(state.behavior.preserve_thinking),
+            thinking: req.template_thinking,
+        },
         tools_active,
     )?;
     if state.chat.phase_timing {
@@ -148,6 +165,26 @@ pub(crate) fn prepare_chat_prompt(
 /// the request's value, else the `--default-chat-template-kwargs` default;
 /// `None` otherwise. `tokenizer/chat_render.rs` renders `None` as `"medium"`
 /// when thinking is on and as `"none"` when it is off.
+/// 2026-10-18: For an encoder whose `thinking` kwarg is its thinking switch
+/// (`ChatTokenizer::thinking_kwarg_is_directive`), the kwarg is read after the
+/// request's explicit directive and before the defaults.
+fn thinking_kwarg_directive(
+    request: crate::ir::ThinkingDirective,
+    thinking_kwarg: Option<bool>,
+    kwarg_is_directive: bool,
+) -> crate::ir::ThinkingDirective {
+    match thinking_kwarg {
+        Some(thinking) if kwarg_is_directive && !request.is_explicit() => {
+            if thinking {
+                crate::ir::ThinkingDirective::On { budget: None }
+            } else {
+                crate::ir::ThinkingDirective::Off
+            }
+        }
+        _ => request,
+    }
+}
+
 fn effective_reasoning_effort(
     request: Option<crate::ir::ReasoningEffort>,
     server_default: Option<crate::ir::ReasoningEffort>,
@@ -204,8 +241,38 @@ pub(crate) fn inject_tool_system_prompt(
 
 #[cfg(test)]
 mod tests {
-    use super::{effective_reasoning_effort, inject_tool_system_prompt};
-    use crate::ir::{Message, ReasoningEffort, Role};
+    use super::{effective_reasoning_effort, inject_tool_system_prompt, thinking_kwarg_directive};
+    use crate::ir::{EffortLevel, Message, ReasoningEffort, Role, ThinkingDirective};
+
+    /// 2026-10-18: The `thinking` kwarg steers only an encoder that declares it as its
+    /// switch, and only when the request gave no explicit directive.
+    #[test]
+    fn thinking_kwarg_is_a_directive_only_when_declared_and_unspecified() {
+        let unspecified = ThinkingDirective::Unspecified;
+        let on = ThinkingDirective::On { budget: None };
+        assert_eq!(thinking_kwarg_directive(unspecified, Some(true), true), on);
+        assert_eq!(
+            thinking_kwarg_directive(unspecified, Some(false), true),
+            ThinkingDirective::Off
+        );
+        assert_eq!(
+            thinking_kwarg_directive(unspecified, None, true),
+            unspecified
+        );
+        assert_eq!(
+            thinking_kwarg_directive(unspecified, Some(true), false),
+            unspecified
+        );
+        let explicit = ThinkingDirective::OnEffort(EffortLevel::High);
+        assert_eq!(
+            thinking_kwarg_directive(explicit, Some(false), true),
+            explicit
+        );
+        assert_eq!(
+            thinking_kwarg_directive(ThinkingDirective::Off, Some(true), true),
+            ThinkingDirective::Off
+        );
+    }
 
     /// 2026-09-26: The request beats the server default, the server default
     /// fills a silent request, and thinking off gives `None` from both.

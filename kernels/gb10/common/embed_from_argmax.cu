@@ -53,41 +53,6 @@ extern "C" __global__ void batched_embed(
     }
 }
 
-// 2026-09-25: batched_embed with the BF16 rows widened to an FP32 output.
-extern "C" __global__ void batched_embed_f32(
-    const unsigned int* __restrict__ token_ids,
-    const __nv_bfloat16* __restrict__ embed_table,
-    float* __restrict__ output,
-    unsigned int hidden_size
-) {
-    const unsigned int token_idx = blockIdx.x;
-    const unsigned int token_id = token_ids[token_idx];
-    const __nv_bfloat16* src = embed_table + (unsigned long long)token_id * hidden_size;
-    float* dst = output + (unsigned long long)token_idx * hidden_size;
-    for (unsigned int i = threadIdx.x; i < hidden_size; i += blockDim.x) {
-        dst[i] = __bfloat162float(src[i]);
-    }
-}
-
-// 2026-09-25: embed_from_argmax with the BF16 row widened to an FP32 output.
-extern "C" __global__ void embed_from_argmax_f32(
-    const unsigned int* __restrict__ argmax_result,
-    const __nv_bfloat16* __restrict__ embed_table,
-    float* __restrict__ output,
-    unsigned int* __restrict__ token_id_out,
-    unsigned int hidden_size
-) {
-    unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx == 0) {
-        token_id_out[0] = argmax_result[0];
-    }
-    if (idx < hidden_size) {
-        unsigned int token_id = argmax_result[0];
-        output[idx] = __bfloat162float(embed_table[token_id * hidden_size + idx]);
-    }
-}
-
-
 // 2026-09-25: batched_embed over an FP8 table: rows of FP8 E4M3 bytes with a per-row f32
 // scale, the layout quantize_bf16_to_fp8 (dense_gemv_fp8w.cu) writes. Each byte is decoded
 // with the same software bit-math as scl_fp8 there (NaN code -> 0), times the row scale,

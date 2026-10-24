@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use crate::cli;
 use crate::main_modules::AppState;
@@ -45,7 +45,13 @@ enum Startup {
 /// a shutdown.
 pub(crate) async fn serve(
     args: cli::ServeArgs,
+    settings: Arc<metrale_settings::InferenceServerSettings>,
     tui_progress: Option<std::sync::mpsc::Receiver<crate::tui::capture_layer::ProgressEvent>>,
+    // 2026-10-17: The harness levers, resolved once by the caller with `settings`.
+    bench_levers: Arc<metrale_host_probe::levers::BenchLevers>,
+    // 2026-10-24: `met embed`: the stdio transport's settings and the claimed stdout, served
+    // instead of the TCP listener; `None` for `met serve`.
+    embed: Option<(cli::embed_args::EmbedStdio, std::fs::File)>,
 ) -> Result<()> {
     // 2026-09-26: One host for the process lifetime, created before startup so
     // the dashboard (`tui::start`) can hold it. The load publishes into it.
@@ -53,9 +59,11 @@ pub(crate) async fn serve(
     // 2026-09-26: Recorded before `args` moves into startup: a swap whose load
     // fails restores this argv.
     host.set_args(args.clone());
+    host.set_bench_levers(bench_levers.clone());
     // 2026-09-26: Installed in every process that serves, so the
     // scheduler-equivalence gate can re-serve this checkpoint under each
     // device router.
+    #[cfg(feature = "bench")]
     metrale_bench::benchmarks::scheduler_equivalence::host::install(Arc::new(
         crate::tui::bench_host::TuiServeHost::new(host.clone(), args.cache_dir.clone()),
     ));
@@ -66,32 +74,60 @@ pub(crate) async fn serve(
     // 2026-09-26: Before any load, so the policy is in force from the moment
     // the listener is up, also while no model is loaded.
     host.set_auth(build_auth_config(&args)?);
+    let body_limit = crate::main_modules::serve_router::max_body_bytes(&settings)?;
+    let listener_rcvbuf = settings.runtime.listener_rcvbuf;
+    // 2026-10-17: Before any weight conversion; a process serves under one rounding.
+    anyhow::ensure!(
+        metrale_core::numeric::install_disable_rne(settings.sampling.disable_rne),
+        "METRALE_DISABLE_RNE differs from the value this process already converts under"
+    );
     // 2026-09-26: Process-scoped too, and installed before the first model.
-    host.set_process(super::serve_load::Carried::from_env().map_err(|e| anyhow::anyhow!("{e}"))?);
+    host.set_process(
+        super::serve_load::Carried::from_settings(&settings).map_err(|e| anyhow::anyhow!("{e}"))?,
+    );
     let startup_host = host.clone();
-    match tokio::task::spawn_blocking(move || startup(args, tui_progress, startup_host)).await?? {
+    match tokio::task::spawn_blocking(move || {
+        startup(args, settings, tui_progress, startup_host, bench_levers)
+    })
+    .await??
+    {
         Startup::Serve(prepared) => {
             host.publish(prepared.state);
             // 2026-09-26: The host owns the first load's scheduler thread too,
             // so the first swap can join it before tearing the model down.
             host.set_scheduler(prepared.scheduler);
-            crate::main_modules::serve_router::build_and_serve(host, &prepared.bind, prepared.port)
-                .await
+            if let Some((cfg, out)) = embed {
+                return crate::main_modules::embed_stdio::run(host, body_limit, cfg, out).await;
+            }
+            crate::main_modules::serve_router::build_and_serve(
+                host,
+                &prepared.bind,
+                prepared.port,
+                body_limit,
+                listener_rcvbuf,
+            )
+            .await
         }
         Startup::Worker => Ok(()),
         // 2026-09-26: Nothing to serve yet, but the listener still binds, so a
         // model chosen from the Library later has a port. Until one is
         // published, routes that need a model answer 503 `model_not_loaded`.
         Startup::AwaitingModel => {
-            crate::main_modules::serve_router::build_and_serve(host, &bind_addr, bind_port).await
+            anyhow::ensure!(embed.is_none(), "met embed: the blueprint names no model");
+            crate::main_modules::serve_router::build_and_serve(
+                host, &bind_addr, bind_port, body_limit, listener_rcvbuf,
+            )
+            .await
         }
     }
 }
 
 fn startup(
     args: cli::ServeArgs,
+    settings: Arc<metrale_settings::InferenceServerSettings>,
     tui_progress: Option<std::sync::mpsc::Receiver<crate::tui::capture_layer::ProgressEvent>>,
     host: Arc<crate::main_modules::model_host::ModelHost>,
+    bench_levers: Arc<metrale_host_probe::levers::BenchLevers>,
 ) -> Result<Startup> {
     tracing::info!("Metrale Engine starting...");
     tracing::info!("Licensed under MIT OR Apache-2.0 — see /LICENSE-MIT and /LICENSE-APACHE");
@@ -111,7 +147,16 @@ fn startup(
     if let Some(progress_rx) = tui_progress
         && args.rank == 0
     {
-        let tx = crate::tui::start(args.clone(), progress_rx, host.clone());
+        let tx = crate::tui::start(
+            args.clone(),
+            crate::tui::report::target_from(
+                settings.telemetry.report_client_id.clone(),
+                settings.telemetry.report_repo.clone(),
+            ),
+            progress_rx,
+            host.clone(),
+            bench_levers,
+        );
         // 2026-09-26: Every later load sends its handles through this, so the
         // dashboard follows the model that is serving.
         host.set_tui_handles(tx.clone());
@@ -127,7 +172,7 @@ fn startup(
     // 2026-09-26: Publish the kernel-path flags before anything reads their
     // cells. An absent flag publishes nothing, so its `METRALE_*` variable
     // still decides (`serve_flags`).
-    super::serve_flags::publish_kernel_flags(&args);
+    super::serve_flags::publish_kernel_flags(&args, &settings)?;
     // 2026-09-26: Process-scoped, like the flags: started before the first
     // load and kept across swaps.
     super::telemetry_boot::start(&args)?;
@@ -151,7 +196,7 @@ fn startup(
     let carried = host
         .process()
         .expect("process-scoped state is installed before startup");
-    match super::serve_load::load_model(args, tui_handles_tx, carried)? {
+    match super::serve_load::load_model(args, settings, tui_handles_tx, carried)? {
         Some(prepared) => Ok(Startup::Serve(prepared)),
         None => Ok(Startup::Worker),
     }
@@ -269,32 +314,15 @@ pub(super) fn build_auth_config(
     Ok(Some(Arc::new(cfg)))
 }
 
-/// 2026-09-26: The vision area bound, first match wins: `--vision-max-pixels`
-/// above 0, then a positive `METRALE_VISION_MAX_PIXELS`, then the checkpoint's
-/// processor config (`read_preprocessor_max_pixels`), else `None`.
-///
-/// # Errors
-/// When `METRALE_VISION_MAX_PIXELS` is set to something other than blank, `0`
-/// or an unsigned integer.
+/// 2026-09-26: The vision area bound, first match wins: `--vision-max-pixels` /
+/// `METRALE_VISION_MAX_PIXELS` above 0 (2026-10-17: `lever`, `LoadLevers::vision_max_pixels`,
+/// resolved once from the settings), then the checkpoint's processor config
+/// (`read_preprocessor_max_pixels`), else `None`.
 pub(super) fn resolve_vision_max_pixels(
-    args: &cli::ServeArgs,
+    lever: Option<usize>,
     model_dir: &std::path::Path,
-) -> Result<Option<usize>> {
-    if args.vision_max_pixels > 0 {
-        return Ok(Some(args.vision_max_pixels));
-    }
-    if let Ok(raw) = std::env::var("METRALE_VISION_MAX_PIXELS") {
-        let trimmed = raw.trim();
-        if !trimmed.is_empty() && trimmed != "0" {
-            let parsed = trimmed.parse::<usize>().with_context(|| {
-                format!("METRALE_VISION_MAX_PIXELS must be a positive integer, got {raw:?}")
-            })?;
-            if parsed > 0 {
-                return Ok(Some(parsed));
-            }
-        }
-    }
-    Ok(read_preprocessor_max_pixels(model_dir))
+) -> Option<usize> {
+    lever.or_else(|| read_preprocessor_max_pixels(model_dir))
 }
 
 /// 2026-09-26: The image area bound from the checkpoint's processor config,

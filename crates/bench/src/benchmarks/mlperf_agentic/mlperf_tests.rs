@@ -27,6 +27,7 @@ fn handle(root: &str) -> (PluginHandle, std::path::PathBuf) {
             ArtifactStore::with_root(&dir),
             tx,
             Arc::new(AtomicBool::new(false)),
+            crate::levers::tests::unset(),
         ),
         dir,
     )

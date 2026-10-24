@@ -82,6 +82,12 @@ enable_loop_watchdog = true
 thinking_default = false
 # 2026-09-25: The reference model quantises the latent KV row to e4m3 with a power-of-two block scale
 # before caching it (crates/model-arch/src/deepseek_v41_ref/attn.rs, `act_quant_inplace(&mut kv)`).
+# 2026-10-18: Stays "fp8" although the checkpoint declares FP4 for its compressed KV rows (E2M1
+# with an E4M3 scale per 16 channels), FP4 with an E8M0 scale per 32 for its indexer keys, and
+# FP8 for its sliding-window ring. One `KvCacheDtype` cannot name that three-pool layout ("fp4"
+# does not parse), and "nvfp4" would switch every pool, the window ring included, on a path
+# whose kernels cache FP8. FP8 is above the declared precision for the compressed rows; the
+# declared value lands with the paged FP4 pool.
 default_kv_dtype = "fp8"
 
 

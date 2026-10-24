@@ -11,26 +11,10 @@
 use anyhow::{Context, Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
-use super::step_graph_on;
-use super::{DeepSeekV41Layer, GraphMode, V41LayerState, graph_mode};
+use super::{DeepSeekV41Layer, GraphMode, V41LayerState};
 use crate::attn_v41::SharedV41;
-use crate::engram_v41::ENGRAM_ROW_BYTES;
 use metrale_model_layers::layer::{ForwardContext, LayerState};
 use metrale_model_layers::layers::ops;
-
-pub(super) fn diag_on() -> bool {
-    std::env::var("METRALE_DS41_DIAG").is_ok_and(|v| v == "1")
-}
-
-/// 2026-09-25: `METRALE_DS41_TRACE=1`, read once: the eager step synchronises
-/// and logs FNV-1a checksums of each layer's attention output and normed
-/// input, the MoE input with the highway before the MoE, and the MoE output
-/// with the highway after it, so two runs of one request can be diffed to the
-/// first place they part. Diagnostics only.
-pub(super) fn trace_on() -> bool {
-    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *V.get_or_init(|| std::env::var("METRALE_DS41_TRACE").is_ok_and(|v| v == "1"))
-}
 
 /// 2026-09-25: FNV-1a over `bytes` device bytes at `p` (a blocking copy); 0
 /// when the copy fails.
@@ -120,10 +104,8 @@ impl DeepSeekV41Layer {
         let hasher = rt.hasher.lock().unwrap();
         let row_ids = hasher.layer_row_ids(&hashes, m, hi);
         drop(hasher);
-        let mut raw = vec![0u8; row_ids.len() * ENGRAM_ROW_BYTES];
-        rt.rows.read_rows(self.idx, &row_ids, &mut raw)?;
+        rt.fill_engram_rows(gpu, self.idx, &row_ids, stream)?;
         let engram = rt.engram.lock().unwrap();
-        engram.rows_from_q2k(gpu, Some(self.idx), &raw, row_ids.len(), stream)?;
         engram.apply(gpu, self.idx, streams, m, stream)
     }
 
@@ -156,7 +138,7 @@ impl DeepSeekV41Layer {
             .context("deepseek-v4.1 layer given a foreign state")?;
         let streams = ctx.buffers.hc_streams();
         let (h, hc) = (rt.hidden, rt.hc_mult);
-        if step_graph_on() {
+        if self.rt.levers.step_graph {
             self.note_window(st.attn.window());
         }
 
@@ -197,7 +179,7 @@ impl DeepSeekV41Layer {
         // 2026-09-25: The multi-layer segment graphs (`step_seg.rs`) take the
         // single-token step at a position > 0; layer 0 uploads every engram
         // layer's rows up front.
-        let seg_mode = step_graph_on()
+        let seg_mode = self.rt.levers.step_graph
             && m == 1
             && start_pos > 0
             && !gpu.debug_sync_kernels()
@@ -207,12 +189,12 @@ impl DeepSeekV41Layer {
         }
         let te = std::time::Instant::now();
         if let Some(hi) = self.engram_index
-            && !std::env::var("METRALE_DS41_NO_ENGRAM").is_ok_and(|v| v == "1")
+            && !self.rt.levers.no_engram
         {
             self.engram(hi, streams, m, start_pos, ctx, stream)?;
         }
         *rt.step_engram_ms.lock().unwrap() += te.elapsed().as_secs_f64() * 1e3;
-        let diag = diag_on();
+        let diag = self.rt.levers.diag;
         if diag {
             gpu.synchronize(stream)?;
             tracing::info!(
@@ -225,7 +207,7 @@ impl DeepSeekV41Layer {
         // 2026-09-25: Only the single-token step at a position > 0 is
         // captured; prefill (m > 1, or a one-token prompt at position 0) runs
         // eagerly.
-        let mode = graph_mode();
+        let mode = self.rt.levers.graph_mode;
         let graph = mode != GraphMode::Off && m == 1 && start_pos > 0 && !gpu.debug_sync_kernels();
         match (graph, mode) {
             (false, _) => self.step_eager(hidden, m, start_pos, st, ctx, stream),
@@ -263,7 +245,7 @@ impl DeepSeekV41Layer {
             }
         }
         gpu.copy_d2d_async(normed, slot(self.idx), h * 2, stream)?;
-        let lru = rt.lru.lock().unwrap();
+        let lru = rt.streamed()?.lru.lock().unwrap();
         let resident: Vec<bool> = (0..rt.moe_cfg.n_routed)
             .map(|e| lru.contains(self.idx as u32, e as u32))
             .collect();
@@ -320,7 +302,7 @@ impl DeepSeekV41Layer {
         let gpu = ctx.gpu;
         let streams = ctx.buffers.hc_streams();
         let h = rt.hidden;
-        let diag = diag_on();
+        let diag = self.rt.levers.diag;
 
         self.mixes_collapse(
             gpu,
@@ -356,12 +338,13 @@ impl DeepSeekV41Layer {
                 normed,
                 m,
                 start_pos,
+                ctx.comm,
                 stream,
             )?;
             run.out
         };
         *rt.step_attn_ms.lock().unwrap() += ta.elapsed().as_secs_f64() * 1e3;
-        if trace_on() {
+        if self.rt.levers.trace {
             gpu.synchronize(stream)?;
             tracing::info!(
                 "DS41 trace pos={} L{} attn={:016x} normed={:016x}",

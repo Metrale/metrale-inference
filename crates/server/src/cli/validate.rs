@@ -19,6 +19,7 @@ use super::flag_values::{
 };
 
 mod prompt_lookup;
+mod tokenizer_trim;
 pub(super) mod violation;
 use violation::{Violation, check_enum, format_violations};
 
@@ -208,21 +209,20 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
     if let Some(parser) = args.tool_call_parser.as_deref() {
         check_enum(&mut v, "--tool-call-parser", parser, TOOL_CALL_PARSERS);
     }
-    // 2026-09-26: Parsed with `KvCacheDtype`'s own `FromStr`. Only an explicit
-    // value can be checked here: an omitted flag resolves later against
-    // MODEL.toml (`resolve_kv_dtype_str`). The build embeds MODEL.toml's
-    // `default_kv_dtype` unchecked (`build_parse_behavior.rs`), so a bad value
-    // there fails only at the same parse in `serve_phases/kv_cache.rs`, during
-    // the model load.
+    // 2026-09-26: Only an explicit value can be checked here: an omitted flag
+    // resolves later against MODEL.toml (`resolve_kv_dtype_str`). The build
+    // embeds MODEL.toml's `default_kv_dtype` unchecked
+    // (`build_parse_behavior.rs`), so a bad value there fails only at the same
+    // parse in `serve_phases/kv_cache.rs`, during the model load. 2026-10-19:
+    // Parsed by the codec registry (`KvPair`), the parse that resolve site uses,
+    // and the fix lists the registry's accepted spellings.
     if let Some(kv_dtype) = args.kv_cache_dtype.as_deref()
-        && kv_dtype
-            .parse::<metrale_cache::kv_cache::KvCacheDtype>()
-            .is_err()
+        && kv_dtype.parse::<metrale_kv_codec::KvPair>().is_err()
     {
         v.push(Violation::new(
             format!("--kv-cache-dtype '{kv_dtype}' is not a known KV cache dtype."),
             "the value does not parse to any supported KV cache format.",
-            "use one of: fp8, bf16, nvfp4 (or a turbo* TurboQuant-Plus variant).",
+            format!("use one of: {}.", metrale_kv_codec::accepted()),
         ));
     }
 
@@ -269,10 +269,12 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
     }
 
     prompt_lookup::check(args, &mut v);
+    tokenizer_trim::check(args, &mut v);
 
     // 2026-10-02: The confidence stop shapes MTP draft chains, so it needs MTP;
     // DFlash drafts a whole block in one pass and has no chain to stop.
-    if let Some(tau) = args.mtp_draft.draft_confidence_stop {
+    if let Some(spec) = args.mtp_draft.draft_confidence_stop {
+        let tau = spec.tau;
         if !(tau > 0.0 && tau < 1.0) {
             v.push(Violation::new(
                 format!("--draft-confidence-stop {tau} is outside (0, 1)."),
@@ -369,6 +371,24 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
             "raise --world-size to at least --ep-size, or lower --ep-size.",
         ));
     }
+    // 2026-10-09: The expert layout's topology rule, before any weight loads.
+    if let Err(e) = args
+        .moe_expert_layout
+        .0
+        .check_topology(args.tp_size, args.ep_size)
+    {
+        v.push(Violation::new(
+            format!(
+                "--moe-expert-layout {} does not fit --tp-size {} --ep-size {}.",
+                args.moe_expert_layout.0.name(),
+                args.tp_size,
+                args.ep_size
+            ),
+            format!("{e:#}"),
+            "use --moe-expert-layout tp with --ep-size 1 and --tp-size equal to the rank \
+             count, or --moe-expert-layout ep.",
+        ));
+    }
     if args.tp_size > args.world_size {
         v.push(Violation::new(
             format!(
@@ -427,7 +447,7 @@ pub fn validate_serve_args(args: &ServeArgs) -> Result<(), String> {
             ),
             why,
             "use a layer count (0 = let the KV dtype decide), auto (2, recommended), \
-             or max/all (every attention layer).",
+             max/all (every attention layer), or none (zero, overriding the KV dtype).",
         ));
     }
 

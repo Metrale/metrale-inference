@@ -14,7 +14,9 @@
 //!   is not an error (it belongs to another checkpoint), but an unknown op, format, law or
 //!   setting spelling is refused at parse.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use serde::Deserialize;
 

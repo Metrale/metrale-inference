@@ -25,7 +25,7 @@ pub fn prefill_request(
     mut req: InferenceRequest,
     eos_tokens: &[u32],
     grammar_engine: &mut Option<GrammarEngine>,
-    spontaneous_think_budget: u32,
+    spontaneous_think_budget: Option<u32>,
     // 2026-09-25: `Some` when this beam request's hypothesis was already
     // computed by a batched search; `None` runs the search here.
     precomputed_beam_hyp: Option<Vec<u32>>,
@@ -259,13 +259,13 @@ pub fn prefill_request(
             model.prepare_vision_embed(&image_pixels)?;
         }
 
-        model.ep_broadcast_cmd_for_seq(seq.slot_idx as u32, 0xFFFFFFF0)?;
+        model.ep_broadcast_cmd_for_seq(seq.slot_idx as u32, metrale_model_layers::ep_wire::EP_CMD_PREFILL_CHUNK)?;
         model.ep_broadcast_cmd(prompt_tokens.len() as u32)?;
         model.ep_broadcast_cmd(0)?;
         model.ep_broadcast_cmd(prompt_tokens.len() as u32)?;
         model.ep_broadcast_tokens(&prompt_tokens)?;
         // 2026-09-25: The worker makes the matching call in its
-        // `0xFFFFFFF0` handler.
+        // `EP_CMD_PREFILL_CHUNK` handler.
         model.ep_sync_vision_embeds(&prompt_tokens)?;
 
         let logits = model.prefill(&prompt_tokens, &mut seq, 0)?;
@@ -282,6 +282,8 @@ pub fn prefill_request(
                 req_enable_thinking,
                 think_end_token,
                 tool_call_start_token,
+                req_min_tokens,
+                req_require_tool_call,
             ),
             &sched.levers.sampling(),
             sched.io.tel.dumps(),
@@ -298,7 +300,7 @@ pub fn prefill_request(
                     "prefill_b_step: free_sequence (after prefill error): {free_err:#}"
                 );
             }
-            if let Err(bcast_err) = model.ep_broadcast_cmd_for_seq(seq.slot_idx as u32, 0xFFFFFFF1)
+            if let Err(bcast_err) = model.ep_broadcast_cmd_for_seq(seq.slot_idx as u32, metrale_model_layers::ep_wire::EP_CMD_ALLOC_SLOT)
             {
                 tracing::error!(
                     "prefill_b_step: ep_broadcast (after prefill error): {bcast_err:#}"

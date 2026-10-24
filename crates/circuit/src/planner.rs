@@ -20,7 +20,9 @@
 //!   pack row. A row pack placed `over` an edge occupies exactly that edge's bytes.
 //! - Offsets of unpacked storage are aligned to [`ALIGN`] bytes; a pack's first edge is.
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use crate::fuser::{EdgeState, FusionPlan};
 use crate::ir::{Circuit, EdgeIdx};

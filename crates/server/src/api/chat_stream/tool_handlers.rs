@@ -80,7 +80,12 @@ pub(super) fn handle_complete_tool_call(
     }
     // 2026-09-26: `MissingParam` and `EmptyRequired` are soft: the call is still
     // emitted. Any other issue is hard: the call is replaced by a content chunk.
-    let validation = tool_parser::assess_tool_call(tc, &ctx.tool_defs_for_backfill).map_err(|i| {
+    let validation = tool_parser::assess_tool_call(
+        tc,
+        &ctx.tool_defs_for_backfill,
+        ctx.state.chat.toolcall_debug,
+    )
+    .map_err(|i| {
         (
             matches!(
                 i,
@@ -284,7 +289,11 @@ pub(super) fn handle_tool_call_delta(
         if let Some(ref cwd) = ctx.cwd_for_normalize {
             tool_parser::normalize_paths(std::slice::from_mut(&mut tc), cwd);
         }
-        if let Err(issue) = tool_parser::assess_tool_call(&tc, &ctx.tool_defs_for_backfill) {
+        if let Err(issue) = tool_parser::assess_tool_call(
+            &tc,
+            &ctx.tool_defs_for_backfill,
+            ctx.state.chat.toolcall_debug,
+        ) {
             // 2026-09-26: `handle_tool_call_start` has already emitted the
             // header for `idx`. A soft issue (`MissingParam`, `EmptyRequired`)
             // still emits the arguments, leaving the error to the client's

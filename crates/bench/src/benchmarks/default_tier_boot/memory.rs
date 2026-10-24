@@ -17,27 +17,9 @@ use crate::result::Verdict;
 /// 2026-10-01: Bytes per MiB, the unit of every byte-valued metric this check emits.
 pub const MIB: f64 = 1024.0 * 1024.0;
 
-/// 2026-10-01: The body of `GET /memory`. Byte counts unless the name says otherwise.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct MemoryReport {
-    /// 2026-10-01: Blocks in the model's main paged KV pool.
-    pub kv_blocks: usize,
-    /// 2026-10-01: Bytes of one block index across every layer, K and V.
-    pub kv_block_bytes: u64,
-    /// 2026-10-01: The slot count the model was built with.
-    pub max_batch_size: usize,
-    /// 2026-10-01: Total device memory times `--gpu-memory-utilization`.
-    pub budget_bytes: u64,
-    /// 2026-10-01: The GPU backend's allocation ledger at request time; `None` on a backend
-    /// without one.
-    pub ledger_live_bytes: Option<u64>,
-    /// 2026-10-01: Host `MemAvailable`, sampled once before the GPU backend initialised.
-    pub mem_available_at_start_bytes: Option<u64>,
-    /// 2026-10-01: Host `MemAvailable` at request time.
-    pub mem_available_now_bytes: Option<u64>,
-    /// 2026-10-01: The server process's `RssAnon` at request time.
-    pub rss_anon_bytes: Option<u64>,
-}
+/// 2026-10-01: The body of `GET /memory`; the wire shape lives in metrale-serve-identity so the
+/// server answers it without this crate.
+pub use metrale_serve_identity::wire::MemoryReport;
 
 /// 2026-10-01: The figures the check reports, derived from one [`MemoryReport`].
 #[derive(Debug, Clone, Copy, PartialEq)]

@@ -10,7 +10,8 @@ Pure: takes the parsed TOML documents and the inventory, returns rows, and raise
 * every trade-off `match` names an existing file or `file::function`, carries text
   of at most TEXT_MAX characters, and cites PRs only as positive integers;
 * every measurement row names an existing kernel, and its stored pct_of_floor
-  equals floor_us / time_us * 100 to within PCT_TOL points.
+  equals floor_us / time_us * 100 to within PCT_TOL points;
+* a row's optional energy group passes kernel_perf_energy.check.
 
 Family attribution (the "LLMs" column), per engine call site of a kernel: a family
 F is admitted when (1) a target of F compiles the kernel's file, (2) the kernel's
@@ -29,6 +30,8 @@ from __future__ import annotations
 import fnmatch
 from dataclasses import dataclass, field
 
+import kernel_perf_energy as energy
+
 TEXT_MAX = 400
 PCT_TOL = 0.5
 MEASURE_KEYS = {
@@ -36,6 +39,8 @@ MEASURE_KEYS = {
     "time_us": (int, float), "bytes": int, "flops": int, "bound": str,
     "floor_us": (int, float), "pct_of_floor": (int, float), "source": str, "notes": str,
 }
+# 2026-10-22: Optional per-row energy group (kernel_perf_energy.KEYS), all-or-none.
+OPTIONAL_MEASURE_KEYS = energy.KEYS
 
 
 class ModelError(Exception):
@@ -47,8 +52,8 @@ class ModelError(Exception):
 @dataclass
 class Row:
     k: object  # kernel_perf_inventory.Kernel
-    component: str
-    kind: str
+    component: str | None  # None only in a partial model: no rule classifies the kernel
+    kind: str | None
     used_by: set[str] = field(default_factory=set)  # primary + site_components
     site_components: set[str] = field(default_factory=set)  # owner of each engine call-site path
     families: set[str] = field(default_factory=set)
@@ -69,6 +74,9 @@ class Model:
     components: list[dict]
     family_of_model: dict[str, str]
     checkpoints: dict[str, str]  # model directory -> checkpoint id (MODEL.toml hf_id)
+    # 2026-10-23: Only a partial model (build(partial=True)) carries these; a strict one raises.
+    unclassified: list[str] = field(default_factory=list)  # kernel keys no rule classifies
+    problems: list[str] = field(default_factory=list)  # every other inconsistency
 
 
 def _globs(pats: list[str], s: str) -> bool:
@@ -93,8 +101,14 @@ def _longest(prefixes: dict[str, object], path: str):
     return best[1] if best else None
 
 
-def build(inv, tax: dict, tradeoffs: dict, measurements: dict, existing_paths: set[str]) -> Model:
+def build(inv, tax: dict, tradeoffs: dict, measurements: dict, existing_paths: set[str],
+          rooflines: dict[str, dict] | None = None, partial: bool = False) -> Model:
+    """`rooflines`: hardware -> its KERNEL_FAMILIES.toml [roofline] table (energy floors).
+
+    2026-10-23: `partial` (for tooling such as metrale-kg): never raise; an unclassified kernel
+    is kept as a row with component None, and every inconsistency is returned on the model."""
     problems: list[str] = []
+    unclassified: list[str] = []
     fams = tax.get("family", [])
     comps = tax.get("component", [])
     rules = tax.get("rule", [])
@@ -138,7 +152,11 @@ def build(inv, tax: dict, tradeoffs: dict, measurements: dict, existing_paths: s
         k = inv.kernels[key]
         ri = _rule_for(rules, k)
         if ri is None:
-            problems.append(f"taxonomy: no rule classifies {k.key}")
+            if partial:
+                unclassified.append(k.key)
+                rows.append(Row(k, None, None))
+            else:
+                problems.append(f"taxonomy: no rule classifies {k.key}")
             continue
         used_rules.add(ri)
         row = Row(k, rules[ri]["component"], rules[ri]["kind"])
@@ -205,6 +223,7 @@ def build(inv, tax: dict, tradeoffs: dict, measurements: dict, existing_paths: s
         derived = m["floor_us"] / m["time_us"] * 100.0
         if abs(derived - m["pct_of_floor"]) > PCT_TOL:
             problems.append(f"{where}: pct_of_floor {m['pct_of_floor']} != floor_us/time_us*100 = {derived:.2f}")
+        problems += energy.check(m, where, (rooflines or {}).get(m["hardware"]))
         func = m["kernel"].rsplit("::", 1)[-1]
         row = by_key.get(f"{m['file']}::{func}")
         if row is None:
@@ -214,7 +233,9 @@ def build(inv, tax: dict, tradeoffs: dict, measurements: dict, existing_paths: s
             problems.append(f"{where}: no kernel {func} defined in or compiled from {m['file']}")
             continue
         row.measures.append(m)
-    if problems:
+    if problems and not partial:
         raise ModelError(problems)
     checkpoints = {model: hf for (_hw, model), hf in sorted(inv.hf_ids.items())}
+    if partial:
+        return Model(rows, fams, comps, family_of_model, checkpoints, unclassified, problems)
     return Model(rows, fams, comps, family_of_model, checkpoints)

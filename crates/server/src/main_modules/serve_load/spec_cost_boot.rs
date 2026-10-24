@@ -60,7 +60,7 @@ pub(crate) fn resolve(
         .with_context(|| format!("reading {}", cal_path.display()))?;
     let calibration = AcceptanceCalibration::parse(&cal_text).map_err(anyhow::Error::msg)?;
 
-    let box_class = metrale_bench::hardware::Hardware::probe().gate_key();
+    let box_class = metrale_host_probe::hardware::Hardware::probe().gate_key();
     let plan_digests = metrale_model_layers::circuit_exec::spec_key::spec_cost_plan_digests(recipe)
         .with_context(|| format!("--spec-cost-recipe {recipe}"))?;
     let serve_key = TableKey {

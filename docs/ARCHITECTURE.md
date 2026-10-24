@@ -7,7 +7,7 @@ A 5-minute tour of the crate graph, the build pipeline, and the request lifecycl
 Metrale Engine is a single Cargo workspace with 23 crates (the root `Cargo.toml` `members` list):
 
 ```
-   HTTP / scheduling / CLI     metrale-server  (the `met` binary)
+   HTTP / scheduling / CLI     met  (the `met` binary)
                                metrale-scheduler (the scheduler's I/O contract)
                                metrale-bench     (benchmark suite + certification gate)
                                      │
@@ -24,10 +24,12 @@ Metrale Engine is a single Cargo workspace with 23 crates (the root `Cargo.toml`
                                metrale-storage     (GDS/RDMA tiers, NVMe swap, expert paging)
                                metrale-telemetry   (metrics, kernel audit, NVML instruments)
                                      │
-   build / foundation          metrale-kernels  (PTX embedded per (hardware, model, quant))
+   build / foundation          metrale-kernels  (PTX embedded per (hardware, model, quant); linked by `met` only)
+                               metrale-target-defaults (HARDWARE.toml `[defaults]`, split-K policy)
                                metrale-closure  (kernel layout resolver + closure hash)
                                metrale-circuit  (circuit compiler: circuits, fuser, kernel families, plans)
-                               metrale-kernel-tree (kernel tree embedded in the binary)
+                               metrale-kernel-tree (kernel tree embedded in the binary; linked by `met` only)
+                               metrale-kernel-root (locates kernels/ for build scripts)
                                metrale-config   (ModelConfig, parsers, environment levers)
                                metrale-gpu-sys  (raw FFI: cuFile, NVML, NCCL, RDMA verbs)
                                metrale-core     (shared types: ComputeTarget, KernelTarget, DType, …)
@@ -45,9 +47,14 @@ The build script (`crates/kernels/build.rs` and its `build_*.rs` modules):
 1. Reads `METRALE_TARGET_HW` (default `gb10`), `METRALE_TARGET_MODEL` (default `*`) and `METRALE_TARGET_QUANT` (default `nvfp4`).
 2. Resolves each selected target's sources through `metrale-closure`'s layout module: the target's leaf `kernels/<hw>/<model>/<quant>/`, `kernels/<hw>/common/`, the same pair of the tree `HARDWARE.toml` `[hardware] inherits` names, and every `KERNEL.toml` `[sources] use`. A leaf file with a `common/` file's name shadows it and must be declared in `[shadow]`.
 3. Compiles every source with the compiler the tree's `vendor` selects (`nvcc` for NVIDIA), applying `HARDWARE.toml` and `KERNEL.toml` flags.
-4. Parses `MODEL.toml` (sampling presets, behaviour) and `HARDWARE.toml` `[defaults]` (serving levers), and emits `OUT_DIR/target_ptx.rs`: one `TargetPtxSet` per target, `all_ptx_sets()`, `TARGET_DEFAULTS`.
+4. Parses `MODEL.toml` (sampling presets, behaviour), and emits `OUT_DIR/target_ptx.rs`: one `TargetPtxSet` per target and `all_ptx_sets()`. `KERNEL_SET_HASH` also covers the `HARDWARE.toml` `[defaults]` text.
 
 Skip mode (`METRALE_SKIP_BUILD=1`) emits a stub registry. CI uses it for GPU-free `cargo check` / `clippy` / `test`.
+
+Only the `met` package links `metrale-kernels`; library crates take it as a dev-dependency, and `met` hands the selected target's PTX modules to `MetraleCudaBackend::new` at construction. A `.cu` edit therefore re-runs this build script and recompiles only the `met` package, not the library crates below it (Cargo has no early cutoff, so every normal dependent of `metrale-kernels` would rebuild).
+
+### `metrale-target-defaults`
+Its build script parses `HARDWARE.toml` `[defaults]` and `[hardware] sm_count` for `METRALE_TARGET_HW` (through `metrale-closure`'s `hardware_defaults`) into `TARGET_DEFAULTS` / `TARGET_SM_COUNT`. It also holds the paged-decode split-K policy (`attn_splitk`). Library crates read serving defaults from here, so they do not depend on the PTX table.
 
 ### `metrale-gpu-runtime`, `metrale-cache`, `metrale-comm`, `metrale-storage`
 - `metrale-gpu-runtime` — the `GpuBackend` trait (`src/gpu.rs`) with `MetraleCudaBackend` (`src/cuda_backend.rs`), a Metal backend and `MockGpuBackend` for tests; buffer arenas, streams, the kernel registry, and the cuBLASLt/CUTLASS/FlashInfer bridges.
@@ -61,7 +68,7 @@ Skip mode (`METRALE_SKIP_BUILD=1`) emits a stub registry. CI uses it for GPU-fre
 - `metrale-model-layers` — the `TransformerLayer` trait (`src/layer/`) and the generic layers (`src/layers/`: `qwen3_attention/`, `qwen3_ssm/`, `moe/`, `dense_ffn*`, `vision_encoder/`, MTP heads, `ops/` kernel launches), LoRA, the weight map and quant-format dispatch.
 - `metrale-model-weights` — the weight store, the `O_DIRECT` fast loader, the RDMA weight/LoRA tiers and the pre-construction checkpoint preflight.
 
-### `metrale-server`
+### `met`
 - `main_modules/serve.rs` — the `met serve` boot sequence (phases under `serve_load/` and `serve_phases/`), the router (`serve_router.rs`) and model hot-swap.
 - `scheduler/` — the scheduler loop (`scheduler/mod.rs::run`) and its per-step phases (prefill, decode, verify, MTP/n-gram/DFlash drafting, sampling, emission, lifecycle, rollback).
 - `api/` — OpenAI-compatible handlers (chat completions, responses, completions, conversations, LoRA control, tokenize).
@@ -87,7 +94,7 @@ Skip mode (`METRALE_SKIP_BUILD=1`) emits a stub registry. CI uses it for GPU-fre
 
 ```
 $ METRALE_TARGET_HW=gb10 METRALE_TARGET_MODEL=qwen3.6-35b-a3b METRALE_TARGET_QUANT=nvfp4 \
-    cargo build --release -p metrale-server
+    cargo build --release -p met
 ```
 
 1. Cargo runs `crates/kernels/build.rs`.

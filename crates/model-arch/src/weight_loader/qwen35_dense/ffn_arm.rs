@@ -50,7 +50,7 @@ pub(super) fn build_dense_ffn(
     // store's BF16 buffer, and `dense_auto` returns that same pointer. `ffn_q2`:
     // keep-packed Q2_0 gate/up/down (TP=1) are installed as they are
     // (`set_q2_weights`), with no NVFP4 copy.
-    let ffn_fp8 = ffn_fp8_arm_selected(store, config, variant, lp);
+    let ffn_fp8 = ffn_fp8_arm_selected(store, config, variant, lp, cx.lc.settings);
     let ffn_q2 = config.tp_world_size.max(1) == 1
         && proj_q2_group(store, &format!("{lp}.mlp.gate_proj")).is_some()
         && proj_q2_group(store, &format!("{lp}.mlp.up_proj")).is_some()
@@ -128,7 +128,7 @@ pub(super) fn build_dense_ffn(
         }
     };
     residency.twins.ffn_nvfp4 |= ffn_nvfp4;
-    let mut dffn = DenseFfnLayer::new(ffn_weights, gpu)?;
+    let mut dffn = DenseFfnLayer::new(ffn_weights, gpu, cx.lc)?;
     if ffn_q2 {
         dffn.set_q2_weights(
             packed_q2_from_store(store, &format!("{lp}.mlp.gate_proj"))?,
@@ -156,7 +156,7 @@ pub(super) fn build_dense_ffn(
         // inside them, so the fused and unfused GEMMs read the same bytes.
         // `prune_after_load` then frees the two source store tensors.
         let inter = ffn_inter(config);
-        let fused = if ffn_gateup_fused_selected(store, config, variant, lp) {
+        let fused = if ffn_gateup_fused_selected(store, config, variant, lp, cx.lc.settings) {
             let fused = concat_fp8_block_scaled(&gate, &up, h, gpu)?;
             let (w_bytes, s_bytes) = fp8_residency::ffn_gateup_fused_parts(h, inter);
             // 2026-09-25: The concat copied both widened grids; disown the per-projection

@@ -19,12 +19,14 @@ use crate::factory::DflashBuildArgs;
 
 /// 2026-09-26: `used_so_far` as the bytes this process holds, from the first
 /// source that applies; the input is total minus free device memory.
+/// 2026-10-17: `external_reserve_gb` is the `cache.kv_external_reserve_gb` setting.
 pub(super) fn self_relative_used(
     gpu: &dyn GpuBackend,
     store: &WeightStore,
     build_entry_free: Option<usize>,
     actual_free: usize,
     mut used_so_far: usize,
+    external_reserve_gb: Option<f64>,
     gib: impl Fn(usize) -> f64,
 ) -> usize {
     // 2026-09-25: `used_so_far` (total − free) also counts other processes on
@@ -39,10 +41,7 @@ pub(super) fn self_relative_used(
     //      memory now, capped as described below.
     // The clamp to the free memory left after the reserves applies whichever
     // path set `used_so_far`.
-    let manual_reserve_gb = std::env::var("METRALE_KV_EXTERNAL_RESERVE_GB")
-        .ok()
-        .and_then(|v| v.parse::<f64>().ok())
-        .filter(|&gb| gb > 0.0);
+    let manual_reserve_gb = external_reserve_gb.filter(|&gb| gb > 0.0);
     if let Some(gb) = manual_reserve_gb {
         let ext = (gb * 1024.0 * 1024.0 * 1024.0) as usize;
         let discounted = used_so_far.saturating_sub(ext);
@@ -143,15 +142,13 @@ pub(super) fn dflash_reserve_bytes(
             let drafter_kv = max_seq_len * c.num_hidden_layers * 2 * kv_dim * 2;
             let fused_kv = c.num_hidden_layers * 2 * kv_dim * c.hidden_size * 2;
             let capture = max_seq_len * config.hidden_size * 2;
-            // 2026-09-25: The same test as the allocation in
-            // dflash_head/from_weights.rs: on unless the variable is `0`.
-            let fp8_mirrors =
-                if std::env::var("METRALE_DFLASH_DRAFTER_FP8").ok().as_deref() != Some("0") {
-                    a.drafter_store.total_bytes() / 2
-                } else {
-                    0
-                };
-            drafter_kv + fused_kv + capture + fp8_mirrors + (300 << 20)
+            // 2026-09-25: The weight copies `dflash_head/from_weights.rs` builds: half the BF16
+            // store in FP8, 2026-10-10: scaled to the `--draft-weight-quantization` tier.
+            let copies = a
+                .weight_quant
+                .copy_bytes_from_fp8(a.drafter_store.total_bytes() as u64 / 2)
+                as usize;
+            drafter_kv + fused_kv + capture + copies + (300 << 20)
         })
         .unwrap_or(0);
     if dflash_reserve > 0 {

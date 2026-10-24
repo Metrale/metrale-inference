@@ -20,6 +20,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use metrale_settings::InferenceServerSettings;
 use parking_lot::Mutex;
 
 /// 2026-09-26: One conversation: metadata and its items in insertion order.
@@ -53,28 +54,24 @@ struct Inner {
 pub const MAX_ITEMS_PER_INSERT: usize = 20;
 
 impl ConversationStore {
-    /// 2026-09-26: Build the store from `METRALE_CONVERSATION_MAX_ENTRIES`
+    /// 2026-10-17: Build the store from the resolved `METRALE_CONVERSATION_MAX_ENTRIES`
     /// (default 10 000, minimum 1) and `METRALE_CONVERSATION_TTL_SECONDS`
     /// (default 86 400, minimum 1).
     ///
     /// # Errors
-    /// When either variable is set to something that is not a whole number
+    /// When either value is not a whole number
     /// at or above its minimum (`env_config::parse_min`).
-    pub fn from_env() -> Result<Arc<Self>, String> {
+    pub fn from_settings(settings: &InferenceServerSettings) -> Result<Arc<Self>, String> {
         let max_entries = crate::env_config::parse_min(
             "METRALE_CONVERSATION_MAX_ENTRIES",
-            std::env::var("METRALE_CONVERSATION_MAX_ENTRIES")
-                .ok()
-                .as_deref(),
+            settings.kernels.conversation_max_entries.as_deref(),
             1_usize,
             "how many conversations to keep before evicting the coldest",
         )?
         .unwrap_or(10_000);
         let ttl_secs = crate::env_config::parse_min(
             "METRALE_CONVERSATION_TTL_SECONDS",
-            std::env::var("METRALE_CONVERSATION_TTL_SECONDS")
-                .ok()
-                .as_deref(),
+            settings.kernels.conversation_ttl_seconds.as_deref(),
             1_u64,
             "how long a conversation stays retrievable, in seconds",
         )?

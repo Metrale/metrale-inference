@@ -5,6 +5,7 @@
 //! Owner: server.
 //! Invariants: none beyond the types.
 
+use super::glm47::Glm47ReasoningParser;
 use super::{ReasoningFormat, ReasoningParser};
 
 /// 2026-09-26: The boxed parser for a [`ReasoningFormat`].
@@ -27,6 +28,7 @@ pub(super) fn build(fmt: ReasoningFormat) -> Box<dyn ReasoningParser> {
             prompt_opens_think: false,
         }),
         ReasoningFormat::Gemma4 => Box::new(Gemma4ReasoningParser),
+        ReasoningFormat::Glm47 => Box::new(Glm47ReasoningParser),
     }
 }
 

@@ -55,8 +55,7 @@ impl Qwen3AttentionLayer {
         let mla_cache_dim = kv_lora + rope;
         let hd_mla = nope + rope;
         let use_tc = self.dense_gemm_tc_k.0 != 0;
-        let diag_all =
-            std::env::var("METRALE_DIAG_V4_ALL_LAYERS").is_ok_and(|v| v == "1" || v == "true");
+        let diag_all = self.levers.diag_v4_all_layers;
         let diag_this = self.attn_layer_idx == 0 || diag_all;
 
         // 2026-09-25: Diagnostics, on layer 0 or on every layer with
@@ -346,7 +345,7 @@ impl Qwen3AttentionLayer {
             mla_cache_dim,
             mla_cache_dim,
             stream,
-            ctx.graph_capture,
+            ctx,
         )?;
         ctx.gpu
             .synchronize(stream)

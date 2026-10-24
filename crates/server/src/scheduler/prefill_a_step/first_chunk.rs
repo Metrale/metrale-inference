@@ -23,7 +23,7 @@ pub(super) fn finish_first_chunk(
     tool_call_end_token: Option<u32>,
     model: &dyn Model,
     eos_tokens: &[u32],
-    spontaneous_think_budget: u32,
+    spontaneous_think_budget: Option<u32>,
     top_k: u32,
     top_p: f32,
     top_n_sigma: f32,
@@ -76,6 +76,8 @@ pub(super) fn finish_first_chunk(
                 req_enable_thinking,
                 think_end_token,
                 tool_call_start_token,
+                req_min_tokens,
+                req_require_tool_call,
             ),
             &sched.levers.sampling(),
             sched.io.tel.dumps(),
@@ -92,7 +94,7 @@ pub(super) fn finish_first_chunk(
                     );
                 }
                 if let Err(bcast_err) =
-                    model.ep_broadcast_cmd_for_seq(seq.slot_idx as u32, 0xFFFFFFF1)
+                    model.ep_broadcast_cmd_for_seq(seq.slot_idx as u32, metrale_model_layers::ep_wire::EP_CMD_ALLOC_SLOT)
                 {
                     tracing::error!(target: "met::scheduler::prefill_a_step", "prefill_a_step: ep_broadcast (after sample error): {bcast_err:#}"
                     );
@@ -124,8 +126,11 @@ pub(super) fn finish_first_chunk(
         }
         // 2026-09-25: With `max_tokens == 0` (scoring only) no generated
         // token is sent.
+        // 2026-10-14: An EOS first token is not sent (`phase_promote_prefills`,
+        // the decode path); `eos_hold` lets token 0 be one.
         if !spontaneous_think
             && max_tokens > 0
+            && !eos_tokens.contains(&first)
             && !sched
                 .io
                 .req
@@ -274,7 +279,7 @@ pub(super) fn finish_first_chunk(
                     || born_inside_thinking(req_enable_thinking, think_end_token),
                 enable_thinking: req_enable_thinking,
                 thinking_budget: if spontaneous_think {
-                    Some(spontaneous_think_budget)
+                    spontaneous_think_budget.or(req_thinking_budget)
                 } else {
                     req_thinking_budget
                 },

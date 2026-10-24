@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-25: Unit tests for `scheduler::helpers`: the thinking- and
-//! content-loop detectors and their overrides, forced-token fast-path
-//! parsing, and two `WatchdogParams` defaults. A child of `helpers` via
-//! `#[path]`, so `use super::*` brings in that module's items.
+//! content-loop detectors and their overrides, and two `WatchdogParams`
+//! defaults. A child of `helpers` via `#[path]`, so `use super::*` brings in
+//! that module's items.
 //!
 //! Owner: scheduler.
 //! Invariants: none beyond the types.
@@ -363,39 +363,11 @@ fn override_applies_to_thinking_loop() {
     );
 }
 
-// 2026-09-25: Forced-token fast-path kill-switch parsing.
-
+/// 2026-09-25: Pins a `WatchdogParams::default()` value: the think-loop
+/// watchdog is on. Served runs take it from `ModelBehavior` instead.
 #[test]
-fn forced_token_fastpath_default_enabled() {
-    assert!(parse_forced_token_fastpath(None));
-}
-
-#[test]
-fn forced_token_fastpath_disabled_by_truthy() {
-    assert!(!parse_forced_token_fastpath(Some("1")));
-    assert!(!parse_forced_token_fastpath(Some("true")));
-    assert!(!parse_forced_token_fastpath(Some("TRUE")));
-    assert!(!parse_forced_token_fastpath(Some("  true  ")));
-}
-
-#[test]
-fn forced_token_fastpath_enabled_by_falsy_or_junk() {
-    assert!(parse_forced_token_fastpath(Some("0")));
-    assert!(parse_forced_token_fastpath(Some("false")));
-    assert!(parse_forced_token_fastpath(Some("")));
-    assert!(parse_forced_token_fastpath(Some("yes")));
-}
-
-/// 2026-09-25: Pins two `WatchdogParams::default()` values: a mid-`<think>`
-/// EOS is not honored as an implicit close, and the think-loop watchdog is
-/// on. Served runs take both from `ModelBehavior` instead.
-#[test]
-fn watchdog_defaults_keep_mid_think_eos_block_inert() {
+fn watchdog_defaults_arm_the_think_loop_watchdog() {
     let d = WatchdogParams::default();
-    assert!(
-        !d.honor_eos_inside_thinking,
-        "honor_eos_inside_thinking must default OFF (opt-in per model)"
-    );
     assert!(
         d.enable_think_loop_watchdog,
         "think-loop watchdog must default ON (opt-out per model)"

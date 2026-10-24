@@ -13,10 +13,13 @@ use super::MetraleCudaBackend;
 /// 2026-09-25: One live device allocation: its size in bytes and the call
 /// site of `GpuBackend::alloc` or `alloc_managed` that made it (both are
 /// `#[track_caller]` on the trait and on the CUDA impl).
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(super) struct AllocRecord {
     pub(super) bytes: usize,
     pub(super) site: &'static std::panic::Location<'static>,
+    /// 2026-10-19: What the allocation holds, set by its owner after the fact
+    /// ([`MetraleCudaBackend::label_alloc`]); `None` until then.
+    pub(super) label: Option<Box<str>>,
 }
 
 /// 2026-10-01: A read handle on one backend's ledger, for a reader that cannot hold the
@@ -70,9 +73,14 @@ impl MetraleCudaBackend {
         bytes: usize,
         site: &'static std::panic::Location<'static>,
     ) {
-        self.live_allocs
-            .lock()
-            .insert(ptr.0, AllocRecord { bytes, site });
+        self.live_allocs.lock().insert(
+            ptr.0,
+            AllocRecord {
+                bytes,
+                site,
+                label: None,
+            },
+        );
     }
 
     /// 2026-10-02: Every live allocation: address, bytes and call site (`file:line`).
@@ -85,6 +93,24 @@ impl MetraleCudaBackend {
                 (crate::gpu::DevicePtr(a), r.bytes, site)
             })
             .collect()
+    }
+
+    /// 2026-10-19: Name what the live allocation at base pointer `ptr` holds. Returns whether
+    /// `ptr` is a live allocation's base; a label is replaced, never appended to.
+    pub fn label_alloc(&self, ptr: crate::gpu::DevicePtr, label: &str) -> bool {
+        match self.live_allocs.lock().get_mut(&ptr.0) {
+            Some(r) => {
+                r.label = Some(label.into());
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// 2026-10-19: The label of the live allocation at base pointer `ptr`, if it has one.
+    pub fn alloc_label(&self, ptr: crate::gpu::DevicePtr) -> Option<String> {
+        let ledger = self.live_allocs.lock();
+        ledger.get(&ptr.0)?.label.as_deref().map(str::to_owned)
     }
 
     pub(crate) fn forget_alloc(&self, ptr: crate::gpu::DevicePtr) {

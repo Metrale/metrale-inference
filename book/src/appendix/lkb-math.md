@@ -191,6 +191,8 @@ and does not depend on the plan: it counts every edge a node reads or writes, fu
 no launch overhead. Under it every plan's cost is the sum of its nodes', so the modelled laxity
 is zero. Computing it needs a cost per fused group that drops the fused edges' round trips and
 adds a per-launch term.
+`met circuit headroom` (docs/kernel-perf/HEADROOM.md) now computes the per-launch-site floor
+that drops the fused edges, and, from a capture, the step's residual (time no kernel runs).
 
 **Rule 5.** A fusion rule is kept only if its time laxity is positive where it applies (measured
 once a serve runs), and its energy laxity is recorded beside it; a fusion that wins one and

@@ -52,11 +52,11 @@ impl MoeLayer {
     /// 2026-09-28: Whether this layer's grouped decode runs the W8A8 expert step: FP8 expert
     /// activations published ([`moe_expert_fp8_act`]), the tensor-core W8A16 kernels'
     /// conditions, the three W8A8 kernels, and gate+up and down in whole CTAs of their tiles.
-    pub(super) fn fp8_grouped_tc_w8a8_on(&self, hidden: usize, inter: usize) -> bool {
+    pub(super) fn fp8_grouped_tc_w8a8_on(&self, hidden: usize, inter: usize, tc: bool) -> bool {
         let (h, i) = (hidden as u32, inter as u32);
         let k = &self.fp8_grouped_tc;
         moe_expert_fp8_act()
-            && self.fp8_grouped_tc_on(hidden, inter)
+            && self.fp8_grouped_tc_on(hidden, inter, tc)
             && k.quant_w8a8.0 != 0
             && k.gate_up_w8a8.0 != 0
             && k.down_w8a8.0 != 0

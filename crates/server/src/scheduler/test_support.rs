@@ -14,8 +14,10 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 use std::time::Instant;
 
+mod host_logits;
 mod model_impl;
 mod requests;
+pub(super) use host_logits::{HostLogits, bf16_bytes};
 pub(super) use requests::blocking_request;
 
 pub(super) const EOS: &[u32] = &[151645];
@@ -68,7 +70,7 @@ pub(super) fn test_seq(
         enable_thinking: false,
         thinking_budget: None,
         repetition_detection: None,
-        spontaneous_think_budget: 0,
+        spontaneous_think_budget: Some(0),
         thinking_tokens: 0,
         force_end_thinking: false,
         think_force_closed: false,
@@ -153,7 +155,7 @@ pub(super) fn test_prefill(prompt: Vec<u32>) -> (super::types::PrefillInProgress
         enable_thinking: false,
         thinking_budget: None,
         repetition_detection: None,
-        spontaneous_think_budget: 0,
+        spontaneous_think_budget: Some(0),
         require_tool_call: false,
         tools_present: false,
         suppress_tool_call: false,
@@ -207,7 +209,7 @@ pub(super) fn test_prefill_ident(
         enable_thinking: false,
         thinking_budget: None,
         repetition_detection: None,
-        spontaneous_think_budget: 0,
+        spontaneous_think_budget: Some(0),
         require_tool_call: false,
         tools_present: false,
         suppress_tool_call: false,
@@ -245,6 +247,9 @@ pub(super) struct PreemptStubModel {
     /// 2026-09-30: Blocks of any non-empty prompt's prefix the stub's prefix cache
     /// holds, which `reclaim_prefix_blocks_for` leaves out of its target.
     pub(super) cached_prefix_blocks: usize,
+    /// 2026-10-21: When set, the logits buffer, `decode` and the argmaxes read
+    /// these host rows.
+    pub(super) host_logits: Option<HostLogits>,
 }
 
 impl PreemptStubModel {

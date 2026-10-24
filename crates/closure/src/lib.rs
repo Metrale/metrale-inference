@@ -33,12 +33,16 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 mod circuits;
-mod hex;
+// 2026-10-17: The HARDWARE.toml `[defaults]` parse both kernel-tree build scripts share.
+pub mod hardware_defaults;
 pub mod layout;
 mod layout_manifest;
 mod layout_scan;
+pub mod ptx_cache;
 
-pub use hex::hex_lower;
+// 2026-10-17: The one lower-case hex spelling, owned by the lowest crate that hashes
+// (metrale-serve-identity, no_std); re-exported so every recorded digest keeps one spelling.
+pub use metrale_serve_identity::hex_lower;
 
 use sha2::{Digest, Sha256};
 
@@ -126,7 +130,7 @@ pub fn hash_with_report(root: &Path, inputs: &ClosureInputs) -> Result<Closure> 
     let mut closure: BTreeSet<PathBuf> = BTreeSet::new();
     let mut raw: BTreeSet<(PathBuf, String)> = BTreeSet::new();
     for src in &inputs.sources {
-        expand(src, &mut closure, &mut raw)?;
+        expand(src, &[], &mut closure, &mut raw)?;
     }
     let unresolved: BTreeSet<String> = raw
         .into_iter()
@@ -184,13 +188,41 @@ pub fn hash_with_report(root: &Path, inputs: &ClosureInputs) -> Result<Closure> 
     })
 }
 
+/// 2026-10-17: The files one compile reads through quoted includes, found the
+/// way nvcc finds them: the including file's directory first, then each
+/// `search` directory in order. The PTX cache keys on this set, so a header
+/// reached through a `-I` directory (the glm `dflash_fp8_gemm.cu` include of
+/// the qwen `w4a16_gemm.cu`) invalidates the entry when its bytes change.
+#[derive(Debug, Clone, Default)]
+pub struct IncludeClosure {
+    /// 2026-10-17: Canonical paths, `source` included.
+    pub files: BTreeSet<PathBuf>,
+    /// 2026-10-17: `(canonical including file, include)` for every quoted
+    /// include that no candidate directory resolves.
+    pub unresolved: BTreeSet<(PathBuf, String)>,
+}
+
+/// 2026-10-17: Walk `source`'s quoted-include closure, resolving through
+/// `search` after the including file's own directory.
+///
+/// # Errors
+/// [`ClosureError::Io`] when a file in the closure cannot be read.
+pub fn include_closure(source: &Path, search: &[PathBuf]) -> Result<IncludeClosure> {
+    let mut found = IncludeClosure::default();
+    expand(source, search, &mut found.files, &mut found.unresolved)?;
+    Ok(found)
+}
+
 /// 2026-09-26: Add `file` and everything it quoted-includes, transitively,
-/// resolving each include against the including file's directory.
+/// resolving each include against the including file's directory, then
+/// against each `search` directory in order (2026-10-17: [`hash_with_report`]
+/// passes none, so the attestation digest is unchanged).
 ///
 /// `out` is also the cycle guard: a file already inserted is not walked again,
 /// so mutually including headers terminate.
 fn expand(
     file: &Path,
+    search: &[PathBuf],
     out: &mut BTreeSet<PathBuf>,
     unresolved: &mut BTreeSet<(PathBuf, String)>,
 ) -> Result<()> {
@@ -204,14 +236,17 @@ fn expand(
     })?;
     let dir = canonical.parent().unwrap_or(Path::new("."));
     for include in quoted_includes(&text) {
-        let target = dir.join(&include);
-        if !target.exists() {
+        let target = std::iter::once(dir)
+            .chain(search.iter().map(PathBuf::as_path))
+            .map(|base| base.join(&include))
+            .find(|candidate| candidate.exists());
+        let Some(target) = target else {
             // 2026-09-26: Keyed by the including file, so two files naming the
             // same missing header are two entries.
             unresolved.insert((canonical.clone(), include));
             continue;
-        }
-        expand(&target, out, unresolved)?;
+        };
+        expand(&target, search, out, unresolved)?;
     }
     Ok(())
 }

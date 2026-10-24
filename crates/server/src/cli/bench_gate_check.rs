@@ -42,9 +42,12 @@ pub(super) fn print_statuses(
 /// 2026-09-26: `--pull-request-gate-check`: print every required gate's status
 /// at the checked-out commit, then the advisory intent for `pr`. Returns 0
 /// when every gate passes and 1 otherwise; the caller exits with it.
-pub(super) fn gate_check_cmd(pr: Option<u64>) -> Result<i32> {
+pub(super) fn gate_check_cmd(
+    pr: Option<u64>,
+    levers: &metrale_bench::levers::BenchLevers,
+) -> Result<i32> {
     let root = repo_root()?;
-    let sha = gate::git_sha(&root)?;
+    let sha = gate::git_sha(&root, levers.gate_sha.as_deref())?;
     let gates = gate::check_gates(&root, &sha);
     println!("gate check for {sha} ({})", root.display());
     let open = print_statuses(&gates);

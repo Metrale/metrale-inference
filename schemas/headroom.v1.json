@@ -1,0 +1,778 @@
+{
+  "$defs": {
+    "Ceilings": {
+      "additionalProperties": false,
+      "description": "The roofline's bandwidth (GB/s) and compute ceilings (TFLOPS) per MMA class.",
+      "properties": {
+        "bf16_tflops": {
+          "type": "number"
+        },
+        "dram_gbps": {
+          "type": "number"
+        },
+        "fp8_tflops": {
+          "type": "number"
+        },
+        "nvfp4_tflops": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "bf16_tflops",
+        "dram_gbps",
+        "fp8_tflops",
+        "nvfp4_tflops"
+      ],
+      "type": "object"
+    },
+    "CurvePoint": {
+      "additionalProperties": false,
+      "description": "The top N sites at 100% and at target_pct of their floors.",
+      "properties": {
+        "full": {
+          "$ref": "#/$defs/Upside"
+        },
+        "n": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "site": {
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/Upside"
+        }
+      },
+      "required": [
+        "full",
+        "n",
+        "site",
+        "target"
+      ],
+      "type": "object"
+    },
+    "EnergyCols": {
+      "additionalProperties": false,
+      "description": "Energy per step; null without captured energy or an energy roofline, never 0.",
+      "properties": {
+        "floor_uj": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pct_of_floor": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "uj_per_launch": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "upside_uj": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "floor_uj",
+        "pct_of_floor",
+        "uj_per_launch",
+        "upside_uj"
+      ],
+      "type": "object"
+    },
+    "Interval": {
+      "additionalProperties": false,
+      "description": "A 95% interval.",
+      "properties": {
+        "hi": {
+          "type": "number"
+        },
+        "lo": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "hi",
+        "lo"
+      ],
+      "type": "object"
+    },
+    "Measured": {
+      "additionalProperties": false,
+      "description": "Captured time of a site per step: launches, summed durations, non-overlapped time, the kernels and where the capture's lowering differs from the plan.",
+      "properties": {
+        "calls_per_step": {
+          "type": "number"
+        },
+        "drift": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "exclusive_us": {
+          "type": "number"
+        },
+        "kernels": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "total_us": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "calls_per_step",
+        "drift",
+        "exclusive_us",
+        "kernels",
+        "total_us"
+      ],
+      "type": "object"
+    },
+    "Outside": {
+      "anyOf": [
+        {
+          "enum": [
+            "unknown"
+          ]
+        },
+        {
+          "additionalProperties": false,
+          "description": "Several launch sites run the kernel.",
+          "properties": {
+            "ambiguous": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "ambiguous"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "OutsideRow": {
+      "additionalProperties": false,
+      "description": "A captured kernel no launch site of the step runs.",
+      "properties": {
+        "calls_per_step": {
+          "type": "number"
+        },
+        "exclusive_us": {
+          "type": "number"
+        },
+        "kernel": {
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "total_us": {
+          "type": "number"
+        },
+        "why": {
+          "$ref": "#/$defs/Outside"
+        }
+      },
+      "required": [
+        "calls_per_step",
+        "exclusive_us",
+        "kernel",
+        "label",
+        "total_us",
+        "why"
+      ],
+      "type": "object"
+    },
+    "PlanShare": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One run's shares of the step: describable = exclusive time of the sites the plan names; executed = the part the circuit executor issued from the plan in the captured serve.",
+      "properties": {
+        "run": {
+          "type": "string"
+        },
+        "by": {
+          "enum": [
+            "plan",
+            "legacy"
+          ]
+        },
+        "why": {
+          "type": "string"
+        },
+        "describable_us": {
+          "type": "number"
+        },
+        "describable_pct": {
+          "type": "number"
+        },
+        "executed_us": {
+          "type": "number"
+        },
+        "executed_pct": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "by",
+        "describable_pct",
+        "describable_us",
+        "executed_pct",
+        "executed_us",
+        "run",
+        "why"
+      ]
+    },
+    "SiteCi": {
+      "additionalProperties": false,
+      "description": "95% intervals of a measured site: moving-block bootstrap over the capture's steps; pct_of_floor_delta is the delta-method cross-check.",
+      "properties": {
+        "exclusive_us": {
+          "$ref": "#/$defs/Interval"
+        },
+        "median_total_ci": {
+          "$ref": "#/$defs/Interval"
+        },
+        "median_total_us": {
+          "type": "number"
+        },
+        "pct_of_floor": {
+          "$ref": "#/$defs/Interval"
+        },
+        "pct_of_floor_delta": {
+          "$ref": "#/$defs/Interval"
+        },
+        "saved_full_us": {
+          "$ref": "#/$defs/Interval"
+        },
+        "saved_target_us": {
+          "$ref": "#/$defs/Interval"
+        },
+        "tok_s_full": {
+          "$ref": "#/$defs/Interval"
+        },
+        "tok_s_target": {
+          "$ref": "#/$defs/Interval"
+        },
+        "total_us": {
+          "$ref": "#/$defs/Interval"
+        }
+      },
+      "required": [
+        "exclusive_us",
+        "median_total_ci",
+        "median_total_us",
+        "pct_of_floor",
+        "pct_of_floor_delta",
+        "saved_full_us",
+        "saved_target_us",
+        "tok_s_full",
+        "tok_s_target",
+        "total_us"
+      ],
+      "type": "object"
+    },
+    "SiteRow": {
+      "additionalProperties": false,
+      "description": "One launch site (a plan group template across its layers). measured is null when nothing was captured for it: its projection is floor_us. ci is null without per-step series (never invented); tied: its upside interval overlaps a ranked neighbour's.",
+      "properties": {
+        "bound": {
+          "enum": [
+            "memory",
+            "compute",
+            "launch"
+          ]
+        },
+        "bytes": {
+          "type": "number"
+        },
+        "ci": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SiteCi"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "energy": {
+          "$ref": "#/$defs/EnergyCols"
+        },
+        "floor_us": {
+          "type": "number"
+        },
+        "flops": {
+          "type": "number"
+        },
+        "fused": {
+          "type": "boolean"
+        },
+        "groups": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "headroom_us": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kernels": {
+          "type": "string"
+        },
+        "launches": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "measured": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Measured"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "node_sum_us": {
+          "type": "number"
+        },
+        "pct_of_floor": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rules": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "run": {
+          "type": "string"
+        },
+        "site": {
+          "type": "string"
+        },
+        "tied": {
+          "type": "boolean"
+        },
+        "upside_full": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Upside"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "upside_target": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Upside"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "bound",
+        "bytes",
+        "ci",
+        "energy",
+        "floor_us",
+        "flops",
+        "fused",
+        "groups",
+        "headroom_us",
+        "kernels",
+        "launches",
+        "measured",
+        "node_sum_us",
+        "pct_of_floor",
+        "rules",
+        "run",
+        "site",
+        "tied",
+        "upside_full",
+        "upside_target"
+      ],
+      "type": "object"
+    },
+    "Stated": {
+      "additionalProperties": false,
+      "description": "A stated quantity and where it comes from.",
+      "properties": {
+        "basis": {
+          "type": "string"
+        },
+        "value": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "basis",
+        "value"
+      ],
+      "type": "object"
+    },
+    "Totals": {
+      "additionalProperties": false,
+      "description": "Step totals, us per step; the measured ones are null without a capture. step_us = sites_exclusive_us + outside_exclusive_us + residual_us.",
+      "properties": {
+        "ceiling_tok_s": {
+          "type": "number"
+        },
+        "ceiling_us": {
+          "type": "number"
+        },
+        "ci": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TotalsCi"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "measured_floor_us": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outside_exclusive_us": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "overlap_us": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "residual_us": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sites_exclusive_us": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sites_total_us": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "step_tok_s": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "step_us": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unmeasured_projection_us": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "ceiling_tok_s",
+        "ceiling_us",
+        "ci",
+        "measured_floor_us",
+        "outside_exclusive_us",
+        "overlap_us",
+        "residual_us",
+        "sites_exclusive_us",
+        "sites_total_us",
+        "step_tok_s",
+        "step_us",
+        "unmeasured_projection_us"
+      ],
+      "type": "object"
+    },
+    "TotalsCi": {
+      "additionalProperties": false,
+      "description": "95% intervals of the step, tok/s and the residual (residual_delta: delta method).",
+      "properties": {
+        "residual_delta": {
+          "$ref": "#/$defs/Interval"
+        },
+        "residual_us": {
+          "$ref": "#/$defs/Interval"
+        },
+        "step_tok_s": {
+          "$ref": "#/$defs/Interval"
+        },
+        "step_us": {
+          "$ref": "#/$defs/Interval"
+        }
+      },
+      "required": [
+        "residual_delta",
+        "residual_us",
+        "step_tok_s",
+        "step_us"
+      ],
+      "type": "object"
+    },
+    "Upside": {
+      "additionalProperties": false,
+      "description": "The step after one change: time saved, step and tok/s.",
+      "properties": {
+        "saved_us": {
+          "type": "number"
+        },
+        "step_us": {
+          "type": "number"
+        },
+        "tok_s": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "saved_us",
+        "step_us",
+        "tok_s"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://metrale.ai/schemas/headroom.v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The headroom of one step of a plan on a device (met circuit headroom --format json).",
+  "properties": {
+    "ceilings": {
+      "$ref": "#/$defs/Ceilings"
+    },
+    "curve": {
+      "items": {
+        "$ref": "#/$defs/CurvePoint"
+      },
+      "type": "array"
+    },
+    "device": {
+      "type": "string"
+    },
+    "dims": {
+      "additionalProperties": {
+        "minimum": 0,
+        "type": "integer"
+      },
+      "type": "object"
+    },
+    "dims_basis": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "energy": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "kv_tokens": {
+      "$ref": "#/$defs/Stated"
+    },
+    "launch_floor_us": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Stated"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "model": {
+      "type": "string"
+    },
+    "outside": {
+      "items": {
+        "$ref": "#/$defs/OutsideRow"
+      },
+      "type": "array"
+    },
+    "roofline": {
+      "type": "string"
+    },
+    "runs": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "schema": {
+      "enum": [
+        "headroom/v1"
+      ]
+    },
+    "shares": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PlanShare"
+      },
+      "description": "Per run of the step: the plan-describable and plan-executed shares (empty without a capture)."
+    },
+    "sites": {
+      "items": {
+        "$ref": "#/$defs/SiteRow"
+      },
+      "type": "array"
+    },
+    "target_pct": {
+      "type": "number"
+    },
+    "tokens_per_step": {
+      "$ref": "#/$defs/Stated"
+    },
+    "totals": {
+      "$ref": "#/$defs/Totals"
+    },
+    "trace": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "uncertainty": {
+      "description": "What the intervals cover (method, steps, captures, block, replicates, seed), or why there are none (\"preliminary, n=1 (no CI)\").",
+      "type": "string"
+    }
+  },
+  "required": [
+    "ceilings",
+    "curve",
+    "device",
+    "dims",
+    "dims_basis",
+    "energy",
+    "kv_tokens",
+    "launch_floor_us",
+    "model",
+    "outside",
+    "roofline",
+    "runs",
+    "schema",
+    "shares",
+    "sites",
+    "target_pct",
+    "tokens_per_step",
+    "totals",
+    "trace",
+    "uncertainty"
+  ],
+  "title": "headroom/v1",
+  "type": "object"
+}

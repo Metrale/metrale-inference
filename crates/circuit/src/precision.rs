@@ -5,7 +5,7 @@
 //! `kernels/circuits/precision/<checkpoint>.toml`.
 //!
 //! The trait is shaped after `DeclaredPrecisionPlan::resolve(module) -> LayerPrecision`
-//! (branch perf/weight-quantization, `crates/config/src/precision_plan.rs`): a module path
+//! (branch perf/weight-quantization, `crates/precision/src/precision_plan.rs`): a module path
 //! in, the weight and input-activation formats out. Once that plan and `WeightQuantPolicy`
 //! are on main, an adapter implements this trait from them and the tables go.
 //!
@@ -15,12 +15,14 @@
 //!   stated format; there is no implicit default.
 //! - The first matching entry wins, in file order.
 
+use crate::prelude::*;
+
 use serde::Deserialize;
 
 use crate::format::{Format, FormatError};
 
 /// 2026-09-28: The formats one linear module runs at.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LinearFormats {
     /// 2026-09-28: Weight format as loaded.
     pub weight: Format,
@@ -33,6 +35,11 @@ pub struct LinearFormats {
 pub trait EdgePrecision {
     /// 2026-09-28: The formats `module` runs at.
     fn linear(&self, module: &str) -> LinearFormats;
+    /// 2026-10-23: The formats an entry naming `module` states, never a catch-all or the
+    /// checkpoint's own config: what reaches a module the circuit declares `unquantized` (a
+    /// load-time quantization the serve applies, the GLM indexer's compress gate on the FP8
+    /// tier). `None`: the module stays 16-bit.
+    fn named(&self, module: &str) -> Option<LinearFormats>;
 }
 
 /// 2026-09-28: Why a precision table did not load.
@@ -128,18 +135,10 @@ impl EdgePrecision for PrecisionTable {
             .find(|(p, _)| glob(p, module))
             .map_or(self.catch_all, |(_, f)| *f)
     }
-}
 
-/// 2026-10-02: The fused-experts module an expert projection belongs to: `<p>.experts` for
-/// `<p>.experts.<i>.<proj>`. A checkpoint that quantizes the routed experts as one module (a
-/// ModelOpt `quantized_layers` entry naming `...mlp.experts`, nvidia/Qwen3.6-35B-A3B-NVFP4)
-/// declares every expert projection through it; the circuit asks expert 0's projection.
-pub(crate) fn expert_container(module: &str) -> Option<&str> {
-    let at = module.rfind(".experts.")?;
-    let rest = &module[at + ".experts.".len()..];
-    let (index, proj) = rest.split_once('.')?;
-    (!index.is_empty() && index.bytes().all(|b| b.is_ascii_digit()) && !proj.is_empty())
-        .then(|| &module[..at + ".experts".len()])
+    fn named(&self, module: &str) -> Option<LinearFormats> {
+        self.entries.iter().find(|(p, _)| glob(p, module)).map(|(_, f)| *f)
+    }
 }
 
 /// 2026-09-28: `*` matches any run of characters, dots included; everything else is literal.

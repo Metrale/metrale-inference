@@ -2,7 +2,7 @@
 
 //! 2026-10-01: What `GET /memory` reports: the KV pool and slot count the model was built
 //! with, the serve's memory budget, and host memory readings, as the wire type
-//! `metrale_bench::benchmarks::default_tier_boot::MemoryReport`. On a unified-memory device,
+//! `metrale_serve_identity::wire::MemoryReport`. On a unified-memory device,
 //! device allocations come out of host RAM, so the drop in host `MemAvailable` since process
 //! start, less the process's own anonymous RSS, is the serve's device footprint.
 //!
@@ -15,7 +15,7 @@
 
 use std::sync::{Arc, OnceLock};
 
-use metrale_bench::benchmarks::default_tier_boot::MemoryReport;
+use metrale_serve_identity::wire::MemoryReport;
 
 /// 2026-10-01: Reads the GPU backend's allocation ledger, at request time.
 pub type LedgerReader = Arc<dyn Fn() -> usize + Send + Sync>;

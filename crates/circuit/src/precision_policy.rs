@@ -15,9 +15,11 @@
 //!   `nvfp4` every quantized module runs NVFP4 weights and 16-bit activations.
 //! - An unquantized module is BF16 weights and activations.
 
-use metrale_config::precision_plan::{Granularity, Operand};
-use metrale_config::weight_quantization::{ActFormat, KernelCaps};
-use metrale_config::{
+use crate::prelude::*;
+
+use metrale_precision::precision_plan::{Granularity, Operand};
+use metrale_precision::weight_quantization::{ActFormat, KernelCaps};
+use metrale_precision::{
     DeclaredPrecisionPlan, W4a4Downcast, WeightQuantPolicy, WeightQuantTier, WeightQuantization,
 };
 use serde::Deserialize;
@@ -139,18 +141,18 @@ fn fp8_act(a: Option<Operand>) -> Format {
 }
 
 impl EdgePrecision for PolicyPrecision<'_> {
+    /// 2026-10-23: Only a format the engine chooses itself names a module.
+    fn named(&self, module: &str) -> Option<LinearFormats> {
+        self.engine.iter().find(|(p, _)| glob(p, module)).map(|(_, f)| *f)
+    }
+
     fn linear(&self, module: &str) -> LinearFormats {
         if let Some((_, f)) = self.engine.iter().find(|(p, _)| glob(p, module)) {
             return *f;
         }
-        // 2026-10-02: As `DeclaredPrecision`: an expert projection the plan does not name is
-        // declared by its experts module (`precision::expert_container`).
-        let mut declared = self.policy.declared(module);
-        if declared.weight.is_none()
-            && let Some(container) = crate::precision::expert_container(module)
-        {
-            declared = self.policy.declared(container);
-        }
+        // 2026-10-17: The plan's own resolve reaches an expert projection's fused-experts entry
+        // and keeps an ignored projection 16-bit (`DeclaredPrecisionPlan::resolve`).
+        let declared = self.policy.declared(module);
         let Some(w) = declared.weight else {
             return BF16;
         };

@@ -102,6 +102,7 @@ impl PrefillKernels {
         gpu: &dyn GpuBackend,
         config: &metrale_config::ModelConfig,
         probes: &ArchProbes,
+        ops: &crate::layers::ops::OpsLevers,
     ) -> Result<Self> {
         Ok(Self {
             residual_add_k: gpu.kernel("residual_add", "bf16_residual_add")?,
@@ -124,7 +125,7 @@ impl PrefillKernels {
             w4a16_gemv_qg_batch3_k: gpu.kernel("w4a16_gemv", "w4a16_gemv_qg_batch3")?,
             w4a16_gemv_dual_batch3_k: gpu.kernel("w4a16_gemv", "w4a16_gemv_dual_batch3")?,
             w4a16_gemv_batch3_k: gpu.kernel("w4a16_gemv", "w4a16_gemv_batch3")?,
-            w4a16_batchm: crate::layers::w4a16_gemv_tiers::W4a16BatchmTiers::resolve(gpu),
+            w4a16_batchm: crate::layers::w4a16_gemv_tiers::W4a16BatchmTiers::resolve(gpu, ops),
             w4a16_gemm_k: gpu.kernel("w4a16", "w4a16_gemm")?,
             w4a16_gemm_t_k: crate::layers::tgemm_kernel(gpu),
             w4a16_gemm_t_k64_k: crate::layers::k64_kernel(gpu)?,
@@ -146,15 +147,15 @@ impl PrefillKernels {
             prefill_attn_k: gpu.kernel("attn_prefill", "attn_prefill")?,
             // 2026-09-25: `ops::wide_prefill_kernel` returns both the kernel and
             // the BR its launcher builds the grid for: the tensor-core
-            // `attn_prefill_512tc` (BR=32) unless `METRALE_ATTN_512_TC=0` or the
-            // target lacks it, otherwise the scalar `attn_prefill_512` (BR=16).
+            // `attn_prefill_512tc` (BR=32) unless `METRALE_ATTN_512_TC` is switched off or
+            // the target lacks it, otherwise the scalar `attn_prefill_512` (BR=16).
             prefill_attn_512_k: if probes.wide_head_dim {
-                crate::layers::ops::wide_prefill_kernel(gpu).0
+                crate::layers::ops::wide_prefill_kernel(gpu, ops.attn_512_tc).0
             } else {
                 metrale_gpu_runtime::gpu::KernelHandle(0)
             },
             prefill_attn_512_is_tc: probes.wide_head_dim
-                && crate::layers::ops::wide_prefill_kernel(gpu).1 == 32,
+                && crate::layers::ops::wide_prefill_kernel(gpu, ops.attn_512_tc).1 == 32,
             // 2026-09-25: The compressed-attention kernels, looked up only when
             // the config's `compress_ratios` has a nonzero entry.
             csa_compress_k: gate(probes.compressed_attn, gpu, "csa_compress", "csa_compress"),
@@ -181,7 +182,7 @@ impl PrefillKernels {
                 "attn_prefill_paged_turbo4",
             ),
             prefill_attn_paged_64_k: gpu.kernel("prefill_paged", "attn_prefill_paged_64")?,
-            prefill_attn_fa128: crate::layers::ops::AttnFa128Kernels::resolve(gpu),
+            prefill_attn_fa128: crate::layers::ops::AttnFa128Kernels::resolve(gpu, ops.attn_fa128),
             prefill_attn_paged_fp8_64_k: gpu
                 .kernel("prefill_paged_fp8", "attn_prefill_paged_fp8_64")?,
             prefill_attn_paged_nvfp4_64_k: gpu

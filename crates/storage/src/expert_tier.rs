@@ -230,14 +230,14 @@ impl ExpertTier for UmaArenaTier {
 
 /// 2026-09-25: Open the tier named by `backend`:
 ///   * `posix`, `uma`: read the store in `dir`;
-///   * `rdma`: `RdmaTier` over TCP to `$METRALE_EXPERT_PEER`;
-///   * `rdma-verbs`: `RdmaTier` with one-sided RDMA READ from
-///     `$METRALE_EXPERT_PEER`.
+///   * `rdma`: `RdmaTier` over TCP to `links.expert_peer` (`METRALE_EXPERT_PEER`);
+///   * `rdma-verbs`: `RdmaTier` with one-sided RDMA READ from `links.expert_peer`.
 pub fn open_tier(
     backend: &str,
     dir: &Path,
     num_slabs: u32,
     slots_per_slab: u32,
+    links: &crate::links::StorageLinks,
 ) -> Result<Box<dyn ExpertTier>> {
     // 2026-09-25: The RDMA tiers exist on unix only; elsewhere asking for one
     // is an error.
@@ -245,18 +245,20 @@ pub fn open_tier(
         let flag = if use_verbs { "rdma-verbs" } else { "rdma" };
         #[cfg(unix)]
         {
-            let addr = std::env::var("METRALE_EXPERT_PEER").map_err(|_| {
+            let addr = links.expert_peer.as_deref().ok_or_else(|| {
                 anyhow::anyhow!("--expert-backend {flag} needs $METRALE_EXPERT_PEER=host:port")
             })?;
             Ok(Box::new(crate::expert_tier_rdma::RdmaTier::connect(
-                &addr,
+                addr,
                 num_slabs,
                 slots_per_slab,
                 use_verbs,
+                links,
             )?))
         }
         #[cfg(not(unix))]
         {
+            let _ = links;
             bail!("--expert-backend {flag} requires rdma-core, which is unix-only")
         }
     };

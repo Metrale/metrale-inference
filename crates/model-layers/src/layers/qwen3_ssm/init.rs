@@ -17,6 +17,7 @@ impl Qwen3SsmLayer {
         qkvz_nvfp4: Option<QuantizedWeight>,
         config: &metrale_config::ModelConfig,
         gpu: &dyn GpuBackend,
+        lc: crate::load_context::LoadContext<'_>,
     ) -> Result<Self> {
         let nv = config.linear_num_value_heads;
         let vd = config.linear_value_head_dim;
@@ -252,7 +253,11 @@ impl Qwen3SsmLayer {
                 "gated_delta_rule_chunk_delta_h_tc_vblock",
             ),
             gdn_prefill_fla_chunk_delta_h_tcfuse_k: gdn_tc_spine,
-            gdn_prefill_fla_chunk_delta_h_fused_k: fused_spine_kernel(gpu, gdn_tc_spine),
+            gdn_prefill_fla_chunk_delta_h_fused_k: fused_spine_kernel(
+                gpu,
+                gdn_tc_spine,
+                lc.levers.ops.gdn_prefill.spine,
+            ),
             gdn_prefill_fla_chunk_delta_h_tma_k: super::super::try_kernel(
                 gpu,
                 "gated_delta_rule_fla",
@@ -322,6 +327,7 @@ impl Qwen3SsmLayer {
             woa_seqs: std::sync::atomic::AtomicUsize::new(0),
             woa_dims: [nk, nv, kd, vd],
             carry: super::carry::CarryState::new(gpu, [nk, nv, kd, vd]),
+            levers: lc.levers.ssm,
             gdn_wy2_f16_k: super::super::try_kernel(
                 gpu,
                 "gated_delta_rule_wy_f16",
@@ -425,7 +431,10 @@ impl Qwen3SsmLayer {
                 "w8a16_gemv_batch4",
                 "w8a16_gemv_batch16",
             ),
-            w4a16_batchm: crate::layers::w4a16_gemv_tiers::W4a16BatchmTiers::resolve(gpu),
+            w4a16_batchm: crate::layers::w4a16_gemv_tiers::W4a16BatchmTiers::resolve(
+                gpu,
+                &lc.levers.ops,
+            ),
             w4a16_gemv_batch16_k: super::super::try_kernel(gpu, "w4a16_gemv", "w4a16_gemv_batch16"),
             w8a16_gemm_t_k: super::super::try_kernel(gpu, "w8a16_gemm_t", "w8a16_gemm_t"),
             per_token_group_quant_fp8_k: ops::Fp8ActQuant::resolve(gpu),

@@ -30,11 +30,13 @@ mod compute;
 mod kernels;
 mod kv;
 mod lang;
+mod levers;
 mod lora;
 mod model_impl;
 mod util;
 
 pub use lang::NllbLang;
+pub use levers::NllbLevers;
 
 use compute::DecScratch;
 use kernels::NllbKernels;
@@ -84,6 +86,8 @@ pub struct NllbGpuModel {
     /// 2026-09-25: Per-request LoRA gate, set from the sequence's `adapter_slot`
     /// before each forward (`>= 0` applies the adapter).
     lora_active: AtomicBool,
+    /// 2026-10-17: The beam-search levers, resolved once at construction.
+    levers: NllbLevers,
 }
 
 /// 2026-09-25: Monotonic slot allocator with a free list for reuse.
@@ -119,6 +123,8 @@ impl NllbGpuModel {
         max_seq_len: usize,
         max_batch: usize,
         lora_dir: Option<&std::path::Path>,
+        lora_levers: metrale_model_layers::layers::ops::lora_delta::LoraLevers,
+        levers: NllbLevers,
     ) -> Result<Self> {
         let d = config.hidden_size;
         let heads = config.num_attention_heads;
@@ -161,7 +167,7 @@ impl NllbGpuModel {
         gpu.copy_h2d(util::bf16_bytes(&pos_host), pos_table)?;
 
         let lora = match lora_dir {
-            Some(dir) => Some(NllbLora::load(dir, gpu.as_ref(), cache_rows)?),
+            Some(dir) => Some(NllbLora::load(dir, gpu.as_ref(), cache_rows, lora_levers)?),
             None => None,
         };
 
@@ -197,6 +203,7 @@ impl NllbGpuModel {
             slots: Mutex::new(SlotAlloc::default()),
             lora,
             lora_active: AtomicBool::new(false),
+            levers,
         })
     }
 

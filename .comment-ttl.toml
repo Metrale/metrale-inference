@@ -24,7 +24,7 @@ warn_within = "7d"
 # listed as a bare name because two engine source directories are called that.
 exempt_paths = '''(?x)
     ^vendor/
-  | (^|/)q4k_vendor/
+  | ^kernels/gb10/common/mmq/
   | (^|/)vllm_src/
   | ^bench/qwen4_exp/ref/
   | ^bench/ngram_ref/modeling_longcat_ngram\.py$

@@ -41,12 +41,6 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates/ crates/
 COPY vendor/ vendor/
 COPY kernels/ kernels/
-# 🪤 REQUIRED. `metrale-bench` pulls the
-# benchmark prompts in with `include_str!("../../../../tests/fixtures/bench_prompt_*.txt")`,
-# so a build without repo-root `tests/` dies at COMPILE time with four "couldn't read"
-# errors — after the CUDA kernels have already built, which makes it look like a kernel
-# problem. 784 KB.
-COPY tests/ tests/
 
 ENV METRALE_TARGET_HW=gb10
 # 🪤 This must be the kernel-target directory name, `glm-5.3-flash` — the same
@@ -57,7 +51,7 @@ ENV METRALE_TARGET_HW=gb10
 ENV METRALE_TARGET_MODEL=glm-5.3-flash
 ENV METRALE_TARGET_QUANT=nvfp4
 
-RUN cargo build --release -p metrale-server
+RUN cargo build --release -p met --features bench
 
 # ── Runtime stage ────────────────────────────────────────────────
 FROM nvidia/cuda:13.0.0-runtime-ubuntu24.04

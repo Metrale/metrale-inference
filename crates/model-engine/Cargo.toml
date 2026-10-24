@@ -13,36 +13,45 @@ cuda = ["metrale-model-arch/cuda"]
 metal = ["metrale-model-arch/metal"]
 
 [dependencies]
-metrale-cache = { path = "../cache", default-features = false }
-metrale-comm = { path = "../comm", default-features = false }
-metrale-config = { path = "../config", default-features = false }
-metrale-core = { path = "../core", default-features = false }
-metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false }
-metrale-kernels = { path = "../kernels" }
-metrale-model-arch = { path = "../model-arch", default-features = false }
-metrale-model-layers = { path = "../model-layers", default-features = false }
-metrale-model-weights = { path = "../model-weights", default-features = false }
-metrale-sampling = { path = "../sampling", default-features = false }
+metrale-cache = { workspace = true }
+metrale-kv-codec = { workspace = true }
+metrale-comm = { workspace = true }
+metrale-config = { workspace = true }
+metrale-error = { workspace = true }
+metrale-settings = { workspace = true }
+metrale-core = { workspace = true }
+metrale-gpu-runtime = { workspace = true }
+metrale-model-arch = { workspace = true }
+metrale-model-layers = { workspace = true }
+metrale-model-weights = { workspace = true }
+metrale-sampling = { workspace = true }
 # 2026-09-25: For `FeedSource` and `RowMask`, which the `Model` trait's
 # fed-decode methods take (`src/traits/model.rs`).
-metrale-scheduler = { path = "../scheduler" }
-metrale-storage = { path = "../storage", default-features = false }
-metrale-telemetry = { path = "../telemetry" }
+metrale-scheduler = { workspace = true }
+metrale-storage = { workspace = true }
+metrale-telemetry = { workspace = true }
 # 2026-09-28: The circuit instance a `ForwardSelect::Circuit` names; also read by `padded_ladder`,
 # which checks the batch ladder against the instances' plans.
-metrale-circuit = { path = "../circuit" }
-anyhow = { workspace = true }
-half = "2"
+metrale-circuit = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
+half = { workspace = true, features = ["std"] }
 parking_lot = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
+serde = { workspace = true, features = ["std", "derive"] }
+serde_json = { workspace = true, features = ["std", "preserve_order"] }
 # 2026-10-02: `METRALE_DEBUG_ALLOC_DIGEST` (factory/build/alloc_digest.rs).
-sha2.workspace = true
-tracing = "0.1"
+sha2 = { workspace = true, features = ["alloc", "oid"] }
+tracing = { workspace = true, features = ["std", "attributes"] }
 
 [dev-dependencies]
-metrale-gpu-runtime = { path = "../gpu-runtime", default-features = false, features = ["test-utils"] }
-base64 = "0.23"
+metrale-model-layers = { workspace = true, features = ["test-utils"] }
+metrale-gpu-runtime = { workspace = true, features = ["test-utils"] }
+# 2026-10-17: Tests load real kernel tables; production code never names this crate, so a
+# kernel edit does not rebuild this one.
+metrale-kernels = { workspace = true }
+base64 = { workspace = true, features = ["std", "simd-unsafe"] }
 
 [lints]
 workspace = true
+
+[package.metadata.metrale]
+role = "device"

@@ -49,6 +49,7 @@ pub struct VerifyBatch {
     layers: Vec<CircuitLayer>,
     head: HeadBinding,
     config: ModelConfig,
+    ops: crate::layers::ops::OpsLevers,
     workspace: DevicePtr,
     workspace_bytes: u64,
     /// 2026-09-30: The widest table admitted, in rows.
@@ -98,6 +99,8 @@ pub struct Parts {
     pub layers: Vec<CircuitLayer>,
     pub head: HeadBinding,
     pub config: ModelConfig,
+    /// 2026-10-17: The launcher levers the emitters run under (`compile::Inputs::ops`).
+    pub ops: crate::layers::ops::OpsLevers,
 }
 
 impl VerifyBatch {
@@ -114,6 +117,7 @@ impl VerifyBatch {
             layers,
             head,
             config,
+            ops,
         } = parts;
         VerifyBatch {
             circuit,
@@ -125,6 +129,7 @@ impl VerifyBatch {
             layers,
             head,
             config,
+            ops,
             workspace,
             workspace_bytes,
             max_rows,
@@ -177,6 +182,7 @@ impl VerifyBatch {
             layers: &self.layers,
             head: &self.head,
             draft: None,
+            ops: self.ops,
         };
         let program = compile::compile(
             &self.circuit,

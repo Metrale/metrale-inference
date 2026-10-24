@@ -8,8 +8,10 @@
 //! Invariants:
 //! - A report or plan with no applicable route renders exactly as it did before routes existed.
 
-use std::collections::BTreeSet;
-use std::fmt::Write as _;
+use crate::prelude::*;
+
+use alloc::collections::BTreeSet;
+use core::fmt::Write as _;
 
 use super::gaps::{GapTable, gap_table};
 use super::plan::Resolved;
@@ -105,8 +107,8 @@ pub(super) fn routes_section(s: &mut String, r: &HwReport) {
         let (runs, instead) = primary.map(|q| swapped(q, p)).unwrap_or_default();
         let _ = writeln!(
             s,
-            "| decode C={} ({} n={}) | `{}` | {:.3} | {:.3} | {} | {} | {} | {} |",
-            p.rows,
+            "| {} ({} n={}) | `{}` | {:.3} | {:.3} | {} | {} | {} | {} |",
+            super::render::case_name(p),
             p.mode.name(),
             p.rows,
             row.route.id,

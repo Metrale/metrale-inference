@@ -10,7 +10,9 @@
 //! - Every in-plan edge appears exactly once: as a fused edge of the group it lives in, as a
 //!   written output of the group that stores it, or as a plan input.
 
-use std::fmt::Write as _;
+use crate::prelude::*;
+
+use core::fmt::Write as _;
 
 use crate::fuser::{EdgeState, FusionPlan, Group, Policy};
 use crate::ir::{Circuit, NodeIdx};
@@ -240,6 +242,10 @@ fn group_line(circuit: &Circuit, plan: &FusionPlan, g: usize) -> String {
         members.join(","),
         grp.rule
     );
+    // 2026-10-23: A collective group's all-reduce path ([`crate::collective`]).
+    if let Some(p) = grp.path {
+        line.push_str(&format!(" path={p}"));
+    }
     let mut fused = Vec::new();
     let mut writes = Vec::new();
     for &n in &grp.nodes {

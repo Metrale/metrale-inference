@@ -37,7 +37,7 @@ Two reasons that both land on 16:
 
 Later Blackwell parts have a single-instruction conversion: `cvt.rn.satfinite.e2m1x2.f32` takes two floats and emits two E2M1 nibbles. SM121 **does not have this instruction**. It is the headline hardware limitation of GB10 NVFP4.
 
-Metrale Engine's software fix — `e2m1_branchless.cu` — does the conversion in 7 ALU ops using the IEEE-754 bit pattern:
+Metrale Engine's software fix — `nvfp4_float_to_e2m1` in `reshape_and_cache.cu` — does the conversion in 7 ALU ops using the IEEE-754 bit pattern:
 
 ```cuda
 // Simplified sketch: convert a positive f32 to a 3-bit magnitude nibble.
@@ -113,7 +113,7 @@ The Hopper and B200 targets compile `kernels/gb10/common` with `METRALE_NO_WARP_
 
 ## Files to read
 
-- `kernels/gb10/common/e2m1_branchless.cu` — the conversion.
+- `kernels/gb10/common/reshape_and_cache.cu` (`nvfp4_float_to_e2m1`) — the conversion.
 - `kernels/gb10/common/moe_prefill.cu`, `w4a16_gemm.cu`, `w4a16_gemv.cu` — the GEMM tiles + fragment-time dequant.
 - `kernels/gb10/common/w4a4_gemv_mx.cu` — the W4A4 FP4 block-scale GEMV.
 - `kernels/gb10/common/paged_decode_attn_nvfp4.cu` — the NVFP4 KV attention.

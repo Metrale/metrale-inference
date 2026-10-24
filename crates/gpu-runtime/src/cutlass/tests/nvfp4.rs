@@ -24,6 +24,7 @@ use super::*;
 #[test]
 #[ignore = "requires a free CUDA device and CUTLASS_HOME build"]
 fn cutlass_nvfp4_projection_numeric_comparator() {
+    fix_declared_workspace();
     // 2026-09-25: The weight scale layout depends on N and K only, so a small M
     // keeps the host reference cheap.
     const M: usize = 128;
@@ -194,6 +195,7 @@ fn cutlass_nvfp4_projection_numeric_comparator() {
 #[test]
 #[ignore = "requires a free CUDA device and CUTLASS_HOME build"]
 fn cutlass_nvfp4_transpose_is_bit_exact() {
+    fix_declared_workspace();
     // 2026-09-25: The `[K/2,N] -> [N,K/2]` transpose that `cutlass_nvfp4_proj`
     // (metrale-model-layers) applies through
     // `cutlass_nvfp4_weight_transposed_cached`. A golden `[N,K/2]` pack is

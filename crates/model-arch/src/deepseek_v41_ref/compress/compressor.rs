@@ -10,15 +10,14 @@
 //! Invariants: none beyond the types.
 
 use super::super::hc::rms_norm;
-use super::super::moe::linear_bf16;
+use super::super::mat::{OutPrec, Weight, linear};
 use super::super::to_bf16_rne;
-use super::linear_f32;
 
-/// 2026-09-25: `wkv` holds f32 values at ratio > 1 and bf16 values at ratio 1;
+/// 2026-09-25: `wkv` projects to f32 at ratio > 1 and to bf16 at ratio 1;
 /// `wgate` is required at ratio > 1 only.
-pub struct CompressorWeights<'a> {
-    pub wkv: &'a [f32],
-    pub wgate: Option<&'a [f32]>,
+pub struct CompressorWeights<'a, W: Weight + ?Sized = [f32]> {
+    pub wkv: &'a W,
+    pub wgate: Option<&'a W>,
     pub norm: &'a [f32],
 }
 
@@ -39,28 +38,29 @@ impl CompressorState {
 /// 2026-09-25: The pre-RoPE latent `[groups][hd]` (bf16 values), or `None` while
 /// a group is still filling (prefill shorter than `ratio`, or a decode step
 /// that does not complete a group).
-pub fn compressor(
+pub fn compressor<W: Weight + ?Sized>(
     x: &[f32],
     seqlen: usize,
     start_pos: usize,
     ratio: usize,
     dim: usize,
     hd: usize,
-    w: &CompressorWeights,
+    w: &CompressorWeights<'_, W>,
     st: &mut CompressorState,
     eps: f32,
 ) -> Option<Vec<f32>> {
     if ratio == 1 {
         return Some(rms_norm(
-            &linear_bf16(x, w.wkv, seqlen, dim, hd),
+            &linear(w.wkv, x, seqlen, dim, hd, OutPrec::Bf16),
             w.norm,
             seqlen,
             hd,
             eps,
         ));
     }
-    let kv = linear_f32(x, w.wkv, seqlen, dim, hd);
-    let score = linear_f32(x, w.wgate.expect("wgate at ratio > 1"), seqlen, dim, hd);
+    let kv = linear(w.wkv, x, seqlen, dim, hd, OutPrec::F32);
+    let wgate = w.wgate.expect("wgate at ratio > 1");
+    let score = linear(wgate, x, seqlen, dim, hd, OutPrec::F32);
     let pool = |kvg: &[f32], scg: &[f32]| -> Vec<f32> {
         // 2026-09-25: Softmax over the `ratio` members per dimension, then the
         // weighted sum.

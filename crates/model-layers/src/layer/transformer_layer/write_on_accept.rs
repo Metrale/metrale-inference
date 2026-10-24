@@ -88,4 +88,20 @@ pub trait LayerWriteOnAccept {
     ) -> Result<bool> {
         Ok(false)
     }
+
+    /// 2026-10-08: Under `--ssm-rollback-mode replay`, commit `accepted` of the `k_rows`
+    /// rows of this sequence's last verify (the anchor row included): the state after row
+    /// `accepted - 1`, rebuilt from the slot's checkpoint by replaying the recorded rows.
+    /// `Ok(false)` (the default) means the layer has no replay commit
+    /// (`LayerCapabilities::supports_ssm_replay` is false).
+    fn ssm_replay_commit(
+        &self,
+        _gpu: &dyn GpuBackend,
+        _state: &mut dyn crate::layer::LayerState,
+        _accepted: usize,
+        _k_rows: usize,
+        _stream: u64,
+    ) -> Result<bool> {
+        Ok(false)
+    }
 }

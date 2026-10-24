@@ -1,0 +1,414 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+
+# 2026-10-18: The DeepSeek-V4.1 (`deepseek_v41`) attention sites that compress nothing: the
+# sliding-window layers (`swa`), and the layers that read a compressed cache an earlier layer
+# wrote (`csa_reuse`, `hca_reuse`). Split out of kernels/circuits/deepseek_v41.toml to keep each
+# file short; only that circuit includes it.
+#
+# Owner: metrale-circuit (schema: crates/circuit/src/circuit_toml.rs).
+# Invariants:
+# - Every site is hc_mix -> hc_pre -> rms_norm -> attention -> hc_post on the `hc` streams.
+# - Every layer keeps a sliding window: q = wq_b(rmsnorm(wq_a(x))), one shared latent row
+#   kv = rmsnorm(wkv(x)) per token, both rotated on their last `rope_dim` channels; keys and
+#   values are the latent itself (no `kv_b_proj`), with a learned sink logit per head. The
+#   output is rotated back, then `wo_a` projects each of `o_groups` head groups to its own
+#   `o_lora` latent and `wo_b` mixes them.
+# - A reuse site attends the window plus the rows of the nearest earlier layer's `ckv` cache
+#   that layer's indexer selected; it holds no cache of its own and reads no selection edge
+#   (the selection is that layer's, reused across the layer boundary).
+# - Declared precision (precision/deepseek-v4.1-flash-mxfp4.toml): the five attention
+#   projections are FP8 with one E8M0 scale per 32x32 block; norms, the sink and the
+#   hyper-connection parameters are BF16/FP32 tensors outside the precision table.
+
+schema = 1
+description = "DeepSeek-V4.1 attention sites without a compressor: sliding window, compressed-cache reuse"
+
+[block.swa]
+stream_in = "x"
+stream_out = "y"
+
+# 2026-10-18: The sliding-window ring: the last `window` latent rows, each FP8 with one E8M0
+# scale per 32 channels; a window, so a verify rolls it back like a conv state.
+[[block.swa.state]]
+id = "window"
+kind = "recurrent"
+lifetime = "sequence"
+format = "u8"
+shape = "window x head_dim+head_dim/32"
+verify = "conv_steps"
+
+[[block.swa.node]]
+id = "mix"
+op = "linear"
+role = "hc_mix"
+in = ["x"]
+out = [{ edge = "mix", format = "f32", shape = "n x hc*hc+hc*2" }]
+binding = ["{L}.hc_attn_fn"]
+unquantized = true
+
+[[block.swa.node]]
+id = "pre"
+op = "hc_pre"
+in = ["x", "mix"]
+out = [
+  { edge = "u", format = "bf16", shape = "n x hidden" },
+  { edge = "post", format = "f32", shape = "n x hc" },
+  { edge = "comb", format = "f32", shape = "n x hc*hc" },
+]
+binding = ["{L}.hc_attn_scale", "{L}.hc_attn_base"]
+
+[[block.swa.node]]
+id = "attn_norm"
+op = "rms_norm"
+in = ["u"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.attn_norm"]
+params = { weight_form = "plain" }
+
+[[block.swa.node]]
+id = "q_a"
+op = "linear"
+role = "mla_q_a"
+in = ["xn"]
+out = [{ edge = "qa", format = "bf16", shape = "n x q_lora" }]
+binding = ["{L}.attn.wq_a"]
+
+[[block.swa.node]]
+id = "q_norm"
+op = "rms_norm"
+in = ["qa"]
+out = [{ edge = "qan", format = "bf16", shape = "n x q_lora" }]
+binding = ["{L}.attn.q_norm"]
+params = { weight_form = "plain" }
+
+[[block.swa.node]]
+id = "q_b"
+op = "linear"
+role = "mla_q_b"
+in = ["qan"]
+out = [{ edge = "q", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.attn.wq_b"]
+
+[[block.swa.node]]
+id = "kv"
+op = "linear"
+role = "mla_kv_a"
+in = ["xn"]
+out = [{ edge = "kva", format = "bf16", shape = "n x head_dim" }]
+binding = ["{L}.attn.wkv"]
+
+[[block.swa.node]]
+id = "kv_norm"
+op = "rms_norm"
+in = ["kva"]
+out = [{ edge = "kvn", format = "bf16", shape = "n x head_dim" }]
+binding = ["{L}.attn.kv_norm"]
+params = { weight_form = "plain" }
+
+[[block.swa.node]]
+id = "rope"
+op = "rope"
+in = ["q", "kvn"]
+out = [
+  { edge = "qr", format = "bf16", shape = "n x q_heads*head_dim" },
+  { edge = "kvr", format = "bf16", shape = "n x head_dim" },
+]
+
+[[block.swa.node]]
+id = "attend"
+op = "latent_sparse_attention"
+state = { window = "update" }
+in = ["qr", "kvr"]
+out = [{ edge = "a", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.attn.attn_sink"]
+params = { compressed = "none" }
+
+[[block.swa.node]]
+id = "unrope"
+op = "rope"
+in = ["a"]
+out = [{ edge = "au", format = "bf16", shape = "n x q_heads*head_dim" }]
+params = { inverse = "true" }
+
+[[block.swa.node]]
+id = "o_a"
+op = "linear"
+role = "o_a"
+in = ["au"]
+out = [{ edge = "oa", format = "bf16", shape = "n x o_groups*o_lora" }]
+binding = ["{L}.attn.wo_a"]
+params = { groups = "{o_groups}" }
+
+[[block.swa.node]]
+id = "o"
+op = "linear"
+role = "o"
+in = ["oa"]
+out = [{ edge = "o", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.attn.wo_b"]
+
+[[block.swa.node]]
+id = "post"
+op = "hc_post"
+in = ["o", "x", "post", "comb"]
+out = [{ edge = "y", format = "bf16", shape = "n x hc*hidden" }]
+
+[block.csa_reuse]
+stream_in = "x"
+stream_out = "y"
+
+# 2026-10-18: The sliding-window ring: the last `window` latent rows, each FP8 with one E8M0
+# scale per 32 channels; a window, so a verify rolls it back like a conv state.
+[[block.csa_reuse.state]]
+id = "window"
+kind = "recurrent"
+lifetime = "sequence"
+format = "u8"
+shape = "window x head_dim+head_dim/32"
+verify = "conv_steps"
+
+[[block.csa_reuse.node]]
+id = "mix"
+op = "linear"
+role = "hc_mix"
+in = ["x"]
+out = [{ edge = "mix", format = "f32", shape = "n x hc*hc+hc*2" }]
+binding = ["{L}.hc_attn_fn"]
+unquantized = true
+
+[[block.csa_reuse.node]]
+id = "pre"
+op = "hc_pre"
+in = ["x", "mix"]
+out = [
+  { edge = "u", format = "bf16", shape = "n x hidden" },
+  { edge = "post", format = "f32", shape = "n x hc" },
+  { edge = "comb", format = "f32", shape = "n x hc*hc" },
+]
+binding = ["{L}.hc_attn_scale", "{L}.hc_attn_base"]
+
+[[block.csa_reuse.node]]
+id = "attn_norm"
+op = "rms_norm"
+in = ["u"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.attn_norm"]
+params = { weight_form = "plain" }
+
+[[block.csa_reuse.node]]
+id = "q_a"
+op = "linear"
+role = "mla_q_a"
+in = ["xn"]
+out = [{ edge = "qa", format = "bf16", shape = "n x q_lora" }]
+binding = ["{L}.attn.wq_a"]
+
+[[block.csa_reuse.node]]
+id = "q_norm"
+op = "rms_norm"
+in = ["qa"]
+out = [{ edge = "qan", format = "bf16", shape = "n x q_lora" }]
+binding = ["{L}.attn.q_norm"]
+params = { weight_form = "plain" }
+
+[[block.csa_reuse.node]]
+id = "q_b"
+op = "linear"
+role = "mla_q_b"
+in = ["qan"]
+out = [{ edge = "q", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.attn.wq_b"]
+
+[[block.csa_reuse.node]]
+id = "kv"
+op = "linear"
+role = "mla_kv_a"
+in = ["xn"]
+out = [{ edge = "kva", format = "bf16", shape = "n x head_dim" }]
+binding = ["{L}.attn.wkv"]
+
+[[block.csa_reuse.node]]
+id = "kv_norm"
+op = "rms_norm"
+in = ["kva"]
+out = [{ edge = "kvn", format = "bf16", shape = "n x head_dim" }]
+binding = ["{L}.attn.kv_norm"]
+params = { weight_form = "plain" }
+
+[[block.csa_reuse.node]]
+id = "rope"
+op = "rope"
+in = ["q", "kvn"]
+out = [
+  { edge = "qr", format = "bf16", shape = "n x q_heads*head_dim" },
+  { edge = "kvr", format = "bf16", shape = "n x head_dim" },
+]
+
+[[block.csa_reuse.node]]
+id = "attend"
+op = "latent_sparse_attention"
+state = { window = "update" }
+in = ["qr", "kvr"]
+out = [{ edge = "a", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.attn.attn_sink"]
+params = { compressed = "ckv", ratio = "csa_ratio" }
+
+[[block.csa_reuse.node]]
+id = "unrope"
+op = "rope"
+in = ["a"]
+out = [{ edge = "au", format = "bf16", shape = "n x q_heads*head_dim" }]
+params = { inverse = "true" }
+
+[[block.csa_reuse.node]]
+id = "o_a"
+op = "linear"
+role = "o_a"
+in = ["au"]
+out = [{ edge = "oa", format = "bf16", shape = "n x o_groups*o_lora" }]
+binding = ["{L}.attn.wo_a"]
+params = { groups = "{o_groups}" }
+
+[[block.csa_reuse.node]]
+id = "o"
+op = "linear"
+role = "o"
+in = ["oa"]
+out = [{ edge = "o", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.attn.wo_b"]
+
+[[block.csa_reuse.node]]
+id = "post"
+op = "hc_post"
+in = ["o", "x", "post", "comb"]
+out = [{ edge = "y", format = "bf16", shape = "n x hc*hidden" }]
+
+[block.hca_reuse]
+stream_in = "x"
+stream_out = "y"
+
+# 2026-10-18: The sliding-window ring: the last `window` latent rows, each FP8 with one E8M0
+# scale per 32 channels; a window, so a verify rolls it back like a conv state.
+[[block.hca_reuse.state]]
+id = "window"
+kind = "recurrent"
+lifetime = "sequence"
+format = "u8"
+shape = "window x head_dim+head_dim/32"
+verify = "conv_steps"
+
+[[block.hca_reuse.node]]
+id = "mix"
+op = "linear"
+role = "hc_mix"
+in = ["x"]
+out = [{ edge = "mix", format = "f32", shape = "n x hc*hc+hc*2" }]
+binding = ["{L}.hc_attn_fn"]
+unquantized = true
+
+[[block.hca_reuse.node]]
+id = "pre"
+op = "hc_pre"
+in = ["x", "mix"]
+out = [
+  { edge = "u", format = "bf16", shape = "n x hidden" },
+  { edge = "post", format = "f32", shape = "n x hc" },
+  { edge = "comb", format = "f32", shape = "n x hc*hc" },
+]
+binding = ["{L}.hc_attn_scale", "{L}.hc_attn_base"]
+
+[[block.hca_reuse.node]]
+id = "attn_norm"
+op = "rms_norm"
+in = ["u"]
+out = [{ edge = "xn", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.attn_norm"]
+params = { weight_form = "plain" }
+
+[[block.hca_reuse.node]]
+id = "q_a"
+op = "linear"
+role = "mla_q_a"
+in = ["xn"]
+out = [{ edge = "qa", format = "bf16", shape = "n x q_lora" }]
+binding = ["{L}.attn.wq_a"]
+
+[[block.hca_reuse.node]]
+id = "q_norm"
+op = "rms_norm"
+in = ["qa"]
+out = [{ edge = "qan", format = "bf16", shape = "n x q_lora" }]
+binding = ["{L}.attn.q_norm"]
+params = { weight_form = "plain" }
+
+[[block.hca_reuse.node]]
+id = "q_b"
+op = "linear"
+role = "mla_q_b"
+in = ["qan"]
+out = [{ edge = "q", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.attn.wq_b"]
+
+[[block.hca_reuse.node]]
+id = "kv"
+op = "linear"
+role = "mla_kv_a"
+in = ["xn"]
+out = [{ edge = "kva", format = "bf16", shape = "n x head_dim" }]
+binding = ["{L}.attn.wkv"]
+
+[[block.hca_reuse.node]]
+id = "kv_norm"
+op = "rms_norm"
+in = ["kva"]
+out = [{ edge = "kvn", format = "bf16", shape = "n x head_dim" }]
+binding = ["{L}.attn.kv_norm"]
+params = { weight_form = "plain" }
+
+[[block.hca_reuse.node]]
+id = "rope"
+op = "rope"
+in = ["q", "kvn"]
+out = [
+  { edge = "qr", format = "bf16", shape = "n x q_heads*head_dim" },
+  { edge = "kvr", format = "bf16", shape = "n x head_dim" },
+]
+
+[[block.hca_reuse.node]]
+id = "attend"
+op = "latent_sparse_attention"
+state = { window = "update" }
+in = ["qr", "kvr"]
+out = [{ edge = "a", format = "bf16", shape = "n x q_heads*head_dim" }]
+binding = ["{L}.attn.attn_sink"]
+params = { compressed = "ckv", ratio = "hca_ratio" }
+
+[[block.hca_reuse.node]]
+id = "unrope"
+op = "rope"
+in = ["a"]
+out = [{ edge = "au", format = "bf16", shape = "n x q_heads*head_dim" }]
+params = { inverse = "true" }
+
+[[block.hca_reuse.node]]
+id = "o_a"
+op = "linear"
+role = "o_a"
+in = ["au"]
+out = [{ edge = "oa", format = "bf16", shape = "n x o_groups*o_lora" }]
+binding = ["{L}.attn.wo_a"]
+params = { groups = "{o_groups}" }
+
+[[block.hca_reuse.node]]
+id = "o"
+op = "linear"
+role = "o"
+in = ["oa"]
+out = [{ edge = "o", format = "bf16", shape = "n x hidden" }]
+binding = ["{L}.attn.wo_b"]
+
+[[block.hca_reuse.node]]
+id = "post"
+op = "hc_post"
+in = ["o", "x", "post", "comb"]
+out = [{ edge = "y", format = "bf16", shape = "n x hc*hidden" }]

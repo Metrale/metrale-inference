@@ -66,16 +66,14 @@ pub(super) fn compact(messages: &mut [Value]) {
     }
 }
 
-/// 2026-09-26: `METRALE_AGENTIC_PRESERVE_THINKING=1`: echo each turn's non-empty
-/// reasoning as `reasoning_content` in its assistant message, and send
-/// `preserve_thinking: true` in `chat_template_kwargs`. Off by default; read
-/// once per process.
-pub(super) fn preserve_thinking() -> bool {
-    static V: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *V.get_or_init(|| std::env::var("METRALE_AGENTIC_PRESERVE_THINKING").as_deref() == Ok("1"))
-}
-
-pub(super) fn assistant_message(outcome: &crate::http::ChatOutcome, turn: usize) -> Value {
+/// 2026-10-17: `preserve_thinking` is the resolved `METRALE_AGENTIC_PRESERVE_THINKING`: echo
+/// the turn's non-empty reasoning as `reasoning_content` (`request_body` sends the matching
+/// `preserve_thinking: true` template kwarg).
+pub(super) fn assistant_message(
+    outcome: &crate::http::ChatOutcome,
+    turn: usize,
+    preserve_thinking: bool,
+) -> Value {
     let calls: Vec<Value> = outcome
         .tool_calls
         .iter()
@@ -89,7 +87,7 @@ pub(super) fn assistant_message(outcome: &crate::http::ChatOutcome, turn: usize)
     let text = &outcome.text;
     let mut msg = json!({"role": "assistant", "tool_calls": calls,
         "content": if text.is_empty() { Value::Null } else { Value::String(text.clone()) }});
-    if preserve_thinking() && !outcome.reasoning.trim().is_empty() {
+    if preserve_thinking && !outcome.reasoning.trim().is_empty() {
         msg["reasoning_content"] = Value::String(outcome.reasoning.clone());
     }
     msg

@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-kernel-set"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: the types of a compiled kernel registry (targets, MODEL.toml defaults, resolution), without the kernels."
+
+# 2026-10-24: Split from metrale-kernels so the server library names these types without
+# depending on the crate whose build script compiles the kernels. No build script, no features.
+[dependencies]
+metrale-kernel-target = { workspace = true }
+
+[lints]
+workspace = true
+
+[package.metadata.metrale]
+role = "device"

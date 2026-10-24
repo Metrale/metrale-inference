@@ -27,6 +27,22 @@ pub struct Glm5NextKdaConfig {
 }
 
 impl Glm5NextKdaConfig {
+    /// 2026-10-08: The block geometry of `config` (after any tensor-parallel sharding of its
+    /// `linear_*` fields). `l2_eps` and `chunk` are fixed here; every other field is read from
+    /// the config. The loader and the replay-record sizing both build it here.
+    pub fn from_model_config(config: &metrale_config::ModelConfig) -> Self {
+        Self {
+            hidden: config.hidden_size,
+            heads: config.linear_num_value_heads,
+            head_dim: config.linear_value_head_dim,
+            conv_kernel: config.linear_conv_kernel_dim,
+            gate_lower_bound: config.linear_gate_lower_bound,
+            rms_norm_eps: config.rms_norm_eps as f32,
+            l2_eps: 1e-6,
+            chunk: 32,
+        }
+    }
+
     pub fn qkv_dim(&self) -> usize {
         self.heads * self.head_dim
     }
@@ -76,6 +92,8 @@ impl Glm5NextKdaConfig {
 
 /// 2026-09-25: One KDA block's device weights. Torch `Linear` layout `[out, in]`, BF16, except the
 /// two F32 gate parameters. There is no `Z` tensor; the output gate is low-rank `g_a`/`g_b`.
+/// 2026-10-23: Clone: pointers only (the paired A/B's per-step lever view, `with_levers`).
+#[derive(Clone)]
 pub struct Glm5NextKdaWeights {
     pub q_proj: DenseWeight,
     pub k_proj: DenseWeight,

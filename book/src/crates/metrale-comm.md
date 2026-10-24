@@ -94,7 +94,7 @@ The unit tests for the expert-parallel layer code do not instantiate `NcclBacken
 ## What's explicitly not here
 
 - **No kernel code.** The EP=2 token-dispatch logic lives in Rust at `crates/model-layers/src/layers/moe/forward_ep.rs`, and the routed grouped-GEMM kernel in `kernels/gb10/common/moe_w4a16_grouped_gemm.cu`.
-- **No scheduler logic.** That's `metrale-server::scheduler`.
+- **No scheduler logic.** That's `metrale_server::scheduler`.
 - **No RDMA-specific code.** Metrale Engine talks through NCCL; NCCL talks through `libibverbs`/`librdmacm`. We do not bypass.
 
-Adding a new collective-ops library is a single `impl CommBackend` in a new module here plus a selection arm in `metrale-server::main` that picks the right backend given the vendor.
+Adding a new collective-ops library is a single `impl CommBackend` in a new module here plus a selection arm in `met::main` that picks the right backend given the vendor.

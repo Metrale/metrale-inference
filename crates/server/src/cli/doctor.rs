@@ -12,6 +12,8 @@
 use anyhow::Result;
 use metrale_bench::artifacts::{HomeFault, MetraleHome};
 use metrale_bench::gate;
+use metrale_bench::levers::BenchLevers;
+use metrale_settings::Env;
 
 pub struct Finding {
     pub label: &'static str,
@@ -40,9 +42,18 @@ impl Finding {
     }
 }
 
+/// 2026-10-17: The home every check reads, resolved once from `env`. A malformed lever, or no
+/// usable `METRALE_HOME` or `HOME`, is an `Err` that `check_home` reports as a finding.
+///
+/// # Errors
+/// The first lever that fails to resolve, or a home that cannot be placed.
+pub fn resolve_home(env: &impl Env) -> Result<MetraleHome> {
+    MetraleHome::resolve(&BenchLevers::resolve(env)?)
+}
+
 /// 2026-09-26: Where the home is, and where that came from (`MetraleHome::describe`).
-pub fn check_home() -> Finding {
-    match MetraleHome::resolve() {
+pub fn check_home(home: &Result<MetraleHome>) -> Finding {
+    match home {
         Err(e) => Finding::bad(
             "home",
             format!("cannot be resolved: {e:#}"),
@@ -54,8 +65,8 @@ pub fn check_home() -> Finding {
 
 /// 2026-09-26: Can this process write there? `MetraleHome::fault` probes by
 /// writing, not by reading a mode bit.
-pub fn check_writable() -> Finding {
-    let Ok(h) = MetraleHome::resolve() else {
+pub fn check_writable(home: &Result<MetraleHome>) -> Finding {
+    let Ok(h) = home else {
         return Finding::bad(
             "writable",
             "skipped — the home could not be resolved",
@@ -83,8 +94,8 @@ pub fn check_writable() -> Finding {
 ///
 /// A `.pub` that `signing::register` wrote on disk proves only that this box
 /// once signed something, so `committed_signers` asks `git ls-files`.
-pub fn check_identity(repo_root: Option<&std::path::Path>) -> Finding {
-    let Ok(h) = MetraleHome::resolve() else {
+pub fn check_identity(home: &Result<MetraleHome>, repo_root: Option<&std::path::Path>) -> Finding {
+    let Ok(h) = home else {
         return Finding::bad(
             "identity",
             "skipped — the home could not be resolved",
@@ -136,8 +147,8 @@ pub fn check_identity(repo_root: Option<&std::path::Path>) -> Finding {
 }
 
 /// 2026-09-26: Has the recipe index been populated, and can it be read?
-pub fn check_recipes() -> Finding {
-    let Ok(h) = MetraleHome::resolve() else {
+pub fn check_recipes(home: &Result<MetraleHome>) -> Finding {
+    let Ok(h) = home else {
         return Finding::bad(
             "recipes",
             "skipped — the home could not be resolved",
@@ -187,12 +198,15 @@ pub fn check_recipes() -> Finding {
     }
 }
 
-pub fn run(repo_root: Option<&std::path::Path>) -> (Vec<Finding>, bool) {
+pub fn run(
+    home: &Result<MetraleHome>,
+    repo_root: Option<&std::path::Path>,
+) -> (Vec<Finding>, bool) {
     let findings = vec![
-        check_home(),
-        check_writable(),
-        check_identity(repo_root),
-        check_recipes(),
+        check_home(home),
+        check_writable(home),
+        check_identity(home, repo_root),
+        check_recipes(home),
     ];
     let bad = findings.iter().any(|f| f.problem);
     (findings, bad)
@@ -201,7 +215,8 @@ pub fn run(repo_root: Option<&std::path::Path>) -> (Vec<Finding>, bool) {
 /// 2026-09-26: `met doctor`. Exit code 1 when any finding is a problem.
 pub fn dispatch() -> Result<i32> {
     let repo_root = super::bench_run::repo_root().ok();
-    let (findings, bad) = run(repo_root.as_deref());
+    let home = resolve_home(&metrale_io_host_std::ProcessEnv);
+    let (findings, bad) = run(&home, repo_root.as_deref());
     for f in &findings {
         let mark = if f.problem { "PROBLEM" } else { "ok" };
         println!("{:>8}  {:<9} {}", mark, f.label, f.detail);

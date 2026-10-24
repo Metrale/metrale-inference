@@ -41,13 +41,13 @@ pub(crate) mod phase_qk_absorbed;
 mod yarn;
 
 impl ModelWeightLoader for MistralWeightLoader {
-    fn supports_tp(&self) -> bool {
+    fn tp_support(&self) -> metrale_config::TpSupport {
         // 2026-09-25: Under TP, `phase_lora_qkv` shards wq_b and wkv_b
         // column-parallel on the head axis; wq_a, wkv_a and the two latent
         // norms stay replicated. The per-head steps loop over
         // `num_key_value_heads`, which the server has already divided by the
         // TP size, so they build this rank's heads only.
-        true
+        metrale_config::TpSupport::Even
     }
 
     fn load_layers(
@@ -56,8 +56,9 @@ impl ModelWeightLoader for MistralWeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         layer_kv_dtypes: &[KvCacheDtype],
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
-        self.load_layers_inner(store, config, gpu, layer_kv_dtypes)
+        self.load_layers_inner(store, config, gpu, layer_kv_dtypes, lc)
     }
 
     fn load_embedding(
@@ -127,6 +128,7 @@ impl MistralWeightLoader {
         config: &ModelConfig,
         gpu: &dyn GpuBackend,
         layer_kv_dtypes: &[KvCacheDtype],
+        lc: metrale_model_layers::load_context::LoadContext<'_>,
     ) -> Result<Vec<Box<dyn TransformerLayer>>> {
         let n = config.num_hidden_layers;
         let q_lora = config.q_lora_rank;
@@ -147,17 +149,18 @@ impl MistralWeightLoader {
         let mut layers: Vec<Box<dyn TransformerLayer>> = Vec::with_capacity(n);
         let mut yarn_inv_freq_shared = metrale_gpu_runtime::gpu::DevicePtr::NULL;
 
+        let absorb = crate::mla_absorb::AbsorbThreads::from_settings(lc.settings);
         for i in 0..n {
             let mut ctx =
                 ctx::MistralLayerCtx::new(store, config, gpu, absmax_k, quantize_k, stream, i);
             phase_lora_qkv::load_lora_qkv(&mut ctx)?;
             phase_per_head::build_per_head_views(&mut ctx)?;
-            phase_qk_absorbed::build_w_qk_absorbed(&mut ctx)?;
+            phase_qk_absorbed::build_w_qk_absorbed(&mut ctx, absorb)?;
             phase_block_diag::build_block_diagonals(&mut ctx)?;
             phase_o_proj::load_o_proj(&mut ctx)?;
             let yarn_inv_freq =
                 ctx::ensure_yarn_inv_freq(&mut yarn_inv_freq_shared, config, rope, gpu)?;
-            let layer = phase_assemble::assemble_layer(ctx, yarn_inv_freq, layer_kv_dtypes)?;
+            let layer = phase_assemble::assemble_layer(ctx, yarn_inv_freq, layer_kv_dtypes, lc)?;
             layers.push(layer);
 
             if (i + 1) % 6 == 0 || i == n - 1 {

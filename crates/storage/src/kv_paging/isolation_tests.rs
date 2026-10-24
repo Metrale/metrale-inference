@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::num::NonZeroU64;
 
-use super::ns::{derive_kv_ns, wire_key};
+use super::ns::{FNV_OFFSET, KV_DOMAIN, derive_kv_ns, fnv1a_64, wire_key};
 use crate::group::{GroupKey, GroupLayout, KvKind};
 use crate::snapshot_swap::{MemSwapStore, Residency, VecSlotArena};
 
@@ -37,8 +37,11 @@ struct Client {
 
 impl Client {
     fn new(fp: u64, salt: u64) -> Self {
+        Self::with_codec(fp, salt, CODEC_A)
+    }
+    fn with_codec(fp: u64, salt: u64, codec_salt: u64) -> Self {
         Self {
-            ns: derive_kv_ns(fp, &layout(), 2, 16, 128, salt),
+            ns: derive_kv_ns(fp, &layout(), 2, 16, 128, salt, codec_salt),
         }
     }
     fn key(&self, layer: u32, block: u32) -> u64 {
@@ -63,6 +66,9 @@ impl Client {
 const FP_A: u64 = 0x5629_922c_51a1_6a10;
 const FP_B: u64 = 0x971e_b3b4_bd13_22f1;
 const SALT: u64 = 0x0BAD_5EED;
+// 2026-10-18: Two `KvCacheConfig::spill_salt` values; the namespace treats them as opaque.
+const CODEC_A: u64 = 0xC0DE_0000_0000_000A;
+const CODEC_B: u64 = 0xC0DE_0000_0000_000B;
 
 #[test]
 fn two_models_do_not_cross_serve() {
@@ -187,4 +193,73 @@ fn disk_id_reuse_overwrites_in_place() {
     c.put(&mut peer, 0, 7, 0x01);
     c.put(&mut peer, 0, 7, 0x02);
     assert_eq!(c.get(&mut peer, 0, 7), Some(vec![0x02; BB]));
+}
+
+// 2026-10-18: Two codecs can share a byte layout (nvfp4 and turbo4), so a model served under
+// one must miss the blocks it spilled under the other: the codec salt separates them.
+#[test]
+fn two_codecs_of_one_model_do_not_cross_serve() {
+    let mut peer = peer(8);
+    let a = Client::with_codec(FP_A, SALT, CODEC_A);
+    let b = Client::with_codec(FP_A, SALT, CODEC_B);
+    assert_ne!(a.ns, b.ns);
+    a.put(&mut peer, 1, 3, 0xA4);
+    assert_eq!(
+        b.get(&mut peer, 1, 3),
+        None,
+        "a block spilled under one codec must MISS under another"
+    );
+    assert_eq!(a.get(&mut peer, 1, 3), Some(vec![0xA4; BB]));
+}
+
+/// 2026-10-18: The version-1 namespace encoding (no codec salt) for 2-byte elements, block 16
+/// and head_dim 128, kept here as the reference for blocks spilled before the bump.
+fn derive_kv_ns_v1(fp: u64, l: &GroupLayout, salt: u64) -> NonZeroU64 {
+    let mut buf = Vec::new();
+    for (tag, v) in [
+        (0x00u8, 1u64),
+        (0x01, fp),
+        (0x02, KV_DOMAIN),
+        (0x03, 2),
+        (0x04, 16),
+        (0x05, 128),
+        (0x06, u64::from(l.num_layers)),
+        (0x07, u64::from(l.num_blocks)),
+        (0x08, u64::from(l.num_kv_heads)),
+        (0x09, l.fs_block_size),
+        (0x0a, l.group_stride),
+        (0x0b, salt),
+    ] {
+        buf.push(tag);
+        buf.extend_from_slice(&v.to_le_bytes());
+    }
+    NonZeroU64::new(fnv1a_64(&buf)).unwrap_or(NonZeroU64::new(FNV_OFFSET).unwrap())
+}
+
+// 2026-10-18: The reference above is the old encoding: it reproduces the golden namespace
+// version 1 pinned (80 layers, 4096 blocks, 8 KV heads, block 16, head_dim 128).
+#[test]
+fn the_v1_reference_reproduces_the_v1_golden() {
+    let l = GroupLayout::new(80, 4096, 8, 16, 128, 2, 4096);
+    let ns = derive_kv_ns_v1(0x5629_922c_51a1_6a10, &l, 0xD00D_F00D_0000_0001);
+    assert_eq!(ns.get(), 0x74b4_02b0_f421_5375);
+}
+
+// 2026-10-18: A block a version-1 client spilled is never read by a version-2 client of the
+// same model, salt and layout: the bump makes it a miss, never a misread.
+#[test]
+fn a_version_1_spill_is_never_read() {
+    let mut peer = peer(8);
+    let old = Client {
+        ns: derive_kv_ns_v1(FP_A, &layout(), SALT),
+    };
+    let new = Client::new(FP_A, SALT);
+    assert_ne!(old.ns, new.ns);
+    for block in 0..4 {
+        old.put(&mut peer, 0, block, 0x01);
+    }
+    for block in 0..4 {
+        assert_eq!(new.get(&mut peer, 0, block), None, "block {block}");
+        assert_eq!(old.get(&mut peer, 0, block), Some(vec![0x01; BB]));
+    }
 }

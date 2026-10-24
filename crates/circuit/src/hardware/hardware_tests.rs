@@ -293,6 +293,9 @@ context_tokens = 1
 [[family]]
 id = "attn"
 description = "test"
+explain.about = "toy"
+explain.numerics = "toy"
+explain.math = ["x"]
 compute = "cuda_core"
 kernels = ["attn_a::attn"]
 rows = [1, 1]
@@ -375,4 +378,51 @@ fn a_recipe_pin_stands_on_its_own_class_only() {
     bare.defaults.clear();
     let e = super::model::policy_on_class(&policy, Some("gb10"), &bare).unwrap_err();
     assert!(matches!(e, HwError::Class(_)), "{e}");
+}
+
+// 2026-10-22: Every report plans the verify of one draft (two rows), and evidence measured at
+// two rows counts there, and only there: a family whose record names rows [2] is measured in
+// the verify table and unmeasured at one row. Mutation: dropping the verify run from
+// `report_runs` fails the first assertion; matching evidence by mode or ignoring its rows fails
+// the class assertions.
+#[test]
+fn the_report_plans_a_two_row_verify_where_verify_keyed_evidence_is_measured() {
+    let reg = fx::registry();
+    let mut tree = fx::tree();
+    let fams = tree.files["kernels/base/common/KERNEL_FAMILIES.toml"].clone();
+    let one_row = "kernels = [\"m::down\"]\nrows = [1, 128]";
+    assert!(fams.contains(one_row), "fixture down family");
+    let (head, tail) = fams.split_at(fams.find(one_row).unwrap());
+    let tail = tail.replacen("rows = [1]\nmicrobench", "rows = [2]\nmicrobench", 1);
+    tree.files.insert(
+        "kernels/base/common/KERNEL_FAMILIES.toml".into(),
+        format!("{head}{tail}"),
+    );
+    let model = fx::model(W4A16);
+    let r = super::build_report(&reg, "fp4dev", &tree, model, "cmd".into()).unwrap();
+    let table = |mode: Mode, rows: u64| {
+        r.tables
+            .iter()
+            .find(|t| t.planned.run == Run { mode, rows })
+            .unwrap_or_else(|| panic!("no {} n={rows} table", mode.name()))
+    };
+    let down = |t: &super::gaps::GapTable| {
+        t.rows
+            .iter()
+            .find(|x| x.family.as_deref() == Some("f_down"))
+            .map(|x| x.class)
+            .expect("a down row")
+    };
+    let verify = table(Mode::Verify, 2);
+    assert_eq!(
+        down(verify),
+        Class::Shared,
+        "rows [2] evidence at verify n=2"
+    );
+    assert_eq!(down(table(Mode::Decode, 1)), Class::SharedUnmeasured);
+    let text = super::render_report(&r);
+    assert!(
+        text.contains("| verify C=1, 1 draft (every draft accepted) (verify n=2)"),
+        "the estimate names the verify case: {text}"
+    );
 }

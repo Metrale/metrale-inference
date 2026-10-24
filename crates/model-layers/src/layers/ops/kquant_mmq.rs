@@ -26,21 +26,44 @@ pub const Q6K_BLOCK_BYTES: usize = 210;
 /// 2026-09-25: A resident `[N, K]` row-major projection from the GGUF path: expanded bf16, or the
 /// raw `Q2_K` / `Q3_K` blocks (`WeightDtype::Q2K` / `Q3K`) that the K-quant GEMV and MMQ
 /// kernels read.
+///
+/// 2026-10-19: `Fp8Block` is the safetensors path's E4M3 weight with one E8M0 scale per 32 x 32
+/// tile (`scale` is `[N / 32, K / 32]`). `qdq`: the projection rounds its input to E4M3 in blocks
+/// of 32 first (the checkpoint's rule for a quantized linear).
 #[derive(Clone, Copy, Debug)]
 pub enum ResidentMat {
     Bf16(DevicePtr),
     Q2K(DevicePtr),
     Q3K(DevicePtr),
+    Fp8Block {
+        w: DevicePtr,
+        scale: DevicePtr,
+        qdq: bool,
+    },
 }
+
+/// 2026-10-19: The edge of one `ResidentMat::Fp8Block` scale tile, in rows and in columns.
+pub const FP8_BLOCK_TILE: usize = 32;
 
 impl ResidentMat {
     /// 2026-09-25: The sub-matrix starting `rows` rows in (each row `k` weights long).
+    /// 2026-10-19: For `Fp8Block`, `rows` and `k` are whole scale tiles.
     pub fn at_rows(self, rows: usize, k: usize) -> ResidentMat {
         let at = |p: DevicePtr, off: usize| DevicePtr(p.0 + off as u64);
         match self {
             ResidentMat::Bf16(p) => ResidentMat::Bf16(at(p, rows * k * 2)),
             ResidentMat::Q2K(p) => ResidentMat::Q2K(at(p, rows * (k / 256) * Q2K_BLOCK_BYTES)),
             ResidentMat::Q3K(p) => ResidentMat::Q3K(at(p, rows * (k / 256) * Q3K_BLOCK_BYTES)),
+            ResidentMat::Fp8Block { w, scale, qdq } => {
+                debug_assert!(
+                    rows.is_multiple_of(FP8_BLOCK_TILE) && k.is_multiple_of(FP8_BLOCK_TILE)
+                );
+                ResidentMat::Fp8Block {
+                    w: at(w, rows * k),
+                    scale: at(scale, (rows / FP8_BLOCK_TILE) * (k / FP8_BLOCK_TILE)),
+                    qdq,
+                }
+            }
         }
     }
 }

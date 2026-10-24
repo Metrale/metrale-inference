@@ -5,7 +5,7 @@
 //! inherent methods in `gpu_copy.rs`, `gpu_impl_graph.rs` and `redzone.rs`.
 //!
 //! Each `unsafe` block is one call: a driver function declared in
-//! `cuda_backend.rs`, `cudaMemcpy2DAsync`, or the `unsafe fn`
+//! `cuda_backend.rs`, or the `unsafe fn`
 //! `MetraleRegistry::launch_on_stream`.
 //! The caller provides what they need and nothing here checks it: the
 //! backend's context current on the calling thread (`bind_to_thread`),
@@ -29,7 +29,7 @@ use super::{
     MetraleCudaBackend, cuMemAlloc_v2, cuMemAllocManaged, cuMemFree_v2, cuMemGetInfo_v2,
     cuMemcpyDtoDAsync_v2, cuMemcpyDtoHAsync_v2, cuStreamSynchronize,
 };
-use crate::gpu::{DevicePtr, GpuBackend, GraphHandle, KernelHandle};
+use crate::gpu::{DevicePtr, GpuBackend, GraphHandle, KernelHandle, Memcpy2d};
 
 mod d2h_trace;
 mod h2d;
@@ -47,11 +47,11 @@ impl GpuBackend for MetraleCudaBackend {
         // and only for creation indices >= `METRALE_REDZONE_MIN_IDX`):
         // allocate `pad` extra bytes after the buffer and return the base, so
         // the caller's pointer is what an unpadded allocation would give. The
-        // pad is filled with `redzone_fill()` here and checked by
+        // pad is filled with the configured fill here and checked by
         // `scan_redzones`.
         let seq = super::ALLOC_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let pad = if seq >= super::redzone_min_idx() {
-            super::redzone_bytes()
+        let pad = if seq >= self.device.redzone.min_idx {
+            self.device.redzone.bytes
         } else {
             0
         };
@@ -81,14 +81,14 @@ impl GpuBackend for MetraleCudaBackend {
     }
 
     fn scan_redzones(&self) -> Result<usize> {
-        if super::redzone_bytes() == 0 {
+        if self.device.redzone.bytes == 0 {
             return Ok(0);
         }
         MetraleCudaBackend::scan_redzones(self)
     }
 
     fn poison_redzones(&self, lo: usize, hi: usize) -> Result<()> {
-        if super::redzone_bytes() == 0 {
+        if self.device.redzone.bytes == 0 {
             return Ok(());
         }
         MetraleCudaBackend::poison_redzones(self, lo, hi)
@@ -117,7 +117,7 @@ impl GpuBackend for MetraleCudaBackend {
         // 2026-09-25: Off the ledger before the free: an entry left behind
         // would be freed again by `sweep_unreleased`.
         self.forget_alloc(ptr);
-        if super::redzone_bytes() > 0 {
+        if self.device.redzone.bytes > 0 {
             self.forget_redzone(ptr.0);
         }
         let status = unsafe { cuMemFree_v2(ptr.0) };
@@ -145,6 +145,14 @@ impl GpuBackend for MetraleCudaBackend {
         Some(MetraleCudaBackend::live_allocations(self))
     }
 
+    fn label_alloc(&self, ptr: DevicePtr, label: &str) {
+        MetraleCudaBackend::label_alloc(self, ptr, label);
+    }
+
+    fn alloc_label(&self, ptr: DevicePtr) -> Option<String> {
+        MetraleCudaBackend::alloc_label(self, ptr)
+    }
+
     fn sweep_unreleased(&self) -> usize {
         MetraleCudaBackend::sweep_unreleased(self)
     }
@@ -154,12 +162,12 @@ impl GpuBackend for MetraleCudaBackend {
     }
 
     fn copy_d2h(&self, src: DevicePtr, dst: &mut [u8]) -> Result<()> {
-        d2h_trace_tick();
+        d2h_trace_tick(self.device.d2h_trace);
         MetraleCudaBackend::copy_d2h_impl(self, src, dst)
     }
 
     fn copy_d2h_on_stream(&self, src: DevicePtr, dst: &mut [u8], stream: u64) -> Result<()> {
-        d2h_trace_tick();
+        d2h_trace_tick(self.device.d2h_trace);
         MetraleCudaBackend::copy_d2h_on_stream_impl(self, src, dst, stream)
     }
 
@@ -167,7 +175,8 @@ impl GpuBackend for MetraleCudaBackend {
         // 2026-09-25: No wait here, unlike `copy_d2h` and
         // `copy_d2h_on_stream`. The caller must synchronise `stream` before
         // reading `dst`.
-        d2h_trace_tick();
+        d2h_trace_tick(self.device.d2h_trace);
+        crate::host_sync_counts::d2h();
         let status = unsafe {
             cuMemcpyDtoHAsync_v2(dst.as_mut_ptr() as *mut c_void, src.0, dst.len(), stream)
         };
@@ -206,10 +215,9 @@ impl GpuBackend for MetraleCudaBackend {
             block_dim: (block[0], block[1], block[2]),
             shared_mem_bytes: shared_mem,
         };
-        let registry = self.registry();
         let span = crate::timing::kernel_begin(self, func.0, stream);
         let launched =
-            unsafe { registry.launch_on_stream(raw_func, cfg, stream, params) }.map_err(|e| {
+            unsafe { self.launch_raw(raw_func, cfg, stream, params) }.map_err(|e| {
                 // 2026-09-25: Probe the context and latch the fault if it is
                 // gone (`fault_probe`); the error is returned either way.
                 super::fault_probe::note_failure("kernel launch", &e.to_string());
@@ -217,6 +225,10 @@ impl GpuBackend for MetraleCudaBackend {
             });
         crate::timing::kernel_end(span, stream);
         launched
+    }
+
+    fn enable_programmatic_launches(&self) -> Result<bool> {
+        Ok(self.enable_programmatic())
     }
 
     fn stream_is_capturing(&self, stream: u64) -> bool {
@@ -238,7 +250,9 @@ impl GpuBackend for MetraleCudaBackend {
     }
 
     fn synchronize(&self, stream: u64) -> Result<()> {
+        self.refuse_host_sync_in_capture(stream, "synchronize")?;
         metrale_telemetry::global().stream_sync();
+        crate::host_sync_counts::sync();
         let status = unsafe { cuStreamSynchronize(stream) };
         if status != 0 {
             bail!("cuStreamSynchronize failed: {}", cuda_error_text(status));
@@ -277,6 +291,9 @@ impl GpuBackend for MetraleCudaBackend {
                 metrale_telemetry::launch_trace::name_kernel(raw.0 as u64, module, func_name);
                 let handle = KernelHandle(raw.0 as u64);
                 record_published(registry, &self.op_cache, module, func_name, handle)?;
+                if registry.entry_waits(module, func_name) {
+                    self.pdl.note_waiting(handle.0);
+                }
                 Ok(handle)
             }
             Err(e) => {
@@ -293,6 +310,7 @@ impl GpuBackend for MetraleCudaBackend {
     }
 
     fn copy_h2d_async(&self, src: &[u8], dst: DevicePtr, stream: u64) -> Result<()> {
+        crate::host_sync_counts::h2d();
         h2d_enqueue(src, dst, stream)?;
         // 2026-09-25: The trait lets the caller drop `src` on return. For a
         // page-locked source (`pinned_hosts::is_pinned`) the copy reads `src`
@@ -313,6 +331,7 @@ impl GpuBackend for MetraleCudaBackend {
     fn copy_h2d_async_retained(&self, src: &[u8], dst: DevicePtr, stream: u64) -> Result<()> {
         // 2026-09-25: The caller keeps `src` alive until its next sync on
         // `stream`, so no wait is added.
+        crate::host_sync_counts::h2d();
         h2d_enqueue(src, dst, stream)
     }
 
@@ -335,6 +354,13 @@ impl GpuBackend for MetraleCudaBackend {
         Ok(())
     }
 
+    fn memcpy_2d_async(&self, copy: Memcpy2d, stream: u64) -> metrale_error::Result<()> {
+        raw::memcpy_2d_async(copy, stream)
+    }
+
+    // 2026-10-17: Off SCALE the pitched copy is one `memcpy_2d_async`; on SCALE (driver 2D copy
+    // not verified there) the trait default loops `copy_d2d_async` per row.
+    #[cfg(not(metrale_scale))]
     fn copy_d2d_2d_async(
         &self,
         src: DevicePtr,
@@ -345,7 +371,15 @@ impl GpuBackend for MetraleCudaBackend {
         height: usize,
         stream: u64,
     ) -> Result<()> {
-        raw::memcpy_2d_async(src, src_pitch, dst, dst_pitch, width_bytes, height, stream)
+        let copy = Memcpy2d {
+            src,
+            src_pitch,
+            dst,
+            dst_pitch,
+            width_bytes,
+            height,
+        };
+        Ok(self.memcpy_2d_async(copy, stream)?)
     }
 
     fn begin_capture(&self, stream: u64) -> Result<()> {
@@ -399,6 +433,12 @@ impl GpuBackend for MetraleCudaBackend {
     fn create_stream(&self) -> Result<u64> {
         self.create_stream_cu()
     }
+    fn create_stream_greatest_priority(&self) -> Result<u64> {
+        self.create_stream_greatest_priority_cu()
+    }
+    fn create_stream_like(&self, like: u64) -> Result<u64> {
+        self.create_stream_like_cu(like)
+    }
     fn bind_to_thread(&self) -> Result<()> {
         self.bind_to_thread_cu()
     }
@@ -409,7 +449,11 @@ impl GpuBackend for MetraleCudaBackend {
         self.record_event_cu(event, stream)
     }
     fn stream_wait_event(&self, stream: u64, event: u64) -> Result<()> {
-        self.stream_wait_event_cu(stream, event)
+        self.stream_wait_event_cu(stream, event, 0)
+    }
+    fn stream_wait_event_external(&self, stream: u64, event: u64) -> Result<()> {
+        // 2026-10-21: Flag 1 is CU_EVENT_WAIT_EXTERNAL.
+        self.stream_wait_event_cu(stream, event, 1)
     }
     fn event_synchronize(&self, event: u64) -> Result<()> {
         self.event_synchronize_cu(event)

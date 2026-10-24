@@ -15,6 +15,8 @@
 //! - A `tiered` entry's `snapshot_id` is never returned for freeing, and
 //!   `lookup` and the victim scans skip tiered entries.
 
+use metrale_settings::groups::device_cache::CacheTuning;
+
 use super::hash_token_prefix;
 use super::snapshot_stats::SnapshotStats;
 
@@ -71,68 +73,33 @@ pub(super) struct SsmSnapshotIndex {
     /// sibling entries (`session_aware_victim_with_alpha`).
     pub(super) last_lookup_session: u64,
     /// 2026-09-25: Evictions since that lookup. The lease lapses at
-    /// [`tail_lease_ttl`] evictions, so a session that never looks up again
+    /// `tuning.tail_lease_ttl` evictions, so a session that never looks up again
     /// does not hold its slots for good.
     pub(super) evictions_since_lookup: u32,
+    /// 2026-10-17: The lease, eviction, hermetic and logging levers, fixed
+    /// when the index is built.
+    ///
+    /// - `tail_lease` protects only tail and sibling entries. The model
+    ///   engine writes those only from `finalize_midchunk_capture`
+    ///   (`midchunk_capture.rs`), so with mid-chunk capture off
+    ///   (`METRALE_SSM_TAIL_MIDCHUNK=0`) the lease has nothing to protect.
+    /// - `tail_lease_ttl`: evictions a leased entry survives without its
+    ///   session looking up again. Measured 2026-07-20 on an eviction test rig
+    ///   with 8 slots and 6 other requests per turn: about 18 evictions
+    ///   between a session's turns.
+    /// - `snap_evict_alpha`: depth weight α of the within-session eviction
+    ///   score `S(e) = norm(recency) + α·norm(token_count)`, after Marconi
+    ///   (arXiv:2411.19379), with token depth standing in for FLOPs saved; 0
+    ///   ranks by recency alone.
+    pub(super) tuning: CacheTuning,
     /// 2026-09-25: Counters; outside tests only `log_stats_if_due` reads them.
     pub(super) stats: SnapshotStats,
 }
 
-/// 2026-09-25: Whether the tail lease is on: yes unless
-/// `METRALE_DISABLE_SSM_TAIL_PROTECT` is `1`, `on` or `true`.
-///
-/// The lease protects only tail and sibling entries. The model engine writes
-/// those only from `finalize_midchunk_capture` (`midchunk_capture.rs`), so
-/// with mid-chunk capture off (`METRALE_SSM_TAIL_MIDCHUNK=0`) the lease has
-/// nothing to protect.
-fn tail_lease_enabled() -> bool {
-    // 2026-09-25: Read once per process: `tail_lease_active` runs on every
-    // eviction.
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| {
-        !matches!(
-            std::env::var("METRALE_DISABLE_SSM_TAIL_PROTECT").as_deref(),
-            Ok("1") | Ok("on") | Ok("true")
-        )
-    })
-}
-
-/// 2026-09-25: Evictions a leased entry survives without its session looking
-/// up again: `METRALE_SSM_TAIL_LEASE_TTL`, else 64 (also when the value does
-/// not parse). Measured 2026-07-20 on an eviction test rig with 8 slots and 6
-/// other requests per turn: about 18 evictions between a session's turns.
-fn tail_lease_ttl() -> u32 {
-    // 2026-09-25: Read once per process, like `tail_lease_enabled`.
-    static TTL: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
-    *TTL.get_or_init(|| {
-        std::env::var("METRALE_SSM_TAIL_LEASE_TTL")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(64)
-    })
-}
-
-/// 2026-09-25: Depth weight α of the within-session eviction score
-/// `S(e) = norm(recency) + α·norm(token_count)`, after Marconi
-/// (arXiv:2411.19379), with token depth standing in for FLOPs saved.
-/// `METRALE_SNAP_EVICT_ALPHA`, clamped to `[0, 8]`; unset or unparsable is 0,
-/// which ranks by recency alone.
-fn snap_evict_alpha() -> f64 {
-    // 2026-09-25: Read once per process: `session_aware_victim` runs on
-    // every eviction.
-    static ALPHA: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
-    *ALPHA.get_or_init(|| {
-        std::env::var("METRALE_SNAP_EVICT_ALPHA")
-            .ok()
-            .and_then(|v| v.parse::<f64>().ok())
-            .map(|a| a.clamp(0.0, 8.0))
-            .unwrap_or(0.0)
-    })
-}
-
 impl SsmSnapshotIndex {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(tuning: CacheTuning) -> Self {
         Self {
+            tuning,
             entries: Vec::new(),
             access_counter: 0,
             last_lookup_session: 0,
@@ -146,8 +113,8 @@ impl SsmSnapshotIndex {
     /// passed since.
     pub(super) fn tail_lease_active(&self) -> bool {
         self.last_lookup_session != 0
-            && tail_lease_enabled()
-            && self.evictions_since_lookup < tail_lease_ttl()
+            && self.tuning.tail_lease
+            && self.evictions_since_lookup < self.tuning.tail_lease_ttl
     }
 
     /// 2026-09-25: The deepest resident entry with `token_count <=
@@ -170,7 +137,7 @@ impl SsmSnapshotIndex {
         }
         // 2026-09-25: Only the winner's recency is bumped, after the scan, so
         // the shallow entries a deep lookup passes over do not stay fresh.
-        let hermetic = metrale_gpu_runtime::hermetic_enabled();
+        let hermetic = self.tuning.hermetic;
         let mut best: Option<(usize, usize)> = None;
         let mut best_idx: Option<usize> = None;
         for (i, entry) in self.entries.iter().enumerate() {
@@ -217,9 +184,7 @@ impl SsmSnapshotIndex {
                 self.stats.recompute_tokens_on_miss += matched_tokens as u64;
             }
         }
-        // 2026-09-25: Read once per process.
-        static DBG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *DBG.get_or_init(|| std::env::var_os("METRALE_SNAP_LOOKUP_DBG").is_some()) {
+        if self.tuning.snap_lookup_dbg {
             let mut cands: Vec<usize> = self.entries.iter().map(|e| e.token_count).collect();
             cands.sort_unstable();
             tracing::info!(
@@ -236,11 +201,7 @@ impl SsmSnapshotIndex {
     /// 2026-09-25: Log the counters every 64th lookup when
     /// `METRALE_SSM_SNAP_STATS` is set (to any value). Changes nothing.
     pub(super) fn log_stats_if_due(&self) {
-        // 2026-09-25: Read once per process.
-        static STATS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if !self.stats.lookups.is_multiple_of(64)
-            || !*STATS.get_or_init(|| std::env::var_os("METRALE_SSM_SNAP_STATS").is_some())
-        {
+        if !self.stats.lookups.is_multiple_of(64) || !self.tuning.ssm_snap_stats {
             return;
         }
         let s = &self.stats;
@@ -276,11 +237,9 @@ impl SsmSnapshotIndex {
         // 2026-09-25: Pure recency (LRU) for the per-entry path below.
         let escore = |e: &SnapshotEntry| e.last_access;
 
-        // 2026-09-25: Session-aware eviction, unless `METRALE_SNAP_EVICT_LEGACY`
-        // is set to any value (even `0`), which selects per-entry LRU. Read
-        // once per process.
-        static LEGACY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if !*LEGACY.get_or_init(|| std::env::var_os("METRALE_SNAP_EVICT_LEGACY").is_some()) {
+        // 2026-09-25: Session-aware eviction, unless `snap_evict_legacy`
+        // (`METRALE_SNAP_EVICT_LEGACY`) selects per-entry LRU.
+        if !self.tuning.snap_evict_legacy {
             let tail_protect = self.tail_lease_active();
             // 2026-09-25: Tiered entries have no slot to free, so skip them.
             let victim_idx = self.session_aware_victim(tail_protect, true)?;
@@ -318,7 +277,11 @@ impl SsmSnapshotIndex {
         tail_protect: bool,
         skip_tiered: bool,
     ) -> Option<usize> {
-        self.session_aware_victim_with_alpha(tail_protect, skip_tiered, snap_evict_alpha())
+        self.session_aware_victim_with_alpha(
+            tail_protect,
+            skip_tiered,
+            self.tuning.snap_evict_alpha,
+        )
     }
 
     /// 2026-09-25: [`Self::session_aware_victim`] with α passed in, so tests

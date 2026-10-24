@@ -6,14 +6,11 @@
 //!   pointer tables depend on. A collision would let a verify step reuse
 //!   tables staged for a different batch, so its GDN layers would read
 //!   another sequence's recurrent state.
-//! * [`value_switch_armed`] must accept only the exact value `1`. A looser
-//!   predicate would arm `METRALE_K4_DIAG`, which turns off the batched-verify
-//!   graphs, for anyone who sets it to `0`.
 //!
 //! Owner: model-engine (speculative verify).
 //! Invariants: none beyond the types.
 
-use super::{value_switch_armed, verify_wy_cache_key};
+use super::verify_wy_cache_key;
 
 /// 2026-09-25: The full input set, so a test can vary one axis at a time.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -178,25 +175,5 @@ fn key_is_injective_over_the_reachable_domain() {
                 }
             }
         }
-    }
-}
-
-/// 2026-09-25: Only the exact value `1` arms a value switch; absence, an empty
-/// value, `0`, `2`, `true` and ` 1` do not.
-#[test]
-fn value_switch_is_armed_only_by_a_literal_one() {
-    assert!(value_switch_armed(Some("1")));
-    for raw in [
-        None,
-        Some(""),
-        Some("0"),
-        Some("2"),
-        Some("true"),
-        Some(" 1"),
-    ] {
-        assert!(
-            !value_switch_armed(raw),
-            "{raw:?} must not arm a VALUE switch"
-        );
     }
 }

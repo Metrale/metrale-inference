@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# 2026-10-17: Files of non-`device`, non-`tool` crates that name a GPU vendor, as `path count`.
+# This list may only shrink: `cargo xtask vendor-ban` refuses a new offender, a grown count and a
+# stale entry, and asks for an entry to be tightened when its count falls.
+crates/circuit/src/venn/compute.rs 4
+crates/circuit/src/venn/compute_tests.rs 5
+crates/core/src/device.rs 7
+crates/core/src/error.rs 2
+crates/grammar/src/api/dlpack.rs 1
+crates/server/src/cli/bench_certify/remote/wire.rs 1
+crates/server/src/main_modules/serve_load/engine.rs 2
+crates/server/src/main_modules/serve_load/load_phases.rs 1
+crates/server/src/main_modules/serve_phases/kernel_gate.rs 3
+crates/server/src/main_modules/serve_phases/kv_cache.rs 4
+crates/server/src/main_modules/serve_phases/load_levers_tests.rs 1
+crates/server/src/main_modules/serve_phases/mod.rs 1
+crates/server/src/main_modules/serve_phases/preflight/gpu_backend.rs 4
+crates/server/src/main_modules/serve_phases/topology.rs 3
+crates/server/src/tui/data/mod.rs 2
+crates/server/tests/integration/helpers.rs 2
+crates/settings/src/groups/build.rs 2
+crates/settings/src/groups/dev.rs 2
+crates/settings/src/groups/device.rs 3
+crates/settings/src/groups/harness.rs 1
+crates/settings/src/groups/kernels.rs 2
+crates/settings/src/groups/model.rs 1
+crates/settings/src/groups/runtime.rs 2

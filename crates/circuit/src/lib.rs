@@ -9,22 +9,49 @@
 //! - Pure: no GPU, no file I/O, no environment, no clock and no randomness. Callers read the
 //!   TOMLs and pass their text in ([`load`]).
 //! - A plan is deterministic, and its digest is recorded beside the closure hash.
+//! - 2026-10-22: `no_std` + `alloc`, no `unsafe`; builds for both wasm32 targets (NSCC). Every
+//!   file a caller reads arrives through a port ([`venn::Repo`], [`hardware::KernelTree`]),
+//!   implemented by a host (`metrale-io-host-std`'s `FsRepo`) or a test.
+
+#![cfg_attr(not(test), no_std)]
+#![forbid(unsafe_code)]
+#![deny(
+    clippy::cast_possible_truncation,
+    clippy::cast_lossless,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss
+)]
+
+extern crate alloc;
+
+mod prelude;
+
+use crate::prelude::*;
 
 pub mod checkpoint;
 pub mod circuit_toml;
+pub mod collective;
 pub mod config_map;
+pub mod critical;
+pub mod critical_report;
 pub mod declared_precision;
+pub mod deploy;
 pub mod digest;
 pub mod dims;
+pub mod fidelity;
 pub mod display;
+pub mod explain;
 pub mod format;
+pub mod format_explain;
 pub mod fuser;
 pub mod hardware;
 pub mod instances;
 pub mod instantiate;
 pub mod ir;
+pub mod kv;
 pub mod memory;
 pub mod model_buffer;
+mod num;
 pub mod pipeline;
 pub mod planner;
 pub mod precision;
@@ -35,6 +62,8 @@ pub mod runs;
 pub mod runtime;
 pub mod state;
 pub mod state_ops;
+pub mod parallel;
+pub mod parallel_cost;
 pub mod venn;
 
 #[cfg(test)]
@@ -45,12 +74,13 @@ pub use checkpoint::{
     instantiate_from_checkpoint, map_checkpoint, recurrent_states, resolve_checkpoint,
 };
 pub use circuit_toml::{CircuitError, includes_of};
+pub use collective::CollectivePath;
 pub use format::{Format, Scale};
 pub use fuser::{
     AvailableKernels, EdgeState, FuseError, FusionPlan, Group, Policy, fuse, fuse_table,
 };
-pub use instances::{Instance, InstanceError, PrecisionSpec, parse_instances};
-pub use instantiate::instantiate;
+pub use instances::{Deployment, Instance, InstanceError, PrecisionSpec, parse_instances};
+pub use instantiate::{instantiate, instantiate_rank, parallel_spec};
 pub use ir::{ArchShape, Circuit, LayerKind, LinearRole, OpKind, Section};
 pub use precision::{EdgePrecision, LinearFormats, PrecisionError, PrecisionTable};
 pub use rules::{KernelId, Mode, Numerics, Rule, RuleError, parse_rules};
@@ -118,6 +148,11 @@ pub struct Loaded {
     pub runtime: Vec<RuntimeRoute>,
     /// 2026-09-28: SHA-256 of the FUSIONS.toml text ([`digest::rules_digest`]).
     pub rules_digest: String,
+    /// 2026-10-23: The deployment's layout ([`parallel::place`]); `None` on one device.
+    pub layout: Option<parallel::Layout>,
+    /// 2026-10-23: Each rank's circuit, rank order ([`instantiate::instantiate_rank`]); empty on
+    /// one device.
+    pub ranks: Vec<Circuit>,
 }
 
 /// 2026-09-28: Parse and instantiate `instance` from `src`, with the precision its spec names.
@@ -141,7 +176,7 @@ pub fn load(instance: &Instance, src: Sources<'_>) -> Result<Loaded, LoadError> 
             if plan.checkpoint != instance.checkpoint {
                 return Err(mismatch(plan.checkpoint));
             }
-            let policy = metrale_config::WeightQuantPolicy::new(
+            let policy = metrale_precision::WeightQuantPolicy::new(
                 precision_policy::tier_named(tier)?,
                 &plan.plan,
                 precision_policy::caps_named(caps)?,
@@ -165,11 +200,42 @@ pub fn load_with(
 ) -> Result<Loaded, LoadError> {
     let circuit = instantiate(src.circuit, src.blocks, &instance.shape, precision)?;
     let RuleSet { rules, runtime } = parse_rule_set(src.rules)?;
+    let (layout, ranks) = match &instance.parallel {
+        None => (None, Vec::new()),
+        Some(d) => {
+            let spec = instantiate::parallel_spec(src.circuit, src.blocks)?;
+            let layout = parallel::place(
+                &spec,
+                &instance.shape.dims,
+                d.ranks,
+                &d.degree,
+                parallel::Chosen::Instance,
+            )
+            .map_err(|e| circuit_toml::CircuitError::Parallel(e.to_string()))?;
+            let ranks = (0..d.ranks)
+                .map(|rank| {
+                    instantiate::instantiate_rank(
+                        src.circuit,
+                        src.blocks,
+                        &instance.shape,
+                        precision,
+                        parallel::RankOf {
+                            layout: &layout,
+                            rank,
+                        },
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            (Some(layout), ranks)
+        }
+    };
     Ok(Loaded {
         circuit,
         rules,
         runtime,
         rules_digest: digest::rules_digest(src.rules),
+        layout,
+        ranks,
     })
 }
 

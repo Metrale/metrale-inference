@@ -38,7 +38,7 @@ At startup, `metrale_kernels::ptx_for_config(model_type, hidden_size, model_refs
 3. **Stage** each role's sources into `OUT_DIR` (`build_stage.rs`), so a quoted `#include` resolves against the headers of the layer that compiles it.
 4. **Resolve the compiler** — `resolve_compute_target(vendor)` (`build_target.rs`) returns `NvidiaTarget`, `AppleTarget`, `ScaleTarget` or `HipTarget`.
 5. **Compile every source** — flags come from `HARDWARE.toml`, the `common/` and leaf `KERNEL.toml` `[build]` tables, and `METRALE_EXTRA_NVCC_FLAGS`.
-6. **Apply module-name overrides** — `KERNEL.toml`'s `[modules]` section lets a file stem (`e2m1_branchless.cu`) expose itself under a shorter module name (`e2m1`).
+6. **Apply module-name overrides** — `KERNEL.toml`'s `[modules]` section lets a file stem (`rms_norm.cu`) expose itself under a shorter module name (`norm`).
 7. **Parse `MODEL.toml`** into `SamplingPresets` and `ModelBehavior`, and `HARDWARE.toml` `[defaults]` into `TARGET_DEFAULTS` — the serving levers the target runs with.
 8. **Write `target_ptx.rs`.**
 

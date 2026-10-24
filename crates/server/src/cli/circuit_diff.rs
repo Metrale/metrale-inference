@@ -253,20 +253,37 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
     if let Err(msg) = crate::cli::validate_serve_args(&args.serve) {
         bail!("{msg}");
     }
-    crate::main_modules::serve_flags::publish_kernel_flags(&args.serve);
+    let settings = crate::main_modules::serve_settings::resolve(
+        &metrale_io_host_std::ProcessEnv,
+        &args.serve,
+    )?;
+    crate::main_modules::serve_flags::publish_kernel_flags(&args.serve, &settings)?;
     let num_drafts = args.serve.resolved_num_drafts();
-    let Some(engine) = load_engine(args.serve)? else {
+    // 2026-10-17: Each report's graph label, from the settings the engine loads with (until now
+    // the tool's own environment was read at report time).
+    let label = |eager: bool| if eager { "eager" } else { "graphed" };
+    // 2026-10-23: The instance is the one deployed at this serve's tensor-parallel degree.
+    let engine_tp_ranks = u64::try_from(args.serve.tp_size)?;
+    let Some(engine) = load_engine(args.serve, &settings)? else {
         bail!("this rank is an expert-parallel worker; run the diff on the head");
     };
     let model = engine.model.as_ref();
     model.bind_gpu_to_thread()?;
-    let instance = sources::instance_for(&checkpoint, &circuit_target(&engine.ptx_set.target)?)?;
+    let instance = sources::instance_for(
+        &checkpoint,
+        &circuit_target(&engine.ptx_set.target)?,
+        engine_tp_ranks,
+    )?;
     let modules = metrale_model_layers::circuit_exec::TargetModules(engine.ptx_set.modules.clone());
     let circuit = |fusions| ForwardSelect::Circuit {
         instance: Box::new(instance.clone()),
         fusions,
         modules: modules.clone(),
         config_json: engine.config_json.clone(),
+        // 2026-10-23: The verify widths of the serve's draft depth.
+        verify_rows: metrale_model_layers::circuit_exec::rank_shapes::speculative_verify_rows(
+            num_drafts,
+        ),
     };
     let forwards = [
         ("legacy-repeat", ForwardSelect::Legacy),
@@ -295,7 +312,7 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
             (&args.batch, args.fragment_slots),
             args.steps,
             &forwards,
-            &args.out,
+            (&args.out, label(settings.kernels.no_decode_graphs_multiseq)),
         );
     }
     if !args.verify_batch.is_empty() {
@@ -310,7 +327,7 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
             num_drafts,
             args.steps,
             &forwards,
-            &args.out,
+            (&args.out, label(settings.speculative.no_mtp_verify_graphs)),
         );
     }
     if !args.verify.is_empty() {
@@ -321,7 +338,7 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
             (&args.verify, args.mtp),
             args.steps,
             &forwards,
-            &args.out,
+            (&args.out, label(settings.telemetry.debug_no_graph)),
         );
     }
     let mut variants = Vec::new();
@@ -367,11 +384,7 @@ pub(crate) fn run_diff(args: CircuitDiffArgs) -> Result<()> {
     let control = control.context("no prompt ran")?;
     let reasons = failures(&per_prompt, &control);
     let report = Report {
-        graphs: if std::env::var("METRALE_DEBUG_NO_GRAPH").as_deref() == Ok("1") {
-            "eager"
-        } else {
-            "graphed"
-        },
+        graphs: label(settings.telemetry.debug_no_graph),
         steps: args.steps,
         variants,
         prompts: reports,
@@ -404,17 +417,13 @@ fn batch_report(
     (widths, fragment): (&[usize], bool),
     steps: usize,
     forwards: &[(&'static str, ForwardSelect)],
-    out: &Path,
+    (out, graphs): (&Path, &'static str),
 ) -> Result<()> {
     let variants = disclosed(model, forwards)?;
     let widths = batch::diff_widths(model, (widths, fragment), steps, forwards)?;
     let reasons = batch::batch_failures(&widths);
     let report = BatchReport {
-        graphs: if std::env::var("METRALE_NO_DECODE_GRAPHS_MULTISEQ").as_deref() == Ok("1") {
-            "eager"
-        } else {
-            "graphed"
-        },
+        graphs,
         fragment_slots: fragment,
         steps,
         variants,

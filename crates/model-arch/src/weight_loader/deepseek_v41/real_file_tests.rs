@@ -13,6 +13,7 @@
 use super::*;
 use crate::attn_v41::AttnV41LayerState;
 use crate::attn_v41::{AttnV41, AttnV41Cfg, AttnV41LayerWeights, LayerRole, SharedV41};
+use crate::deepseek_v41_layer::levers::tests::at_defaults;
 use crate::deepseek_v41_ref::attn::{AttnWeights, freqs_cis};
 use crate::deepseek_v41_ref::compress::{
     CompAttnCfg, IndexerCfg, LayerAttnState, SharedRuntime, attention_any,
@@ -22,61 +23,18 @@ use crate::deepseek_v41_ref::moe::{MoeCfg, MoeWeights, gate as ref_gate, moe as 
 use crate::moe_v41::{MoeV41, MoeV41Cfg, MoeV41LayerWeights};
 use metrale_gpu_runtime::kernel_args::KernelLaunch;
 use metrale_model_layers::layers::ops;
-use metrale_model_weights::weights::GgufLoader;
-use metrale_model_weights::weights::WeightLoader;
 use metrale_model_weights::weights::dequant_cpu::{GgmlType, dequant_to_f32};
 use metrale_model_weights::weights::expert_stream::{
     ExpertLru, ExpertSliceMap, ExpertSource, PinnedArena, ShardFiles,
 };
+use metrale_model_weights::weights::{GgufLoader, WeightLoader};
 use std::sync::Arc;
 
 const MODEL_DIR: &str = "/home/rstesiak/models/dsv41-q2k";
 
-fn rms(v: &[f32]) -> f32 {
-    (v.iter().map(|x| x * x).sum::<f32>() / v.len().max(1) as f32).sqrt()
-}
-
-fn report(what: &str, got: &[f32], want: &[f32]) -> f32 {
-    assert_eq!(got.len(), want.len(), "{what}: length");
-    let max = want.iter().fold(0f32, |a, v| a.max(v.abs()));
-    let worst = got
-        .iter()
-        .zip(want)
-        .map(|(a, b)| (a - b).abs())
-        .fold(0f32, f32::max);
-    println!(
-        "  {what:<28} rms got {:.5} want {:.5}  max|want| {:.4}  worst {:.5}  rel {:.2e}",
-        rms(got),
-        rms(want),
-        max,
-        worst,
-        worst / max.max(1e-12)
-    );
-    worst / max.max(1e-12)
-}
-
-fn dl_bf16(gpu: &dyn GpuBackend, p: DevicePtr, n: usize) -> Vec<f32> {
-    let mut b = vec![0u8; n * 2];
-    gpu.copy_d2h(p, &mut b).unwrap();
-    b.chunks_exact(2)
-        .map(|c| f32::from_bits((u16::from_le_bytes([c[0], c[1]]) as u32) << 16))
-        .collect()
-}
-
-fn dl_f32(gpu: &dyn GpuBackend, p: DevicePtr, n: usize) -> Vec<f32> {
-    let mut b = vec![0u8; n * 4];
-    gpu.copy_d2h(p, &mut b).unwrap();
-    b.chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect()
-}
-
-fn up_bf16(gpu: &dyn GpuBackend, v: &[f32]) -> DevicePtr {
-    let b = crate::moe_v41::bf16_bytes(v);
-    let p = gpu.alloc(b.len()).unwrap();
-    gpu.copy_h2d(&b, p).unwrap();
-    p
-}
+#[path = "real_file_support.rs"]
+mod support;
+use support::{dl_bf16, dl_f32, report, up_bf16};
 
 #[test]
 #[ignore = "requires a CUDA GB10 + the on-disk DeepSeek-V4.1-Flash Q2_K shards"]
@@ -92,7 +50,16 @@ fn layer0_matches_the_cpu_reference_on_the_real_weights() {
         metrale_model_weights::weights::config_from_gguf_dir(dir).expect("config from gguf");
     let store = GgufLoader::new().load(dir, g, 0).expect("load gguf");
     let layers = DeepSeekV41WeightLoader
-        .load_layers(&store, &config, g, &[])
+        .load_layers(
+            &store,
+            &config,
+            g,
+            &[],
+            metrale_model_layers::load_context::LoadContext {
+                settings: &metrale_model_layers::lever_equivalence::defaults(),
+                levers: &metrale_model_layers::layers::ops::ModelLevers::defaults(),
+            },
+        )
         .expect("layers");
     assert_eq!(layers.len(), config.num_hidden_layers);
     let (dim, hc, hd, nh) = (
@@ -140,7 +107,12 @@ fn layer0_matches_the_cpu_reference_on_the_real_weights() {
     let streams = g.alloc(m * hc * dim * 4).unwrap();
     let hb: Vec<u8> = h.iter().flat_map(|v| v.to_le_bytes()).collect();
     g.copy_h2d(&hb, streams).unwrap();
-    let site = hc_site(g, &store, lp, "attn", &config).unwrap();
+    let src = gguf_source::GgufSource {
+        store: &store,
+        files: Arc::new(ShardFiles::open_dir(dir).unwrap()),
+        engram_q2k: false,
+    };
+    let site = build::hc_site(g, &src, 0, source::HcSite::Attn, &config).unwrap();
     let (pre_d, post_d, comb_d) = (
         g.alloc(m * hc * 4).unwrap(),
         g.alloc(m * hc * 4).unwrap(),
@@ -258,6 +230,7 @@ fn layer0_matches_the_cpu_reference_on_the_real_weights() {
         is_index_source: false,
         is_candidate_source: false,
         uses_candidates: false,
+        o_act_quant: false,
     };
     let icfg = IndexerCfg {
         n_heads: config.index_n_heads,
@@ -270,6 +243,7 @@ fn layer0_matches_the_cpu_reference_on_the_real_weights() {
         cand_topk_blocks: 1,
         cand_block: 1,
         eps,
+        index_k_every_step: false,
     };
     let fc = freqs_cis(config.rotary_dim, max_seq, config.rope_theta as f32);
     let mut st = LayerAttnState::new(&cc, max_seq, config.index_head_dim);
@@ -277,7 +251,7 @@ fn layer0_matches_the_cpu_reference_on_the_real_weights() {
     let run_r = attention_any(
         &x_r, m, 0, &aw, None, None, &icfg, &cc, &fc, &mut st, &mut sh,
     );
-    let mut acfg = AttnV41Cfg {
+    let acfg = AttnV41Cfg {
         dim,
         n_heads: nh,
         head_dim: hd,
@@ -300,9 +274,11 @@ fn layer0_matches_the_cpu_reference_on_the_real_weights() {
         orig_seq: 65536,
         beta_fast: 32.0,
         beta_slow: 1.0,
+        fp8_stage: crate::fp8_block_v41::Fp8StageSize::NONE,
+        tp_world: 1,
+        kv: crate::attn_v41::kv_codec::declared().unwrap(),
     };
-    acfg.max_tokens = 16;
-    let attn = AttnV41::new(g, acfg.clone()).unwrap();
+    let attn = AttnV41::new(g, acfg.clone(), at_defaults()).unwrap();
     let role = LayerRole {
         ratio: 0,
         ..Default::default()
@@ -330,13 +306,20 @@ fn layer0_matches_the_cpu_reference_on_the_real_weights() {
     let mut shared = SharedV41::default();
     let x_in = up_bf16(g, &x_r);
     let run = attn
-        .forward(g, &attn_w, &mut ast, &mut shared, x_in, m, 0, stream)
+        .forward(g, &attn_w, &mut ast, &mut shared, x_in, m, 0, None, stream)
         .unwrap();
     assert_eq!(run.idx, run_r.idx, "window idx");
     report("attn q", &dl_bf16(g, run.q, m * nh * hd), &run_r.q);
     report(
         "attn kv rows",
-        &dl_bf16(g, run.rows_a, m * hd),
+        &{
+            let w = crate::attn_v41::V41Rows::resolve(&acfg.kv, hd, acfg.index_hd)
+                .unwrap()
+                .window;
+            let mut b = vec![0u8; m * w.bytes];
+            g.copy_d2h(run.rows_a, &mut b).unwrap();
+            crate::attn_v41::kv_codec::decode_rows(w.codec, &b, m, hd).unwrap()
+        },
         &run_r.kv_rows,
     );
     report("attn o", &dl_bf16(g, run.o, m * nh * hd), &run_r.o);
@@ -446,10 +429,7 @@ fn layer0_matches_the_cpu_reference_on_the_real_weights() {
     let mw = MoeWeights {
         gate_w: &gate_w,
         gate_bias: &gate_bias,
-        experts: experts
-            .iter()
-            .map(|(a, b, c)| (a.as_slice(), b.as_slice(), c.as_slice()))
-            .collect(),
+        experts: experts.iter().map(|(a, b, c)| (a, b, c)).collect(),
         shared: (&s1, &s2, &s3),
     };
     let (moe_r, _, _) = ref_moe(&f_in_r, m, &mw, &mc);
@@ -463,8 +443,9 @@ fn layer0_matches_the_cpu_reference_on_the_real_weights() {
         route_scale: mc.route_scale,
         swiglu_limit: mc.swiglu_limit,
         max_tokens: 16,
+        fp8_stage: crate::fp8_block_v41::Fp8StageSize::NONE,
     };
-    let moe = MoeV41::new(g, mcfg).unwrap();
+    let moe = MoeV41::new(g, mcfg, at_defaults()).unwrap();
     let mw_d = MoeV41LayerWeights {
         layer: 0,
         gate_w: bf16_ptr(&store, &format!("{lp}.ffn.gate.weight")).unwrap(),

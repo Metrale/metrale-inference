@@ -29,6 +29,10 @@ use std::sync::mpsc::sync_channel;
 
 mod direct_io;
 mod header;
+mod mapped;
+
+pub use direct_io::read_exact_direct;
+pub use mapped::{MappedSafetensors, MappedTensor};
 
 use header::{parse_header, resolve_shards};
 
@@ -94,6 +98,13 @@ pub struct FastSafetensorsLoader {
     /// model that does not opt in. See [`crate::weights::DeferHook`] for the
     /// contract — including the half that says the pre-flight must agree.
     pub defer: Option<crate::weights::DeferHook>,
+    /// 2026-10-17: The device bytes the model's loader allocates for each tensor it defers, for
+    /// the pre-flight ([`crate::weights::DeferCharge`]). `None`: deferred tensors cost it nothing.
+    pub defer_charge: Option<crate::weights::DeferCharge>,
+    /// 2026-10-24: When set, every tensor whose name does not start with this prefix is
+    /// skipped: an embedding model binds only its text tower (`<weight_prefix>.`), and the
+    /// checkpoint's other towers would otherwise sit in unified memory unbound.
+    pub keep_only_prefix: Option<String>,
 }
 
 /// Is this tensor part of a multimodal checkpoint's vision tower?
@@ -135,6 +146,8 @@ impl FastSafetensorsLoader {
             prefetch_shards: false,
             skip_vision: false,
             defer: None,
+            defer_charge: None,
+            keep_only_prefix: None,
         }
     }
 
@@ -151,6 +164,8 @@ impl FastSafetensorsLoader {
             prefetch_shards: false,
             skip_vision: false,
             defer: None,
+            defer_charge: None,
+            keep_only_prefix: None,
         }
     }
 }
@@ -203,19 +218,22 @@ fn load_shard_fast(
     // block's routed experts full-width BF16 against a w4a16-only forward, so
     // every one of them would be uploaded, read back, quantised and freed —
     // ~7.25 GB per EP=2 rank resident across the whole 45-layer build.
-    let mut deferred_here: Vec<(String, crate::weights::DeferredTensor)> = Vec::new();
+    // 2026-10-17: Each entry is built with the header's span, which refuses a
+    // shape that disagrees with it; the first refusal fails the shard below.
+    let mut deferred_here: Vec<(String, Result<crate::weights::DeferredTensor>)> = Vec::new();
     let mut ngram_count = 0usize;
     #[allow(clippy::items_after_statements)]
     tensors.retain(|t| {
         let mut defer = |t: &header::TensorMeta| {
             deferred_here.push((
                 t.name.clone(),
-                crate::weights::DeferredTensor {
-                    path: shard_path.to_path_buf(),
-                    offset: t.abs_offset,
-                    shape: t.shape.clone(),
-                    dtype: t.dtype,
-                },
+                crate::weights::DeferredTensor::at_span(
+                    shard_path.to_path_buf(),
+                    t.abs_offset,
+                    t.len as u64,
+                    t.shape.clone(),
+                    t.dtype,
+                ),
             ));
         };
         if crate::weights::is_ngram_table(&t.name) {
@@ -238,6 +256,10 @@ fn load_shard_fast(
         }
         true
     });
+    let deferred_here = deferred_here
+        .into_iter()
+        .map(|(n, d)| d.map(|d| (n, d)))
+        .collect::<Result<Vec<_>>>()?;
     if !deferred_here.is_empty() {
         tracing::info!(
             "Deferred {} tensor(s) in {} ({} n-gram table(s), {} claimed by the model's \

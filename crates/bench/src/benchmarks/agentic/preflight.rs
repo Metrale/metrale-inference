@@ -176,6 +176,7 @@ mod tests {
             ArtifactStore::with_root(std::env::temp_dir().join("metrale-preflight-test")),
             events,
             Arc::new(AtomicBool::new(false)),
+            crate::levers::tests::unset(),
         );
 
         sanity_check(&handle, Duration::from_secs(2))

@@ -1,0 +1,154 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-10-14: The attention sublayer of `k` rows of one sequence: what `forward_k`'s mixer
+//! closure ran inline before, moved here unchanged so the SP pipeline
+//! (`steps/forward_sp_pipe.rs`) runs each sub-chunk's mixer by the same code.
+//!
+//! Owner: model-arch (GLM-5.3).
+//! Invariants:
+//! - The launches, their order and their arguments are `forward_k`'s before the move.
+
+use super::*;
+
+impl Glm5NextLayer {
+    /// 2026-10-14: The attention sublayer on the `k` normed rows at `normed` (positions from
+    /// `seq_len`), returning its output: KDA's `final_out`, or DSA's over its input. With
+    /// `take_snapshots` a KDA layer writes its state after row `t` to intermediate `t`;
+    /// `is_prefill` as `forward_k`'s. 2026-10-14: non-empty `cuts` (`--prefill-tail-mode merge`)
+    /// run a KDA prefill sub-chunk's conv and recurrence cut there (`glm5next_kda/cut.rs`); DSA
+    /// has no state to cut and ignores them.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::glm5next_layer) fn mix(
+        &self,
+        normed: DevicePtr,
+        k: usize,
+        state: &mut dyn LayerState,
+        kv_cache: &mut PagedKvCache,
+        seq_len: usize,
+        block_table: &mut Vec<u32>,
+        ctx: &ForwardContext,
+        stream: u64,
+        take_snapshots: bool,
+        is_prefill: bool,
+        cuts: &[crate::glm5next_kda::cut::KdaCut],
+    ) -> Result<DevicePtr> {
+        let gpu = ctx.gpu;
+        let kda_ctx = match &self.mixer {
+            Glm5NextMixer::Kda { ws, .. } => {
+                if k > ws.max_tokens() {
+                    bail!(
+                        "GLM layer {}: a {k}-token verify exceeds the KDA workspace built for {}",
+                        self.layer_idx,
+                        ws.max_tokens()
+                    );
+                }
+                let st = self.kda_state(state)?;
+                // 2026-09-25: Intermediates only when `take_snapshots` (a verify); prefill passes
+                // none. `decode_k` looks each row up with `get`, so an empty list takes none.
+                let snaps: Vec<(DevicePtr, DevicePtr)> = if take_snapshots {
+                    (0..k.saturating_sub(1))
+                        .map(|t| (st.h_state_intermediates[t], st.conv_state_intermediates[t]))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                Some((
+                    KdaSeqState {
+                        conv: st.conv_state,
+                        recurrent: st.h_state,
+                    },
+                    snaps,
+                ))
+            }
+            Glm5NextMixer::Dsa(_) => None,
+        };
+
+        match (&self.mixer, &kda_ctx) {
+            (Glm5NextMixer::Kda { layer, ws, .. }, Some((kda, snaps))) => {
+                // 2026-10-23: The paired A/B's KDA levers for this step (`ab_levers.rs`).
+                let view;
+                let layer: &crate::glm5next_kda::Glm5NextKdaLayer =
+                    match super::ab_levers::kda_levers(layer.levers, ctx)? {
+                        Some(levers) => {
+                            view = crate::glm5next_kda::Glm5NextKdaLayer {
+                                levers,
+                                ..(**layer).clone()
+                            };
+                            &view
+                        }
+                        None => layer,
+                    };
+                // 2026-09-25: The chunked scan runs only for a prefill sub-chunk of more
+                // than one row that asked for no intermediates: it never materialises the
+                // state after an interior row, and its order differs from `decode_k`'s,
+                // which a verify must match.
+                // 2026-10-12: `METRALE_GLM_KDA_CHUNK64` (`decode_k` picks it) is ahead of
+                // `METRALE_GLM_KDA_CHUNK_PREFILL` where its floor is reached.
+                if !cuts.is_empty() {
+                    if !is_prefill || !snaps.is_empty() {
+                        bail!(
+                            "GLM layer {}: KDA cuts are for a prefill sub-chunk without snapshots",
+                            self.layer_idx
+                        );
+                    }
+                    layer.prefill_cut(gpu, normed, k, kda, ws, cuts, stream)?;
+                } else if is_prefill
+                    && k > 1
+                    && snaps.is_empty()
+                    && self.levers.kda_chunk_prefill
+                    && !layer.chunk64_applies(k, self.levers.kda.chunk64)
+                {
+                    layer.prefill(gpu, normed, k, kda, ws, stream)?;
+                } else if let Some(p) = self.plans.kda.get(k).filter(|p| p.takes(k, snaps.len())) {
+                    // 2026-10-23: `--forward circuit` on a TP rank: the installed plan
+                    // (`glm5next_plan::kda`), launch for launch what `decode_k` runs here.
+                    layer.decode_k_plan(gpu, normed, k, kda, ws, snaps, &p, stream)?;
+                } else {
+                    layer.decode_k(gpu, normed, k, kda, ws, snaps, stream)?;
+                }
+                Ok(ws.final_out)
+            }
+            (Glm5NextMixer::Dsa(layer), _) => {
+                // 2026-10-23: The paired A/B's DSA levers for this step (`ab_levers.rs`).
+                let view;
+                let layer: &crate::glm5next_dsa::layer::Glm5NextDsaLayer =
+                    match super::ab_levers::dsa_kernels(&layer.select_kernels, ctx)? {
+                        Some(select_kernels) => {
+                            view = crate::glm5next_dsa::layer::Glm5NextDsaLayer {
+                                select_kernels,
+                                ..(**layer).clone()
+                            };
+                            &view
+                        }
+                        None => layer,
+                    };
+                // 2026-09-25: DSA's `decode_k` writes its output projection over its input
+                // buffer. 2026-10-23: Under `--forward circuit` a captured pass with row
+                // metadata at an installed row count runs its plan (`glm5next_plan::dsa`),
+                // launch for launch what `decode_k` runs there; every other pass (eager, a
+                // prefill piece, no metadata) is the layer's own code.
+                let captured = crate::glm5next_dsa::plan::plan_rows(ctx, k, is_prefill).is_some();
+                match self.plans.dsa.get(k).filter(|_| captured) {
+                    Some(p) => layer.decode_k_plan(
+                        normed, k, state, kv_cache, seq_len, ctx, is_prefill, &p, stream,
+                    )?,
+                    None => layer.decode_k(
+                        normed,
+                        k,
+                        state,
+                        kv_cache,
+                        seq_len,
+                        block_table,
+                        ctx,
+                        stream,
+                        is_prefill,
+                    )?,
+                }
+                Ok(normed)
+            }
+            (Glm5NextMixer::Kda { .. }, None) => {
+                bail!("GLM layer {}: KDA mixer without KDA state", self.layer_idx)
+            }
+        }
+    }
+}

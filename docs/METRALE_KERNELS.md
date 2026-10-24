@@ -11,6 +11,9 @@ Tracking every kernel, its baseline comparison, and optimizations applied.
 > and the per-model `MODEL.toml` / `KERNEL.toml` files — they are the SSOT.
 > Everything below is kept because the *reasoning* (SM121 MMA availability,
 > grouped-GEMM approach comparison, fragment-ordering fix) is still correct.
+> Three of the eight are gone from the tree: `fused_silu_mul`, `e2m1_branchless.cu` and the
+> stacked-weight `moe_w4a16_grouped_gemm` were deleted on 2026-10-23 because nothing loaded them;
+> the `_ptrtable` grouped GEMMs are what the MoE layers run.
 
 **Target**: nvidia/Qwen3-Next-80B-A3B-Instruct-NVFP4 on DGX Spark GB10 (SM121)
 **Goal**: Beat vLLM v21+Marlin+MTP (59.9 tok/s) with purpose-built kernels

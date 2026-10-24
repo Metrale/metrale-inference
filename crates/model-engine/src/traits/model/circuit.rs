@@ -29,6 +29,10 @@ pub enum ForwardSelect {
         /// 2026-09-30: The checkpoint's `config.json` as the server read it; the executor maps it
         /// to the served shape through the circuit's config map.
         config_json: String,
+        /// 2026-10-23: The one-sequence verify widths the serve's speculation runs
+        /// (`speculative_verify_rows` of its draft depth; empty when it does not speculate):
+        /// the verify shapes the forward compiles, from this one source.
+        verify_rows: Vec<u64>,
     },
 }
 
@@ -36,11 +40,14 @@ pub enum ForwardSelect {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ForwardDisclosure {
     /// 2026-09-28: `legacy`, `circuit`, or `circuit-reference` (no `bit_identical` fusions).
+    /// 2026-10-23: Or `circuit-sites`: a TP rank whose layers run some sites from the plan.
     pub forward: &'static str,
     /// 2026-09-28: The digest over every compiled plan (decode, then each multi-sequence
-    /// width; `CircuitExec::plans_digest`); `None` under legacy.
+    /// width; `CircuitExec::plans_digest`), or under `circuit-sites` over the executed sites;
+    /// `None` under legacy.
     pub plan_digest: Option<String>,
-    /// 2026-09-28: Launches per decode step of the plan; `None` under legacy.
+    /// 2026-09-28: Launches per decode step of the plan; `None` under legacy and
+    /// `circuit-sites`.
     pub launches_per_step: Option<usize>,
 }
 

@@ -1,0 +1,487 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! 2026-10-23: The CPU equivalence gate of the plan-executed KDA mixers: on the recording device,
+//! every KDA layer of every rank run from its plan (the six W4A16 projections, pack, gate chain,
+//! conv, recurrence, output norm and `o`) puts the same operations on the same streams as
+//! `decode_k` under the served levers, at decode n=1 and at verify n=2 with its snapshot. One changed field of the plan turns it red; a plan at another snapshot count is not
+//! taken; installation refuses a lever the rules do not model.
+//!
+//! The KDA front end and `o` choose their launches from the process-wide dense tier
+//! (`--dense-quantization w4a16`, published once per process), which the rest of this test binary
+//! runs without. The gates therefore run in a child process of this binary that publishes the
+//! served tier first ([`in_w4a16_process`]); nothing on either path is mocked.
+//!
+//! Owner: model-arch (GLM-5.3).
+//! Invariants: none beyond the types.
+
+use metrale_circuit::Circuit;
+use metrale_gpu_runtime::gpu::recording::{Op, RecordingGpu};
+use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend, KernelHandle};
+use metrale_model_layers::layers::{DenseQuantization, DsaQuantization};
+
+use super::*;
+use crate::glm5next_kda::plan::{ConvStep, KdaPlan, KdaSteps, RecurStep};
+use crate::glm5next_kda::{
+    Glm5NextKdaConfig, Glm5NextKdaKernels, Glm5NextKdaLayer, Glm5NextKdaWeights,
+    Glm5NextKdaWorkspace, KdaSeqState,
+};
+use crate::glm5next_layer::GlmLevers;
+use crate::glm5next_plan::fixture::{
+    RUNS, model_config_at, plan, ranks, ranks_at, served_levers, served_world, worlds,
+};
+use crate::glm5next_plan::fixture_site::{SMS, STREAM, gate};
+use crate::glm5next_plan::{compile_kda, kda};
+use crate::glm5next_w4a16_plan::W4a16Step;
+use metrale_model_layers::weight_map::DenseWeight;
+
+const HIDDEN_IN: DevicePtr = DevicePtr(0x9200_0000);
+
+/// 2026-10-23: Run `body` in a child process of this test binary (only the test `name`) that
+/// publishes `--dense-quantization w4a16` before anything reads the tier.
+fn in_w4a16_process(name: &str, body: impl FnOnce()) {
+    let publish = || {
+        let q =
+            metrale_model_layers::layers::set_dense_quantization_from_cli(DenseQuantization::W4a16);
+        assert_eq!(
+            q,
+            DenseQuantization::W4a16,
+            "the child published the tier first"
+        );
+    };
+    let path = format!("glm5next_plan::kda::tests::{name}");
+    crate::glm5next_plan::fixture::in_child_process(&path, publish, body);
+}
+
+/// 2026-10-23: The KDA layers of `c`.
+fn kda_layers(c: &Circuit) -> Vec<usize> {
+    let mut v: Vec<usize> = c
+        .nodes
+        .iter()
+        .filter(|n| n.block == "kda")
+        .filter_map(|n| n.layer)
+        .collect();
+    v.dedup();
+    v
+}
+
+/// 2026-10-23: Rank `rank` of `world`'s KDA value heads as the loader divides them
+/// (`shard_heads_for_tp` under its support at the served W4A16 channel unit).
+fn engine_heads(rank: usize, world: usize) -> usize {
+    let mut c = model_config_at(rank, world);
+    let unit = crate::glm5next_w4a16_dense::kda_channel_unit();
+    c.shard_heads_for_tp(metrale_config::TpSupport::Uneven {
+        linear_channel_unit: unit,
+    })
+    .unwrap();
+    c.linear_num_value_heads
+}
+
+struct Mixer<'a> {
+    gpu: &'a RecordingGpu,
+    layer: Glm5NextKdaLayer,
+    ws: Glm5NextKdaWorkspace,
+    state: KdaSeqState,
+    snap: (DevicePtr, DevicePtr),
+}
+
+/// 2026-10-23: Rank `rank`'s KDA mixer `idx` with `heads` local heads under `levers`, its
+/// projections registered on the served tiers as the loader registers them. The dense registries
+/// are process-wide and keyed by address, so every mixer of a process allocates on one device.
+fn mixer(
+    gpu: &RecordingGpu,
+    (rank, world): (usize, usize),
+    idx: usize,
+    heads: usize,
+    levers: GlmLevers,
+) -> Mixer<'_> {
+    let mut cfg = Glm5NextKdaConfig::from_model_config(&model_config_at(rank, world));
+    cfg.heads = heads;
+    let w = || DenseWeight {
+        weight: gpu.alloc(64).unwrap(),
+    };
+    let mut weights = Glm5NextKdaWeights {
+        q_proj: w(),
+        k_proj: w(),
+        v_proj: w(),
+        conv: w(),
+        f_a: w(),
+        f_b: w(),
+        dt_bias: gpu.alloc(64).unwrap(),
+        a_log: gpu.alloc(64).unwrap(),
+        b_proj: w(),
+        g_a: w(),
+        g_b: w(),
+        o_norm: w(),
+        o_proj: w(),
+    };
+    let kernels = Glm5NextKdaKernels::resolve(gpu).unwrap();
+    let projs = Glm5NextKdaLayer::new(idx, cfg, weights_view(&weights), kernels, levers)
+        .unwrap()
+        .dense_projections();
+    {
+        let x = &mut weights;
+        let mut slots = [
+            &mut x.q_proj.weight,
+            &mut x.k_proj.weight,
+            &mut x.v_proj.weight,
+            &mut x.f_a.weight,
+            &mut x.f_b.weight,
+            &mut x.b_proj.weight,
+            &mut x.g_a.weight,
+            &mut x.g_b.weight,
+            &mut x.o_proj.weight,
+        ];
+        crate::weight_loader::glm5_next_load::dense_tiers::register_projections(
+            gpu,
+            projs,
+            &mut slots,
+            DenseQuantization::W4a16,
+            DsaQuantization::Declared,
+            &levers.dense,
+            idx,
+        )
+        .unwrap();
+    }
+    let layer = Glm5NextKdaLayer::new(idx, cfg, weights, kernels, levers).unwrap();
+    let ws = Glm5NextKdaWorkspace::new(gpu, &cfg, 16).unwrap();
+    let state = KdaSeqState {
+        conv: gpu.alloc(cfg.conv_state_elems() * 4).unwrap(),
+        recurrent: gpu.alloc(cfg.recurrent_state_elems() * 4).unwrap(),
+    };
+    let snap = (
+        gpu.alloc(cfg.recurrent_state_elems() * 4).unwrap(),
+        gpu.alloc(cfg.conv_state_elems() * 4).unwrap(),
+    );
+    gpu.take();
+    Mixer {
+        gpu,
+        layer,
+        ws,
+        state,
+        snap,
+    }
+}
+
+/// 2026-10-23: A copy of the weight pointers (the layer owns its weights).
+fn weights_view(w: &Glm5NextKdaWeights) -> Glm5NextKdaWeights {
+    Glm5NextKdaWeights {
+        q_proj: w.q_proj,
+        k_proj: w.k_proj,
+        v_proj: w.v_proj,
+        conv: w.conv,
+        f_a: w.f_a,
+        f_b: w.f_b,
+        dt_bias: w.dt_bias,
+        a_log: w.a_log,
+        b_proj: w.b_proj,
+        g_a: w.g_a,
+        g_b: w.g_b,
+        o_norm: w.o_norm,
+        o_proj: w.o_proj,
+    }
+}
+
+impl Mixer<'_> {
+    /// 2026-10-23: `rows` rows (a verify keeps one snapshot per row but the last) from `plan`, or
+    /// `decode_k` without one.
+    fn run(&self, rows: usize, plan: Option<&KdaPlan>) -> anyhow::Result<Vec<Op>> {
+        let snaps: Vec<_> = std::iter::repeat_n(self.snap, rows - 1).collect();
+        let (l, g) = (&self.layer, self.gpu);
+        match plan {
+            Some(p) => {
+                l.decode_k_plan(g, HIDDEN_IN, rows, &self.state, &self.ws, &snaps, p, STREAM)?
+            }
+            None => l.decode_k(g, HIDDEN_IN, rows, &self.state, &self.ws, &snaps, STREAM)?,
+        }
+        Ok(g.take())
+    }
+
+    fn bind(&self, s: KdaSteps<metrale_circuit::KernelId>) -> KdaPlan {
+        KdaPlan {
+            steps: s
+                .map(|k| metrale_model_layers::circuit_exec::family::plan_kernel(self.gpu, &k))
+                .unwrap(),
+            sms: self.gpu.sm_count().unwrap(),
+        }
+    }
+}
+
+fn kernels(ops: &[Op]) -> Vec<&str> {
+    ops.iter().filter_map(|o| o.kernel()).collect()
+}
+
+/// 2026-10-23: Every KDA mixer of every rank, at decode n=1 and verify n=2, launches from its
+/// plan exactly what `decode_k` launches under the served levers: the same stream graph and the
+/// same operations. The plan steps are the served forms (one-row conv and register-resident
+/// recurrence at one row, the snapshotting token kernels at two; the six projections pipelined,
+/// `o` on the one-row GEMV at one row and pipelined at two); no site stays legacy.
+#[test]
+fn every_kda_mixer_launches_what_decode_k_launches() {
+    in_w4a16_process("every_kda_mixer_launches_what_decode_k_launches", || {
+        let gpu = RecordingGpu::new(SMS);
+        let mut mixers = 0;
+        for (world, rank) in worlds()
+            .into_iter()
+            .flat_map(|w| (0..w).map(move |r| (w, r)))
+        {
+            let (c, rules, policy) = ranks_at(world).unwrap();
+            let layers = kda_layers(&c[rank]);
+            assert!(
+                layers.len() > 30,
+                "rank {rank}: {} KDA layers",
+                layers.len()
+            );
+            let heads = c[rank].dims["lin_v_heads"] as usize;
+            assert_eq!(
+                heads,
+                engine_heads(rank, world),
+                "world {world} rank {rank}: the head split"
+            );
+            let built: Vec<Mixer> = layers
+                .iter()
+                .map(|&l| mixer(&gpu, (rank, world), l, heads, served_levers()))
+                .collect();
+            for (mode, rows) in RUNS {
+                let p = plan(&c, &rules, &policy, rank, mode, rows);
+                let rows = rows as usize;
+                for (&l, m) in layers.iter().zip(&built) {
+                    let site = compile_kda(&c[rank], &p, l)
+                        .unwrap_or_else(|e| panic!("rank {rank} {mode:?} layer {l}: {e:#}"));
+                    assert!(site.legacy.is_empty(), "rank {rank} n={rows} layer {l}");
+                    let steps = m.bind(site.steps.clone());
+                    assert!(steps.takes(rows, rows - 1));
+                    let legacy = m.run(rows, None).unwrap();
+                    let planned = m.run(rows, Some(&steps)).unwrap();
+                    if let Some(d) = gate(&legacy, &planned) {
+                        panic!("rank {rank} n={rows} layer {l}: {d}");
+                    }
+                    let ks = kernels(&planned);
+                    let own = |e: (&str, &str)| format!("{}::{}", e.0, e.1);
+                    use crate::glm5next_kda::entry as e;
+                    use crate::glm5next_w4a16_plan::entry as w;
+                    let pipe = own(w::pipe(rows as u64).unwrap());
+                    let want: Vec<String> = if rows == 1 {
+                        vec![
+                            pipe.clone(),
+                            own(e::PACK),
+                            own(e::GATES_ROWS),
+                            own(e::CONV_ROW),
+                            own(e::RECUR_REG),
+                            own(e::O_NORM),
+                            own(w::GEMV),
+                        ]
+                    } else {
+                        vec![
+                            pipe.clone(),
+                            own(e::PACK),
+                            own(e::GATES_ROWS),
+                            own(e::CONV_WINDOW_TO),
+                            own(e::CONV_TOKENS),
+                            own(e::CONV_WINDOW),
+                            own(e::RECUR_SNAP),
+                            own(e::O_NORM),
+                            pipe,
+                        ]
+                    };
+                    let mine: Vec<&str> = ks
+                        .iter()
+                        .copied()
+                        .filter(|k| want.iter().any(|w| w == k))
+                        .collect();
+                    assert_eq!(
+                        mine, want,
+                        "rank {rank} n={rows}: the plan's own launches, in order"
+                    );
+                    mixers += 1;
+                }
+            }
+        }
+        println!("{mixers} KDA mixer runs gated");
+    });
+}
+
+/// 2026-10-23: One changed field of a bound plan turns the gate red at that launch: the gate
+/// entry, the conv entry, the recurrence entry, the pack entry, the output norm entry, the
+/// snapshot advance (here the window advance named in its place), the six-projection and `o`
+/// entries, their launch form, and the SM count the pipe's block cap reads.
+#[test]
+fn a_changed_plan_field_turns_the_gate_red() {
+    in_w4a16_process("a_changed_plan_field_turns_the_gate_red", || {
+        let (c, rules, policy) = ranks();
+        let l = kda_layers(&c[0])[0];
+        let heads = c[0].dims["lin_v_heads"] as usize;
+        let gpu = RecordingGpu::new(SMS);
+        let m = mixer(&gpu, (0, served_world()), l, heads, served_levers());
+        for (mode, rows) in RUNS {
+            let p = plan(&c, &rules, &policy, 0, mode, rows);
+            let rows = rows as usize;
+            let bound = m.bind(compile_kda(&c[0], &p, l).unwrap().steps);
+            let good = bound.steps;
+            let legacy = m.run(rows, None).unwrap();
+            assert_eq!(gate(&legacy, &m.run(rows, Some(&bound)).unwrap()), None);
+            let other = m
+                .gpu
+                .kernel("kda_layer_ops", "kda_sigmoid_bf16_f32")
+                .unwrap();
+            let mut bad: Vec<(&str, KdaSteps<KernelHandle>)> = vec![
+                (
+                    "gates",
+                    KdaSteps {
+                        gates: other,
+                        ..good
+                    },
+                ),
+                (
+                    "pack",
+                    KdaSteps {
+                        pack: other,
+                        ..good
+                    },
+                ),
+                (
+                    "out_norm",
+                    KdaSteps {
+                        out_norm: other,
+                        ..good
+                    },
+                ),
+            ];
+            let swap = |s: W4a16Step<KernelHandle>| match s {
+                W4a16Step::Gemv(k) => W4a16Step::Pipe(k),
+                W4a16Step::Pipe(k) => W4a16Step::Gemv(k),
+            };
+            let entry = |s: W4a16Step<KernelHandle>| s.map(|_| Ok(other)).unwrap();
+            for (what, six, o) in [
+                ("six entry", entry(good.six), good.o),
+                ("six form", swap(good.six), good.o),
+                ("o entry", good.six, entry(good.o)),
+                ("o form", good.six, swap(good.o)),
+            ] {
+                bad.push((what, KdaSteps { six, o, ..good }));
+            }
+            match good.conv {
+                ConvStep::Row(_) => {
+                    bad.push((
+                        "conv",
+                        KdaSteps {
+                            conv: ConvStep::Row(other),
+                            ..good
+                        },
+                    ));
+                    bad.push((
+                        "recur",
+                        KdaSteps {
+                            recur: RecurStep::Row(other),
+                            ..good
+                        },
+                    ));
+                }
+                ConvStep::TokensSnap { tokens, window, .. } => {
+                    let conv = ConvStep::TokensSnap {
+                        advance_to: window,
+                        tokens,
+                        window,
+                    };
+                    bad.push(("advance_to", KdaSteps { conv, ..good }));
+                    bad.push((
+                        "recur",
+                        KdaSteps {
+                            recur: RecurStep::Snap(other),
+                            ..good
+                        },
+                    ));
+                }
+            }
+            let mut plans: Vec<(&str, KdaPlan)> = bad
+                .into_iter()
+                .map(|(w, steps)| (w, KdaPlan { steps, ..bound }))
+                .collect();
+            // 2026-10-23: Doubled, not halved: on fewer SMs the six-projection launch (~5.7
+            // waves at 48) stays uncapped either way, so only a larger count moves its grid.
+            plans.push((
+                "sms",
+                KdaPlan {
+                    sms: bound.sms * 2,
+                    ..bound
+                },
+            ));
+            for (what, p) in plans {
+                let d = match m.run(rows, Some(&p)) {
+                    Ok(ops) => gate(&legacy, &ops),
+                    Err(e) => Some(format!("refused: {e:#}")),
+                };
+                assert!(d.is_some(), "n={rows}: a changed {what} stayed green");
+            }
+        }
+    });
+}
+
+/// 2026-10-23: The layer takes a plan only at its row count and snapshot form (a two-row prefill
+/// piece keeps no snapshot: `decode_k`'s token kernels, not the verify's), and the plan path
+/// refuses a run it was not compiled for rather than launching it.
+#[test]
+fn a_plan_runs_only_its_rows_and_snapshots() {
+    let (c, rules, policy) = ranks();
+    let l = kda_layers(&c[0])[0];
+    let one = compile_kda(&c[0], &plan(&c, &rules, &policy, 0, Mode::Decode, 1), l)
+        .unwrap()
+        .steps;
+    let two = compile_kda(&c[0], &plan(&c, &rules, &policy, 0, Mode::Verify, 2), l)
+        .unwrap()
+        .steps;
+    assert!(one.takes(1, 0) && !one.takes(1, 1) && !one.takes(2, 1));
+    assert!(two.takes(2, 1) && !two.takes(2, 0) && !two.takes(1, 0) && !two.takes(3, 2));
+    assert!(matches!(one.conv, ConvStep::Row(_)) && matches!(one.o, W4a16Step::Gemv(_)));
+    assert!(matches!(two.conv, ConvStep::TokensSnap { .. }) && matches!(two.o, W4a16Step::Pipe(_)));
+    assert!(matches!(
+        (one.six, two.six),
+        (W4a16Step::Pipe(_), W4a16Step::Pipe(_))
+    ));
+}
+
+/// 2026-10-23: A plan conv naming the window advance where the snapshot advance belongs, or one
+/// advance short, is refused at compile, naming the kernel or the count.
+#[test]
+fn a_verify_conv_of_another_form_is_refused() {
+    let (c, rules, policy) = ranks();
+    let l = kda_layers(&c[0])[0];
+    let mut p = plan(&c, &rules, &policy, 0, Mode::Verify, 2);
+    let i = PlanGroup::all(&c[0], &p)
+        .position(|g| g.layer() == Some(l) && g.locals() == ["short_conv", "conv_ckpt", "l2"])
+        .unwrap();
+    let saved = p.groups[i].kernels.clone();
+    p.groups[i].kernels[0].func = "causal_conv1d_window_advance".into();
+    let e = compile_kda(&c[0], &p, l).err().unwrap();
+    assert!(
+        format!("{e:#}").contains("causal_conv1d_window_advance_to"),
+        "{e:#}"
+    );
+    p.groups[i].kernels = saved[1..].to_vec();
+    let e = compile_kda(&c[0], &p, l).err().unwrap();
+    assert!(format!("{e:#}").contains("names 2 kernels"), "{e:#}");
+}
+
+/// 2026-10-23: Installation refuses a KDA lever the rules do not model, naming it, and clears on
+/// `None`; under the served levers it installs both runs.
+#[test]
+fn installation_refuses_unmodelled_levers() {
+    let mut levers = served_levers();
+    assert!(
+        kda::unmodelled(&levers).is_empty(),
+        "the served levers are modelled"
+    );
+    levers.kda.gates_fused = true;
+    levers.kda.conv_snap_to = false;
+    let refused = kda::unmodelled(&levers).join("; ");
+    assert!(
+        refused.contains("GATES_FUSED") && refused.contains("CONV_SNAP_TO"),
+        "{refused}"
+    );
+    levers = served_levers();
+    levers.kda.gates_rows = false;
+    assert!(kda::unmodelled(&levers)[0].contains("GATES_ROWS"));
+    // 2026-10-23: The one-launch conv the rules do not name (bit-identical, but inert under a plan).
+    levers = served_levers();
+    levers.kda.conv_one = true;
+    assert!(kda::unmodelled(&levers)[0].contains("CONV_ONE"));
+}

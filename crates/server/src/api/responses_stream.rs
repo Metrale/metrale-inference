@@ -317,6 +317,7 @@ pub(super) async fn responses_endpoint_stream(
                     emit(&tx, &ev).await;
                     seq += 1;
                 }
+                StreamDelta::Prompt { .. } => {}
                 StreamDelta::Content { .. } => {}
                 StreamDelta::ToolCallStart { id, name, .. } => {
                     // 2026-09-26: A tool call closes an open reasoning item; the

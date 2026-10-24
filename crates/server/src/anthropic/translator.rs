@@ -188,6 +188,9 @@ impl AnthropicTranslator {
     pub(super) fn on_delta(&mut self, d: &crate::ir::StreamDelta, out: &mut Vec<SseEvent>) {
         use crate::ir::StreamDelta;
         match d {
+            // 2026-10-20: The prompt count arrives before any content, so
+            // `message_start` carries the real `input_tokens` instead of 0.
+            StreamDelta::Prompt { tokens } => self.prompt_tokens = *tokens,
             StreamDelta::Reasoning { text, .. } if !text.is_empty() => {
                 self.ensure_message_start(out);
                 if !matches!(self.open_block, OpenBlock::Thinking) {

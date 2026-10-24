@@ -28,13 +28,16 @@
 //! - The base requirement (no plan) and a plan's requirement differ only where the plan states
 //!   something: a stored, held or stated format.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
 
-use super::vocab::steps_of;
+use alloc::collections::BTreeMap;
+
+use super::vocab::{cache_value, steps_of};
 use super::{NodePipeline, Num, PipelineError, Step, StepKind, Value};
 use crate::format::Format;
 use crate::fuser::{EdgeState, FusionPlan};
 use crate::ir::{Circuit, EdgeIdx, Node, NodeIdx, OpKind};
+use crate::kv;
 use crate::rules::Rule;
 use crate::state::{StateAccess, StateDtype, StateFormat};
 
@@ -186,7 +189,7 @@ pub fn required(need: &Need<'_>, n: NodeIdx) -> Result<NodePipeline, PipelineErr
             }
             (_, Some(v)) => v,
             (StepKind::Gather, None) => match node.op {
-                OpKind::Embed => Value::Format(
+                OpKind::Embed | OpKind::EngramLookup => Value::Format(
                     outputs
                         .first()
                         .copied()
@@ -211,12 +214,12 @@ pub fn required(need: &Need<'_>, n: NodeIdx) -> Result<NodePipeline, PipelineErr
             ) => Value::Num(Num::F32),
             (StepKind::Combine, None) => Value::OptNum((inputs.len() > 2).then_some(Num::F32)),
             (StepKind::Move | StepKind::Compare, None) => Value::Format(first("a move")?),
-            (StepKind::Cache, None) => Value::Kv(
-                need.settings
-                    .get("kv_cache_dtype")
-                    .cloned()
-                    .ok_or_else(|| fail("the policy states no `kv_cache_dtype`".into()))?,
-            ),
+            // 2026-10-18: A write into a state of fixed format (DeepSeek-V4.1's packed latent and
+            // index rows) caches at that format; only a keyed one follows `kv_cache_dtype`.
+            (StepKind::Cache, None) => match fixed_write(need, node) {
+                Some(d) => cache_value(d.name()).map_err(fail)?,
+                None => Value::Kv(kv::kv_pair(need.settings).map_err(fail)?),
+            },
             (StepKind::State, None) => Value::State(state_of(need, node).map_err(fail)?),
         };
         steps.push(Step { kind, value });
@@ -233,7 +236,10 @@ fn derived(kind: StepKind, act: Format, weight: Format) -> Result<Value, String>
     let operand = match (act, weight) {
         (Format::Bf16, _) => Num::Bf16,
         (Format::F32, _) => Num::F32,
-        (Format::Fp8E4m3 { .. }, Format::Fp8E4m3 { .. } | Format::Nvfp4 { .. }) => Num::E4m3,
+        (
+            Format::Fp8E4m3 { .. },
+            Format::Fp8E4m3 { .. } | Format::Nvfp4 { .. } | Format::Mxfp4 { .. },
+        ) => Num::E4m3,
         (Format::Nvfp4 { .. }, Format::Nvfp4 { .. }) => Num::E2m1,
         (a, w) => {
             return Err(format!(
@@ -272,9 +278,21 @@ fn state_of(need: &Need<'_>, node: &Node) -> Result<StateDtype, String> {
     }
 }
 
+/// 2026-10-18: The dtype of the fixed-format state `node` writes, if it writes one.
+fn fixed_write(need: &Need<'_>, node: &Node) -> Option<StateDtype> {
+    node.state
+        .iter()
+        .filter(|(_, a)| *a == StateAccess::Write)
+        .find_map(|(idx, _)| match need.circuit.states[*idx].format {
+            StateFormat::Fixed(d) => Some(d),
+            StateFormat::Keyed(_) => None,
+        })
+}
+
 /// 2026-10-02: The precision a keyed state format holds under `settings`. The recurrent h-state
 /// (`ssm_h_storage`) holds the precision `--ssm-h-dtype` names: FP16 under `f16` and
 /// `f16-pool` (which differ only in the pool's size), FP32 under `f32`.
+/// 2026-10-18: The KV cache (`kv_cache_dtype`) holds the codec pair it names ([`kv::parse_kv`]).
 pub fn keyed_state(key: &str, settings: &BTreeMap<String, String>) -> Result<StateDtype, String> {
     let setting = match key {
         "ssm_h_storage" => "ssm_h_dtype",
@@ -289,6 +307,7 @@ pub fn keyed_state(key: &str, settings: &BTreeMap<String, String>) -> Result<Sta
         ("ssm_h_storage", other) => Err(format!(
             "`ssm_h_dtype = {other}` names no h-state precision"
         )),
+        (kv::KV_SETTING, other) => kv::parse_kv(other).map(StateDtype::Kv),
         (_, other) => StateDtype::parse(other)
             .ok_or_else(|| format!("`{setting} = {other}` is no state dtype")),
     }

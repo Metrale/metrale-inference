@@ -79,6 +79,7 @@ fn mla_decode_keep_state(
     let dispatch = GemmDispatch::defaults();
     let derived = DerivedWeights::new();
     let levers = ModelLevers::defaults();
+    let settings = metrale_model_layers::lever_equivalence::defaults();
     let stats = ModelStats::new();
     let ctx = ForwardContext {
         buffers: &buffers,
@@ -88,6 +89,7 @@ fn mla_decode_keep_state(
         dispatch: &dispatch,
         derived: &derived,
         levers: &levers,
+        settings: &settings,
         stats: &stats,
         attn_metadata: None,
         profile: false,
@@ -101,6 +103,7 @@ fn mla_decode_keep_state(
         routed_lora_layers: None,
         midchunk_capture: None,
         moe_lora_route: MoeLoraRoute::Fold,
+        ab_levers: metrale_model_layers::layer::AbLevers::NONE,
     };
     let seed = K3BoundLayer {
         index: 0,
@@ -215,6 +218,7 @@ fn serving_cuda_mla_requires_serve_max_seq_len() {
     let dispatch = GemmDispatch::defaults();
     let derived = DerivedWeights::new();
     let levers = ModelLevers::defaults();
+    let settings = metrale_model_layers::lever_equivalence::defaults();
     let stats = ModelStats::new();
     let ctx = ForwardContext {
         buffers: &buffers,
@@ -224,6 +228,7 @@ fn serving_cuda_mla_requires_serve_max_seq_len() {
         dispatch: &dispatch,
         derived: &derived,
         levers: &levers,
+        settings: &settings,
         stats: &stats,
         attn_metadata: None,
         profile: false,
@@ -237,6 +242,7 @@ fn serving_cuda_mla_requires_serve_max_seq_len() {
         routed_lora_layers: None,
         midchunk_capture: None,
         moe_lora_route: MoeLoraRoute::Fold,
+        ab_levers: metrale_model_layers::layer::AbLevers::NONE,
     };
     let layer = K3BoundLayer {
         index: 3,

@@ -42,7 +42,7 @@ pub(super) fn promote_completed_prefills(
             if let Err(e) = model.free_sequence(&mut seq) {
                 tracing::error!("phase_promote_prefills: free_sequence (error path): {e:#}");
             }
-            if let Err(e) = model.ep_broadcast_cmd_for_seq(seq.slot_idx as u32, 0xFFFFFFF1) {
+            if let Err(e) = model.ep_broadcast_cmd_for_seq(seq.slot_idx as u32, metrale_model_layers::ep_wire::EP_CMD_ALLOC_SLOT) {
                 tracing::error!(
                     "phase_promote_prefills: ep_broadcast free+realloc (error path): {e:#}"
                 );
@@ -144,7 +144,10 @@ fn build_active_seq_from_prefill(
         remaining: if immediate_finish {
             0
         } else {
-            p.max_tokens - 1
+            // 2026-10-20: Saturating: `max_tokens == 0` with a spontaneous
+            // think start skips `immediate_finish` and must not underflow
+            // into an effectively unbounded budget.
+            p.max_tokens.saturating_sub(1)
         },
         min_tokens: p.min_tokens,
         eos_tokens: p.eos_tokens,
@@ -179,7 +182,7 @@ fn build_active_seq_from_prefill(
         },
         enable_thinking: p.enable_thinking,
         thinking_budget: if !immediate_finish && spontaneous_think {
-            Some(p.spontaneous_think_budget)
+            p.spontaneous_think_budget.or(p.thinking_budget)
         } else {
             p.thinking_budget
         },

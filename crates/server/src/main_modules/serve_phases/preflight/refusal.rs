@@ -23,7 +23,7 @@ pub(super) struct Refusal {
     /// leaves after them.
     pub(super) seq_len_independent: usize,
     /// 2026-09-26: The ring depth requested before the fit
-    /// (`decode_ring::requested_slots`: flags and environment), and the depth
+    /// (`decode_ring::requested_slots`: flags and `LoadLevers`), and the depth
     /// reserved after the fit.
     pub(super) ring_requested: usize,
     pub(super) ring_slots: usize,

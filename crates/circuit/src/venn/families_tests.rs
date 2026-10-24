@@ -25,6 +25,9 @@ fn attn(extra: &str) -> String {
 [[family]]
 id = "attn"
 description = "toy"
+explain.about = "toy"
+explain.numerics = "toy"
+explain.math = ["x"]
 compute = "cuda_core"
 kernels = ["m::attn"]
 rows = [1, 64]
@@ -152,5 +155,92 @@ fn malformed_entries_are_refused() {
             .unwrap_err()
             .to_string()
             .contains("rows")
+    );
+}
+
+/// 2026-10-22: `HEAD` with `extra` appended to its `[roofline]` table.
+fn with_roofline(extra: &str) -> String {
+    attn("").replacen(
+        "context_tokens = 4096\n",
+        &format!("context_tokens = 4096\n{extra}"),
+        1,
+    )
+}
+
+const ENERGY: &str = "dram_pj_per_byte = 23.2\ncuda_core_fp32_pj_per_flop = 1.7\nstatic_w = 12.5\n\
+                      energy_label = \"preliminary\"\nenergy_source = \"probe\"\n";
+
+#[test]
+fn the_energy_roofline_parses_and_its_absence_is_none() {
+    let f = parse_families(&with_roofline(ENERGY)).unwrap();
+    let e = f.energy.unwrap();
+    assert_eq!(e.dram_pj_per_byte, 23.2);
+    assert_eq!(e.simt_fp32_pj_per_flop, Some(1.7));
+    assert_eq!(e.nvfp4_mma_pj_per_flop, None);
+    assert_eq!(e.static_w, 12.5);
+    assert_eq!(e.label, "preliminary");
+    assert!(parse_families(&attn("")).unwrap().energy.is_none());
+}
+
+#[test]
+fn half_an_energy_roofline_is_refused() {
+    for drop in [
+        "dram_pj_per_byte",
+        "static_w",
+        "energy_label",
+        "energy_source",
+    ] {
+        let text: String = ENERGY
+            .lines()
+            .filter(|l| !l.starts_with(drop))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        let e = parse_families(&with_roofline(&text)).unwrap_err();
+        assert!(e.to_string().contains("all-or-none"), "{drop}: {e}");
+    }
+    let e = parse_families(&with_roofline("fp8_mma_pj_per_flop = 0.5\n")).unwrap_err();
+    assert!(e.to_string().contains("needs dram_pj_per_byte"), "{e}");
+}
+
+#[test]
+fn a_non_positive_or_mislabelled_energy_constant_is_refused() {
+    for (from, to) in [
+        ("dram_pj_per_byte = 23.2", "dram_pj_per_byte = 0.0"),
+        ("static_w = 12.5", "static_w = -1.0"),
+        (
+            "cuda_core_fp32_pj_per_flop = 1.7",
+            "cuda_core_fp32_pj_per_flop = nan",
+        ),
+    ] {
+        let e = parse_families(&with_roofline(&ENERGY.replace(from, to))).unwrap_err();
+        assert!(e.to_string().contains("must be positive"), "{to}: {e}");
+    }
+    let e = parse_families(&with_roofline(&ENERGY.replace("preliminary", "guessed"))).unwrap_err();
+    assert!(e.to_string().contains("energy_label"), "{e}");
+}
+
+#[test]
+fn an_unknown_roofline_key_is_still_refused() {
+    assert!(parse_families(&with_roofline("dram_pj_per_bit = 3.0\n")).is_err());
+}
+
+/// 2026-10-22: The gate that every family states its math: a family without `explain`, or
+/// with an empty `explain.math`, does not load.
+#[test]
+fn a_family_without_its_math_is_refused() {
+    let ok = attn("");
+    parse_families(&ok).unwrap();
+    let no_explain = ok
+        .lines()
+        .filter(|l| !l.starts_with("explain."))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let e = parse_families(&no_explain).unwrap_err().to_string();
+    assert!(e.contains("explain"), "{e}");
+    let empty = ok.replace("explain.math = [\"x\"]", "explain.math = []");
+    let e = parse_families(&empty).unwrap_err().to_string();
+    assert!(
+        e.contains("explain.math is empty") && e.contains("attn"),
+        "{e}"
     );
 }

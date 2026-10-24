@@ -11,7 +11,9 @@
 //! - Drift is two-way: a point the sources realise that the manifest lacks, and a point the
 //!   manifest declares at a file whose rule does not find it there.
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use super::families::{Discover, Families, Values};
 use crate::precision::glob;

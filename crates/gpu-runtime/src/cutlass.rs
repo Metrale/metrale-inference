@@ -227,19 +227,36 @@ unsafe impl Sync for Ctx {}
 static CTX: OnceLock<Ctx> = OnceLock::new();
 
 #[cfg(metrale_cutlass)]
+/// 2026-10-17: The workspace size (`DeviceSettings::cutlass_workspace_bytes`), fixed by the
+/// first backend built (`MetraleCudaBackend::with_settings`). Static for the same reason as
+/// [`CTX`], which is allocated at this size. ROTI: a startup static, accepted until the CUTLASS
+/// context is owned by the backend instead of the process.
+static WORKSPACE_BYTES: OnceLock<usize> = OnceLock::new();
+
+#[cfg(metrale_cutlass)]
+/// 2026-10-17: Fix the workspace size for the process. The first call sets it; a later call
+/// with another size is an error, since the workspace may already be allocated at the first.
+pub(crate) fn fix_workspace_bytes(bytes: usize) -> Result<()> {
+    let fixed = *WORKSPACE_BYTES.get_or_init(|| bytes);
+    if fixed != bytes {
+        bail!(
+            "CUTLASS workspace already fixed at {fixed} bytes — cannot change it to {bytes} \
+             (METRALE_CUTLASS_WORKSPACE_MB)"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(metrale_cutlass)]
 pub(crate) fn ctx() -> Result<&'static Ctx> {
     if let Some(c) = CTX.get() {
         return Ok(c);
     }
     // 2026-09-25: Scratch for every CUTLASS wrapper; the grouped NVFP4 path
     // carves packed A, SFA, per-group arrays and the GEMM workspace from it.
-    // 512 MiB unless `METRALE_CUTLASS_WORKSPACE_MB` parses as a number.
-    let ws_size = std::env::var("METRALE_CUTLASS_WORKSPACE_MB")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(512)
-        * 1024
-        * 1024;
+    let Some(&ws_size) = WORKSPACE_BYTES.get() else {
+        bail!("CUTLASS workspace size not fixed: build a MetraleCudaBackend before a CUTLASS call");
+    };
     let mut workspace = 0u64;
     let status = unsafe { cuMemAlloc_v2(&mut workspace, ws_size) };
     if status != 0 {

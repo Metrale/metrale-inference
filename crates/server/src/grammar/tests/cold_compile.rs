@@ -13,7 +13,7 @@
 use std::time::{Duration, Instant};
 
 use super::*;
-use crate::grammar::GrammarState;
+use crate::grammar::{GrammarLevers, GrammarState};
 
 /// 2026-09-26: A deterministic `n`-token vocabulary (printable ASCII, then
 /// three-character strings), followed by `<tool_call>`, `</tool_call>` and
@@ -80,8 +80,13 @@ fn prepare(engine: &mut GrammarEngine, tools: &[ToolDefinition]) -> Prepared {
 
     let started = Instant::now();
     let hook = engine.mask_snapshot_hook();
-    let mut state =
-        GrammarState::new_with_hook(&compiled, engine.vocab_size(), hook).expect("grammar state");
+    let mut state = GrammarState::new_with_hook(
+        &compiled,
+        engine.vocab_size(),
+        engine.levers().async_prewarm,
+        hook,
+    )
+    .expect("grammar state");
     state.fill_bitmask();
     Prepared {
         construct,
@@ -228,8 +233,8 @@ fn phase_timings_with_a_real_tokenizer() {
     let tokenizer = tokenizers::Tokenizer::from_file(path).expect("tokenizer loads");
     let stop = tokenizer.token_to_id("<|im_end|>").expect("<|im_end|>") as i32;
     let started = Instant::now();
-    let mut engine =
-        GrammarEngine::from_tokenizer(&tokenizer, None, &[stop]).expect("engine builds");
+    let mut engine = GrammarEngine::from_tokenizer(&tokenizer, None, &[stop], GrammarLevers::UNSET)
+        .expect("engine builds");
     println!(
         "vocab={} engine_build_ms={:.1}",
         engine.vocab_size(),
@@ -286,7 +291,10 @@ fn cold_vs_snapshot_warm_with_a_real_tokenizer() {
     let stop = tokenizer.token_to_id("<|im_end|>").expect("<|im_end|>") as i32;
     let dir = scratch("real");
     let tools = tool("get_weather", "city", "days");
-    let build = || GrammarEngine::from_tokenizer(&tokenizer, None, &[stop]).expect("engine");
+    let build = || {
+        GrammarEngine::from_tokenizer(&tokenizer, None, &[stop], GrammarLevers::UNSET)
+            .expect("engine")
+    };
 
     let mut cold_engine = build();
     cold_engine.attach_mask_cache(&dir);
@@ -308,8 +316,13 @@ fn cold_vs_snapshot_warm_with_a_real_tokenizer() {
         let compiled = admit_engine
             .compile_qwen3_coder_tool_grammar(&tool("ping", "host", "count"), true, "</parameter>")
             .unwrap();
-        let mut state =
-            GrammarState::new_with_hook(&compiled, admit_engine.vocab_size(), None).unwrap();
+        let mut state = GrammarState::new_with_hook(
+            &compiled,
+            admit_engine.vocab_size(),
+            admit_engine.levers().async_prewarm,
+            None,
+        )
+        .unwrap();
         let admit_ms = admitted.elapsed().as_secs_f64() * 1000.0;
         state.fill_bitmask();
         let joined_ms = admitted.elapsed().as_secs_f64() * 1000.0;

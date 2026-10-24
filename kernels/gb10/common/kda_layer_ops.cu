@@ -18,6 +18,8 @@
 
 
 #include <cuda_bf16.h>
+#include "kda_gate_scalar.cuh"
+#include "pdl.cuh"
 
 
 
@@ -55,25 +57,13 @@ extern "C" __global__ void kda_o_norm_gated_bf16(
     unsigned int head_dim,
     float eps
 ) {
+    // 2026-10-21: PDL (pdl.cuh): every input is another kernel's output.
+    pdl_enter();
 #define KDA_ONORM_OUT_BF16(val) output[(size_t)row * head_dim + i] = __float2bfloat16(val)
     KDA_ONORM_BODY(__bfloat162float(gate[(size_t)row * head_dim + i]),
                    __bfloat162float(weight[i]),
                    KDA_ONORM_OUT_BF16)
 #undef KDA_ONORM_OUT_BF16
-}
-
-
-extern "C" __global__ void kda_o_norm_gated_f32(
-    const float* __restrict__ input,
-    const float* __restrict__ gate,
-    const float* __restrict__ weight,
-    float* __restrict__ output,
-    unsigned int head_dim,
-    float eps
-) {
-#define KDA_ONORM_OUT_F32(val) output[(size_t)row * head_dim + i] = (val)
-    KDA_ONORM_BODY(gate[(size_t)row * head_dim + i], weight[i], KDA_ONORM_OUT_F32)
-#undef KDA_ONORM_OUT_F32
 }
 
 // 2026-09-25: Splits the [T, 3 * qkv] BF16 q|k|v rows into three FP32 [T_pad, qkv] buffers;
@@ -118,8 +108,7 @@ extern "C" __global__ void kda_sigmoid_bf16_f32(
 ) {
     unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i < n) {
-        float x = __bfloat162float(src[i]);
-        dst[i] = 1.0f / (1.0f + __expf(-x));
+        dst[i] = kda_beta_scalar(__bfloat162float(src[i]));
     }
 }
 
@@ -138,6 +127,8 @@ extern "C" __global__ void kda_pack_qkv_bf16(
     unsigned int T,
     unsigned int qkv
 ) {
+    // 2026-10-21: PDL (pdl.cuh): every input is another kernel's output.
+    pdl_enter();
     const unsigned int ch = blockIdx.x * blockDim.x + threadIdx.x;
     const unsigned int t = blockIdx.y;
     if (ch >= qkv || t >= T) return;

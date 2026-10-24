@@ -42,6 +42,9 @@ pub struct ModelCapabilities {
     /// 2026-09-26: Copied from `ModelConfig::nested_config`, which a parser sets when the text
     /// model's fields sit under a nested key such as `text_config`.
     pub has_nested_config: bool,
+    /// 2026-10-24: The model generates tokens; `false` for an embedding model
+    /// (`ModelConfig::embedding` is set), which only answers `/v1/embeddings`.
+    pub generates: bool,
 }
 
 impl ModelCapabilities {
@@ -79,6 +82,7 @@ impl ModelCapabilities {
             has_mtp,
             ssm_architecture: ssm_arch,
             has_nested_config: has_nested,
+            generates: config.embedding.is_none(),
             attention_type: if config.kv_lora_rank > 0 {
                 AttentionType::Mla
             } else {

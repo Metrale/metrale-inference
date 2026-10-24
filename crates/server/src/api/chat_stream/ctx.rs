@@ -45,6 +45,14 @@ pub(super) struct StreamCtx {
     /// arguments (`ToolCallParser::wants_typed_arguments`; true for `qwen3_xml`,
     /// `qwen3_coder`, `poolside_v1` and `deepseek_v4_dsml`).
     pub(super) wants_typed_arguments: bool,
+    /// 2026-10-08: The tool parser's `call_policy`; `Repairing` when there is no
+    /// parser. Under `FailClosed` the detector judges calls itself and
+    /// `tool_dispatch::push_keepalive_if_due` keeps a held call's stream alive.
+    pub(super) call_policy: tool_parser::CallPolicy,
+    /// 2026-10-08: The reasoning parser's `tool_call_closes_reasoning`; false without
+    /// one. `handle_token` then ends the reasoning at `<tool_call>` too, and keeps
+    /// marker text inside a call.
+    pub(super) tool_call_closes_reasoning: bool,
     pub(super) max_tool_calls_per_response: usize,
     pub(super) req_return_token_ids: bool,
     pub(super) req_ctx: Option<crate::rate_limiter::RequestContext>,

@@ -62,7 +62,10 @@ pub(super) fn step_verify_k4_batched(
     if let Err(e) = model.sync_secondary() {
         tracing::error!("batched-verify sync_secondary: {e:#}");
         for a in batch.iter_mut() {
-            a.finished = true;
+            crate::scheduler::lifecycle::fail_sequence(
+                a,
+                format!("batched-verify sync_secondary: {e:#}"),
+            );
         }
         return;
     }
@@ -87,6 +90,34 @@ pub(super) fn step_verify_k4_batched(
         drafts_per_seq.push(d);
     }
 
+    // 2026-10-11: Multi-rank (`step_mtp` batches here only with one k for the whole batch and
+    // `METRALE_EP_MTP_BATCH_VERIFY=1`): announce the batch as the batched DFlash verify does
+    // (`EP_CMD_VERIFY_BATCH`, `verify_batch_wire.rs`); the verdict follows the forward below.
+    let ep = model.is_ep();
+    let t_announce = sched.io.clock.now();
+    if ep {
+        let slots: Vec<u32> = batch.iter().map(|a| a.seq.slot_idx as u32).collect();
+        let k = ks[0];
+        let sent = if ks.iter().all(|&x| x == k) {
+            super::verify_dflash_batch_step::ep_send_verify_batch(model, &slots, k, &tokens)
+        } else {
+            Err(anyhow::anyhow!(
+                "a multi-rank batched verify needs one k, got {ks:?}"
+            ))
+        };
+        if let Err(e) = sent {
+            tracing::error!("EP broadcast mtp verify_batch: {e:#}");
+            for a in batch.iter_mut() {
+                super::lifecycle::fail_sequence(a, format!("EP broadcast verify_batch: {e:#}"));
+            }
+            return;
+        }
+        sched
+            .io
+            .tel
+            .mark(crate::scheduler::mtp_timing::Phase::EpBroadcast, t_announce);
+    }
+
     // 2026-09-25: `Model::decode_verify_batched` contract: on Ok each
     // sequence's `tokens` and `seq_len` advanced by its own `ks[i]` (the
     // verdict rewinds them); on Err no sequence state advanced, and this
@@ -104,6 +135,16 @@ pub(super) fn step_verify_k4_batched(
             Ok(r) => r,
             Err(e) => {
                 tracing::error!("decode_verify_batched (n={n} ks={ks:?}): {e:#}");
+                // 2026-10-11: Multi-rank: the workers ran their forward and wait for a verdict.
+                if ep {
+                    super::verify_dflash_batch_step::ep_fail_verify_batch(
+                        model,
+                        batch,
+                        n,
+                        &format!("{e:#}"),
+                    );
+                    return;
+                }
                 for a in batch.iter_mut() {
                     a.finished = true;
                 }
@@ -195,6 +236,31 @@ pub(super) fn step_verify_k4_batched(
         .io
         .tel
         .mark(crate::scheduler::mtp_timing::Phase::PipelineProc, t_phase1);
+    // 2026-10-11: Multi-rank: every sequence's committed row count (the anchor plus its accepted
+    // drafts) before any emit, as the batched DFlash verify sends it; the workers trim, fold,
+    // commit and stash the same rows (`ep_worker_verify_batch`).
+    if ep {
+        let t_send = sched.io.clock.now();
+        let words: Vec<u32> = verdicts
+            .iter()
+            .enumerate()
+            .map(|(i, &(_, na, _))| (na.min(ks[i] - 1) + 1) as u32)
+            .collect();
+        if let Err(e) = model.ep_broadcast_tokens(&words) {
+            tracing::error!("EP broadcast mtp verify_batch verdict: {e:#}");
+            for a in batch.iter_mut() {
+                super::lifecycle::fail_sequence(
+                    a,
+                    format!("EP broadcast verify_batch verdict: {e:#}"),
+                );
+            }
+            return;
+        }
+        sched
+            .io
+            .tel
+            .mark(crate::scheduler::mtp_timing::Phase::EpBroadcast, t_send);
+    }
     let t_stash = sched.io.clock.now();
     // 2026-09-25: stash each sequence's accepted-position hidden row
     // (`off[i] + num_accepted`) into stash slot i before any propose
@@ -248,7 +314,10 @@ pub(super) fn step_verify_k4_batched(
         if let Err(e) = model.gdn_fold_accepted(&slots, &rows, k_max) {
             tracing::error!("gdn_fold_accepted (mtp batched): {e:#}");
             for a in batch.iter_mut() {
-                a.finished = true;
+                crate::scheduler::lifecycle::fail_sequence(
+                    a,
+                    format!("gdn_fold_accepted (mtp batched): {e:#}"),
+                );
             }
             return;
         }
@@ -318,8 +387,7 @@ pub(super) fn step_verify_k4_batched(
     let mut groups_batched = 0usize;
     // 2026-09-25: draft confidences (the D-Cut ranking key) are requested
     // only when D-Cut is on.
-    let want_conf = sched.levers.dcut_enabled
-        || metrale_model_layers::speculative::draft_stop::draft_stop_logprob().is_some();
+    let want_conf = sched.levers.dcut_enabled || sched.levers.draft_stop.is_some();
     let mut conf: Vec<Vec<f32>> = Vec::new();
     let group_cap = model.mtp_propose_batch_max().max(1);
     if pending.len() >= 2 && group_cap >= 2 && sched.levers.mtp_batch_propose {

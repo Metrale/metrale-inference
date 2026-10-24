@@ -45,30 +45,36 @@ pub fn verify_pick_all_with_pipeline(
     // the sequence is outside thinking, decoding is greedy (temperature 0 or
     // `force_temp_zero`), and the penalties are not `Blocked`. Each position's
     // GPU argmax must be grammar-allowed (a grammar-allowed global maximum is
-    // the maximum of the allowed set) and, for `ReduceOnly` penalties,
-    // penalty-immune (`fast_greedy`). The matcher is advanced speculatively
+    // the maximum of the allowed set) and survive the penalties and the
+    // request's `logit_bias` (`fast_greedy::argmax_survives`). The matcher is advanced speculatively
     // between positions and rolled back afterwards, as the host path does.
     //
-    // The other pipeline stages are not consulted: `MinTokensEosMask`,
-    // `PostCloseThinkMask`, `PinToToolCallStart` and the tool-call bias can
-    // still apply outside thinking, so this path can emit a token the host
-    // path would have masked. Temperature above 0 always takes the host path,
-    // where the sampling branch runs.
+    // An EOS pick that `EosHoldMask` would mask declines this path and the
+    // grammarless one below (`eos_hold::eos_masked_in_window`). The other
+    // pipeline stages are not consulted: `PostCloseThinkMask`,
+    // `PinToToolCallStart` and the tool-call bias can still apply outside
+    // thinking, so this path can emit a token the host path would have
+    // masked. Temperature above 0 always takes the host path, where the
+    // sampling branch runs. The bias is checked, not ignored: the tools-active
+    // `<tool_call>` bias is on every such request outside a tool body.
+    let eos_held = crate::scheduler::eos_hold::eos_masked_in_window(a, argmax_ids);
+    // 2026-10-21: the host path's penalties and bias; the two fast paths
+    // below check the bias per position (`fast_greedy::argmax_survives`).
+    let penalties = crate::scheduler::sample_step::penalty_params_for(
+        a,
+        crate::scheduler::sample_step::PositionKind::Verify,
+        0.0,
+        None,
+        a.logit_bias.clone(),
+        ctx.watchdog.min_reasoning_floor,
+    );
     let fast_penalty_gate = if ctx.sampling.fast_greedy_grammar
         && a.grammar_state.is_some()
         && !a.inside_thinking
+        && !eos_held
         && (a.temperature == 0.0 || ctx.sampling.force_temp_zero)
     {
-        crate::scheduler::fast_greedy::classify_penalties(
-            &crate::scheduler::sample_step::penalty_params_for(
-                a,
-                crate::scheduler::sample_step::PositionKind::Verify,
-                0.0,
-                None,
-                Vec::new(),
-                ctx.watchdog.min_reasoning_floor,
-            ),
-        )
+        crate::scheduler::fast_greedy::classify_penalties_except_bias(&penalties)
     } else {
         crate::scheduler::fast_greedy::PenaltyGate::Blocked
     };
@@ -100,18 +106,18 @@ pub fn verify_pick_all_with_pipeline(
             };
             for (i, &tok) in argmax_ids.iter().enumerate() {
                 // 2026-09-25: `ReduceOnly`: the argmax must be absent from the
-                // scoped history and have a raw logit above 0.
-                if fast_penalty_gate == crate::scheduler::fast_greedy::PenaltyGate::ReduceOnly
-                    && !crate::scheduler::fast_greedy::argmax_immune(tok, &scoped_history, || {
-                        crate::scheduler::fast_greedy::logit_is_positive(
-                            model,
-                            logits_base,
-                            row_base + i,
-                            vocab,
-                            tok,
-                        )
-                    })
-                {
+                // scoped history and have a raw logit above 0. 2026-10-21: and
+                // the bias must not lift a competitor past it.
+                if !crate::scheduler::fast_greedy::argmax_survives(
+                    model,
+                    logits_base,
+                    row_base + i,
+                    vocab,
+                    tok,
+                    fast_penalty_gate,
+                    &scoped_history,
+                    &penalties.logit_bias,
+                ) {
                     all_allowed = false;
                     break;
                 }
@@ -151,26 +157,18 @@ pub fn verify_pick_all_with_pipeline(
 
     // 2026-09-25: grammarless fast path. Eligible when `fast_greedy_chat` is
     // on (`METRALE_NO_FAST_GREEDY_CHAT=1` turns it off), no grammar is
-    // active, the sequence is outside thinking, decoding is greedy, and the
-    // penalties are `Neutral`, or `ReduceOnly` with every argmax
-    // penalty-immune. No mask stage is consulted (see the grammar path
+    // active, the sequence is outside thinking, decoding is greedy, and every
+    // argmax survives the penalties and the bias (`argmax_survives`). Only
+    // the EOS hold is consulted (see the grammar path
     // above). The GPU argmax can also break near-ties differently from the
     // host scan, so the picks are not always the host path's.
     let chat_fast_gate = if ctx.sampling.fast_greedy_chat
         && a.grammar_state.is_none()
         && !a.inside_thinking
+        && !eos_held
         && (a.temperature == 0.0 || ctx.sampling.force_temp_zero)
     {
-        crate::scheduler::fast_greedy::classify_penalties(
-            &crate::scheduler::sample_step::penalty_params_for(
-                a,
-                crate::scheduler::sample_step::PositionKind::Verify,
-                0.0,
-                None,
-                Vec::new(),
-                ctx.watchdog.min_reasoning_floor,
-            ),
-        )
+        crate::scheduler::fast_greedy::classify_penalties_except_bias(&penalties)
     } else {
         crate::scheduler::fast_greedy::PenaltyGate::Blocked
     };
@@ -189,16 +187,16 @@ pub fn verify_pick_all_with_pipeline(
                 Vec::new()
             };
         let all_immune = argmax_ids.iter().enumerate().all(|(i, &tok)| {
-            chat_fast_gate == crate::scheduler::fast_greedy::PenaltyGate::Neutral
-                || crate::scheduler::fast_greedy::argmax_immune(tok, &scoped_history, || {
-                    crate::scheduler::fast_greedy::logit_is_positive(
-                        model,
-                        logits_base,
-                        row_base + i,
-                        vocab,
-                        tok,
-                    )
-                })
+            crate::scheduler::fast_greedy::argmax_survives(
+                model,
+                logits_base,
+                row_base + i,
+                vocab,
+                tok,
+                chat_fast_gate,
+                &scoped_history,
+                &penalties.logit_bias,
+            )
         });
         ctx.tel.mark(Phase::FastGreedy, t_fast);
         if all_immune {

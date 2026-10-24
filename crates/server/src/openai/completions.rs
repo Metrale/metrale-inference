@@ -86,6 +86,10 @@ pub struct CompletionRequest {
     pub suffix: Option<String>,
     #[allow(dead_code)]
     pub best_of: Option<usize>,
+    /// 2026-10-20: Request timeout in seconds; `None` = the server's. Same
+    /// field and semantics as on the chat request.
+    #[serde(default)]
+    pub timeout: Option<f32>,
 }
 
 /// 2026-09-26: The completions logprobs block: four parallel arrays. With
@@ -328,5 +332,21 @@ mod min_tokens_tests {
             "min_tokens": 0
         }));
         assert_eq!(req.min_tokens, 0);
+    }
+
+    /// 2026-10-20: The completions request deserializes `timeout` exactly
+    /// like the chat request's: absent = `None` (the server default), a
+    /// number = seconds. The field feeds `request_deadline` at both
+    /// completions call sites.
+    #[test]
+    fn timeout_deserializes_like_chat() {
+        let absent = req_with(serde_json::json!({ "model": "m", "prompt": "hi" }));
+        assert_eq!(absent.timeout, None);
+        let explicit = req_with(serde_json::json!({
+            "model": "m",
+            "prompt": "hi",
+            "timeout": 12.5
+        }));
+        assert_eq!(explicit.timeout, Some(12.5));
     }
 }

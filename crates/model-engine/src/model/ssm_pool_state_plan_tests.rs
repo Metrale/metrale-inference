@@ -116,6 +116,7 @@ fn one_unit_of_every_state_is_the_legacy_blob() {
             layer_dtypes: Vec::new(),
             layer_dims: Vec::new(),
             cache_blocks_per_seq: None,
+            v_block_bytes: None,
         };
         assert_eq!(main("k").len(), config.num_attention_layers(), "{name}");
         let p = StatePlan::new(

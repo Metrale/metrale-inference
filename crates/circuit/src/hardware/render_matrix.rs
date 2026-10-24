@@ -6,8 +6,10 @@
 //! Owner: metrale-circuit (hardware).
 //! Invariants: deterministic text, formatted as [`super::render`] formats the reports.
 
-use std::collections::BTreeMap;
-use std::fmt::Write as _;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
+use core::fmt::Write as _;
 
 use super::HwReport;
 use super::render::{FIT_CONTEXTS, FIT_SEQS, pct, projection};
@@ -88,7 +90,7 @@ pub fn summary_row(r: &HwReport) -> String {
             "yes".to_string()
         } else {
             let need = r.footprint.bytes(1, FIT_CONTEXTS[0]);
-            format!("no: TP={}", (need / usable).ceil() as u64)
+            format!("no: TP={}", crate::num::sat_u64(libm::ceil(need / usable)))
         },
         max_c.map_or_else(|| "none".into(), |c| c.to_string()),
         if top.is_empty() {

@@ -102,32 +102,45 @@ fn a_set_tc_kill_switch_is_disclosed_verbatim() {
     }
 }
 
-/// 2026-09-26: The `unset` defaults are right only while `tc_enabled` treats
-/// unset or empty `METRALE_NO_W4A16_TC` as on and `wide_rows_enabled` treats
-/// only a non-empty `METRALE_W4A16_TC_WIDE` as on. Reads `gemv_tc.rs` so a
-/// rule change there fails here.
+/// 2026-10-17: The source of the `layers::ops` lever resolution, where the
+/// tensor-core kill switches, the widening and their shared rule live.
+fn ops_levers_src() -> String {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let path = root.join("crates/model-layers/src/layers/ops/ops_levers.rs");
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}
+
+/// 2026-10-17: The rule `OpsLevers::from_settings` reads the tensor-core
+/// switches through: unset or empty reads as unset, any other value as set.
+fn assert_unset_or_empty_rule(src: &str) {
+    let rule = src
+        .find("fn unset_or_empty(")
+        .map(|at| src[at..].chars().take(120).collect::<String>())
+        .expect("the tensor-core switch rule is gone; PERF_CONTROLS discloses a dead variable");
+    assert!(
+        rule.contains("v.is_none_or(str::is_empty)"),
+        "the tensor-core switch rule changed; the record's \"unset\" defaults assume unset or \
+         empty means unset: {rule}"
+    );
+}
+
+/// 2026-09-26: The `unset` defaults are right only while the lever treats
+/// unset or empty `METRALE_NO_W4A16_TC` as on and only a non-empty
+/// `METRALE_W4A16_TC_WIDE` as on. Reads `ops_levers.rs` so a rule change there
+/// fails here.
 #[test]
 fn tc_kill_switch_default_matches_the_lever() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let path = root.join("crates/model-layers/src/layers/ops/gemv_tc.rs");
-    let src = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    let at = src
-        .find("pub fn tc_enabled()")
-        .expect("the tensor-core lever SSOT is gone; PERF_CONTROLS discloses a dead variable");
-    let body: String = src[at..].chars().take(260).collect();
+    let src = ops_levers_src();
+    assert_unset_or_empty_rule(&src);
     assert!(
-        body.contains("std::env::var_os(\"METRALE_NO_W4A16_TC\").is_none_or(|v| v.is_empty())"),
-        "the tc kill-switch rule changed; the record's \"unset\" default assumes unset or \
-         empty means the tensor-core path ran: {body}"
+        src.contains("let tc = unset_or_empty(k.no_w4a16_tc.as_deref());"),
+        "the tc kill switch no longer reads through the rule; the record's \"unset\" default \
+         assumes unset or empty means the tensor-core path ran"
     );
-    let at = src
-        .find("pub fn wide_rows_enabled()")
-        .expect("the row-edge widening lever is gone; PERF_CONTROLS discloses a dead variable");
-    let body: String = src[at..].chars().take(260).collect();
     assert!(
-        body.contains("std::env::var_os(\"METRALE_W4A16_TC_WIDE\").is_some_and(|v| !v.is_empty())"),
+        src.contains("wide: tc && !unset_or_empty(k.w4a16_tc_wide.as_deref()),"),
         "the widening opt-in rule changed; the record's \"unset\" default assumes unset or \
-         empty means the widening did NOT run: {body}"
+         empty means the widening did NOT run"
     );
     let resolved = super::resolve_perf_env(|_| None);
     for var in ["METRALE_NO_W4A16_TC", "METRALE_W4A16_TC_WIDE"] {
@@ -136,30 +149,16 @@ fn tc_kill_switch_default_matches_the_lever() {
 }
 
 /// 2026-09-26: The `unset` default for `METRALE_NO_MTP_TC` is right only while
-/// `mtp_tc_from` treats unset or empty as on and any other value, `0`
-/// included, as off. Reads `dense_gemv_tc.rs`; a set value is recorded
-/// verbatim.
+/// the lever treats unset or empty as on and any other value, `0` included,
+/// as off. Reads `ops_levers.rs`; a set value is recorded verbatim.
 #[test]
 fn tc_mtp_switch_default_matches_the_lever() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let path = root.join("crates/model-layers/src/layers/ops/dense_gemv_tc.rs");
-    let src = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    let rule = src
-        .find("pub fn mtp_tc_from(")
-        .map(|at| src[at..].chars().take(200).collect::<String>())
-        .expect("the drafter tc rule is gone; PERF_CONTROLS discloses a dead variable");
+    let src = ops_levers_src();
+    assert_unset_or_empty_rule(&src);
     assert!(
-        rule.contains("kill.is_none_or(|v| v.is_empty())"),
-        "the METRALE_NO_MTP_TC rule changed; the record's \"unset\" default assumes unset or \
-         empty means the tensor-core path ran: {rule}"
-    );
-    let read = src
-        .find("pub fn mtp_tc_enabled()")
-        .map(|at| src[at..].chars().take(300).collect::<String>())
-        .expect("the drafter tc lever is gone");
-    assert!(
-        read.contains("mtp_tc_from(std::env::var_os(\"METRALE_NO_MTP_TC\")"),
-        "the lever no longer reads METRALE_NO_MTP_TC through mtp_tc_from: {read}"
+        src.contains("mtp_tc: unset_or_empty(s.speculative.no_mtp_tc.as_deref()),"),
+        "the lever no longer reads METRALE_NO_MTP_TC through the rule; the record's \"unset\" \
+         default assumes unset or empty means the tensor-core path ran"
     );
     assert_eq!(
         super::resolve_perf_env(|_| None)
@@ -178,25 +177,26 @@ fn tc_mtp_switch_default_matches_the_lever() {
 }
 
 /// 2026-09-26: The `unset` default for `METRALE_NO_BORROW_STREAK_LIMIT` is
-/// right only while `streak_limit_from` treats unset or empty as on. Reads
-/// `borrow_streak.rs`; a set value is recorded verbatim.
+/// right only while the guard treats unset or empty as on. Reads
+/// `engine_levers.rs` (2026-10-17: the rule moved there from `borrow_streak.rs`);
+/// a set value is recorded verbatim.
 #[test]
 fn borrow_streak_switch_default_matches_the_lever() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let path = root.join("crates/model-engine/src/model/trait_impl/borrow_streak.rs");
+    let path = root.join("crates/model-engine/src/model/engine_levers.rs");
     let src = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     let rule = src
-        .find("pub fn streak_limit_from(")
+        .find("borrow_streak_limit: s")
         .map(|at| src[at..].chars().take(200).collect::<String>())
         .expect("the borrow-streak rule is gone; PERF_CONTROLS discloses a dead variable");
     assert!(
-        rule.contains("kill.is_none_or(|v| v.is_empty())"),
+        rule.contains(".is_none_or(str::is_empty)"),
         "the METRALE_NO_BORROW_STREAK_LIMIT rule changed; the record's \"unset\" default \
          assumes unset or empty means the guard ran: {rule}"
     );
     assert!(
-        src.contains("streak_limit_from(std::env::var_os(\"METRALE_NO_BORROW_STREAK_LIMIT\")"),
-        "the guard no longer reads METRALE_NO_BORROW_STREAK_LIMIT through streak_limit_from"
+        rule.contains(".no_borrow_streak_limit"),
+        "the guard no longer reads the METRALE_NO_BORROW_STREAK_LIMIT setting"
     );
     assert_eq!(
         super::resolve_perf_env(|_| None)
@@ -215,4 +215,32 @@ fn borrow_streak_switch_default_matches_the_lever() {
             Some(v)
         );
     }
+}
+
+/// 2026-10-17: Every perf control is a declared lever, and an unset one discloses that
+/// lever's declared default: the two co-dispatch timings as numbers, the switches as
+/// `unset`.
+#[test]
+fn every_perf_control_discloses_its_declared_default_when_unset() {
+    let resolved = super::resolve_perf_env(|_| None);
+    assert_eq!(resolved.len(), super::PERF_CONTROLS.len());
+    for key in super::PERF_CONTROLS {
+        let lever = metrale_config::levers::lookup(key)
+            .unwrap_or_else(|| panic!("{key} is not a declared lever"));
+        assert_eq!(
+            resolved.get(key).map(String::as_str),
+            Some(lever.default),
+            "{key}"
+        );
+    }
+    assert_eq!(
+        resolved
+            .get("METRALE_PREFILL_CODISPATCH_SETTLE_MS")
+            .map(String::as_str),
+        Some("10")
+    );
+    assert_eq!(
+        resolved.get("METRALE_NO_MTP_TC").map(String::as_str),
+        Some("unset")
+    );
 }

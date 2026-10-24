@@ -24,13 +24,6 @@ use super::super::types::TransformerModel;
 use crate::traits::SequenceState;
 use metrale_model_layers::layer::ForwardContext;
 
-/// 2026-09-25: True when `METRALE_NO_MTP_EAGER_DRAFTER` is set, to any value: the capture is
-/// then consumed only at the first propose. Read once per process.
-pub fn eager_drafter_disabled() -> bool {
-    static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *OFF.get_or_init(|| std::env::var("METRALE_NO_MTP_EAGER_DRAFTER").is_ok())
-}
-
 impl TransformerModel {
     /// 2026-09-25: Copy this prefill chunk's hidden rows (`[proc_count, h]` BF16 at the head of
     /// the hidden buffer) into the whole-prompt capture at row `chunk_start`.
@@ -75,6 +68,8 @@ impl TransformerModel {
             return Ok(());
         }
         let len = self.mtp_prefill_capture_len.load(Ordering::Relaxed);
+        let carry_on = metrale_model_layers::mtp_carry::mtp_carry_drafter_enabled(&self.levers);
+        let adopt = self.levers.mtp_adopt_capture;
         // 2026-09-25: The capture buffer is one shared slot. Chunk 0 claims it under a fresh
         // generation; an append counts only while this sequence still owns the current
         // generation, because another sequence's chunk 0 may have restarted the capture in
@@ -88,6 +83,21 @@ impl TransformerModel {
             && seq.mtp_capture_gen == self.mtp_prefill_capture_gen.load(Ordering::Relaxed)
         {
             Some(len + proc_count)
+        } else if metrale_model_layers::mtp_adopt::claims_adoption(
+            adopt,
+            carry_on,
+            chunk_start,
+            self.mtp_capture_record.lock().tokens.len(),
+        ) {
+            // 2026-10-14: `METRALE_MTP_ADOPT_CAPTURE`: a prefix-cache hit claims the capture,
+            // taking rows below `chunk_start` from the record; the consume checks the record
+            // still holds this prompt's matched tokens (`mtp_adopt`).
+            let generation = self.mtp_prefill_capture_gen.fetch_add(1, Ordering::Relaxed) + 1;
+            seq.mtp_capture_gen = generation;
+            self.mtp_capture_record
+                .lock()
+                .note_claim(generation, chunk_start);
+            Some(chunk_start + proc_count)
         } else {
             None
         };
@@ -95,9 +105,11 @@ impl TransformerModel {
         // tracker above rejects. With `mtp_carry_drafter_enabled`, the carry path records the
         // written interval by absolute row (`mtp_store_range`), so it wants the write wherever
         // the chunk starts. The source is this chunk's rows; only the destination is absolute.
-        let carry_on = metrale_model_layers::mtp_carry::mtp_carry_drafter_enabled(&self.levers);
         if contiguous_from_zero.is_none() && !carry_on {
             return Ok(());
+        }
+        if adopt {
+            self.mtp_capture_record.lock().note_write(chunk_start);
         }
         let h = self.config.hidden_size;
         let bf16 = 2usize;
@@ -129,8 +141,11 @@ impl TransformerModel {
     /// while it still owns the capture generation. Returns at once unless `is_last`, the
     /// caller's last-chunk flag.
     ///
-    /// The callers pass the `stream` their prefill ran on, so this is ordered after the
-    /// capture copy it reads.
+    /// The callers pass the `stream` they handed the prefill. 2026-10-14: The consume runs on
+    /// `forward_stream(stream)`, where the prefill and its capture copy ran: a multi-rank
+    /// world's forward runs on the default stream whatever stream the caller passes, so on the
+    /// caller's stream the drafter read the capture unordered after its copy. A single-rank
+    /// serve keeps the caller's stream.
     ///
     /// Never fails a prefill: a drafter with fewer rows costs acceptance, not
     /// correctness, because the target verifies every draft.
@@ -140,7 +155,10 @@ impl TransformerModel {
         is_last: bool,
         stream: u64,
     ) {
-        if !is_last || eager_drafter_disabled() || self.mtp_prefill_hidden.is_null() {
+        if !is_last
+            || self.settings.speculative.no_mtp_eager_drafter
+            || self.mtp_prefill_hidden.is_null()
+        {
             return;
         }
         let Some(proposer) = self.proposer.clone() else {
@@ -155,6 +173,7 @@ impl TransformerModel {
         if seq.proposer_state.is_none() {
             return;
         }
+        let stream = self.forward_stream(stream);
         let ctx = ForwardContext {
             buffers: &self.buffers,
             hc_row_offset: 0,
@@ -162,8 +181,10 @@ impl TransformerModel {
             config: &self.config,
             dispatch: &self.dispatch,
             moe_lora_route: self.decode_moe_route(),
+            ab_levers: metrale_model_layers::layer::AbLevers::NONE,
             derived: &self.derived,
             levers: &self.levers,
+            settings: &self.settings,
             stats: &self.stats,
             attn_metadata: None,
             profile: false,

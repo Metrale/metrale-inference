@@ -14,6 +14,7 @@ use metrale_model_engine::traits::{Model, PrefillSlice, SequenceState};
 use std::time::Instant;
 
 use super::super::decode_logits_step::process_decode_logits;
+use super::super::lifecycle::send_error_to_sink;
 use super::super::types::{ActiveSeq, PrefillInProgress};
 use super::super::{FirstTokenPolicy, sample_first_token};
 
@@ -121,7 +122,23 @@ pub(super) fn run_batched_mixed_step(
                 "Mixed-batch forward error (n_decode={n_decode}, n_prefill={n_prefill}): {e:#}",
             );
             for i in 0..n_prefill {
+                // 2026-10-20: The client gets an error frame before the
+                // `(i, None)` frees the sequence (`promote_completed_prefills`
+                // drops the sink without a frame).
+                send_error_to_sink(
+                    &sched.io,
+                    &mut prefilling[i].sink,
+                    &format!("mixed-batch prefill failed: {e:#}"),
+                );
                 completed_indices.push((i, None));
+            }
+            // 2026-10-20: The decode rows are in the failed step too: their
+            // KV/SSM state may have consumed this step's position with no
+            // token sampled, so decoding on would corrupt them silently.
+            // Fail them the way a failed pure-decode readback is failed:
+            // every row gets an error frame and the batch is dropped.
+            for mut a in active.drain(..) {
+                super::super::lifecycle::send_error(&sched.io, &mut a, &format!("mixed-batch decode failed: {e:#}"));
             }
             return;
         }
@@ -158,7 +175,13 @@ pub(super) fn run_batched_mixed_step(
             p.min_p,
             &p.eos_tokens,
             p.grammar_state.as_mut(),
-            FirstTokenPolicy::for_birth(p.enable_thinking, think_end_token, tool_call_start_token),
+            FirstTokenPolicy::for_birth(
+                p.enable_thinking,
+                think_end_token,
+                tool_call_start_token,
+                p.min_tokens,
+                p.require_tool_call,
+            ),
             &sched.levers.sampling(),
             sched.io.tel.dumps(),
         ) {
@@ -172,6 +195,11 @@ pub(super) fn run_batched_mixed_step(
             }
             Err(e) => {
                 tracing::error!("Mixed-batch prefill[{i}] sampling: {e:#}");
+                send_error_to_sink(
+                    &sched.io,
+                    &mut p.sink,
+                    &format!("prefill sampling failed: {e:#}"),
+                );
                 completed_indices.push((i, None));
             }
         }

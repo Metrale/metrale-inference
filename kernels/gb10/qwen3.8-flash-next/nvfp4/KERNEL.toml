@@ -20,7 +20,6 @@ extra_nvcc_flags = ["--fmad=false"]
 # 2026-09-25: File stem -> module name overrides. A .cu file not listed here
 # uses its file stem as the module name (crates/kernels/build.rs).
 [modules]
-e2m1_branchless = "e2m1"
 moe_permute = "moe"
 dense_gemm_bf16 = "gemm"
 rms_norm = "norm"
@@ -57,7 +56,6 @@ attn_prefill_paged_bf16k_turbo4v = "prefill_paged_bf16k_turbo4v"
 paged_decode_attn_bf16k_turbo4v_128 = "paged_decode_bf16k_turbo4v_128"
 attn_prefill_paged_bf16k_turbo2v = "prefill_paged_bf16k_turbo2v"
 paged_decode_attn_bf16k_turbo2v_128 = "paged_decode_bf16k_turbo2v_128"
-attn_prefill_fp8kv = "prefill_fp8kv"
 gated_delta_rule = "gated_delta_rule"
 reshape_and_cache_turbo = "reshape_and_cache_turbo"
 paged_decode_attn_turbo4 = "paged_decode_turbo4"

@@ -9,7 +9,9 @@
 //! - Loading is fail-fast: the first unknown op, dangling or duplicate edge, format no
 //!   consumer accepts, or template/layout mismatch is returned as a [`CircuitError`].
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use serde::Deserialize;
 
@@ -140,6 +142,11 @@ pub enum CircuitError {
     /// layout does not describe.
     #[error("layout: {0}")]
     Layout(String),
+    /// 2026-10-23: A rank circuit the parallel layout cannot derive (a malformed or refused
+    /// split, a marked edge naming no marked part, a partial crossing a block, a resharding
+    /// between two parts).
+    #[error("parallel: {0}")]
+    Parallel(String),
     /// 2026-09-28: An included block file that was not supplied, does not parse, or defines a
     /// block another file also defines.
     #[error("include `{name}`: {detail}")]
@@ -178,10 +185,14 @@ pub(crate) struct CircuitFile {
     #[serde(default)]
     pub draft_variant: BTreeMap<String, Vec<String>>,
     pub block: BTreeMap<String, BlockFile>,
+    /// 2026-10-23: How each dim may split over ranks (`[parallel.<dim>]`); a dim not listed is
+    /// replicated. Read only when a rank circuit is instantiated ([`crate::parallel`]).
+    #[serde(default)]
+    pub parallel: crate::parallel::ParallelSpec,
     /// 2026-09-30: The blocks the circuit file itself defines (not its libraries'); only these
     /// must all be used.
     #[serde(skip)]
-    pub local_blocks: std::collections::BTreeSet<String>,
+    pub local_blocks: alloc::collections::BTreeSet<String>,
 }
 
 #[derive(Deserialize)]
@@ -194,6 +205,23 @@ pub(crate) struct LayoutFile {
     /// holds (`moe_latent = { moe = ["moe_latent"] }`).
     #[serde(default)]
     pub when: BTreeMap<String, BTreeMap<String, Vec<String>>>,
+    /// 2026-10-08: The first layers take other blocks per kind (`first_k_dense_replace`: dense
+    /// FFN layers before the MoE ones).
+    pub prefix: Option<PrefixFile>,
+    /// 2026-10-18: `[layout.at]`: single layers (key = the layer index, written canonically)
+    /// that take their own blocks whatever their kind, ahead of `prefix` and `blocks`
+    /// (DeepSeek-V4.1: the compressor and indexer owners and the Engram layers).
+    #[serde(default)]
+    pub at: BTreeMap<String, Vec<String>>,
+}
+
+/// 2026-10-08: `[layout.prefix]`: layers `0..count` (`count` a dim of the circuit) map their
+/// kind through `blocks` instead of the layout's own; a kind it does not map is an error there.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PrefixFile {
+    pub count: String,
+    pub blocks: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -283,6 +311,10 @@ pub(crate) struct EdgeFile {
     pub edge: String,
     pub format: String,
     pub shape: String,
+    /// 2026-10-23: The `scope = "marked"` part ([`crate::parallel`]) this edge is sliced along
+    /// on a rank (a projection whose output rows split while the dim is whole elsewhere).
+    #[serde(default)]
+    pub split: Option<String>,
 }
 
 /// 2026-09-28: The layer-kind rule a circuit declares.

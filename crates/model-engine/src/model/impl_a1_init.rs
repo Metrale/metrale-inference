@@ -143,8 +143,8 @@ pub(super) fn build_mtp_proposer(
 }
 
 /// 2026-09-25: Build the optional SSM snapshot spill tier. Returns `None`
-/// unless `METRALE_SSM_TIER` is set and the model has SSM layers; otherwise
-/// builds the env-selected store keyed by the model's `ModelFingerprint`.
+/// unless `levers.enabled` (`METRALE_SSM_TIER`) and the model has SSM layers; otherwise
+/// builds the lever-selected store keyed by the model's `ModelFingerprint`.
 ///
 /// `blob_bytes` must be `SsmSnapshotPool::spill_blob_bytes()`: the tier's blobs
 /// are fixed-size and must match the spill and fault-in gathers.
@@ -152,10 +152,13 @@ pub(super) fn build_ssm_tier_store(
     config: &ModelConfig,
     blob_bytes: usize,
     num_ssm_layers: usize,
+    levers: &super::ssm_tier::SsmTierLevers,
 ) -> Result<Option<Arc<dyn super::ssm_tier::SnapshotBlobStore>>> {
-    if super::ssm_tier::ssm_tier_enabled() && num_ssm_layers > 0 {
-        let fp = super::ssm_tier::ModelFingerprint::derive(config, blob_bytes)?;
-        Ok(Some(super::ssm_tier::build_tier_store(fp, blob_bytes)?))
+    if levers.enabled && num_ssm_layers > 0 {
+        let fp = super::ssm_tier::ModelFingerprint::derive(config, blob_bytes, levers)?;
+        Ok(Some(super::ssm_tier::build_tier_store(
+            fp, blob_bytes, levers,
+        )?))
     } else {
         Ok(None)
     }

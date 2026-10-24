@@ -34,6 +34,12 @@ const PINS: &[(&str, &str, usize)] = &[
     // 2026-09-25: The 32-row W8A16 tile. `ops::w8a16_gemm_pipelined_m32_strided`
     // packs 9, and the contiguous entry passes K and N as the row pitches.
     ("w8a16_gemm_pipelined_m32", "w8a16_gemm_pipelined_m32", 9),
+    // 2026-10-17: The FP32-output projection. `ops::dense_gemm_tc_f32::launch` packs 6 for the
+    // tile (A, B, C, M, N, K) and 7 for the GEMV tiers (out_stride added).
+    ("dense_gemm_tc_f32out", "dense_gemm_tc_f32out", 6),
+    ("dense_gemm_tc_f32out", "dense_gemv_bf16_tc8_f32out", 7),
+    ("dense_gemm_tc_f32out", "dense_gemv_bf16_tc16_f32out", 7),
+    ("dense_gemm_tc_f32out", "dense_gemv_bf16_tc32_f32out", 7),
 ];
 
 /// 2026-09-25: The arity a target's copy of a kernel must have. No target

@@ -21,7 +21,9 @@ fn parse(extra: &[&str]) -> ServeArgs {
         | super::super::Command::DumpServeOptions
         | super::super::Command::SyncRecipes
         | super::super::Command::Doctor
-        | super::super::Command::Circuit(_) => {
+        | super::super::Command::Circuit(_)
+        | super::super::Command::Blueprint(_)
+        | super::super::Command::Embed(_) => {
             unreachable!("this test parses a serve command")
         }
     }
@@ -73,12 +75,36 @@ fn kv_high_precision_layers_typo_is_refused_before_the_weight_load() {
 
 #[test]
 fn every_documented_kv_high_precision_layers_form_is_accepted() {
-    for form in ["0", "2", "64", "auto", "max", "all", "AUTO", "Max"] {
+    for form in ["0", "2", "64", "auto", "max", "all", "none", "AUTO", "Max"] {
         assert!(
             validate_serve_args(&parse(&["--kv-high-precision-layers", form])).is_ok(),
             "{form} is documented as valid but was refused"
         );
     }
+}
+
+/// 2026-10-19: `--kv-cache-dtype` takes every spelling the codec registry accepts (so a
+/// codec registered there, such as `turbo3_tcq`, needs no CLI change), refuses a typo, and the
+/// fix lists the registry's spellings.
+#[test]
+fn kv_cache_dtype_accepts_exactly_the_registry_spellings() {
+    let accepted = metrale_kv_codec::accepted();
+    let names: Vec<&str> = accepted.split(", ").collect();
+    assert!(names.contains(&"turbo3_tcq") && names.contains(&"turbo4_n128"));
+    for name in &names {
+        let r = validate_serve_args(&parse(&["--kv-cache-dtype", name]));
+        assert!(
+            r.is_ok(),
+            "{name} is accepted by the registry but refused: {r:?}"
+        );
+    }
+    let err = validate_serve_args(&parse(&["--kv-cache-dtype", "turbo3_tqc"]))
+        .expect_err("a typo must be refused before the weight load");
+    assert!(err.contains("'turbo3_tqc'"), "{err}");
+    assert!(
+        err.contains("turbo1_tcq") && err.contains("turbo4_n128"),
+        "{err}"
+    );
 }
 
 #[test]

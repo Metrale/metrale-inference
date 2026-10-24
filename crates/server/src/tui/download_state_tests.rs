@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-26: Tests of `DownloadState`: refusal, cancel, the fraction, and
-//! the freshness answers. Every accepted `start` spawns the real download
-//! worker; only the two `#[ignore = "network"]` tests wait for its answer.
+//! the freshness answers. Jobs come from `fake::pending`, which never settles;
+//! only the two `#[ignore = "network"]` tests run the real download worker.
 //!
 //! Owner: server tui.
 //! Invariants: none beyond the types.
@@ -17,7 +17,7 @@ fn root() -> std::path::PathBuf {
 
 #[test]
 fn a_second_download_is_refused_by_name_not_queued() {
-    let mut s = DownloadState::default();
+    let mut s = fake::state();
     let (_, err) = s.start("org/first", root());
     assert!(!err, "the first one starts");
 
@@ -33,7 +33,7 @@ fn a_second_download_is_refused_by_name_not_queued() {
 fn cancelling_twice_abandons_the_job() {
     // 2026-09-26: The first call sets the worker's cancel flag and marks the
     // job; the second stops tracking it.
-    let mut s = DownloadState::default();
+    let mut s = fake::state();
     s.start("org/m", root());
 
     let (text, _) = s.cancel().expect("something is running");
@@ -51,13 +51,13 @@ fn cancelling_twice_abandons_the_job() {
 
 #[test]
 fn cancelling_nothing_is_not_an_error() {
-    let mut s = DownloadState::default();
+    let mut s = fake::state();
     assert!(s.cancel().is_none());
 }
 
 #[test]
 fn a_job_without_sizes_reports_no_fraction_rather_than_zero() {
-    let mut s = DownloadState::default();
+    let mut s = fake::state();
     s.start("org/m", root());
     let job = s.job.as_mut().unwrap();
     job.total = 0;
@@ -71,7 +71,7 @@ fn a_job_without_sizes_reports_no_fraction_rather_than_zero() {
 
 #[test]
 fn the_fraction_never_exceeds_one() {
-    let mut s = DownloadState::default();
+    let mut s = fake::state();
     s.start("org/m", root());
     let job = s.job.as_mut().unwrap();
     job.total = 100;
@@ -81,20 +81,20 @@ fn the_fraction_never_exceeds_one() {
 
 #[test]
 fn freshness_defaults_to_nothing_rather_than_current() {
-    let s = DownloadState::default();
+    let s = fake::state();
     assert!(!s.freshness.contains_key("org/m"));
 }
 
 #[test]
 fn pump_with_no_job_is_quiet() {
-    let mut s = DownloadState::default();
+    let mut s = fake::state();
     assert!(s.pump().is_none());
 }
 
 #[test]
 #[ignore = "network"]
 fn a_failed_download_settles_and_explains_itself() {
-    let mut s = DownloadState::default();
+    let mut s = DownloadState::new(crate::model_download::start);
     s.start("definitely-not/a-real-model-xyz", root());
 
     let mut settled = None;
@@ -126,7 +126,7 @@ fn a_real_download_settles_as_finished() {
     let _ = std::fs::remove_dir_all(&cache);
     std::fs::create_dir_all(&cache).unwrap();
 
-    let mut s = DownloadState::default();
+    let mut s = DownloadState::new(crate::model_download::start);
     s.start("hf-internal-testing/tiny-random-gpt2", cache.clone());
 
     let mut settled = None;
@@ -154,10 +154,10 @@ fn a_real_download_settles_as_finished() {
 
 #[test]
 fn a_download_for_a_model_not_being_downloaded_reads_as_not_downloading() {
-    let mut s = DownloadState::default();
+    let mut s = fake::state();
     s.start("org/m", root());
     assert!(!s.is_downloading("org/other"));
-    assert!(!DownloadState::default().is_downloading("org/m"));
+    assert!(!fake::state().is_downloading("org/m"));
 }
 
 #[test]
@@ -177,7 +177,7 @@ fn a_freshness_answer_reports_every_outcome_not_only_stale() {
         (Freshness::Unknown, "could not reach the Hub", true),
     ];
     for (f, needle, wants_error_tone) in cases {
-        let mut s = DownloadState::default();
+        let mut s = fake::state();
         let (tx, rx) = std::sync::mpsc::channel();
         s.pending_check = Some(rx);
         s.checking = Some("org/m".into());
@@ -206,7 +206,7 @@ fn only_the_actionable_outcomes_name_the_d_key() {
         (Freshness::Missing, true),
         (Freshness::Unknown, false),
     ] {
-        let mut s = DownloadState::default();
+        let mut s = fake::state();
         let (tx, rx) = std::sync::mpsc::channel();
         s.pending_check = Some(rx);
         tx.send(("org/m".to_string(), f)).unwrap();
@@ -219,7 +219,7 @@ fn only_the_actionable_outcomes_name_the_d_key() {
 #[test]
 fn a_freshness_worker_that_died_settles_out_loud() {
     use crate::model_download::stale::Freshness;
-    let mut s = DownloadState::default();
+    let mut s = fake::state();
     let (tx, rx) = std::sync::mpsc::channel::<(String, Freshness)>();
     s.pending_check = Some(rx);
     s.checking = Some("org/m".into());

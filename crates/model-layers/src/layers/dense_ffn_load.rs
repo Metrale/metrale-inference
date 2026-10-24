@@ -2,7 +2,8 @@
 
 //! 2026-09-26: Load-time copies of the NVFP4 weights for the Q4_K, NVFP4 MMQ and int8 prefill
 //! arms: the `ensure_*_weight` builders, and the steps of `finalize_q4k_load` and
-//! `finalize_nvfp4_mmq_load` (in `dense_ffn.rs`) that follow their environment reads.
+//! `finalize_nvfp4_mmq_load` (in `dense_ffn.rs`) that follow their lever checks, and the levers
+//! those two read ([`MmqLoadLevers`]).
 //!
 //! Owner: model-layers (dense FFN).
 //! Invariants:
@@ -15,6 +16,27 @@ use metrale_gpu_runtime::gpu::GpuBackend;
 use super::{DenseFfnLayer, Fp4MmqWeight, Int8Weight, Q4kWeight};
 use crate::layers::ops;
 use crate::weight_map::QuantizedWeight;
+
+/// 2026-10-17: The four `ModelLevers` fields the MMQ finalizers read, copied at construction so
+/// the loaders call `finalize_*_load` without the levers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct MmqLoadLevers {
+    pub(super) ffn_mmq: bool,
+    pub(super) ffn_mmq_down_q4k: bool,
+    pub(super) ffn_nvfp4_mmq: bool,
+    pub(super) ffn_nvfp4_mmq_down: bool,
+}
+
+impl MmqLoadLevers {
+    pub(super) fn of(l: &ops::ModelLevers) -> Self {
+        Self {
+            ffn_mmq: l.ffn_mmq,
+            ffn_mmq_down_q4k: l.ffn_mmq_down_q4k,
+            ffn_nvfp4_mmq: l.ffn_nvfp4_mmq,
+            ffn_nvfp4_mmq_down: l.ffn_nvfp4_mmq_down,
+        }
+    }
+}
 
 impl DenseFfnLayer {
     /// 2026-09-26: The gate and up Q4_K copies `finalize_q4k_load` builds.

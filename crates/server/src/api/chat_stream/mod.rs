@@ -30,7 +30,11 @@ mod handle_token;
 mod state;
 mod strip;
 mod token_ids;
+mod tool_dispatch;
 mod tool_handlers;
+mod vllm_shape;
+#[cfg(test)]
+mod vllm_shape_tests;
 
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive};
@@ -176,10 +180,7 @@ pub(crate) async fn run_chat_stream(
         .map(|p| p.leak_markers())
         .unwrap_or(tool_parser::LeakMarkers::EMPTY);
 
-    let max_tool_calls_per_response: usize = std::env::var("METRALE_MAX_TOOL_CALLS_PER_RESPONSE")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(12);
+    let max_tool_calls_per_response = state.chat.max_tool_calls_per_response;
 
     // 2026-09-26: Hold back the longest stop string's byte length minus one, so a stop
     // string split across two decoded chunks is not sent in part; 0 without stop
@@ -194,6 +195,10 @@ pub(crate) async fn run_chat_stream(
     let prompt_vocab: Arc<std::collections::HashSet<String>> =
         Arc::new(std::collections::HashSet::new());
 
+    let call_policy = state
+        .tool_call_parser
+        .as_ref()
+        .map_or(tool_parser::CallPolicy::Repairing, |p| p.call_policy());
     let ctx = StreamCtx {
         state: state.clone(),
         model: model_name.clone(),
@@ -209,6 +214,11 @@ pub(crate) async fn run_chat_stream(
             .tool_call_parser
             .as_ref()
             .is_some_and(|p| p.wants_typed_arguments()),
+        call_policy,
+        tool_call_closes_reasoning: state
+            .reasoning_parser
+            .as_ref()
+            .is_some_and(|p| p.tool_call_closes_reasoning()),
         max_tool_calls_per_response,
         req_return_token_ids,
         req_ctx,
@@ -227,6 +237,7 @@ pub(crate) async fn run_chat_stream(
         enable_thinking,
         cancel_flag.clone(),
         ctx.tool_defs_for_backfill.clone(),
+        &state.chat,
     );
     if let Some(detector) = stream_state.detector.as_mut() {
         // 2026-09-26: Only `poolside_v1` promotes a bare name inside `<tool_call>` to a
@@ -237,8 +248,19 @@ pub(crate) async fn run_chat_stream(
                 .as_ref()
                 .is_some_and(|p| p.promotes_bare_call_names()),
         );
+        detector.set_fail_closed(matches!(
+            call_policy,
+            tool_parser::CallPolicy::FailClosed { .. }
+        ));
     }
 
+    // 2026-10-14: vLLM's whitespace shaping, for a reasoning format that asks
+    // for it (`vllm_shape.rs`).
+    let mut vllm_shape = state
+        .reasoning_parser
+        .as_ref()
+        .is_some_and(|p| p.shapes_stream_whitespace())
+        .then(vllm_shape::VllmDeltaShape::default);
     // 2026-09-26: `terminated`: a stream the scheduler drops without Done/Error still
     // ends in an error frame (`stream_terminal.rs`).
     let events = super::stream_terminal::terminated(ReceiverStream::new(token_rx));
@@ -279,9 +301,19 @@ pub(crate) async fn run_chat_stream(
             }
             StreamEvent::Error(msg) => handle_error::handle_error(&ctx, msg),
         };
+        let deltas = match vllm_shape.as_mut() {
+            Some(shape) => shape.apply(deltas),
+            None => deltas,
+        };
 
         futures::stream::iter(deltas).boxed()
     });
 
-    Ok(Box::pin(token_stream))
+    // 2026-10-20: The prompt count is known before the first token, so lead
+    // the stream with it: a streaming encoder's opening event (the Anthropic
+    // `message_start`) can carry the real `input_tokens` instead of 0.
+    let prompt_head = futures::stream::iter(vec![crate::ir::StreamDelta::Prompt {
+        tokens: prompt_len,
+    }]);
+    Ok(Box::pin(prompt_head.chain(token_stream)))
 }

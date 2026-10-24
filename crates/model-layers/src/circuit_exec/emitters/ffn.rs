@@ -53,13 +53,14 @@ impl OpEmitter for DenseFfnKm {
         let (g, u, inter) = gate_up_rows(cx, cx.g.output(0, 0)?)?;
         let x = cx.ptr(cx.g.input(0, 0)?)?;
         let (m, h) = (rows(cx)?, dim(cx, "hidden")?);
+        let w4a16_tc = cx.ops.w4a16_tc;
         for (i, (w, y)) in [(gate, g), (up, u)].into_iter().enumerate() {
             let k = cx.handle(i)?;
             batchm_runs(cx, k, &w, [m, inter, h])?;
             cx.push(
                 i,
                 Box::new(move |e| {
-                    ops::w4a16_gemv_batchm(e.gpu, k, x, &w, y, m, inter, h, e.stream)
+                    ops::w4a16_gemv_batchm(e.gpu, k, w4a16_tc, x, &w, y, m, inter, h, e.stream)
                 }),
             )?;
         }

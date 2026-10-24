@@ -13,7 +13,9 @@
 //! - A flag's cost is the estimate of running the flagged nodes once per row minus running them
 //!   once for all rows, so flags rank by the time the missing multi-row path costs.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use super::classify::{candidates, classify_node, usages};
 use super::families::{EvidenceSource, Families};
@@ -348,7 +350,11 @@ fn flags_for(
     let kind_of = |n: NodeIdx| tc.nodes[n].layer.map(|l| tc.layer_kinds[l]);
     let mut out = Vec::new();
     for l in &inp.families.legacy {
-        if l.arch != tc.arch || !l.per_sequence.contains(&run.mode) || run.rows <= l.rows_above {
+        if l.arch != tc.arch
+            || !l.per_sequence.contains(&run.mode)
+            || run.rows <= l.rows_above
+            || !l.runs_under(&inp.target.instance.policy.settings)
+        {
             continue;
         }
         let nodes: Vec<NodeIdx> = scope
@@ -382,7 +388,7 @@ fn flags_for(
     }
     for (kind, nodes) in by_kind {
         let added = penalty(inp, tc, &nodes, run)?;
-        let sites: std::collections::BTreeSet<String> =
+        let sites: alloc::collections::BTreeSet<String> =
             nodes.iter().map(|&n| site_of(tc, n)).collect();
         out.push(Flag {
             layer_kind: kind,

@@ -11,13 +11,17 @@
 //! - Rule ids are unique; `rows` is a non-empty inclusive range; `modes` is non-empty.
 //! - Every rule cites the dispatch site that makes today's choice (`cite`).
 
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use crate::format::Format;
 use crate::ir::{LayerKind, LinearRole, OpKind};
 
 /// 2026-09-28: Which forward a plan is for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum Mode {
     /// 2026-09-28: One sequence, one row.
     Decode,
@@ -61,7 +65,9 @@ impl Mode {
 /// 2026-09-28: A kernel entry point as the engine looks it up: the module name (the source
 /// stem after KERNEL.toml `[modules]` renames, e.g. `norm` for `rms_norm.cu`) and the
 /// function.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct KernelId {
     /// 2026-09-28: Module, e.g. `norm`.
     pub module: String,
@@ -69,14 +75,68 @@ pub struct KernelId {
     pub func: String,
 }
 
-impl std::fmt::Display for KernelId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for KernelId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}::{}", self.module, self.func)
     }
 }
 
+/// 2026-10-23: The communication library call a collective group issues.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub enum CommApi {
+    /// 2026-10-23: Every rank sends its partial to every peer and receives theirs (the one-shot
+    /// exchange, `metrale_comm` `exchange_partials` / the one-shot all-reduce); the sum is a kernel
+    /// of the group.
+    Exchange,
+    /// 2026-10-23: The library's ring all-reduce.
+    AllReduceRing,
+    /// 2026-10-23: A broadcast from one rank.
+    Broadcast,
+}
+
+impl CommApi {
+    /// 2026-10-23: The spelling in FUSIONS.toml.
+    pub fn name(self) -> &'static str {
+        match self {
+            CommApi::Exchange => "exchange",
+            CommApi::AllReduceRing => "all_reduce_ring",
+            CommApi::Broadcast => "broadcast",
+        }
+    }
+
+    /// 2026-10-23: Parse [`CommApi::name`].
+    pub fn parse(s: &str) -> Option<Self> {
+        [
+            CommApi::Exchange,
+            CommApi::AllReduceRing,
+            CommApi::Broadcast,
+        ]
+        .into_iter()
+        .find(|a| a.name() == s)
+    }
+}
+
+/// 2026-10-23: One collective launch of a group: the call and the device kernel the library runs
+/// for it (`ncclDevKernel_SendRecv` for the one-shot exchange), which a trace names.
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub struct CommLaunch {
+    /// 2026-10-23: The call.
+    pub api: CommApi,
+    /// 2026-10-23: The library kernel it launches.
+    pub kernel: String,
+    /// 2026-10-23: How many of the group's kernels launch before it (0: first; the screened head
+    /// exchanges its keys after its two scan kernels).
+    pub at: u64,
+}
+
 /// 2026-09-28: How a rule's output relates to the reference numerics.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum Numerics {
     /// 2026-09-28: Byte-identical to the unfused chain, proven by the named microtest.
     BitIdentical {
@@ -115,6 +175,9 @@ pub struct PatternOp {
     pub layer_kind: Option<LayerKind>,
     /// 2026-09-28: The node's template-local id must be this, when set.
     pub local: Option<String>,
+    /// 2026-10-23: The node's block template must be this, when set (`mtp_dsa`): a rule for one
+    /// model's draft head, whose nodes have no layer kind, is never taken by another model's.
+    pub block: Option<String>,
     /// 2026-09-28: The node's weight format must be this, when set.
     pub weight: Option<Format>,
     /// 2026-09-28: The format the kernel reads its first input as. Checked after fusion
@@ -127,6 +190,11 @@ pub struct PatternOp {
     /// 2026-09-28: The kernel writes this element's outputs even though a later element
     /// reads them, so they may have readers outside the group.
     pub keep: bool,
+    /// 2026-10-23: The lowering does not produce this element's circuit outputs (a greedy
+    /// head that returns the token and never the full logits: the screened verify head, the
+    /// MTP head's shard argmax and exchange); legal only where every reader of them is in the
+    /// group, so nothing in the step reads what is not written.
+    pub elides: bool,
     /// 2026-09-30: The kernel stores this element's outputs in memory, where a later launch of
     /// the group reads them back (a per-run schedule's conv rows), so they are materialized even
     /// when every reader is in the group.
@@ -143,10 +211,21 @@ pub struct PatternOp {
     /// the reference requirement (an activation quantized inside the group, a sum rounded to
     /// BF16), stated so the plan shows them and the kernel must declare them.
     pub steps: BTreeMap<crate::pipeline::StepKind, crate::pipeline::Value>,
+    /// 2026-10-08: Node params the node must state with these values (`decay = "channel"`): a
+    /// rule for one policy point of an op (a KDA recurrence, a gated delta rule with per-channel
+    /// decay) is never taken by a node of another point that states it. Empty: any params.
+    pub params: BTreeMap<String, String>,
+    /// 2026-10-23: For a collective element only: the size of the node's communicator group
+    /// (its `group` param) must pass this ([`dims::DimPred`]), so a rule for the engine's one-shot
+    /// path at three or more ranks is never taken by a two-rank group, which runs another path
+    /// (`metrale_comm::ar_path`). `None`: any group size.
+    pub ranks: Option<dims::DimPred>,
 }
 
 /// 2026-09-28: How many times a group's kernels launch per step.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum Repeat {
     /// 2026-09-28: Once.
     Once,
@@ -216,6 +295,9 @@ pub struct Rule {
     /// 2026-09-29: Copy-engine transfers the emitter issues besides its kernels, and how
     /// often; `None` for none (the verify conv's state snapshots are `per_row_but_last`).
     pub copies: Option<Repeat>,
+    /// 2026-10-23: Collective launches the emitter issues besides its kernels, each at its stated
+    /// place among them; empty for a rule that communicates nothing.
+    pub comm: Vec<CommLaunch>,
     /// 2026-09-28: The executor's emitter for this kernel.
     pub emitter: String,
     /// 2026-09-28: Inclusive row range.
@@ -226,6 +308,9 @@ pub struct Rule {
     pub requires: BTreeSet<String>,
     /// 2026-09-28: Policy settings that must hold (`kv_cache_dtype = "bf16"`).
     pub when: BTreeMap<String, String>,
+    /// 2026-10-23: Dims of the planned circuit that must pass these tests ([`dims`]): the shape a
+    /// kernel takes, e.g. a TP rank's expert slice; empty for a rule any shape takes.
+    pub dims: BTreeMap<String, dims::DimPred>,
     /// 2026-09-28: Numerics class.
     pub numerics: Numerics,
     /// 2026-09-28: Higher wins.
@@ -234,7 +319,23 @@ pub struct Rule {
     pub cite: String,
     /// 2026-09-30: A `per_run` rule's selectors (`[[rule.run]]`), in file order; empty for any
     /// other repeat.
-    pub runs: Vec<crate::runs::RunSelect>,
+    pub runs: Vec<crate::runs::RunSelect>,    /// 2026-10-23: For a rule that lowers an all-reduce (or an all-gather run as one): the path
+    /// the communicator takes ([`crate::collective`]), copied onto each group it forms; `None` for
+    /// every other rule. A `one_shot` rule is taken only within the policy's payload bound.
+    pub path: Option<crate::collective::CollectivePath>,
+    /// 2026-10-24: For a rule whose one kernel is a persistent segment: the SMs whose CTAs take
+    /// tasks (those with `%smid` below it), copied onto each group it forms; `None`: every SM.
+    pub sm_budget: Option<core::num::NonZeroU32>,
+}
+
+impl Rule {
+    /// 2026-10-08: Node `n` of `c` fits the rule's first pattern element (op, role, local id,
+    /// formats, layer kind, params): a group of this rule could start there.
+    pub fn heads_a_node(&self, c: &crate::ir::Circuit, n: crate::ir::NodeIdx) -> bool {
+        self.pattern
+            .first()
+            .is_some_and(|p| crate::fuser::pattern_fits(c, p, &c.nodes[n]))
+    }
 }
 
 /// 2026-09-28: Why FUSIONS.toml did not load.
@@ -286,6 +387,8 @@ pub enum RuleError {
     },
 }
 
+#[path = "rules_dims.rs"]
+pub mod dims;
 #[path = "rules_parse.rs"]
 mod parse;
 pub(crate) use parse::parse_file;

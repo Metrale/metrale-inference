@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
-use crate::tokenizer::deepseek_v4::encode_messages;
+use crate::tokenizer::deepseek_v4::{encode_messages, python_json};
 
 const INPUT_1: &str = include_str!("../../../test_data/deepseek_v4_encoding/test_input_1.json");
 const INPUT_2: &str = include_str!("../../../test_data/deepseek_v4_encoding/test_input_2.json");
@@ -82,4 +82,28 @@ fn non_thinking_generation_is_preclosed() {
     let rendered =
         encode_messages(messages.as_array().unwrap(), None, false, None).expect("direct mode");
     assert!(rendered.ends_with("<｜Assistant｜></think>"));
+}
+
+/// 2026-10-18: `python_json` spells floats as Python's `repr` does (`json.dumps`), which
+/// both DeepSeek encoders render tool schemas and arguments with.
+#[test]
+fn json_floats_use_the_python_spelling() {
+    for (value, python) in [
+        (json!(1.0), "1.0"),
+        (json!(0.1), "0.1"),
+        (json!(-0.0), "-0.0"),
+        (json!(123.456), "123.456"),
+        (json!(0.0001), "0.0001"),
+        (json!(0.00001), "1e-05"),
+        (json!(1.5e-7), "1.5e-07"),
+        (json!(100000.0), "100000.0"),
+        (json!(1e15), "1000000000000000.0"),
+        (json!(1e16), "1e+16"),
+        (json!(1.2345678901234568e20), "1.2345678901234568e+20"),
+        (json!(-2.5e300), "-2.5e+300"),
+        (json!(7), "7"),
+        (json!(-7), "-7"),
+    ] {
+        assert_eq!(python_json(&value).unwrap(), python, "{value}");
+    }
 }

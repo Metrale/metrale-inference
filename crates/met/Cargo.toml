@@ -1,0 +1,41 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "met"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: pure Rust LLM inference server (HTTP API, scheduler, TUI, CLI)."
+
+# 2026-10-24: The `met` binary: a `main` that links the compiled kernels (metrale-kernels) and
+# the packed kernel tree (metrale-kernel-tree) and hands both to `metrale_server::serve_main`.
+# Everything else is the metrale-server library, which does not depend on those two crates, so
+# a kernel source edit recompiles them and this one file, then relinks (DEV-LOOP-SPEED #7).
+# The features are metrale-server's, forwarded, so `cargo build -p met --features bench`
+# builds what it always did.
+[features]
+default = ["cuda", "nccl"]
+cuda = ["metrale-server/cuda"]
+nccl = ["metrale-server/nccl"]
+metal = ["metrale-server/metal"]
+gpu-examples = ["metrale-server/gpu-examples"]
+otlp = ["metrale-server/otlp"]
+nvtx = ["metrale-server/nvtx"]
+bench = ["metrale-server/bench"]
+
+[dependencies]
+metrale-server = { workspace = true }
+metrale-kernels = { workspace = true }
+metrale-kernel-tree = { workspace = true }
+anyhow = { workspace = true, features = ["std"] }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+
+[[bin]]
+name = "met"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[package.metadata.metrale]
+role = "bin"

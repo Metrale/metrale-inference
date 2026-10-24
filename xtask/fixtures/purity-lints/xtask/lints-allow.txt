@@ -1,0 +1,4 @@
+# 2026-10-17: Fixture: one non-compliant crate that is listed, and one compliant crate that is
+# still listed (stale).
+l-allowed
+l-stale

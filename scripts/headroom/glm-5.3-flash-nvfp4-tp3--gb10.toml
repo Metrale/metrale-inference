@@ -1,0 +1,334 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# 2026-10-22: Launch shape -> plan site for GLM-5.3-Flash NVFP4 served TP=3 on GB10 (recipe
+# glm-5.3/glm-5.3-flash-nvfp4-tp3-512k), rank 0, decode C=1 with the MTP verify at 2 rows and
+# the one-row draft head, the serve flags of profiles glm53-tp3-512k-fast11/12/13. Read by
+# scripts/headroom_trace.py; the sites are `block.local` of `met circuit headroom --recipe
+# glm-5.3/glm-5.3-flash-nvfp4-tp3-512k --hardware gb10 --mode verify --rows 2 --also draft:1`.
+#
+# The launch shapes (grid, dynamic smem, same-stream predecessor) are the rank-0 shapes derived
+# from the launchers in the GLM nsys row generator (claude-state glm/lkb/nsys_to_rows.py RULES,
+# whose comments cite each launcher's grid formula). A launch not listed here is exported with
+# no site: the headroom matches it by kernel name when exactly one launch site runs that name,
+# else reports it outside the plan. Kernels listed nowhere on purpose:
+# - glm5next_hc_pre_norm_c1 (grid 2,24,1) and glm5next_hc_post_rank_sum: the same launch at the
+#   kda/dsa/mlp/moe mix (and post) sites; the shape does not tell them apart.
+# - w4a4_gemv_mx8 (256,1,1): the dense FFN's gate, up and down share one shape.
+# - screen_head_scan/resolve/rescore (the verify LM head) and dense_gemv_fp8w (the draft head):
+#   INT8 / FP8 heads where the plan's lm_head is BF16; another precision is not that site's floor.
+# - w4a16_gemv_sw_moe (the draft head's routed experts): NVFP4 weights where the plan's draft
+#   experts are BF16; another precision is not that site's floor.
+# - NCCL, argmax, sampling and MTP exchange kernels: not plan sites.
+#
+# `note` states where the serve's lowering puts work the plan puts at another site; the floor
+# stays the plan's.
+
+[plan]
+# One rank's shard: KDA and DSA heads 64 -> 22 (glm5next_kda/tp.rs head split 22/22/20),
+# shared expert 2048 -> 768 (256-unit split), routed 2048 -> 704 (64-unit split, expert layout
+# tp), dense FFN 12288 -> 4096, LM head vocab 154880 -> 51648 (807 units of 64,
+# lm_head_vocab_tp.rs). The router (288 experts), mHC, the indexer and the MLA ranks are
+# replicated on every rank.
+dims = { q_heads = 22, lin_k_heads = 22, lin_v_heads = 22, shared_inter = 768, moe_inter = 704, inter = 4096, vocab = 51648 }
+dims_basis = "rank 0 of TP=3: head split 22/22/20 (glm5next_kda/tp.rs), shared 768 and routed 704 (glm5next_mlp/expert_tp.rs), dense 4096, vocab shard 51648 (lm_head_vocab_tp.rs); router, mHC, indexer, MLA ranks replicated"
+
+# --- KDA layers (34)
+[[launch]]
+kernel = "w4a16_gemv_pipe_m2"
+grid = [1091, 1, 1]
+smem = 16448
+site = "kda.q"
+label = "KDA in-proj q|k|v|f_a|b|g_a M=2 N=8726 K=4096"
+
+[[launch]]
+kernel = "w4a16_gemv_pipe_m2"
+grid = [192, 1, 1]
+smem = 16448
+pred = "kda_o_norm_gated_bf16"
+site = "kda.o"
+label = "KDA o_proj M=2 N=4096 K=2816"
+
+[[launch]]
+kernel = "kda_o_norm_gated_bf16"
+grid = [44, 1, 1]
+site = "kda.out_norm"
+label = "rows=2x22 head_dim=128"
+
+[[launch]]
+kernel = "kda_pack_qkv_bf16"
+grid = [11, 2, 1]
+site = "kda.qkv"
+label = "T=2 qkv=2816"
+
+[[launch]]
+kernel = "kda_gates_w8a8_k128_rows"
+grid = [44, 1, 1]
+site = "kda.f_b"
+label = "f_b|g_b M=2 N=2816+2816 K=128"
+
+[[launch]]
+kernel = "causal_conv1d_window_advance_to"
+grid = [33, 1, 1]
+site = "kda.short_conv"
+label = "snapshot T=1 dim=8448 d_conv=4"
+
+[[launch]]
+kernel = "causal_conv1d_update_l2norm_tokens"
+grid = [33, 2, 1]
+site = "kda.short_conv"
+label = "T=2 dim=8448 d_conv=4"
+
+[[launch]]
+kernel = "causal_conv1d_window_advance"
+grid = [33, 1, 1]
+site = "kda.short_conv"
+label = "T=2 dim=8448 d_conv=4"
+
+[[launch]]
+kernel = "kda_recurrent_decode_bf16_seq_reg_snap"
+grid = [22, 4, 1]
+site = "kda.recur"
+label = "T=2 heads=22 dk=dv=128 1 snapshot"
+
+# --- MoE (42) and dense FFN (3)
+[[launch]]
+kernel = "w4a16_gemv_pipe_m2"
+grid = [192, 1, 1]
+smem = 16448
+site = "moe.shared_gate_up"
+label = "shared expert gate|up M=2 N=768+768 K=4096"
+
+[[launch]]
+kernel = "w4a16_gemv_pipe_m2"
+grid = [192, 1, 1]
+smem = 8256
+site = "moe.shared_down"
+label = "shared expert down M=2 N=4096 K=768"
+note = "side stream: co-runs with the routed W4A4 sweep"
+
+[[launch]]
+kernel = "glm5next_swiglu_clamp"
+grid = [6, 1, 1]
+site = "moe.shared_clamp"
+label = "shared expert n=2x768"
+
+[[launch]]
+kernel = "glm5next_swiglu_clamp"
+grid = [32, 1, 1]
+site = "mlp.clamp"
+label = "dense FFN n=2x4096"
+
+[[launch]]
+kernel = "glm5next_swiglu_clamp_zero"
+grid = [44, 1, 1]
+site = "moe.experts_clamp"
+label = "routed n=16x704 + zero expert_out"
+
+[[launch]]
+kernel = "dense_gemv_bf16_batchm_few_fp32out"
+grid = [72, 1, 1]
+site = "moe.gate"
+label = "router M=2 N=288 K=4096"
+
+[[launch]]
+kernel = "glm5next_router_topk_rank"
+grid = [2, 1, 1]
+site = "moe.top_k"
+label = "rows=2 experts=288 top_k=8"
+
+[[launch]]
+kernel = "w4a4_quant_rows_static"
+grid = [2, 1, 1]
+site = "moe.xn_quant"
+label = "rows=2 K=4096"
+note = "also the 3 dense layers' input quant (plan: mlp [xn_quant], w4a4_quant_rows)"
+
+[[launch]]
+kernel = "glm5next_moe_row_union"
+grid = [1, 1, 1]
+site = "moe.experts_gate_up"
+label = "rows=2 x top_k=8 ids"
+
+[[launch]]
+kernel = "w4a4_gemv_mx8_moe_union_sweep_sl_cs"
+grid = [48, 1, 1]
+site = "moe.experts_gate_up"
+label = "routed gate+up union M=2x8 N=704+704 K=4096"
+
+[[launch]]
+kernel = "w4a4_quant_rows_static_k64"
+grid = [16, 1, 1]
+site = "moe.eact_quant"
+label = "slots=16 K=704 stored 768"
+
+[[launch]]
+kernel = "w4a4_gemv_mx8_moe_union_sweep_k64_cs"
+grid = [48, 1, 1]
+site = "moe.experts_down"
+label = "routed down union slots=16 N=4096 K=704"
+
+[[launch]]
+kernel = "glm5next_moe_combine"
+grid = [2, 16, 1]
+site = "moe.blend"
+label = "rows=2 top_k=8 H=4096"
+
+# --- DSA layers (11)
+[[launch]]
+kernel = "w8a8_gemv_rowscale_mb1_ku8_split4"
+grid = [144, 1, 1]
+site = "dsa.q_a"
+label = "DSA in-proj q_a|kv_a|idx wk|idx gate M=2 N=1536+512+128+128 K=4096"
+note = "also the indexer's wk and gate projections (plan: dsa [idx_k], dsa [idx_gate])"
+
+[[launch]]
+kernel = "w8a8_gemv_rowscale_mb1_ku8"
+grid = [704, 1, 1]
+site = "dsa.q_b"
+label = "DSA q_absorb M=2 N=11264 K=1536"
+note = "q_b absorbed with kv_b_proj's key half: N = 22 heads x 512 latent, where the plan's q_b is 22 x 256 and its attend reads kv_b_proj"
+
+[[launch]]
+kernel = "w8a8_gemv_rowscale_mb1_ku8"
+grid = [256, 1, 1]
+site = "dsa.o"
+label = "DSA o_absorb M=2 N=4096 K=11264"
+note = "o_proj absorbed with kv_b_proj's value half: K = 22 heads x 512 latent, where the plan's o reads 22 x 256"
+
+[[launch]]
+kernel = "dense_gemv_bf16_batchm_few_fp32out_pair"
+grid = [1032, 1, 1]
+site = "dsa.idx_q"
+label = "DSA indexer wq_b M=2 N=4096 K=1536 + weights_proj N=32 K=4096"
+note = "also the indexer's weights_proj (plan: dsa [idx_w])"
+
+[[launch]]
+kernel = "glm5next_dsa_mla_decode_hb_fp8"
+grid = [8, 2, 1]
+site = "dsa.attend"
+label = "rows=2 heads=22 latent=512 splits=8"
+note = "kv_b_proj is absorbed into q_b and o (dsa [q_b], dsa [o]): the plan's attend floor counts kv_b_proj, which this lowering does not read here"
+
+[[launch]]
+kernel = "glm5next_dsa_mla_merge"
+grid = [22, 2, 1]
+site = "dsa.attend"
+label = "split-K merge rows=2 heads=22"
+
+[[launch]]
+kernel = "glm5next_dsa_mla_decode_hb_fp8"
+grid = [8, 1, 1]
+site = "mtp_dsa.attend"
+label = "MTP rows=1 heads=22 latent=512 splits=8"
+note = "kv_b_proj is absorbed into q_b and o: the plan's attend floor counts it"
+
+[[launch]]
+kernel = "glm5next_dsa_mla_merge"
+grid = [22, 1, 1]
+site = "mtp_dsa.attend"
+label = "MTP split-K merge rows=1 heads=22"
+
+[[launch]]
+kernel = "dsa_index_scores_heads_paged"
+grid = [48, 1, 1]
+pred = "dense_gemv_bf16_fp32out"
+site = "mtp_dsa.select"
+label = "MTP drafter rows=1"
+
+[[launch]]
+kernel = "dsa_index_scores_heads_paged"
+grid = [48, 1, 1]
+site = "dsa.select"
+label = "rows=2 heads=32 D=128 kpool=4"
+
+[[launch]]
+kernel = "dsa_index_scores_heads_window"
+grid = [48, 1, 1]
+site = "dsa.select"
+label = "rows=2 heads=32 D=128 kpool=4"
+
+# --- MTP draft head (one row, BF16 projections)
+[[launch]]
+kernel = "dense_gemv_bf16"
+grid = [1024, 1, 1]
+pred = "glm5next_dsa_mla_merge"
+site = "mtp_dsa.o"
+label = "MTP o_absorb M=1 N=4096 K=11264"
+note = "o_proj absorbed with kv_b_proj's value half"
+
+[[launch]]
+kernel = "dense_gemv_bf16"
+grid = [1024, 1, 1]
+pred = "rms_norm_vanilla"
+site = "glm_mtp_in.fc"
+label = "MTP catch-up eh_proj M=1 N=4096 K=8192"
+note = "the catch-up eh_proj of the accepted token, a second fc launch per step"
+
+[[launch]]
+kernel = "dense_gemv_bf16"
+grid = [352, 1, 1]
+site = "glm_mtp_in.fc"
+label = "MTP eh_proj TP slice M=1 N=1408 K=8192"
+
+[[launch]]
+kernel = "dense_gemv_bf16"
+grid = [1024, 1, 1]
+pred = "glm5next_swiglu_clamp"
+site = "mtp_moe.shared_down"
+label = "MTP shared down M=1 N=4096 K=768"
+
+[[launch]]
+kernel = "dense_gemv_bf16"
+grid = [2816, 1, 1]
+site = "mtp_dsa.q_b"
+label = "MTP q_absorb M=1 N=11264 K=1536"
+note = "q_b absorbed with kv_b_proj's key half"
+
+[[launch]]
+kernel = "dense_gemv_bf16"
+grid = [384, 1, 1]
+site = "mtp_dsa.q_a"
+label = "MTP q_a M=1 N=1536 K=4096"
+
+[[launch]]
+kernel = "dense_gemv_bf16"
+grid = [192, 1, 1]
+site = "mtp_moe.shared_gate_up"
+label = "MTP shared gate or up M=1 N=768 K=4096"
+
+[[launch]]
+kernel = "dense_gemv_bf16"
+grid = [128, 1, 1]
+site = "mtp_dsa.kv_a"
+label = "MTP kv_a M=1 N=512 K=4096"
+
+[[launch]]
+kernel = "dense_gemv_bf16"
+grid = [32, 1, 1]
+site = "mtp_dsa.idx_k"
+label = "MTP idx wk or compress gate M=1 N=128 K=4096"
+note = "the indexer's gate projection shares this shape (plan: mtp_dsa [idx_gate])"
+
+[[launch]]
+kernel = "dense_gemv_bf16_fp32out"
+grid = [1024, 1, 1]
+site = "mtp_dsa.idx_q"
+label = "MTP idx wq_b M=1 N=4096 K=1536"
+
+[[launch]]
+kernel = "dense_gemv_bf16_fp32out"
+grid = [72, 1, 1]
+site = "mtp_moe.gate"
+label = "MTP router M=1 N=288 K=4096"
+
+[[launch]]
+kernel = "glm5next_swiglu_clamp"
+grid = [3, 1, 1]
+site = "mtp_moe.shared_clamp"
+label = "MTP shared n=768"
+
+[[launch]]
+kernel = "glm5next_swiglu_clamp"
+grid = [22, 1, 1]
+site = "mtp_moe.experts_clamp"
+label = "MTP routed n=8x704"

@@ -21,21 +21,29 @@ pub const DENSE: &str = "qwen3.8/qwen3.8-27b-nvfp4-unsloth";
 pub const REPORT: &str = "kernels/circuits/venn/nemotron-3.5-lightning-vs-qwen3.6-35b-a3b.md";
 pub const MANIFEST: &str = "kernels/gb10/common/KERNEL_FAMILIES.toml";
 
+fn source(rel: &str, e: std::io::Error) -> metrale_error::Error {
+    metrale_error::error!(
+        metrale_error::ErrorCode::CircuitSource,
+        rel.to_string(),
+        e.to_string()
+    )
+}
+
 /// 2026-09-29: The checked-out tree, as the CLI's file-system repo reads it.
 pub struct Tree;
 
 impl Repo for Tree {
-    fn read(&self, rel: &str) -> Result<String, String> {
-        std::fs::read_to_string(common::root().join(rel)).map_err(|e| format!("{rel}: {e}"))
+    fn read(&self, rel: &str) -> metrale_error::Result<String> {
+        std::fs::read_to_string(common::root().join(rel)).map_err(|e| source(rel, e))
     }
 
-    fn list(&self, rel: &str) -> Result<Vec<String>, String> {
+    fn list(&self, rel: &str) -> metrale_error::Result<Vec<String>> {
         let root = common::root();
         let mut out = Vec::new();
         let mut stack = vec![root.join(rel)];
         while let Some(dir) = stack.pop() {
             for entry in std::fs::read_dir(&dir)
-                .map_err(|e| e.to_string())?
+                .map_err(|e| source(rel, e))?
                 .flatten()
             {
                 let path = entry.path();
@@ -66,16 +74,23 @@ pub fn families() -> venn::Families {
 }
 
 pub fn report() -> VennReport {
-    let a = args();
+    report_of(&args())
+}
+
+/// 2026-10-08: The report `a` asks for (target and compared models by recipe), built from the
+/// checked-out tree.
+pub fn report_of(a: &VennArgs) -> VennReport {
     let all = common::instances();
     let find = |r: &str| {
         all.iter()
             .find(|i| i.recipe == r)
             .cloned()
-            .expect("instance")
+            .unwrap_or_else(|| panic!("no instance {r}"))
     };
-    let (t, m, d) = (find(LIGHTNING), find(MOE), find(DENSE));
-    let (lt, lm, ld) = (common::load(&t), common::load(&m), common::load(&d));
+    let t = find(&a.target);
+    let others: Vec<_> = a.against.iter().map(|r| find(r)).collect();
+    let lt = common::load(&t);
+    let lo: Vec<_> = others.iter().map(common::load).collect();
     let fams = families();
     let meas = venn::parse_measurements(&common::read("docs/kernel-perf/measurements.toml"))
         .expect("measurements");
@@ -84,16 +99,11 @@ pub fn report() -> VennReport {
             instance: &t,
             loaded: &lt,
         },
-        against: vec![
-            Side {
-                instance: &m,
-                loaded: &lm,
-            },
-            Side {
-                instance: &d,
-                loaded: &ld,
-            },
-        ],
+        against: others
+            .iter()
+            .zip(&lo)
+            .map(|(instance, loaded)| Side { instance, loaded })
+            .collect(),
         families: &fams,
         measurements: &meas,
         runs: a.runs().expect("runs"),

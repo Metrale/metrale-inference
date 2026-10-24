@@ -7,7 +7,10 @@
 //! Invariants:
 //! - Every transfer holds the arena's lock throughout, and returns `Ok` only after
 //!   its RDMA work has completed.
-//! - Without the `cuda` feature and `metrale_rdma_verbs`, both constructors fail.
+//! - Without the `cuda` feature and `metrale_rdma_verbs`, every constructor fails.
+//! - The rails, staging, chunk size and depth are fixed at connect, from `StorageLinks`.
+//!   `connect` and `connect_paging` read them from the process environment
+//!   (`legacy_env::storage_links`); `connect_with` and `connect_paging_with` take them.
 //!
 //! Both modes send the v2 paging header with kind `SSM`. Raw mode (`connect`, which
 //! sends `blob_bytes == 0`) gets a private arena and the caller chooses offsets.
@@ -25,15 +28,32 @@ pub use stub::RdmaSnapshotArena;
 
 #[cfg(not(all(feature = "cuda", metrale_rdma_verbs)))]
 mod stub {
+    use crate::links::StorageLinks;
     use anyhow::{Result, bail};
-    /// 2026-09-25: Stand-in when RDMA verbs or CUDA are not built. Both constructors
-    /// fail; the other methods panic.
+    /// 2026-09-25: Stand-in when RDMA verbs or CUDA are not built. Every constructor
+    /// fails; the other methods panic.
     pub struct RdmaSnapshotArena;
     impl RdmaSnapshotArena {
         pub fn connect(_addr: &str, _arena_bytes: u64, _blob_bytes: usize) -> Result<Self> {
             bail!("RDMA snapshot tier not built (needs feature `cuda` + metrale_rdma_verbs)")
         }
         pub fn connect_paging(_addr: &str, _arena_bytes: u64, _blob_bytes: usize) -> Result<Self> {
+            bail!("RDMA snapshot tier not built (needs feature `cuda` + metrale_rdma_verbs)")
+        }
+        pub fn connect_with(
+            _addr: &str,
+            _arena_bytes: u64,
+            _blob_bytes: usize,
+            _links: &StorageLinks,
+        ) -> Result<Self> {
+            bail!("RDMA snapshot tier not built (needs feature `cuda` + metrale_rdma_verbs)")
+        }
+        pub fn connect_paging_with(
+            _addr: &str,
+            _arena_bytes: u64,
+            _blob_bytes: usize,
+            _links: &StorageLinks,
+        ) -> Result<Self> {
             bail!("RDMA snapshot tier not built (needs feature `cuda` + metrale_rdma_verbs)")
         }
         pub fn write(&self, _offset: u64, _bytes: &[u8]) -> Result<()> {
@@ -63,7 +83,7 @@ mod imp {
     use anyhow::{Result, bail};
 
     use crate::cuda_min::PinnedBuffer;
-    use metrale_gpu_sys::env::{first_set, first_set_u32};
+    use crate::links::StorageLinks;
     use metrale_gpu_sys::railset::{RailSet, RailSpec};
     use metrale_gpu_sys::verbs::Verbs;
 
@@ -84,7 +104,7 @@ mod imp {
     struct ArenaInner {
         rails: Vec<SnapRail>,
         /// 2026-09-25: One contiguous `blob_bytes` staging buffer for the striped path
-        /// (`METRALE_SSM_STAGING=1`); `None` moves each blob as one WR through a
+        /// (`StorageLinks::ssm_staging`); `None` moves each blob as one WR through a
         /// rail's bounce.
         staging: Option<PinnedBuffer>,
         rr: usize,
@@ -100,6 +120,9 @@ mod imp {
         inner: Mutex<ArenaInner>,
         remote_base: u64,
         blob_bytes: usize,
+        /// 2026-10-17: Stripe chunk size and chunks in flight per rail, fixed at connect.
+        chunk_bytes: usize,
+        depth: usize,
     }
 
     // 2026-09-25: SAFETY: every access to the verbs and bounce state goes through
@@ -109,19 +132,41 @@ mod imp {
 
     impl RdmaSnapshotArena {
         /// 2026-09-25: Raw-mode connect to the peer at `addr` for an arena of
-        /// `arena_bytes`, registering `blob_bytes` bounces. Rails as `RdmaKvBackend`:
-        /// rail 0 from `METRALE_EXPERT_RDMA_DEV`/`GID`, rail 1 (only with
-        /// `METRALE_KV_DUAL_RAIL=1`) from `METRALE_KV_RAIL2_DEV`/`GID`.
+        /// `arena_bytes`, registering `blob_bytes` bounces, with the links of the process
+        /// environment (`legacy_env::storage_links`).
         pub fn connect(addr: &str, arena_bytes: u64, blob_bytes: usize) -> Result<Self> {
-            Self::connect_inner(addr, arena_bytes, blob_bytes, false)
+            let links = crate::legacy_env::storage_links();
+            Self::connect_inner(addr, arena_bytes, blob_bytes, false, &links)
+        }
+
+        /// 2026-10-17: As [`Self::connect`], with `links`. Rails as `RdmaKvBackend`:
+        /// `StorageLinks::kv_rails`.
+        pub fn connect_with(
+            addr: &str,
+            arena_bytes: u64,
+            blob_bytes: usize,
+            links: &StorageLinks,
+        ) -> Result<Self> {
+            Self::connect_inner(addr, arena_bytes, blob_bytes, false, links)
         }
 
         /// 2026-09-25: Paging-mode connect: the peer owns residency, caching blobs in
         /// its arena over an NVMe swap file, and the client uses `paging_put`,
         /// `paging_get` and `paging_remove`. The peer refuses it without a swap
-        /// directory (`RdmaConfig::swap_dir`).
+        /// directory (`RdmaConfig::swap_dir`). Links as [`Self::connect`].
         pub fn connect_paging(addr: &str, arena_bytes: u64, blob_bytes: usize) -> Result<Self> {
-            Self::connect_inner(addr, arena_bytes, blob_bytes, true)
+            let links = crate::legacy_env::storage_links();
+            Self::connect_inner(addr, arena_bytes, blob_bytes, true, &links)
+        }
+
+        /// 2026-10-17: As [`Self::connect_paging`], with `links`.
+        pub fn connect_paging_with(
+            addr: &str,
+            arena_bytes: u64,
+            blob_bytes: usize,
+            links: &StorageLinks,
+        ) -> Result<Self> {
+            Self::connect_inner(addr, arena_bytes, blob_bytes, true, links)
         }
 
         fn connect_inner(
@@ -129,24 +174,14 @@ mod imp {
             arena_bytes: u64,
             blob_bytes: usize,
             paging: bool,
+            links: &StorageLinks,
         ) -> Result<Self> {
             // 2026-09-25: A random 24-bit PSN per rail.
-            let spec =
-                |dev: String, gid: u32| RailSpec::new(dev, gid, rand::random::<u32>() & 0xff_ffff);
-            let rail0 = spec(
-                first_set(&["METRALE_EXPERT_RDMA_DEV"], "roceP2p1s0f1"),
-                first_set_u32(&["METRALE_EXPERT_RDMA_GID"], 3),
-            );
-            let dual = std::env::var("METRALE_KV_DUAL_RAIL").ok().as_deref() == Some("1");
-            let specs: Vec<RailSpec> = if dual {
-                let rail1 = spec(
-                    first_set(&["METRALE_KV_RAIL2_DEV"], "rocep1s0f1"),
-                    first_set_u32(&["METRALE_KV_RAIL2_GID"], 3),
-                );
-                vec![rail0, rail1]
-            } else {
-                vec![rail0]
-            };
+            let specs: Vec<RailSpec> = links
+                .kv_rails()
+                .into_iter()
+                .map(|r| RailSpec::new(r.dev, r.gid, rand::random::<u32>() & 0xff_ffff))
+                .collect();
             let n_rails = specs.len();
 
             let mut stream = TcpStream::connect(addr)
@@ -162,8 +197,7 @@ mod imp {
             let mut rs = RailSet::begin(&mut stream, &specs)?;
 
             // 2026-09-25: One staging buffer, registered on every rail below.
-            let staging_on = std::env::var("METRALE_SSM_STAGING").ok().as_deref() == Some("1");
-            let staging = if staging_on {
+            let staging = if links.ssm_staging {
                 Some(PinnedBuffer::new(blob_bytes)?)
             } else {
                 None
@@ -215,6 +249,8 @@ mod imp {
                 }),
                 remote_base: base,
                 blob_bytes,
+                chunk_bytes: links.ssm_chunk_bytes,
+                depth: links.ssm_pipeline_depth,
             })
         }
 
@@ -318,7 +354,7 @@ mod imp {
         }
 
         /// 2026-09-25: Move one blob through the staging buffer in chunks
-        /// (`stripe_plan`), round-robin across rails with at most `staging_depth()` in
+        /// (`stripe_plan`), round-robin across rails with at most `self.depth` in
         /// flight per rail. `write_src` set: copy in, then WRITE; `read_dst` set: READ,
         /// then copy out. Every chunk sits at its blob offset in both the staging
         /// buffer and the peer arena, so one copy assembles the blob.
@@ -335,8 +371,8 @@ mod imp {
                 unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), staging, self.blob_bytes) };
             }
             let n = g.rails.len();
-            let chunk = crate::snapshot_swap::staging_chunk_bytes();
-            let depth = crate::snapshot_swap::staging_depth();
+            let chunk = self.chunk_bytes;
+            let depth = self.depth;
             let plan = crate::snapshot_swap::stripe_plan(self.blob_bytes, chunk, n);
             let total: usize = plan.iter().map(|w| w.len()).sum();
             let mut posted = vec![0usize; n];

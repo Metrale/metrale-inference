@@ -20,7 +20,6 @@ use metrale_telemetry::prefix_cache::TierEvict;
 
 use super::ssm_snapshot::SsmSnapshotPool;
 use super::ssm_snapshot_faultin::{log_spill_gate_skip, retire_refused_spill};
-use super::ssm_spill_gate::spill_min_tokens;
 
 /// 2026-09-25: Latch so `log_spill_shape_once` logs the spill path once per process.
 static SPILL_SHAPE_LOGGED: AtomicBool = AtomicBool::new(false);
@@ -60,7 +59,7 @@ impl SsmSnapshotPool {
         if let Some(s) = self.try_pop_free_slot() {
             return Some(s);
         }
-        let evict = prefix_cache.evict_snapshot_to_tier(spill_min_tokens())?;
+        let evict = prefix_cache.evict_snapshot_to_tier(self.gates.spill_min_tokens)?;
         if let TierEvict::Spill { slot, key, .. } = evict {
             let stream = gpu.default_stream();
             match self.spill_slot(slot, key, store, gpu, stream) {
@@ -72,7 +71,7 @@ impl SsmSnapshotPool {
                 ),
             }
         } else {
-            log_spill_gate_skip(&evict);
+            log_spill_gate_skip(&evict, self.gates.spill_min_tokens);
         }
         self.free(evict.slot());
         self.try_pop_free_slot()
@@ -176,7 +175,7 @@ impl SsmSnapshotPool {
         if !self.is_enabled() {
             return Ok(false);
         }
-        let timing = std::env::var_os("METRALE_SSM_TIER_TIMING").is_some();
+        let timing = self.gates.timing;
         let t0 = std::time::Instant::now();
         gpu.synchronize(stream)?;
         let bytes = self.spill_blob_bytes();

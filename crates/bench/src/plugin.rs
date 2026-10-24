@@ -22,6 +22,7 @@ use std::sync::mpsc::Sender;
 use anyhow::{Result, bail};
 
 use crate::artifacts::ArtifactStore;
+use crate::levers::BenchLevers;
 use crate::metadata::PluginMetadata;
 use crate::result::{LogLevel, LogLine};
 
@@ -141,6 +142,8 @@ pub struct PluginHandle {
     artifacts: ArtifactStore,
     events: Sender<PluginEvent>,
     cancel: Arc<AtomicBool>,
+    /// 2026-10-17: The harness levers the binary resolved; the benchmarks read them here.
+    levers: Arc<BenchLevers>,
 }
 
 impl PluginHandle {
@@ -155,6 +158,7 @@ impl PluginHandle {
         artifacts: ArtifactStore,
         events: Sender<PluginEvent>,
         cancel: Arc<AtomicBool>,
+        levers: Arc<BenchLevers>,
     ) -> Self {
         Self {
             run_id,
@@ -162,6 +166,7 @@ impl PluginHandle {
             artifacts,
             events,
             cancel,
+            levers,
         }
     }
 
@@ -171,6 +176,11 @@ impl PluginHandle {
 
     pub fn artifacts(&self) -> &ArtifactStore {
         &self.artifacts
+    }
+
+    /// 2026-10-17: The harness levers of this process.
+    pub fn levers(&self) -> &BenchLevers {
+        &self.levers
     }
 
     /// 2026-09-26: Emit an event. A closed channel means the receiver is
@@ -262,6 +272,7 @@ mod tests {
             ArtifactStore::with_root("/tmp/metrale-test"),
             tx,
             cancel.clone(),
+            crate::levers::tests::unset(),
         );
         h.check_cancelled().unwrap();
         h.status("warming up");

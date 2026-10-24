@@ -1,0 +1,170 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# 2026-10-23: `met circuit whatif --spec`: the SM budget of the verify shared-expert side
+# stream (GRAPH-THEORY-MAP E2 input, k_side). Each set confines the shared expert's three
+# kernels (gate|up, clamp SwiGLU, down: 192 CTAs at 4/SM want all 48 SMs) to k SMs, their
+# SM-time unchanged (work x 48/k), so the routed sweep they co-run with gets the rest. No
+# measurement: a prediction sweep, not a backtest.
+
+schema = "whatif-spec/v1"
+
+
+[[set]]
+id = "kside-2"
+depends_on = ["dense-seg-inserve"]
+rewrite = [
+  { kind = "confine", select = [{ site = "moe.shared_gate_up" }, { site = "moe.shared_clamp" }, { site = "moe.shared_down" }], sms = 2.0, basis = "side-stream SM budget k=2; linear in SMs" },
+]
+measured = []
+
+[[set]]
+id = "kside-4"
+depends_on = ["dense-seg-inserve"]
+rewrite = [
+  { kind = "confine", select = [{ site = "moe.shared_gate_up" }, { site = "moe.shared_clamp" }, { site = "moe.shared_down" }], sms = 4.0, basis = "side-stream SM budget k=4; linear in SMs" },
+]
+measured = []
+
+[[set]]
+id = "kside-6"
+depends_on = ["dense-seg-inserve"]
+rewrite = [
+  { kind = "confine", select = [{ site = "moe.shared_gate_up" }, { site = "moe.shared_clamp" }, { site = "moe.shared_down" }], sms = 6.0, basis = "side-stream SM budget k=6; linear in SMs" },
+]
+measured = []
+
+[[set]]
+id = "kside-8"
+depends_on = ["dense-seg-inserve"]
+rewrite = [
+  { kind = "confine", select = [{ site = "moe.shared_gate_up" }, { site = "moe.shared_clamp" }, { site = "moe.shared_down" }], sms = 8.0, basis = "side-stream SM budget k=8; linear in SMs" },
+]
+measured = []
+
+[[set]]
+id = "kside-10"
+depends_on = ["dense-seg-inserve"]
+rewrite = [
+  { kind = "confine", select = [{ site = "moe.shared_gate_up" }, { site = "moe.shared_clamp" }, { site = "moe.shared_down" }], sms = 10.0, basis = "side-stream SM budget k=10; linear in SMs" },
+]
+measured = []
+
+[[set]]
+id = "kside-12"
+depends_on = ["dense-seg-inserve"]
+rewrite = [
+  { kind = "confine", select = [{ site = "moe.shared_gate_up" }, { site = "moe.shared_clamp" }, { site = "moe.shared_down" }], sms = 12.0, basis = "side-stream SM budget k=12; linear in SMs" },
+]
+measured = []
+
+[[set]]
+id = "kside-14"
+depends_on = ["dense-seg-inserve"]
+rewrite = [
+  { kind = "confine", select = [{ site = "moe.shared_gate_up" }, { site = "moe.shared_clamp" }, { site = "moe.shared_down" }], sms = 14.0, basis = "side-stream SM budget k=14; linear in SMs" },
+]
+measured = []
+
+[[set]]
+id = "kside-16"
+depends_on = ["dense-seg-inserve"]
+rewrite = [
+  { kind = "confine", select = [{ site = "moe.shared_gate_up" }, { site = "moe.shared_clamp" }, { site = "moe.shared_down" }], sms = 16.0, basis = "side-stream SM budget k=16; linear in SMs" },
+]
+measured = []
+
+[[set]]
+id = "kside-18"
+depends_on = ["dense-seg-inserve"]
+rewrite = [
+  { kind = "confine", select = [{ site = "moe.shared_gate_up" }, { site = "moe.shared_clamp" }, { site = "moe.shared_down" }], sms = 18.0, basis = "side-stream SM budget k=18; linear in SMs" },
+]
+measured = []
+
+[[set]]
+id = "kside-20"
+depends_on = ["dense-seg-inserve"]
+rewrite = [
+  { kind = "confine", select = [{ site = "moe.shared_gate_up" }, { site = "moe.shared_clamp" }, { site = "moe.shared_down" }], sms = 20.0, basis = "side-stream SM budget k=20; linear in SMs" },
+]
+measured = []
+
+[[set]]
+id = "kside-22"
+depends_on = ["dense-seg-inserve"]
+rewrite = [
+  { kind = "confine", select = [{ site = "moe.shared_gate_up" }, { site = "moe.shared_clamp" }, { site = "moe.shared_down" }], sms = 22.0, basis = "side-stream SM budget k=22; linear in SMs" },
+]
+measured = []
+
+[[set]]
+id = "kside-24"
+depends_on = ["dense-seg-inserve"]
+rewrite = [
+  { kind = "confine", select = [{ site = "moe.shared_gate_up" }, { site = "moe.shared_clamp" }, { site = "moe.shared_down" }], sms = 24.0, basis = "side-stream SM budget k=24; linear in SMs" },
+]
+measured = []
+
+[[set]]
+id = "kside-28"
+depends_on = ["dense-seg-inserve"]
+rewrite = [
+  { kind = "confine", select = [{ site = "moe.shared_gate_up" }, { site = "moe.shared_clamp" }, { site = "moe.shared_down" }], sms = 28.0, basis = "side-stream SM budget k=28; linear in SMs" },
+]
+measured = []
+
+[[set]]
+id = "kside-32"
+depends_on = ["dense-seg-inserve"]
+rewrite = [
+  { kind = "confine", select = [{ site = "moe.shared_gate_up" }, { site = "moe.shared_clamp" }, { site = "moe.shared_down" }], sms = 32.0, basis = "side-stream SM budget k=32; linear in SMs" },
+]
+measured = []
+
+[[set]]
+id = "kside-36"
+depends_on = ["dense-seg-inserve"]
+rewrite = [
+  { kind = "confine", select = [{ site = "moe.shared_gate_up" }, { site = "moe.shared_clamp" }, { site = "moe.shared_down" }], sms = 36.0, basis = "side-stream SM budget k=36; linear in SMs" },
+]
+measured = []
+
+[[set]]
+id = "kside-40"
+depends_on = ["dense-seg-inserve"]
+rewrite = [
+  { kind = "confine", select = [{ site = "moe.shared_gate_up" }, { site = "moe.shared_clamp" }, { site = "moe.shared_down" }], sms = 40.0, basis = "side-stream SM budget k=40; linear in SMs" },
+]
+measured = []
+
+[[set]]
+id = "kside-42"
+depends_on = ["dense-seg-inserve"]
+rewrite = [
+  { kind = "confine", select = [{ site = "moe.shared_gate_up" }, { site = "moe.shared_clamp" }, { site = "moe.shared_down" }], sms = 42.0, basis = "side-stream SM budget k=42; linear in SMs" },
+]
+measured = []
+
+[[set]]
+id = "kside-44"
+depends_on = ["dense-seg-inserve"]
+rewrite = [
+  { kind = "confine", select = [{ site = "moe.shared_gate_up" }, { site = "moe.shared_clamp" }, { site = "moe.shared_down" }], sms = 44.0, basis = "side-stream SM budget k=44; linear in SMs" },
+]
+measured = []
+
+[[set]]
+id = "kside-46"
+depends_on = ["dense-seg-inserve"]
+rewrite = [
+  { kind = "confine", select = [{ site = "moe.shared_gate_up" }, { site = "moe.shared_clamp" }, { site = "moe.shared_down" }], sms = 46.0, basis = "side-stream SM budget k=46; linear in SMs" },
+]
+measured = []
+
+[[set]]
+id = "kside-48"
+depends_on = ["dense-seg-inserve"]
+rewrite = [
+  { kind = "confine", select = [{ site = "moe.shared_gate_up" }, { site = "moe.shared_clamp" }, { site = "moe.shared_down" }], sms = 48.0, basis = "side-stream SM budget k=48; linear in SMs" },
+]
+measured = []

@@ -7,6 +7,8 @@
 
 use metrale_gpu_runtime::gpu::DevicePtr;
 
+use super::precision::GroupPrecision;
+
 /// 2026-09-25: One NVFP4 projection: packed `e2m1` pairs, per-16-element `e4m3` block scales,
 /// and one global `f32` scale.
 ///
@@ -20,6 +22,23 @@ pub struct Nvfp4Proj {
     pub scale: DevicePtr,
     /// 2026-09-25: The single global F32 scale.
     pub scale_2: f32,
+    /// 2026-10-08: The checkpoint's static activation scale (`input_scale`, ModelOpt's
+    /// `amax / (6 * 448)`), when it declares FP4 activations for this projection. The W4A4
+    /// path quantizes the input under it and scales the output by `input_scale * scale_2`; the
+    /// W4A16 path does not read it.
+    pub input_scale: Option<f32>,
+    /// 2026-10-21: How `scale` holds the block scales (`METRALE_GLM_MOE_SCALE_DICT`).
+    pub scale_layout: ScaleLayout,
+}
+
+/// 2026-10-21: The layout of an [`Nvfp4Proj`]'s block scales.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScaleLayout {
+    /// 2026-10-21: `[out, in/16]` E4M3 codes, as the checkpoint stores them.
+    Plain,
+    /// 2026-10-21: 5-bit offsets from the code `base` (`scale_dict`), which only the routed
+    /// W4A4 `_cs` entries read.
+    Compact { base: u8 },
 }
 
 /// 2026-09-25: A BF16 SwiGLU MLP: the dense layers `0..first_k_dense_replace`, and the shared
@@ -35,6 +54,36 @@ pub struct Glm5NextDenseMlpWeights {
     pub up_proj: DevicePtr,
     /// 2026-09-25: `[hidden, local_inter]` BF16.
     pub down_proj: DevicePtr,
+}
+
+/// 2026-10-08: The checkpoint's NVFP4 dense MLP of one rank, kept packed for the W4A4 path:
+/// `gate_proj`/`up_proj` hold this rank's rows, `down_proj` its columns (as the BF16 form).
+#[derive(Debug, Clone, Copy)]
+pub struct Glm5NextDenseNvfp4Weights {
+    pub gate_proj: Nvfp4Proj,
+    pub up_proj: Nvfp4Proj,
+    pub down_proj: Nvfp4Proj,
+}
+
+/// 2026-10-08: The static activation scales one W4A4 MLP group runs under: one for the input
+/// of gate and up (they read the same activations), one for the input of down. A routed site
+/// uses one pair for all its experts (`build_w4a4::uniform_act_scales`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct W4a4ActScales {
+    pub gate_up: f32,
+    pub down: f32,
+}
+
+/// 2026-10-08: A dense MLP site of one rank: the weight forms its precision plan reaches, BF16
+/// (dequantized at load) and/or packed NVFP4 with its activation scales, and the plan.
+#[derive(Debug, Clone)]
+pub struct Glm5NextDenseSite {
+    pub bf16: Option<Glm5NextDenseMlpWeights>,
+    pub nvfp4: Option<(Glm5NextDenseNvfp4Weights, W4a4ActScales)>,
+    pub precision: GroupPrecision,
+    /// 2026-10-12: The one-group grouped-GEMM inputs of `METRALE_GLM_DENSE_W4A4_GROUPED_MIN_ROWS`,
+    /// built at load when the lever is on and `nvfp4` is bound.
+    pub grouped: Option<crate::glm5next_mlp::forward::DenseGroupedTables>,
 }
 
 /// 2026-09-25: One routed NVFP4 expert, owned whole by one EP rank.
@@ -58,6 +107,10 @@ pub struct Glm5NextExpertPtrTable {
     pub scale_ptrs: DevicePtr,
     /// 2026-09-25: `[num_experts]` F32 per-expert global scale.
     pub scale2_vals: DevicePtr,
+    /// 2026-10-21: `[num_experts]` U32 per-expert compact-scale base code in every byte, or
+    /// `scale_dict::PLAIN_BASE4` for an expert with plain scales; null when no expert of the site
+    /// is compact (the plain entries run). The `_cs` entries read it (`scale_dict_kernels`).
+    pub scale_bases: DevicePtr,
 }
 
 /// 2026-09-25: The three projections' pointer tables for one routed site.
@@ -84,4 +137,9 @@ pub struct Glm5NextMoeWeights {
     /// 2026-09-25: Global-id-indexed pointer tables over the same experts, for the
     /// device-dispatched forward. Null entries mark remote ids.
     pub ptrs: Glm5NextMoePtrTables,
+    /// 2026-10-08: Which kernel the routed experts run at each row count.
+    pub precision: GroupPrecision,
+    /// 2026-10-08: The experts' static activation scales, present when `precision` reaches
+    /// the W4A4 kernels.
+    pub act_scales: Option<W4a4ActScales>,
 }

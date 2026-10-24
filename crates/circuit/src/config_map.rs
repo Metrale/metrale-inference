@@ -15,8 +15,13 @@
 //!   in the TOML); a requirement applies to a present (or defaulted) value, and an absent key
 //!   without a default is simply absent. A dim with no default is required.
 //! - JSON `null` is absent.
+//! - 2026-10-22: `[policy]` states the engine's code default of each setting a rule reads that
+//!   only this arch's layer code decides (a lever of its own kernels), with the line that sets
+//!   it; a checkpoint planned at its declared formats takes these values (`derive_policy`).
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use serde::Deserialize;
 
@@ -121,6 +126,22 @@ impl ConfigMap {
             .chain(&self.file.engine_model_types)
             .any(|t| t == model_type)
     }
+
+    /// 2026-10-22: The code defaults of this arch's own policy settings (`[policy]`).
+    pub fn policy_defaults(&self) -> &BTreeMap<String, PolicyDefault> {
+        &self.file.policy
+    }
+}
+
+/// 2026-10-22: One `[policy]` setting: the value the engine runs when nothing sets the lever,
+/// and where the code says so.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicyDefault {
+    /// 2026-10-22: The setting's value at the code default.
+    pub value: String,
+    /// 2026-10-22: The lever and the line that sets its default.
+    pub why: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -145,6 +166,8 @@ pub(crate) struct MapFile {
     pub keys: BTreeMap<String, KeyRule>,
     #[serde(default)]
     pub variant: BTreeMap<String, VariantFile>,
+    #[serde(default)]
+    pub policy: BTreeMap<String, PolicyDefault>,
 }
 
 /// 2026-09-30: Per-`model_type` additions: its dims and key rules replace the base ones of
@@ -181,6 +204,10 @@ pub(crate) struct LayerSource {
     /// 2026-09-30: Pattern letters to layer kinds.
     #[serde(default)]
     pub chars: BTreeMap<String, String>,
+    /// 2026-10-18: The key whose integer value counts trailing list entries that are draft
+    /// layers, not text layers (DeepSeek-V4.1 `compress_ratios` lists the MTP layers after the
+    /// text stack). The list must hold exactly `count` + that many entries; the tail is dropped.
+    pub draft_tail: Option<String>,
 }
 
 /// 2026-09-30: How one dim is read.
@@ -215,6 +242,21 @@ pub(crate) struct DimFull {
     pub default: Option<u64>,
     /// 2026-09-30: The values the circuit models; any other is refused.
     pub allowed: Option<Vec<u64>>,
+    /// 2026-10-18: The index of the first entry equal to `value` in the integer list `key`
+    /// (the first ratio-1 layer of DeepSeek-V4.1 `compress_ratios`); no such entry is refused.
+    pub first_index: Option<FirstIndex>,
+}
+
+/// 2026-10-18: See [`DimFull::first_index`].
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FirstIndex {
+    pub key: String,
+    pub value: u64,
+    /// 2026-10-18: The key whose integer ends (exclusive) the run of `value` that starts at
+    /// the first index: every entry in between must equal `value` (the circuit takes one
+    /// template for the whole run).
+    pub run_to: Option<String>,
 }
 
 /// 2026-09-30: How one config key is classified.

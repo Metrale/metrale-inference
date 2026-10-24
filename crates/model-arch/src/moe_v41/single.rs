@@ -14,7 +14,7 @@ use anyhow::{Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 use metrale_model_weights::weights::expert_stream::{ExpertLru, ExpertSource};
 
-use super::{MoeV41, MoeV41LayerWeights, MoeV41Stage, MoeV41Timing, RouterWeights, prefetch_k};
+use super::{MoeV41, MoeV41LayerWeights, MoeV41Stage, MoeV41Timing, RouterWeights};
 use metrale_model_layers::layers::ops::{
     kquant_mmvq_experts_wn, kquant_q8_1_rows, kquant_q8_1_rows_bytes, kquant_swiglu_q8_1_rows,
 };
@@ -172,7 +172,7 @@ impl MoeV41 {
 
     /// 2026-09-25: The host span of a single-token step between the router
     /// GEMV and the expert compute: the next layer's router on `x` (when
-    /// `next` is given, `prefetch_k() > 0` and the cache has a reader pool),
+    /// `next` is given, `levers.prefetch_k > 0` and the cache has a reader pool),
     /// the selection (drains the stream), the cache fetch with the predicted
     /// experts, and the rows / weights / pointer-table uploads into fixed
     /// buffers. `route_launch` must have been issued on `stream` first.
@@ -188,13 +188,13 @@ impl MoeV41 {
         stream: u64,
     ) -> Result<MoeV41Stage> {
         let t0 = std::time::Instant::now();
-        let predict = next.filter(|_| prefetch_k() > 0 && lru.has_pool());
+        let predict = next.filter(|_| self.levers.prefetch_k > 0 && lru.has_pool());
         if let Some(nw) = predict {
             self.predict_launch(gpu, nw, x, stream)?;
         }
         let (weights, indices) = self.route_select(gpu, w, 1, stream)?;
         let predicted = match predict {
-            Some(nw) => self.predict_select(gpu, nw, prefetch_k(), stream)?,
+            Some(nw) => self.predict_select(gpu, nw, self.levers.prefetch_k, stream)?,
             None => Vec::new(),
         };
         let t1 = std::time::Instant::now();

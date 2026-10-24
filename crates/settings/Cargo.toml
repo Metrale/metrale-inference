@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+[package]
+name = "metrale-settings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Metrale Engine: every METRALE_* lever declared once, as typed settings groups with a CLI > recipe > env > default resolver."
+
+[dependencies]
+metrale-abstract-io = { workspace = true }
+metrale-error = { workspace = true }
+
+[dev-dependencies]
+metrale-io-host-mem = { workspace = true }
+
+[lints]
+workspace = true
+
+[package.metadata.metrale]
+role = "core"

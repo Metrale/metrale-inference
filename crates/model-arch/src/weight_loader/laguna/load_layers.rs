@@ -29,6 +29,7 @@ pub(super) fn load_layers(
     config: &ModelConfig,
     gpu: &dyn GpuBackend,
     layer_kv_dtypes: &[KvCacheDtype],
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Vec<Box<dyn TransformerLayer>>> {
     ensure!(
         layer_kv_dtypes.len() == config.num_hidden_layers,
@@ -44,13 +45,15 @@ pub(super) fn load_layers(
     let stream = gpu.default_stream();
     let yarn_inv_freq = compute_yarn_inv_freq(config, gpu)?;
     // 2026-09-25: Sliding layers: theta=10000 over the full head_dim, no YaRN ramp.
-    let sliding_inv_freq = if sliding_rope_table_enabled() {
+    // 2026-09-25: `METRALE_LAGUNA_ROPE_TABLE` off turns off the precomputed sliding-layer RoPE
+    // table; the layers then get no table.
+    let sliding_inv_freq = if lc.settings.kernels.laguna_rope_table {
         compute_plain_inv_freq(10_000.0, config.head_dim, gpu)?
     } else {
         DevicePtr::NULL
     };
-    let unified_moe_layout =
-        unified_moe_layout_enabled(std::env::var("METRALE_UNIFIED_MOE_LAYOUT").ok().as_deref());
+    let unified_moe_layout = crate::weight_loader::shared_levers::unified_moe_layout(lc.settings);
+    let grouped_cutlass = crate::weight_loader::shared_levers::grouped_cutlass(lc.settings);
     if unified_moe_layout {
         tracing::info!(
             "Laguna: using unified transposed MoE layout; prefill uses fused K64 kernels and decode uses transposed experts"
@@ -63,7 +66,7 @@ pub(super) fn load_layers(
         let input_norm = dense(store, &format!("{lp}.input_layernorm.weight"))?;
         let post_attn_norm = dense(store, &format!("{lp}.post_attention_layernorm.weight"))?;
         let ffn = if config.mlp_only_layers.contains(&i) {
-            load_dense_ffn(store, gpu, &lp)?
+            load_dense_ffn(store, gpu, &lp, lc)?
         } else {
             load_moe_ffn(
                 store,
@@ -74,6 +77,7 @@ pub(super) fn load_layers(
                 quantize_k,
                 stream,
                 unified_moe_layout,
+                grouped_cutlass,
             )?
         };
         let layer = load_attention(
@@ -88,6 +92,7 @@ pub(super) fn load_layers(
             yarn_inv_freq,
             sliding_inv_freq,
             i,
+            lc,
         )?;
         layers.push(Box::new(layer));
     }
@@ -105,8 +110,13 @@ fn null_dense_ffn_weights() -> DenseFfnWeights {
     }
 }
 
-fn load_dense_ffn(store: &WeightStore, gpu: &dyn GpuBackend, lp: &str) -> Result<FfnComponent> {
-    let mut layer = DenseFfnLayer::new(null_dense_ffn_weights(), gpu)?;
+fn load_dense_ffn(
+    store: &WeightStore,
+    gpu: &dyn GpuBackend,
+    lp: &str,
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
+) -> Result<FfnComponent> {
+    let mut layer = DenseFfnLayer::new(null_dense_ffn_weights(), gpu, lc)?;
     layer.set_bf16_weights(
         dense_auto(store, &format!("{lp}.mlp.gate_proj.weight"), gpu)?,
         dense_auto(store, &format!("{lp}.mlp.up_proj.weight"), gpu)?,
@@ -125,6 +135,7 @@ fn load_moe_ffn(
     quantize_k: metrale_gpu_runtime::gpu::KernelHandle,
     stream: u64,
     unified_moe_layout: bool,
+    grouped_cutlass: bool,
 ) -> Result<FfnComponent> {
     let mlp = format!("{lp}.mlp");
     let gate = dense(store, &format!("{mlp}.gate.weight"))?;
@@ -213,7 +224,7 @@ fn load_moe_ffn(
     }
     // 2026-09-25: Native NVFP4 CUTLASS grouped MoE
     // (`METRALE_HOLO_MOE_GROUPED_CUTLASS`).
-    if cutlass_grouped_moe_enabled() {
+    if grouped_cutlass {
         // 2026-09-25: `transpose_for_prefill_unified` frees the original expert
         // weights, and the grouped-CUTLASS prefill branch
         // (`forward_prefill_routed.rs`) reads their `packed_ptrs`.
@@ -226,10 +237,6 @@ fn load_moe_ffn(
         layer.build_cutlass_grouped_sfb(gpu, config, gpu.default_stream())?;
     }
     Ok(FfnComponent::Moe(layer))
-}
-
-fn unified_moe_layout_enabled(value: Option<&str>) -> bool {
-    value.is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -245,6 +252,7 @@ fn load_attention(
     yarn_inv_freq: DevicePtr,
     sliding_inv_freq: DevicePtr,
     i: usize,
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Qwen3AttentionLayer> {
     let p = format!("{lp}.self_attn");
     let heads = config.num_attention_heads_per_layer[i];
@@ -298,6 +306,7 @@ fn load_attention(
         kv_dtype,
         config.fp8_kv_calibration_tokens,
         config,
+        lc,
     )?;
     layer.set_dimension_overrides(config.head_dim, heads, config.num_key_value_heads);
     layer.set_o_dense_bf16(o_proj);
@@ -382,15 +391,6 @@ fn compute_yarn_inv_freq(config: &ModelConfig, gpu: &dyn GpuBackend) -> Result<D
     Ok(ptr)
 }
 
-/// 2026-09-25: Build the CUTLASS grouped-NVFP4 SFB tables at load: opt-in with
-/// `METRALE_HOLO_MOE_GROUPED_CUTLASS=1` or `true`.
-fn cutlass_grouped_moe_enabled() -> bool {
-    matches!(
-        std::env::var("METRALE_HOLO_MOE_GROUPED_CUTLASS").as_deref(),
-        Ok("1") | Ok("true")
-    )
-}
-
 /// 2026-09-25: Plain RoPE inv_freq table (`1 / theta^(2j/dim)`, no YaRN ramp)
 /// for the sliding-attention layers, computed in f64 and narrowed once to f32.
 fn compute_plain_inv_freq(theta: f64, dim: usize, gpu: &dyn GpuBackend) -> Result<DevicePtr> {
@@ -405,23 +405,6 @@ fn compute_plain_inv_freq(theta: f64, dim: usize, gpu: &dyn GpuBackend) -> Resul
     Ok(ptr)
 }
 
-/// 2026-09-25: `METRALE_LAGUNA_ROPE_TABLE=0` turns off the precomputed
-/// sliding-layer RoPE table; the layers then get no table.
-fn sliding_rope_table_enabled() -> bool {
-    std::env::var("METRALE_LAGUNA_ROPE_TABLE").as_deref() != Ok("0")
-}
-
 #[cfg(test)]
-mod tests {
-    use super::unified_moe_layout_enabled;
-
-    #[test]
-    fn unified_moe_layout_is_explicitly_opt_in() {
-        assert!(unified_moe_layout_enabled(Some("1")));
-        assert!(unified_moe_layout_enabled(Some("true")));
-        assert!(unified_moe_layout_enabled(Some("TRUE")));
-        assert!(!unified_moe_layout_enabled(None));
-        assert!(!unified_moe_layout_enabled(Some("0")));
-        assert!(!unified_moe_layout_enabled(Some("full")));
-    }
-}
+#[path = "load_layers_settings_tests.rs"]
+mod settings_tests;

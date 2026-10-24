@@ -6,26 +6,39 @@
 //!
 //! Owner: model-arch (DeepSeek-V4.1 MoE).
 //! Invariants:
-//! - `new` refuses a config whose `dim` or `inter` is not a multiple of 256.
+//! - `new` takes any `dim` and `inter`; the K-quant expert path checks its own shape first
+//!   ([`MoeV41Cfg::require_kquant_experts`]).
 //! - The per-expert buffers (`gate_out`, `up_out`, `h`, `h_q8`, `down_out`)
 //!   hold at least `topk` rows whatever `max_tokens` is.
 
 use anyhow::{Result, ensure};
 use metrale_gpu_runtime::gpu::{DevicePtr, GpuBackend};
 
-use super::{GEMM_MODULE, Kernels, MODULE, MoeV41, MoeV41Cfg, MoeV41Timing, SLOT_TABLE_LAYERS};
+use super::{
+    Fp8BlockStage, GEMM_MODULE, Kernels, MODULE, MoeV41, MoeV41Cfg, MoeV41Timing, SLOT_TABLE_LAYERS,
+};
+use crate::deepseek_v41_layer::levers::Ds41Levers;
 use metrale_model_layers::layers::ops::{
     KQUANT_MODULE, kquant_mmq_act_bytes, kquant_q8_1_rows_bytes,
 };
 
-impl MoeV41 {
-    pub fn new(gpu: &dyn GpuBackend, cfg: MoeV41Cfg) -> Result<Self> {
+impl MoeV41Cfg {
+    /// 2026-10-19: Refuses a shape the K-quant expert kernels cannot run: `dim` and `inter` must
+    /// be multiples of the 256-value K-quant block. The resident block-scaled experts have no
+    /// such bound.
+    pub fn require_kquant_experts(&self) -> Result<()> {
         ensure!(
-            cfg.dim.is_multiple_of(256) && cfg.inter.is_multiple_of(256),
+            self.dim.is_multiple_of(256) && self.inter.is_multiple_of(256),
             "K-quant experts need dim and inter to be multiples of 256 (got {} / {})",
-            cfg.dim,
-            cfg.inter
+            self.dim,
+            self.inter
         );
+        Ok(())
+    }
+}
+
+impl MoeV41 {
+    pub fn new(gpu: &dyn GpuBackend, cfg: MoeV41Cfg, levers: Ds41Levers) -> Result<Self> {
         let m = cfg.max_tokens;
         // 2026-09-25: The single-token arm (`routed_m1`) runs every selected
         // expert as a row of the per-expert buffers, so they hold at least
@@ -33,24 +46,21 @@ impl MoeV41 {
         // keep `m`.
         let me = m.max(cfg.topk);
         let alloc = |bytes: usize| gpu.alloc(bytes.max(16));
-        // 2026-09-25: Warps a block of the single-token expert GEMV batch,
-        // `METRALE_DS41_EXPERT_WARPS` in {2, 4, 8}: 8 (the `_w8` entries) when
-        // unset or any other value, 2 selects `_w2`, 4 the unsuffixed `_w`.
+        // 2026-09-25: Warps a block of the single-token expert GEMV batch
+        // (`Ds41Levers::expert_warps`): 8 selects the `_w8` entries, 2 `_w2`,
+        // 4 the unsuffixed `_w`.
         // Measured 2026-09-19 (hot decode): 8 was the fastest of the three,
         // 18.9 tok/s.
-        let experts_warps: u32 = std::env::var("METRALE_DS41_EXPERT_WARPS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .filter(|w| matches!(w, 2 | 4 | 8))
-            .unwrap_or(8);
+        let experts_warps = levers.expert_warps;
         let sfx = match experts_warps {
             2 => "2",
             8 => "8",
             _ => "",
         };
         Ok(MoeV41 {
+            fp8: Fp8BlockStage::new(gpu, cfg.fp8_stage)?,
             last: std::cell::Cell::new(MoeV41Timing::default()),
-            timing_sync: std::env::var("METRALE_DS41_DIAG").is_ok_and(|v| v == "1"),
+            levers,
             k: Kernels {
                 gemm: gpu.kernel(GEMM_MODULE, "dense_gemm_bf16")?,
                 gemv: gpu.kernel("gemv", "dense_gemv_bf16")?,
@@ -127,6 +137,7 @@ impl MoeV41 {
     }
 
     pub fn free(self, gpu: &dyn GpuBackend) -> Result<()> {
+        self.fp8.free(gpu)?;
         for p in [
             self.logits,
             self.pred_logits,

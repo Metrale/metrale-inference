@@ -11,7 +11,7 @@ use metrale_model_layers::layer::TransformerLayer;
 use metrale_model_layers::weight_map::Nvfp4Variant;
 
 use super::load_cx::{LayerIn, LoadCx};
-use super::proj_is_native_fp8;
+use super::selectors::proj_is_native_fp8;
 
 /// 2026-09-26: Layer `i`'s linear-attention layer, from the builder the rules below select.
 pub(super) fn build_linear_attention(
@@ -22,6 +22,7 @@ pub(super) fn build_linear_attention(
     fp4_proj_decode: bool,
     declared_fp8_ssm: bool,
     parts: LayerIn,
+    lc: metrale_model_layers::load_context::LoadContext<'_>,
 ) -> Result<Box<dyn TransformerLayer>> {
     let LoadCx {
         store,
@@ -73,6 +74,7 @@ pub(super) fn build_linear_attention(
                 input_norm,
                 post_attn_norm,
                 ffn,
+                lc,
             )?
         }
         // 2026-09-25: `METRALE_HOLO_FP4_PROJ_DECODE=1` sends the Holo ModelOpt SSM to
@@ -89,6 +91,7 @@ pub(super) fn build_linear_attention(
                 input_norm,
                 post_attn_norm,
                 ffn,
+                lc,
             )?
         }
         Nvfp4Variant::Fp8Dequanted if !(force_nvfp4_all || fp4_proj_decode) && ssm_native_fp8 => {
@@ -104,6 +107,7 @@ pub(super) fn build_linear_attention(
                 input_norm,
                 post_attn_norm,
                 ffn,
+                lc,
             )?
         }
         _ => super::linear_attn_arms::build_linear_attention_nvfp4(
@@ -119,6 +123,7 @@ pub(super) fn build_linear_attention(
             input_norm,
             post_attn_norm,
             ffn,
+            lc,
         )?,
     };
     Ok(layer)

@@ -14,293 +14,17 @@
 //! - An edge's fused or materialised state belongs to a plan (`FusionPlan::edge_states`),
 //!   not to the circuit, because one circuit has one plan per mode and row count.
 
-use std::collections::BTreeMap;
+use crate::prelude::*;
+
+use alloc::collections::BTreeMap;
 
 use crate::dims::DimExpr;
 use crate::format::Format;
 
-/// 2026-09-28: What a linear (GEMV/GEMM) node projects. Closed, like [`OpKind`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum LinearRole {
-    /// 2026-09-28: Attention Q with its output gate, interleaved per head.
-    Q,
-    /// 2026-09-28: Attention K.
-    K,
-    /// 2026-09-28: Attention V.
-    V,
-    /// 2026-09-28: Attention output projection.
-    O,
-    /// 2026-09-28: GatedDeltaNet `in_proj_qkv` and `in_proj_z` in one projection.
-    Qkvz,
-    /// 2026-09-28: GatedDeltaNet `in_proj_b` and `in_proj_a` (the beta and decay inputs).
-    Ba,
-    /// 2026-09-28: GatedDeltaNet `out_proj`.
-    GdnOut,
-    /// 2026-09-28: MLP gate and up projections.
-    GateUp,
-    /// 2026-09-28: MLP down projection.
-    Down,
-    /// 2026-09-28: MoE shared-expert gate and up projections.
-    SharedGateUp,
-    /// 2026-09-28: MoE shared-expert down projection.
-    SharedDown,
-    /// 2026-09-28: MoE shared-expert scalar gate (`shared_expert_gate`).
-    SharedGate,
-    /// 2026-09-28: MTP head input projection (`fc`, embedding and hidden concatenated).
-    MtpFc,
-    /// 2026-09-29: Mamba2 `in_proj`: z, x, B, C and dt in one projection.
-    MambaIn,
-    /// 2026-09-29: Mamba2 `out_proj`.
-    MambaOut,
-    /// 2026-09-29: An ungated MoE shared expert's up projection.
-    SharedUp,
-    /// 2026-09-30: A latent MoE's projection from the hidden width into the experts' latent
-    /// width (`fc1_latent_proj`, Nemotron-3 Super).
-    MoeLatentIn,
-    /// 2026-09-30: A latent MoE's projection of the routed sum back to the hidden width
-    /// (`fc2_latent_proj`).
-    MoeLatentOut,
-}
-
-const ROLES: [(LinearRole, &str); 18] = [
-    (LinearRole::Q, "q"),
-    (LinearRole::K, "k"),
-    (LinearRole::V, "v"),
-    (LinearRole::O, "o"),
-    (LinearRole::Qkvz, "qkvz"),
-    (LinearRole::Ba, "ba"),
-    (LinearRole::GdnOut, "gdn_out"),
-    (LinearRole::GateUp, "gate_up"),
-    (LinearRole::Down, "down"),
-    (LinearRole::SharedGateUp, "shared_gate_up"),
-    (LinearRole::SharedDown, "shared_down"),
-    (LinearRole::SharedGate, "shared_gate"),
-    (LinearRole::MtpFc, "mtp_fc"),
-    (LinearRole::MambaIn, "mamba_in"),
-    (LinearRole::MambaOut, "mamba_out"),
-    (LinearRole::SharedUp, "shared_up"),
-    (LinearRole::MoeLatentIn, "moe_latent_in"),
-    (LinearRole::MoeLatentOut, "moe_latent_out"),
-];
-
-impl LinearRole {
-    /// 2026-09-28: The role spelled in templates and rules.
-    pub fn parse(s: &str) -> Option<Self> {
-        ROLES.iter().find(|(_, n)| *n == s).map(|(r, _)| *r)
-    }
-
-    /// 2026-09-28: The canonical spelling.
-    pub fn name(self) -> &'static str {
-        ROLES
-            .iter()
-            .find(|(r, _)| *r == self)
-            .map(|(_, n)| *n)
-            .unwrap_or("?")
-    }
-}
-
-/// 2026-09-28: The closed op vocabulary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum OpKind {
-    /// 2026-09-28: Token embedding lookup; a source node.
-    Embed,
-    /// 2026-09-28: RMSNorm with a learned weight.
-    RmsNorm,
-    /// 2026-09-28: RMSNorm of one input gated by SiLU of another (GDN output norm).
-    GatedRmsNorm,
-    /// 2026-09-28: Elementwise sum of two streams.
-    ResidualAdd,
-    /// 2026-09-28: A copy between buffers.
-    Copy,
-    /// 2026-09-28: Concatenate inputs along the feature dim.
-    Concat,
-    /// 2026-09-28: Split or deinterleave a packed projection output.
-    Split,
-    /// 2026-09-28: A weight-bearing projection.
-    Linear(LinearRole),
-    /// 2026-09-28: `silu(gate) * up` over a packed gate|up input.
-    SiluMul,
-    /// 2026-09-29: `relu(x)^2` of an ungated up projection.
-    Relu2,
-    /// 2026-09-28: Quantize activations to the given format.
-    ActQuant(Format),
-    /// 2026-09-28: Per-head RMSNorm of Q or K.
-    QkNorm,
-    /// 2026-09-28: Rotary position embedding.
-    Rope,
-    /// 2026-09-28: Append K and V to the paged cache.
-    KvWrite,
-    /// 2026-09-28: Paged softmax attention over the cache.
-    PagedAttention,
-    /// 2026-09-28: `x * sigmoid(gate)` (attention output gate).
-    SigmoidGateMul,
-    /// 2026-09-28: GDN beta and decay from the `ba` projection.
-    GdnGates,
-    /// 2026-09-28: Causal depthwise conv1d step with its rolling state.
-    Conv1dUpdate,
-    /// 2026-09-28: L2 normalisation of Q and K heads.
-    L2Norm,
-    /// 2026-09-28: The gated delta rule recurrence over the recurrent state.
-    GdnRecurrence,
-    /// 2026-09-29: The Mamba2 selective state-space update: one step of the SSM state per row
-    /// (`dt` softplus, `A`, the grouped `B`/`C` projections and the `D` skip).
-    SsmUpdate,
-    /// 2026-09-28: MoE router logits.
-    Router,
-    /// 2026-09-28: Top-k expert selection and weights.
-    TopK,
-    /// 2026-09-28: Routed experts' gate and up projections.
-    ExpertGateUp,
-    /// 2026-09-28: Routed experts' down projections.
-    ExpertDown,
-    /// 2026-09-28: Weighted sum of the routed experts and the gated shared expert.
-    Blend,
-    /// 2026-09-28: Cross-rank reduction of an expert-parallel FFN output.
-    EpReduce,
-    /// 2026-09-28: The model's final RMSNorm.
-    FinalNorm,
-    /// 2026-09-28: Vocabulary projection.
-    LmHead,
-    /// 2026-09-28: Greedy token selection over the logits.
-    Argmax,
-    /// 2026-09-29: A snapshot of the recurrent state its input's producer updates, taken after
-    /// each row but the last into the step's checkpoint slots (the verify's rollback points).
-    /// It has no output.
-    StateSnapshot,
-}
-
-const PLAIN_OPS: [(OpKind, &str); 29] = [
-    (OpKind::Embed, "embed"),
-    (OpKind::RmsNorm, "rms_norm"),
-    (OpKind::GatedRmsNorm, "gated_rms_norm"),
-    (OpKind::ResidualAdd, "residual_add"),
-    (OpKind::Copy, "copy"),
-    (OpKind::Concat, "concat"),
-    (OpKind::Split, "split"),
-    (OpKind::SiluMul, "silu_mul"),
-    (OpKind::Relu2, "relu2"),
-    (OpKind::QkNorm, "qk_norm"),
-    (OpKind::Rope, "rope"),
-    (OpKind::KvWrite, "kv_write"),
-    (OpKind::PagedAttention, "paged_attention"),
-    (OpKind::SigmoidGateMul, "sigmoid_gate_mul"),
-    (OpKind::GdnGates, "gdn_gates"),
-    (OpKind::Conv1dUpdate, "conv1d_update"),
-    (OpKind::L2Norm, "l2_norm"),
-    (OpKind::GdnRecurrence, "gdn_recurrence"),
-    (OpKind::SsmUpdate, "ssm_update"),
-    (OpKind::Router, "router"),
-    (OpKind::TopK, "top_k"),
-    (OpKind::ExpertGateUp, "expert_gate_up"),
-    (OpKind::ExpertDown, "expert_down"),
-    (OpKind::Blend, "blend"),
-    (OpKind::EpReduce, "ep_reduce"),
-    (OpKind::FinalNorm, "final_norm"),
-    (OpKind::LmHead, "lm_head"),
-    (OpKind::Argmax, "argmax"),
-    (OpKind::StateSnapshot, "state_snapshot"),
-];
-
-impl OpKind {
-    /// 2026-09-28: Resolve an op name. `linear` needs `role`, `act_quant` needs `format`;
-    /// every other op refuses both.
-    pub fn parse(
-        name: &str,
-        role: Option<&str>,
-        format: Option<Format>,
-    ) -> Result<Self, OpParseError> {
-        match (name, role, format) {
-            ("linear", Some(r), None) => LinearRole::parse(r)
-                .map(OpKind::Linear)
-                .ok_or_else(|| OpParseError::UnknownRole(r.to_string())),
-            ("linear", None, _) => Err(OpParseError::MissingRole),
-            ("act_quant", None, Some(f)) => Ok(OpKind::ActQuant(f)),
-            ("act_quant", _, None) => Err(OpParseError::MissingFormat),
-            _ => {
-                let op = PLAIN_OPS
-                    .iter()
-                    .find(|(_, n)| *n == name)
-                    .map(|(k, _)| *k)
-                    .ok_or_else(|| OpParseError::UnknownOp(name.to_string()))?;
-                if role.is_some() || format.is_some() {
-                    return Err(OpParseError::StrayQualifier(name.to_string()));
-                }
-                Ok(op)
-            }
-        }
-    }
-
-    /// 2026-09-28: The op's base name (`linear`, `act_quant`, `rms_norm`, ...).
-    pub fn base_name(&self) -> &'static str {
-        match self {
-            OpKind::Linear(_) => "linear",
-            OpKind::ActQuant(_) => "act_quant",
-            other => PLAIN_OPS
-                .iter()
-                .find(|(k, _)| k == other)
-                .map(|(_, n)| *n)
-                .unwrap_or("?"),
-        }
-    }
-
-    /// 2026-09-28: The canonical spelling with its qualifier, e.g. `linear:down`,
-    /// `act_quant:fp8/token`.
-    pub fn name(&self) -> String {
-        match self {
-            OpKind::Linear(r) => format!("linear:{}", r.name()),
-            OpKind::ActQuant(f) => format!("act_quant:{}", f.name()),
-            _ => self.base_name().to_string(),
-        }
-    }
-
-    /// 2026-09-28: An op that is never generated: projections, attention, the recurrence,
-    /// the experts and the vocabulary projection. Fusion happens at its edges.
-    pub fn is_heavy(&self) -> bool {
-        matches!(
-            self,
-            OpKind::Linear(_)
-                | OpKind::PagedAttention
-                | OpKind::GdnRecurrence
-                | OpKind::SsmUpdate
-                | OpKind::Router
-                | OpKind::ExpertGateUp
-                | OpKind::ExpertDown
-                | OpKind::LmHead
-        )
-    }
-
-    /// 2026-09-28: Ops that read a weight whose format the precision resolver answers.
-    pub fn reads_linear_weight(&self) -> bool {
-        matches!(
-            self,
-            OpKind::Linear(_)
-                | OpKind::ExpertGateUp
-                | OpKind::ExpertDown
-                | OpKind::LmHead
-                | OpKind::Router
-        )
-    }
-}
-
-/// 2026-09-28: Why an op spelling was refused.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum OpParseError {
-    /// 2026-09-28: Not in the vocabulary.
-    #[error("unknown op `{0}`")]
-    UnknownOp(String),
-    /// 2026-09-28: `linear` with a role outside [`LinearRole`].
-    #[error("unknown linear role `{0}`")]
-    UnknownRole(String),
-    /// 2026-09-28: `linear` without `role`.
-    #[error("`linear` needs a `role`")]
-    MissingRole,
-    /// 2026-09-28: `act_quant` without `format`.
-    #[error("`act_quant` needs a `format`")]
-    MissingFormat,
-    /// 2026-09-28: `role` or `format` on an op that takes neither.
-    #[error("op `{0}` takes no `role` or `format`")]
-    StrayQualifier(String),
-}
+mod ops;
+mod roles;
+pub use ops::{OpKind, OpParseError};
+pub use roles::LinearRole;
 
 /// 2026-09-28: Index of an edge in [`Circuit::edges`].
 pub type EdgeIdx = usize;
@@ -309,7 +33,7 @@ pub type NodeIdx = usize;
 
 /// 2026-09-28: One tensor between nodes: `rows x dim` in `format`. `rows` is an expression
 /// over `n`, the step's row count, and the arch dims (e.g. `n*top_k`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Edge {
     /// 2026-09-28: Unique id, e.g. `l3.attn.q` or `stream.4`.
     pub id: String,
@@ -333,7 +57,7 @@ pub struct Edge {
 }
 
 /// 2026-09-28: One op instance.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Node {
     /// 2026-09-28: Unique id, e.g. `l3.attn.o_proj`.
     pub id: String,
@@ -360,9 +84,12 @@ pub struct Node {
 }
 
 /// 2026-09-28: A decoder layer's kind, as `ModelConfig::layer_type` reports it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum LayerKind {
-    /// 2026-09-28: A GatedDeltaNet layer.
+    /// 2026-09-28: A GatedDeltaNet layer. 2026-10-08: Or a KDA layer (`glm5_next`): the HF
+    /// spelling is the same, and the circuit's layout picks the mixer.
     LinearAttention,
     /// 2026-09-28: A softmax attention layer.
     FullAttention,
@@ -370,6 +97,12 @@ pub enum LayerKind {
     Mamba,
     /// 2026-09-29: A layer whose only mixer is a MoE FFN (Nemotron-H `moe`).
     Moe,
+    /// 2026-10-08: A sparse-attention layer: latent attention over the tokens an indexer
+    /// selects (`deepseek_sparse_attention`, GLM-5).
+    SparseAttention,
+    /// 2026-10-18: A sliding-window attention layer: softmax over the last `window` tokens only
+    /// (`sliding_attention`; DeepSeek-V4.1 layers whose `compress_ratios` entry is 0).
+    SlidingAttention,
 }
 
 impl LayerKind {
@@ -380,6 +113,8 @@ impl LayerKind {
             LayerKind::FullAttention => "full_attention",
             LayerKind::Mamba => "mamba",
             LayerKind::Moe => "moe",
+            LayerKind::SparseAttention => "deepseek_sparse_attention",
+            LayerKind::SlidingAttention => "sliding_attention",
         }
     }
 
@@ -390,6 +125,8 @@ impl LayerKind {
             "full_attention" => Some(LayerKind::FullAttention),
             "mamba" => Some(LayerKind::Mamba),
             "moe" => Some(LayerKind::Moe),
+            "deepseek_sparse_attention" => Some(LayerKind::SparseAttention),
+            "sliding_attention" => Some(LayerKind::SlidingAttention),
             _ => None,
         }
     }
@@ -407,7 +144,9 @@ pub struct ArchShape {
 }
 
 /// 2026-09-28: Which forward a block belongs to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum Section {
     /// 2026-09-28: The target model's forward.
     Main,
@@ -416,7 +155,7 @@ pub enum Section {
 }
 
 /// 2026-09-28: One instantiated block: its template and the node range it produced.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BlockInstance {
     /// 2026-09-28: Template name.
     pub template: String,
@@ -435,7 +174,7 @@ pub struct BlockInstance {
 }
 
 /// 2026-09-28: An instantiated circuit.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Circuit {
     /// 2026-09-28: The arch id of the TOML it came from (`qwen3_5`).
     pub arch: String,
@@ -465,4 +204,36 @@ impl Circuit {
     pub fn node(&self, id: &str) -> Option<NodeIdx> {
         self.nodes.iter().position(|n| n.id == id)
     }
+
+    /// 2026-10-08: `(out, k)` of the weight matrix node `n` reads: `k` its first input's width
+    /// and `out` the sum of its output widths, except for latent attention, whose weight is
+    /// `kv_b_proj`, `[q_heads * (mla_qk + mla_v), kv_lora]`. One definition for the roofline,
+    /// the footprint and the memory model. `None` when a dim latent attention needs is
+    /// missing or the product overflows.
+    /// 2026-10-18: A grouped linear (param `groups`, DeepSeek-V4 `wo_a`) multiplies each of its
+    /// `groups` input slices by its own `out / groups` rows, so `k` is the input width over
+    /// `groups`; `None` when `groups` is not a positive divisor of it.
+    pub fn weight_shape(&self, n: &Node) -> Option<(u64, u64)> {
+        if n.op == OpKind::MlaAttention {
+            let d = |k: &str| self.dims.get(k).copied();
+            let per_head = d("mla_qk")?.checked_add(d("mla_v")?)?;
+            return Some((d("q_heads")?.checked_mul(per_head)?, d("kv_lora")?));
+        }
+        let k = n.inputs.first().map_or(0, |&e| self.edges[e].dim_value);
+        let k = match (n.op, n.params.get("groups")) {
+            (OpKind::Linear(_), Some(g)) => {
+                let g = g
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|g| *g > 0 && k.is_multiple_of(*g))?;
+                k / g
+            }
+            _ => k,
+        };
+        let out = n.outputs.iter().map(|&e| self.edges[e].dim_value).sum();
+        Some((out, k))
+    }
 }
+
+#[cfg(test)]
+mod tests;

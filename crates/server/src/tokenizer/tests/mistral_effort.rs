@@ -18,7 +18,9 @@ fn render_mistral(flags: RenderFlags<'_>) -> anyhow::Result<String> {
     ))
     .expect("bundled Mistral override template must be present");
     let converted = jinja_helpers::convert_python_jinja_to_minijinja(&raw);
-    let env = jinja_helpers::build_jinja_env(&converted).expect("template compiles");
+    let env =
+        jinja_helpers::build_jinja_env_with(&converted, crate::tokenizer::ToolJsonStyle::Compact)
+            .expect("template compiles");
     let messages = [json!({"role": "user", "content": "Hello"})];
     render_chat(&env, &messages, None, flags)
 }

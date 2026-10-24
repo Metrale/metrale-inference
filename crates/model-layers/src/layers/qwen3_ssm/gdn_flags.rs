@@ -203,21 +203,12 @@ pub fn verify_exact_enabled() -> bool {
 }
 
 /// 2026-09-25: Batch width at which the multi-sequence decode projections switch
-/// to the 128-row M-tile. `None` when `METRALE_NO_SSM_M128` is set (any value,
-/// `0` included), which keeps the 64-row tile at every width.
+/// to the 128-row M-tile (`SsmLevers::m128_min_m`, `None` under
+/// `METRALE_NO_SSM_M128`, which keeps the 64-row tile at every width).
 ///
 /// 65 is derived, not tuned: `ceil(m/64) > ceil(m/128)` first holds at m=65, so
 /// below it the wider tile saves no weight reads and only pads MMA rows.
-pub(crate) fn ssm_m128_min_m() -> Option<u32> {
-    static M: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
-    *M.get_or_init(|| {
-        if std::env::var("METRALE_NO_SSM_M128").is_ok() {
-            None
-        } else {
-            Some(65)
-        }
-    })
-}
+pub(crate) const SSM_M128_MIN_M: u32 = 65;
 
 /// 2026-09-25: Write-on-accept K=4 batched verify. Off unless `METRALE_GDN_WOA=1`.
 /// With it off the parent wy4 kernel runs, the fold in `woa.rs` returns

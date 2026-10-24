@@ -9,10 +9,14 @@
 //! - Edge formats carry activation scales only (`token`, `tensor`, `g<n>`); `channel` and
 //!   `block` are weight layouts, refused on an edge by the circuit loader.
 
-use std::fmt;
+use crate::prelude::*;
+
+use core::fmt;
 
 /// 2026-09-28: How the scales of an 8-bit float tensor are shared.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum Scale {
     /// 2026-09-28: One scale for the whole tensor.
     PerTensor,
@@ -27,7 +31,9 @@ pub enum Scale {
 }
 
 /// 2026-09-28: A tensor format.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum Format {
     /// 2026-09-28: bfloat16.
     Bf16,
@@ -45,18 +51,24 @@ pub enum Format {
         /// 2026-09-28: Values per scale.
         group: u32,
     },
+    /// 2026-10-18: MXFP4 (OCP Microscaling Formats v1.0): E2M1 values, one E8M0 power-of-two
+    /// scale byte per `group` values, no global scale.
+    Mxfp4 {
+        /// 2026-10-18: Values per scale.
+        group: u32,
+    },
 }
 
 /// 2026-09-28: A format string that is not one of the spellings [`Format::parse`] accepts.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error(
-    "unknown format `{0}` (expected bf16, f32, i32, fp8/<token|tensor|channel|g<n>|block<r>x<c>> or nvfp4/g<n>)"
+    "unknown format `{0}` (expected bf16, f32, i32, fp8/<token|tensor|channel|g<n>|block<r>x<c>> , nvfp4/g<n> or mxfp4/g<n>)"
 )]
 pub struct FormatError(pub String);
 
 impl Format {
     /// 2026-09-28: Parse the canonical spelling, e.g. `bf16`, `fp8/token`, `fp8/block128x128`,
-    /// `nvfp4/g16`.
+    /// `nvfp4/g16`, `mxfp4/g32`.
     pub fn parse(s: &str) -> Result<Self, FormatError> {
         let bad = || FormatError(s.to_string());
         match s {
@@ -74,6 +86,10 @@ impl Format {
                 let group = tail.strip_prefix('g').and_then(positive).ok_or_else(bad)?;
                 Ok(Format::Nvfp4 { group })
             }
+            "mxfp4" => {
+                let group = tail.strip_prefix('g').and_then(positive).ok_or_else(bad)?;
+                Ok(Format::Mxfp4 { group })
+            }
             _ => Err(bad()),
         }
     }
@@ -86,6 +102,7 @@ impl Format {
             Format::I32 => "i32".into(),
             Format::Fp8E4m3 { scale } => format!("fp8/{}", scale_name(*scale)),
             Format::Nvfp4 { group } => format!("nvfp4/g{group}"),
+            Format::Mxfp4 { group } => format!("mxfp4/g{group}"),
         }
     }
 
@@ -97,7 +114,11 @@ impl Format {
     /// 2026-09-28: True when the scale layout is one an activation edge can carry.
     pub fn is_edge_format(&self) -> bool {
         match self {
-            Format::Bf16 | Format::F32 | Format::I32 | Format::Nvfp4 { .. } => true,
+            Format::Bf16
+            | Format::F32
+            | Format::I32
+            | Format::Nvfp4 { .. }
+            | Format::Mxfp4 { .. } => true,
             Format::Fp8E4m3 { scale } => {
                 matches!(scale, Scale::PerTensor | Scale::PerToken | Scale::Group(_))
             }
@@ -154,6 +175,15 @@ impl Format {
                 (elems / 2)
                     .checked_add(elems / g)?
                     .checked_add(rows.checked_mul(4)?)
+            }
+            Format::Mxfp4 { group } => {
+                let g = u64::from(*group);
+                if !dim.is_multiple_of(g) || !elems.is_multiple_of(2) {
+                    return None;
+                }
+                // 2026-10-18: Packed E2M1 pairs and one E8M0 byte per group; the power-of-two
+                // scales need no global, so a weight and an activation take the same bytes.
+                (elems / 2).checked_add(elems / g)
             }
         }
     }

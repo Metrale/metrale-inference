@@ -35,6 +35,7 @@ impl Qwen3AttentionLayer {
         kv_dtype: KvCacheDtype,
         fp8_calibration_tokens: usize,
         config: &metrale_config::ModelConfig,
+        lc: crate::load_context::LoadContext<'_>,
     ) -> Result<Self> {
         Self::new_with_gating(
             input_norm,
@@ -50,6 +51,7 @@ impl Qwen3AttentionLayer {
             kv_dtype,
             fp8_calibration_tokens,
             config,
+            lc,
         )
     }
 
@@ -66,6 +68,7 @@ impl Qwen3AttentionLayer {
         kv_dtype: KvCacheDtype,
         fp8_calibration_tokens: usize,
         config: &metrale_config::ModelConfig,
+        lc: crate::load_context::LoadContext<'_>,
     ) -> Result<Self> {
         Self::new_with_gating(
             input_norm,
@@ -81,6 +84,7 @@ impl Qwen3AttentionLayer {
             kv_dtype,
             fp8_calibration_tokens,
             config,
+            lc,
         )
     }
 
@@ -99,9 +103,10 @@ impl Qwen3AttentionLayer {
         kv_dtype: KvCacheDtype,
         fp8_calibration_tokens: usize,
         config: &metrale_config::ModelConfig,
+        lc: crate::load_context::LoadContext<'_>,
     ) -> Result<Self> {
-        let (reshape_mod, reshape_fn, decode_mod, decode_fn) =
-            super::init_kernel_dispatch::kernel_modules_for_dtype(kv_dtype, config.head_dim);
+        let kv_pair = kv_dtype.codec_pair();
+        let kv_names = super::init_kv_kernels::kv_kernel_names_for(kv_pair, config.head_dim)?;
         // 2026-09-25: Which cross-architecture kernel families the config says
         // the model has. `gate` issues no lookup for a family the model lacks,
         // so it leaves no failed row in the boot audit. See `init_arch_gates`.
@@ -112,13 +117,16 @@ impl Qwen3AttentionLayer {
             gpu,
             config,
             &probes,
-            reshape_mod,
-            reshape_fn,
+            kv_names.write,
+            lc.levers,
         )?;
-        let dec = super::init_decode_kernels::DecodeKernels::resolve(
-            gpu, kv_dtype, &probes, decode_mod, decode_fn,
+        let dec = super::init_decode_kernels::DecodeKernels::resolve(gpu, &probes, &kv_names)?;
+        let pre = super::init_prefill_kernels::PrefillKernels::resolve(
+            gpu,
+            config,
+            &probes,
+            &lc.levers.ops,
         )?;
-        let pre = super::init_prefill_kernels::PrefillKernels::resolve(gpu, config, &probes)?;
         Ok(Self {
             input_norm,
             attn,
@@ -131,6 +139,15 @@ impl Qwen3AttentionLayer {
             mrope_interleaved,
             position_encoding,
             kv_dtype,
+            kv_pair,
+            trellis: super::trellis_kv::TrellisKv::for_pair(
+                gpu,
+                kv_pair,
+                config.head_dim,
+                &kv_names,
+            )?,
+            cutlass_nvfp4_gemm: lc.settings.kernels.cutlass_nvfp4_gemm,
+            levers: lc.levers.attn,
             head_dim_override: None,
             num_q_heads_override: None,
             num_kv_heads_override: None,
@@ -356,6 +373,7 @@ impl Qwen3AttentionLayer {
                     attn_layer_idx,
                     fp8_calibration_tokens,
                     config.fp8_kv_headroom,
+                    lc.levers.attn.fp8_kv_ema_recal,
                     gpu,
                 )?)
             } else {

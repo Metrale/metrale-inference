@@ -212,11 +212,13 @@ impl AttnV41 {
                 &Self::group_positions(groups, ratio, start_pos),
             )?;
             self.rope(gpu, self.ik, self.grp_pos, groups, ihd, true, false, stream)?;
-            self.fp4_quant(gpu, self.ik, groups * ihd, FP4_BLOCK, false, stream)?;
-            gpu.copy_d2d_async(
+            self.pack_rows(
+                gpu,
+                &self.rows.index_key,
                 self.ik,
-                at(cache, (start_pos / ratio) * ihd * 2),
-                groups * ihd * 2,
+                groups,
+                ihd,
+                at(cache, (start_pos / ratio) * self.rows.index_key.bytes),
                 stream,
             )?;
             shared.index_k = Some(cache);
@@ -227,7 +229,7 @@ impl AttnV41 {
         self.gemm(
             gpu,
             self.qr,
-            AttnMat::Bf16(iw.wq_b),
+            iw.wq_b,
             self.iq,
             m,
             nhi * ihd,
@@ -274,7 +276,7 @@ impl AttnV41 {
             width * m <= c.max_seq * c.max_tokens,
             "index width {width} x {m} exceeds the workspace"
         );
-        KernelLaunch::new(gpu, self.k.index_score)
+        KernelLaunch::new(gpu, self.k.index_score_packed)
             .grid([(width as u32).div_ceil(256), m as u32, 1])
             .block([256, 1, 1])
             .arg_ptr(self.iq)

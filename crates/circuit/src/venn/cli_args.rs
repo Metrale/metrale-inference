@@ -8,6 +8,8 @@
 //! Invariants: decode and draft plan one row; multi_seq plans every requested count above one;
 //! verify plans the requested K. A mode left with no row count is an error, never skipped.
 
+use crate::prelude::*;
+
 use super::{Run, VennError};
 use crate::rules::Mode;
 

@@ -58,13 +58,16 @@ impl MoeLayer {
 
     /// 2026-10-04: Why this layer keeps the row-major layout, or `None` when it qualifies for the
     /// lean one (module invariants). Call after the load-time prefill passes.
-    pub fn nvfp4_lean_refusal(&self, config: &metrale_config::ModelConfig) -> Option<&'static str> {
+    pub fn nvfp4_lean_refusal(
+        &self,
+        config: &metrale_config::ModelConfig,
+        levers: &ops::ModelLevers,
+    ) -> Option<&'static str> {
         let (h, inter) = (
             config.hidden_size as u32,
             config.moe_intermediate_size as u32,
         );
         let k = &self.nvfp4_grouped;
-        let levers = ops::ModelLevers::get();
         let local = |q: &QuantizedWeight| !q.weight.is_null() && !q.weight_scale.is_null();
         let checks: [(bool, &'static str); 12] = [
             (
@@ -74,10 +77,7 @@ impl MoeLayer {
                 "experts are not the checkpoint's declared NVFP4 alone (the FP8 kernels would read \
                  the lifted SiLU rows)",
             ),
-            (
-                super::forward_nvfp4_grouped_decode::nvfp4_grouped_tc_enabled(),
-                "METRALE_NO_MOE_NVFP4_TC",
-            ),
+            (levers.moe.nvfp4_tc, "METRALE_NO_MOE_NVFP4_TC"),
             (
                 k.gate_up_tc_lean.0 != 0 && k.down_tc_lean.0 != 0 && k.lean_repack.0 != 0,
                 "lean kernels not in the kernel set",
@@ -129,10 +129,7 @@ impl MoeLayer {
                 !levers.fp32_gate && !self.fp32_routing_active(levers),
                 "FP32 gate or routing",
             ),
-            (
-                crate::layers::moe_grouped_decode_enabled(),
-                "METRALE_NO_MOE_GROUPED_DECODE",
-            ),
+            (levers.moe.grouped_decode, "METRALE_NO_MOE_GROUPED_DECODE"),
             (self.lora.is_none(), "MoE LoRA"),
         ];
         checks.iter().find(|(ok, _)| !ok).map(|(_, why)| *why)
@@ -146,8 +143,9 @@ impl MoeLayer {
         gpu: &dyn GpuBackend,
         config: &metrale_config::ModelConfig,
         stream: u64,
+        levers: &ops::ModelLevers,
     ) -> Result<bool> {
-        if let Some(why) = self.nvfp4_lean_refusal(config) {
+        if let Some(why) = self.nvfp4_lean_refusal(config, levers) {
             tracing::debug!("NVFP4 experts keep the row-major layout: {why}");
             return Ok(false);
         }

@@ -1,0 +1,162 @@
+recipe_version: "2"
+# The checkpoint the measured run served from /srv/models/glm-5.3-flash-nvfp4: its
+# config.json and hf_quant_config.json are byte-identical to
+# crates/circuit/tests/fixtures/checkpoints/nvidia--GLM-5.3-Flash-NVFP4, and its HF
+# download metadata names revision da920bb0b9f4a06727223a349e55468e38352348.
+model: nvidia/GLM-5.3-Flash-NVFP4
+runtime: metrale
+# The measured engine is commit b35510c4b (glm/cold-int). The GLM levers in `env:`
+# below exist only in an engine that carries this branch; until a published :dev
+# image does, serve with a `met` built from it.
+container: metrale/metrale-inference-gb10:dev
+min_nodes: 3
+max_nodes: 3
+
+metadata:
+  description: |
+    GLM-5.3-Flash (nvidia NVFP4, 320B-A18B) for 512k-context agentic coding,
+    tensor-parallel across three GB10 nodes (TP=3, EP=1, expert layout tp),
+    with MTP speculative decoding at one draft.
+
+    This is the measured configuration of the 2026-10-16 run on engine
+    commit b35510c4b. `defaults:` is that run's rank-0 command line and
+    `env:` its levers, each at the value the run used (the env file assigned
+    some names more than once; the last assignment is the one that took
+    effect and the one written here).
+
+    Validation: the agentic-webserver accuracy check passed on this
+    configuration. It is a single boot, so nothing here is a repeated
+    measurement.
+
+    Attribution: METRALE_GLM_MHC_PRE_TILE is on, as measured. Whether it
+    contributes to performance is still open; its paired control is pending.
+    It does not change the output tokens.
+
+    Numerics: `prefill_tail_mode: merge` folds the prefill tail into the
+    last chunk. Its output is numerics class N against the split-tail
+    reference: the last <=16 rows may differ in bits between cold and warm.
+    This is disclosed and flag-gated by owner ruling (option C);
+    `prefill_tail_mode: split` serves the reference path instead, which this
+    recipe has not measured.
+
+    The listen address is left at its default, 127.0.0.1, as measured.
+    Binding 0.0.0.0 would expose an unauthenticated API with any-origin
+    CORS to the LAN.
+  maintainer: metrale
+  category: agent
+  model_params: 320B-A18B
+  model_dtype: nvfp4
+  quantization: NVFP4 experts, W4A16 dense, W8A8 DSA projections
+  kv_dtype: fp8
+  updated: "2026-10-16"
+
+# Not expressible here, so not in `defaults:` (each is per-node launch plumbing):
+#   --model-from-path /srv/models/glm-5.3-flash-nvfp4  the box-local copy of `model:`
+#   --rank N                                           0 on the head, 1 and 2 on the workers
+#   --master-addr <head IP>                            the head node's address
+#   --master-port 29600                                the NCCL bootstrap port of that run
+# --world-size 3 is rendered from `min_nodes: 3`.
+defaults:
+  # Not on the measured command line; this is the engine default that run used,
+  # written out so the recipe states it.
+  activation_quantization: declared
+  model_name: GLM-5.3-Flash
+  port: 8890
+  swap_space_gb: 0
+  max_model_len: 524288
+  # The run passed `fp8_e4m3`, which the flag parser stores as `fp8`
+  # (crates/server/src/cli/flag_values.rs); `fp8` is the spelling the recipe check accepts.
+  kv_cache_dtype: fp8
+  gpu_memory_utilization: 0.82
+  max_batch_size: 16
+  oom_guard_mb: 1024
+  request_timeout: 0
+  no_tui: true
+  all_reduce_oneshot_max_kb: 1024
+  default_chat_template_kwargs: '{"reasoning_effort":"low"}'
+  uncapped_thinking: true
+  limit_images_per_prompt: 16
+  limit_videos_per_prompt: 0
+  # Box-local, outside this repo: no GLM template ships in it (jinja-templates/ has
+  # none). It differs from the checkpoint's own chat_template.jinja in one place:
+  # thinking off (`thinking` or `enable_thinking` false) maps to reasoning_effort
+  # low instead of max, because the model was never trained on an empty
+  # <think></think>. The measured file is sha256
+  # f02c2c536ac51deeb2675125064f56578d4ca729389511a782a8ccdc6721e95e on all 3 nodes.
+  chat_template: /home/claude/glm-bench/glm53-chat-template.jinja
+  tensor_parallel: 3
+  ep_size: 1
+  moe_expert_layout: tp
+  weight_quantization: declared
+  dense_quantization: w4a16
+  dsa_quantization: w8a8
+  enable_prefix_caching: true
+  speculative: true
+  num_drafts: 1
+  mtp_gate: force
+  mtp_max_seqs: 8
+  prefill_tail_mode: merge
+  marconi_min_tokens: 64
+  ssm_cache_slots: 112
+
+env:
+  # Assigned v2, then v3.
+  METRALE_EP_PROTOCOL: v3
+  METRALE_GLM_ROW_GROUP: "128"
+  METRALE_GLM_MOE_PREFILL_GEMM_MIN_ROWS: "17"
+  METRALE_GLM_MOE_ROW_BATCH_MAX: "8"
+  # Assigned 512, 2048, 4096, then 8208.
+  METRALE_GLM_PREFILL_ROWS: "8208"
+  METRALE_GLM_KDA_SEQ_ROWS: decode
+  METRALE_GLM_KDA_ROWS_REG: "1"
+  METRALE_GLM_ROUTER_ROWS: "1"
+  METRALE_EP_PREFILL_BATCH: "1"
+  METRALE_GLM_W4A16_SEG: fuse
+  METRALE_GLM_DSA_DECODE_HB: "8"
+  METRALE_GLM_ROUTER_TOPK_RANK: "1"
+  METRALE_GLM_MOE_COMBINE_SPLIT: "1"
+  METRALE_GLM_KDA_ROW_REG: "1"
+  METRALE_GLM_W4A16_GEMV_SEG: "1"
+  METRALE_GLM_W4A16_GEMV_ROWS: "2"
+  METRALE_EP_K2_FUSED: "1"
+  METRALE_GLM_DSA_VERIFY_ROWS: "1"
+  METRALE_GLM_MTP_EH_TP: "1"
+  METRALE_GLM_KDA_VERIFY_TOKENS: "1"
+  METRALE_MAIN_STREAM_HIGH_PRIORITY: "1"
+  METRALE_MTP_TARGET_POSTNORM: "1"
+  METRALE_MTP_ACCEPTED_ROWS: "1"
+  METRALE_MTP_ZERO_POS0: "1"
+  METRALE_EP_MTP_BATCH_VERIFY: "1"
+  METRALE_GLM_MTP_PROPOSE_BATCH: "1"
+  METRALE_GLM_MTP_EAGER_PREFILL: "0"
+  METRALE_GLM_MOE_W4A4_GROUPED: "1"
+  METRALE_GLM_W4A16_DEQUANT_GEMM_MIN_ROWS: "256"
+  METRALE_GLM_DSA_SCORES_TILED: "1"
+  METRALE_GLM_DSA_BATCH_QIDX: "1"
+  METRALE_GLM_MHC_PRE_TOK: "1"
+  METRALE_GLM_DSA_SCORES_MMA: "1"
+  METRALE_GLM_DSA_HB_PREFILL_ONE_SPLIT: "1"
+  METRALE_GLM_FP8_DEQUANT_GEMM_MIN_ROWS: "1024"
+  METRALE_GLM_SP_MHC: "1"
+  METRALE_GLM_DSA_HB_PREFILL_P_HI: "1"
+  METRALE_GLM_KDA_CHUNK64: "64"
+  METRALE_PREFILL_ZERO_ROWS: "1"
+  METRALE_KV_ZERO_BLOCKS: range
+  METRALE_ONE_ROW_TAIL_DECODE: "1"
+  METRALE_SEQ_ALLOC_ASYNC: "1"
+  METRALE_MAIN_STREAM_UNDER_GREATEST: "1"
+  METRALE_GLM_DENSE_W4A4_GROUPED_MIN_ROWS: "33"
+  NCCL_NET_GDR_LEVEL: LOC
+  METRALE_GLM_DEQUANT_PERSIST: all
+  METRALE_GLM_DSA_SP_SELECT: "8192:4100,8208:2052"
+  METRALE_GLM_DSA_SP_SELECT_SEL: "1"
+  METRALE_LM_HEAD_BATCHM_MAX: "16"
+  # 2026-10-22: levers the measured fast13 serve set (profiles/glm53-tp3-512k-fast13/recipe.env) that this
+  # file lacked; added so the recipe states what was measured. The lever ablation decides which stay.
+  METRALE_GLM_AR_FUSED_POST: "1"
+  METRALE_GLM_EP_CTRL_COMM: "1"
+  METRALE_GLM_EP_CTRL_PORT: "29610"
+  METRALE_GLM_MTP_DEVICE_STEP: "1"
+  METRALE_HOST_WAKE_CORE: gpu-irq
+  METRALE_HOST_WAKE_KEEPER: timer:1000
+  NCCL_SET_THREAD_NAME: "1"
