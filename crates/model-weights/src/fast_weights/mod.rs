@@ -31,6 +31,7 @@ mod direct_io;
 mod header;
 mod mapped;
 
+pub use direct_io::read_exact_direct;
 pub use mapped::{MappedSafetensors, MappedTensor};
 
 use header::{parse_header, resolve_shards};

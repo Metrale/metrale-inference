@@ -214,6 +214,18 @@ impl DeferredTensor {
         Ok(buf)
     }
 
+    /// 2026-10-24: [`Self::read_host_range`] with `O_DIRECT` (`fast_weights::read_exact_direct`):
+    /// the page cache is bypassed and the call holds no shared state, so a loader may issue many
+    /// at once from worker threads. An error where the file system refuses `O_DIRECT`, and on a
+    /// host without it.
+    pub fn read_host_range_direct(&self, start: usize, len: usize) -> Result<Vec<u8>> {
+        let at = self.file_offset(start, len)?;
+        #[cfg(unix)]
+        return crate::fast_weights::read_exact_direct(&self.path, at, len);
+        #[cfg(not(unix))]
+        anyhow::bail!("deferred tensor: O_DIRECT reads need a unix host (offset {at})")
+    }
+
     /// 2026-10-19: The file offset of bytes `start..start + len` of the tensor. Errors when the
     /// range runs past the tensor or the offset overflows.
     fn file_offset(&self, start: usize, len: usize) -> Result<u64> {
@@ -270,16 +282,18 @@ mod tests {
 
     /// 2026-10-09: A range read returns exactly those bytes of the tensor (not of the file),
     /// and a range past the tensor's end is refused even when the file has more bytes after it.
-    /// 2026-10-19: The uncached reader answers the same, refusals included.
+    /// 2026-10-19: The uncached reader answers the same, refusals included. 2026-10-24: And the
+    /// O_DIRECT one.
     #[test]
     fn range_read_is_relative_to_the_tensor_and_bounded_by_it() {
         let payload: Vec<u8> = (10u8..26).collect();
         let (_d, path) = write_shard(&[vec![0xFFu8; 8], payload.clone(), vec![0xEE; 8]].concat());
         let d = DeferredTensor::from_shape(path, 8, vec![4, 4], WeightDtype::UInt8).unwrap();
         type Reader = fn(&DeferredTensor, usize, usize) -> Result<Vec<u8>>;
-        let readers: [Reader; 2] = [
+        let readers: [Reader; 3] = [
             DeferredTensor::read_host_range,
             DeferredTensor::read_host_range_uncached,
+            DeferredTensor::read_host_range_direct,
         ];
         for read in readers {
             assert_eq!(read(&d, 4, 8).unwrap(), payload[4..12]);

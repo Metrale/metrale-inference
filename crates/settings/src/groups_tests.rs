@@ -25,8 +25,8 @@ const EXPECTED: [(&str, Class, usize); 14] = [
     ("scheduler", Class::Runtime, 101),
     ("server", Class::Runtime, 14),
     ("speculative", Class::Runtime, 121),
-    ("storage", Class::Runtime, 17),
-    ("telemetry", Class::Runtime, 93),
+    ("storage", Class::Runtime, 18),
+    ("telemetry", Class::Runtime, 94),
     ("tool", Class::Tool, 25),
 ];
 
@@ -63,7 +63,7 @@ fn every_group_names_its_rows_after_itself_and_has_one_class() {
 #[test]
 fn by_name_is_the_whole_table_strictly_ascending_and_unique() {
     let all = by_name();
-    assert_eq!(all.len(), 850, "lever count");
+    assert_eq!(all.len(), 852, "lever count");
     for w in all.windows(2) {
         assert!(w[0].env < w[1].env, "{} before {}", w[0].env, w[1].env);
     }

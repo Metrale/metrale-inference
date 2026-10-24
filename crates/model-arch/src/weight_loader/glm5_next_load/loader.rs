@@ -123,6 +123,7 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
             crate::glm5next_w4a16_dense::kda_channel_unit(),
         )?;
         let mlp_cfg = Glm5NextMlpConfig::from_config(config)?;
+        let expert_load = expert_prepare::ExpertLoad::from_settings(lc.settings);
 
         let kda_kernels = Glm5NextKdaKernels::resolve(gpu)?;
         let mlp_kernels = Glm5NextMlpKernels::resolve(gpu, levers)?;
@@ -260,8 +261,8 @@ impl ModelWeightLoader for Glm5NextWeightLoader {
                         )
                     };
                     let pack = scale_pack::of(&levers.mlp, &mlp_kernels, &mlp_cfg, &precision)?;
-                    let expert =
-                        expert_tp::routed_expert_binder(gpu, store, idx, &mlp_cfg, Some(&pack));
+                    let (el, p) = (&expert_load, Some(&pack));
+                    let expert = expert_tp::routed_expert_binder(gpu, store, idx, &mlp_cfg, p, el)?;
                     let moe = mlp_build::build_moe(
                         gpu,
                         &mlp_cfg,

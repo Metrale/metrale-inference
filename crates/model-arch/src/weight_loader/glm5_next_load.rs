@@ -44,6 +44,8 @@ mod defer_hook_tests;
 mod dense_site;
 pub(crate) mod dense_tiers;
 mod dsa_stack;
+mod expert_digest;
+mod expert_prepare;
 mod expert_quant;
 mod expert_scales;
 mod expert_slab;
@@ -405,14 +407,17 @@ pub(super) fn layer_source(
 
 /// 2026-09-25: [`bind_expert`], for the MTP loader. 2026-10-09: Under the MLP config's
 /// `shard` (`expert_tp::bind_routed_expert`). 2026-10-14: As the binder of all of `layer`'s
-/// experts (`expert_tp::routed_expert_binder`), one slab under the `tp` layout.
+/// experts (`expert_tp::routed_expert_binder`), one slab under the `tp` layout. 2026-10-24:
+/// Read as `settings` say (`expert_prepare::ExpertLoad`).
 pub(super) fn expert_binder_at<'a>(
     gpu: &'a dyn GpuBackend,
     store: &'a WeightStore,
     layer: usize,
     cfg: &Glm5NextMlpConfig,
-) -> impl Fn(usize) -> Result<Glm5NextExpertWeights> + 'a {
-    expert_tp::routed_expert_binder(gpu, store, layer, cfg, None)
+    settings: &metrale_settings::InferenceServerSettings,
+) -> Result<impl Fn(usize) -> Result<Glm5NextExpertWeights> + use<'a>> {
+    let load = expert_prepare::ExpertLoad::from_settings(settings);
+    expert_tp::routed_expert_binder(gpu, store, layer, cfg, None, &load)
 }
 
 /// 2026-10-08: The routed-expert precision plan of the MTP layer `layer`, for the MTP loader.
