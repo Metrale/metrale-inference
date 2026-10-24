@@ -83,7 +83,7 @@ skip-tree = []
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# ★ One entry, and `unknown-git` stays "deny".
+# ★ Two entries, and `unknown-git` stays "deny".
 #
 # `metrale-governance` depends on LatticeDB for the PR journey ledger's
 # materialised graph. It is a first-party Metrale Engine repository, and the dependency
@@ -95,4 +95,12 @@ allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 # crates.io yet. When it is published, this entry should be REMOVED and the
 # dependency switched to a registry version — an allow-list that outlives its
 # reason is how the next git dependency slips in unnoticed.
-allow-git = ["https://github.com/Avarok-Cybersecurity/lattice-db"]
+#
+# 2026-10-24: `latlas-*` (Avarok-Cybersecurity/latlas, public, MIT OR Apache-2.0) is the
+# generic knowledge-graph core metrale-kg runs on, cut out of this repository (K0). Every
+# `latlas-*` dependency in the root manifest is pinned to one exact `rev`. Remove this entry
+# when the crates are published to crates.io.
+allow-git = [
+  "https://github.com/Avarok-Cybersecurity/lattice-db",
+  "https://github.com/Avarok-Cybersecurity/latlas",
+]

@@ -1683,6 +1683,7 @@ version = "0.1.0"
 [[package]]
 name = "latlas-adapters"
 version = "0.1.0"
+source = "git+https://github.com/Avarok-Cybersecurity/latlas?rev=d840a5dbebc245399a330738655fd8137044a5ad#d840a5dbebc245399a330738655fd8137044a5ad"
 dependencies = [
  "latlas-core",
  "latlas-error",
@@ -1692,6 +1693,7 @@ dependencies = [
 [[package]]
 name = "latlas-check"
 version = "0.1.0"
+source = "git+https://github.com/Avarok-Cybersecurity/latlas?rev=d840a5dbebc245399a330738655fd8137044a5ad#d840a5dbebc245399a330738655fd8137044a5ad"
 dependencies = [
  "latlas-core",
  "latlas-error",
@@ -1704,6 +1706,7 @@ dependencies = [
 [[package]]
 name = "latlas-cli"
 version = "0.1.0"
+source = "git+https://github.com/Avarok-Cybersecurity/latlas?rev=d840a5dbebc245399a330738655fd8137044a5ad#d840a5dbebc245399a330738655fd8137044a5ad"
 dependencies = [
  "anyhow",
  "clap",
@@ -1721,6 +1724,7 @@ dependencies = [
 [[package]]
 name = "latlas-core"
 version = "0.1.0"
+source = "git+https://github.com/Avarok-Cybersecurity/latlas?rev=d840a5dbebc245399a330738655fd8137044a5ad#d840a5dbebc245399a330738655fd8137044a5ad"
 dependencies = [
  "latlas-error",
  "latlas-ports",
@@ -1734,10 +1738,12 @@ dependencies = [
 [[package]]
 name = "latlas-error"
 version = "0.1.0"
+source = "git+https://github.com/Avarok-Cybersecurity/latlas?rev=d840a5dbebc245399a330738655fd8137044a5ad#d840a5dbebc245399a330738655fd8137044a5ad"
 
 [[package]]
 name = "latlas-host-native"
 version = "0.1.0"
+source = "git+https://github.com/Avarok-Cybersecurity/latlas?rev=d840a5dbebc245399a330738655fd8137044a5ad#d840a5dbebc245399a330738655fd8137044a5ad"
 dependencies = [
  "latlas-core",
  "latlas-error",
@@ -1750,6 +1756,7 @@ dependencies = [
 [[package]]
 name = "latlas-index"
 version = "0.1.0"
+source = "git+https://github.com/Avarok-Cybersecurity/latlas?rev=d840a5dbebc245399a330738655fd8137044a5ad#d840a5dbebc245399a330738655fd8137044a5ad"
 dependencies = [
  "latlas-core",
  "latlas-error",
@@ -1761,6 +1768,7 @@ dependencies = [
 [[package]]
 name = "latlas-ports"
 version = "0.1.0"
+source = "git+https://github.com/Avarok-Cybersecurity/latlas?rev=d840a5dbebc245399a330738655fd8137044a5ad#d840a5dbebc245399a330738655fd8137044a5ad"
 
 [[package]]
 name = "latticedb-core"
