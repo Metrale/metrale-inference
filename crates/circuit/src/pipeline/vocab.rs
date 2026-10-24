@@ -84,7 +84,8 @@ pub fn steps_of(op: &OpKind) -> &'static [StepKind] {
         | OpKind::LayerNorm
         | OpKind::HcPre
         | OpKind::HcPost
-        | OpKind::HcContract => COMPUTE,
+        | OpKind::HcContract
+        | OpKind::MeanPool => COMPUTE,
         OpKind::Copy | OpKind::Concat | OpKind::Split | OpKind::HcExpand => &[StepKind::Move],
         OpKind::KvWrite => &[StepKind::Cache],
         OpKind::PagedAttention => ATTENTION,

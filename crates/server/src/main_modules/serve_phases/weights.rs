@@ -122,6 +122,10 @@ pub(crate) fn load_weight_store(
                     config.model_type,
                 );
             }
+            loader.keep_only_prefix = config
+                .embedding
+                .as_ref()
+                .map(|_| format!("{}.", config.weight_prefix));
             loader.defer = defer_hook(config);
             loader.defer_charge = defer_charge(config);
             loader.prefetch_shards = prefetch_shards;

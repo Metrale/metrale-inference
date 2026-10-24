@@ -321,6 +321,7 @@ fn run_scenario_inner(sc: &Scenario, build: DeviceBuilder) -> Vec<String> {
             request_rx,
             rotation_rx,
             crate::scheduler::config::SchedulerConfig {
+                embed_rx: None,
                 eos_tokens: vec![EOS],
                 max_batch_size: opts.max_batch_size,
                 use_speculative: opts.use_speculative,

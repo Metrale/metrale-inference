@@ -11,6 +11,10 @@
 //! check). The FP8 head's drafts differ from it at near ties; a draft changes acceptance, never
 //! an emitted token. The drafter's shard is then the screen's (`init`), so one copy serves both.
 //!
+//! 2026-10-24: `--glm-draft-head nvfp4` (R1) sweeps an NVFP4 copy of the same shard with
+//! `w4a16_gemv_sw` (118.9 MB per TP=3 shard against the FP8 copy's 211.7 MB); drafts may differ
+//! from the FP8 copy's at near ties, never an emitted token.
+//!
 //! Owner: model-arch (GLM-5.3 MTP drafter).
 //! Invariants:
 //! - The screened sweep takes a sharded call of at most `SCREEN_MAX_M` rows without the draft
@@ -110,6 +114,27 @@ impl DraftScreen {
     }
 }
 
+/// 2026-10-24: The copy a one-row (non-screened) draft sweep reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum OneRowHead {
+    /// 2026-10-24: The NVFP4 copy of this rank's shard (`w4a16_gemv_sw`), R1.
+    Nvfp4,
+    /// 2026-09-25: The FP8 copy of this rank's shard (`dense_gemv_fp8w`).
+    Fp8,
+    /// 2026-09-25: The BF16 head at `head_v0` (`dense_gemv_bf16`).
+    Bf16,
+}
+
+/// 2026-10-24: Which copy the sweep reads: a quantized copy holds only this rank's shard, so it
+/// serves only a sweep of exactly that shard (`shard`); NVFP4 is preferred when it was built.
+pub(super) fn pick_one_row_head(nvfp4: bool, fp8: bool, shard: bool) -> OneRowHead {
+    match (shard, nvfp4, fp8) {
+        (true, true, _) => OneRowHead::Nvfp4,
+        (true, false, true) => OneRowHead::Fp8,
+        _ => OneRowHead::Bf16,
+    }
+}
+
 impl Glm5NextMtpHead {
     /// 2026-10-21: The screened draft head for a call of `m` rows over `n` head rows, when it
     /// takes it (module invariants).
@@ -144,19 +169,38 @@ impl Glm5NextMtpHead {
             return Ok((v0, lp));
         }
         // 2026-09-25: The FP8 copy covers only `[head_v0, head_v0 + head_n)`, so it serves the
-        // sharded sweep alone; an unsharded sweep reads the BF16 head.
-        match self.head_fp8.filter(|_| sharded && n == self.head_n) {
-            Some(q) => ops::dense_gemv_fp8w(
+        // sharded sweep alone; an unsharded sweep reads the BF16 head. 2026-10-24: So does the
+        // NVFP4 copy (`--glm-draft-head nvfp4`, R1), which it takes over the FP8 one.
+        let shard = sharded && n == self.head_n;
+        match pick_one_row_head(self.head_nvfp4.is_some(), self.head_fp8.is_some(), shard) {
+            OneRowHead::Nvfp4 => {
+                ops::w4a16_gemv_sw(
+                    gpu,
+                    self.gemv_sw_k,
+                    st.x,
+                    self.head_nvfp4.as_ref().expect("picked only when present"),
+                    st.logits,
+                    n as u32,
+                    h as u32,
+                    stream,
+                )?;
+                // 2026-10-24: Once per process: the serve log's proof that R1 reached the sweep.
+                static TAKEN: std::sync::Once = std::sync::Once::new();
+                TAKEN.call_once(|| {
+                    tracing::info!("GLM MTP: one-row draft head on the NVFP4 copy ({n} rows)")
+                });
+            }
+            OneRowHead::Fp8 => ops::dense_gemv_fp8w(
                 gpu,
                 self.gemv_fp8w_k,
                 st.x,
-                &q,
+                self.head_fp8.as_ref().expect("picked only when present"),
                 st.logits,
                 n as u32,
                 h as u32,
                 stream,
             )?,
-            None => ops::dense_gemv(
+            OneRowHead::Bf16 => ops::dense_gemv(
                 gpu,
                 self.gemv_k,
                 st.x,
@@ -184,5 +228,29 @@ impl Glm5NextMtpHead {
             None => ops::argmax_bf16(gpu, self.argmax_k, st.logits, st.arg, n as u32, stream)?,
         }
         Ok((v0, lp))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OneRowHead, pick_one_row_head};
+
+    /// 2026-10-24: A sweep of exactly this rank's shard reads the NVFP4 copy when it was built,
+    /// else the FP8 copy, else BF16 (positive).
+    #[test]
+    fn a_shard_sweep_prefers_nvfp4_then_fp8() {
+        assert_eq!(pick_one_row_head(true, true, true), OneRowHead::Nvfp4);
+        assert_eq!(pick_one_row_head(true, false, true), OneRowHead::Nvfp4);
+        assert_eq!(pick_one_row_head(false, true, true), OneRowHead::Fp8);
+        assert_eq!(pick_one_row_head(false, false, true), OneRowHead::Bf16);
+    }
+
+    /// 2026-10-24: Any other sweep (unsharded, or a row count other than the shard's) reads the
+    /// BF16 head whatever copies exist: a quantized copy holds only the shard's rows (negative).
+    #[test]
+    fn any_other_sweep_never_reads_a_shard_copy() {
+        for (nvfp4, fp8) in [(true, true), (true, false), (false, true), (false, false)] {
+            assert_eq!(pick_one_row_head(nvfp4, fp8, false), OneRowHead::Bf16);
+        }
     }
 }

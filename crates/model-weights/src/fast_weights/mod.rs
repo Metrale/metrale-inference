@@ -100,6 +100,10 @@ pub struct FastSafetensorsLoader {
     /// 2026-10-17: The device bytes the model's loader allocates for each tensor it defers, for
     /// the pre-flight ([`crate::weights::DeferCharge`]). `None`: deferred tensors cost it nothing.
     pub defer_charge: Option<crate::weights::DeferCharge>,
+    /// 2026-10-24: When set, every tensor whose name does not start with this prefix is
+    /// skipped: an embedding model binds only its text tower (`<weight_prefix>.`), and the
+    /// checkpoint's other towers would otherwise sit in unified memory unbound.
+    pub keep_only_prefix: Option<String>,
 }
 
 /// Is this tensor part of a multimodal checkpoint's vision tower?
@@ -142,6 +146,7 @@ impl FastSafetensorsLoader {
             skip_vision: false,
             defer: None,
             defer_charge: None,
+            keep_only_prefix: None,
         }
     }
 
@@ -159,6 +164,7 @@ impl FastSafetensorsLoader {
             skip_vision: false,
             defer: None,
             defer_charge: None,
+            keep_only_prefix: None,
         }
     }
 }

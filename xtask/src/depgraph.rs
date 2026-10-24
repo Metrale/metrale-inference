@@ -98,6 +98,13 @@ pub const PURE_ALLOWLIST: &[&str] = &[
     // 2026-10-22: KEM traits under ml-kem (metrale-seal); no_std, its getrandom feature off.
     "kem",
     // 2026-10-22: num-traits float fallback under module-lattice; pure math, no_std.
+    // 2026-10-23: The Latlas core the metrale pack is built on (Avarok-Cybersecurity/latlas, K1):
+    // no_std + alloc, forbid(unsafe_code), no I/O, built for both wasm32 targets by its own CI.
+    "latlas-adapters",
+    "latlas-check",
+    "latlas-core",
+    "latlas-error",
+    "latlas-ports",
     "libm",
     "memchr",
     // 2026-10-22: Pure-Rust no_std deflate for `.kbp` bodies and inline kernels (also
@@ -262,6 +269,28 @@ pub const VENDOR_CRATES: &[&str] = &[
 /// cannot retire the rule silently.
 pub const LEAF_CRATES: &[&str] = &["metrale-error"];
 
+/// 2026-10-23: Binaries kept apart from the serving stack, both ways: `(bin, members it may never
+/// depend on)`, and no member may depend on the bin (delegated decision 2026-10-23: the knowledge
+/// graph's `metrale-kg` never links met or metrale-bench, and nothing under them links it).
+pub const ISOLATED_BINS: &[(&str, &[&str])] = &[("metrale-kg-mcp", &["met", "metrale-bench"])];
+
+/// 2026-10-23: Why a normal or dev edge `from -> to` between members breaks [`ISOLATED_BINS`].
+pub fn isolation(from: &str, to: &str) -> Option<String> {
+    ISOLATED_BINS.iter().find_map(|(bin, banned)| {
+        if to == *bin {
+            Some(format!(
+                "`{bin}` is an isolated binary; `{from}` may not depend on it"
+            ))
+        } else if from == *bin && banned.contains(&to) {
+            Some(format!(
+                "the isolated binary `{bin}` may not depend on `{to}`"
+            ))
+        } else {
+            None
+        }
+    })
+}
+
 /// 2026-10-17: Every depgraph offender across `graphs`, keyed `crate->dependency`. The first
 /// graph that shows an offender names it.
 pub fn findings(members: &[Member], graphs: &[Graph]) -> Result<Findings, String> {
@@ -317,6 +346,11 @@ fn judge_member(
                     m.name
                 ),
             );
+        }
+        if (edge.normal || edge.dev) && graph.members.contains(&edge.to) {
+            if let Some(why) = isolation(&m.name, to) {
+                offend(out, &m.name, to, format!("{why} ({platform})"));
+            }
         }
         let used = edge.normal || (edge.dev && m.role.is_pure());
         if !used {
@@ -422,7 +456,17 @@ fn walk_pure(
 
 #[cfg(test)]
 mod tests {
-    use super::{LEAF_CRATES, PURE_ALLOWLIST, PURE_DENYLIST, VENDOR_CRATES};
+    use super::{LEAF_CRATES, PURE_ALLOWLIST, PURE_DENYLIST, VENDOR_CRATES, isolation};
+
+    #[test]
+    fn the_isolated_kg_binary_is_refused_in_both_directions_and_only_there() {
+        assert!(isolation("met", "metrale-kg-mcp").is_some());
+        assert!(isolation("metrale-bench", "metrale-kg-mcp").is_some());
+        assert!(isolation("metrale-kg-mcp", "met").is_some());
+        assert!(isolation("metrale-kg-mcp", "metrale-bench").is_some());
+        assert!(isolation("metrale-kg-mcp", "metrale-latlas-pack").is_none());
+        assert!(isolation("met", "metrale-latlas-pack").is_none());
+    }
 
     #[test]
     fn the_lists_are_sorted_disjoint_and_free_of_duplicates() {

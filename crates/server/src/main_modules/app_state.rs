@@ -29,6 +29,15 @@ pub fn resolve_adapter_slot(adapter_names: &[String], adapter: Option<&str>) -> 
     }
 }
 
+/// 2026-10-24: The embedding model's serving facts, read once at load: the job channel to the
+/// scheduler, the model's embedding semantics (role prompts, limits) and its vector width.
+pub struct EmbedEndpoint {
+    pub tx: mpsc::Sender<crate::scheduler::EmbedJob>,
+    pub spec: metrale_config::embedding::EmbeddingSpec,
+    pub bos_token_id: u32,
+    pub dim: usize,
+}
+
 pub struct AppState {
     /// 2026-09-28: The model's forward (`--forward`) and its decode plan digest, as
     /// `GET /forward` reports them.
@@ -54,6 +63,9 @@ pub struct AppState {
     pub active_adapter: std::sync::Arc<std::sync::Mutex<Option<String>>>,
     pub max_seq_len: usize,
     pub request_tx: mpsc::Sender<InferenceRequest>,
+    /// 2026-10-24: What `/v1/embeddings` serves, for a model whose capabilities say it does not
+    /// generate; `None` for a generative model (the route answers 501, `EmbedNotSupported`).
+    pub embedding: Option<EmbedEndpoint>,
     /// 2026-09-26: LoRA control channel to the scheduler: a `LoraCommand` and
     /// its ack. `None` when no `--lora-adapter` pool is loaded.
     pub rotation_tx: Option<mpsc::Sender<crate::scheduler::LoraRotation>>,

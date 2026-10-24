@@ -36,6 +36,18 @@ pub(crate) fn bench(rig: &Rig, head: &[bf16], gamma: &[f32]) -> Result<()> {
         .g
         .kernel("fp8_gemv_rt", "fp8_gemv_rowscale_batch16_rt2")?;
     let k_amb = rig.g.kernel("argmax", "argmax_bf16_batch")?;
+    // 2026-10-24: R1, `--glm-draft-head nvfp4`: an NVFP4 copy of the same shard, one row by
+    // w4a16_gemv_sw (the drafter's load-time quantizer, one global scale for the shard).
+    let nv = metrale_model_layers::weight_map::quantize_to_nvfp4(
+        &wt,
+        n,
+        K,
+        rig.g,
+        rig.g.kernel("quantize_nvfp4", "nvfp4_global_absmax")?,
+        rig.g.kernel("quantize_nvfp4", "quantize_bf16_to_nvfp4")?,
+        s,
+    )?;
+    let k_sw = rig.g.kernel("w4a16_gemv", "w4a16_gemv_sw")?;
     for m in [1usize, 2, 4] {
         for fam in [Family::Peaked, Family::Iso] {
             let xs: Vec<f32> = (0..m)
@@ -120,6 +132,20 @@ pub(crate) fn bench(rig: &Rig, head: &[bf16], gamma: &[f32]) -> Result<()> {
                     .map(|&c| f64::from(c) * K as f64 * 2.0)
                     .sum::<f64>();
             println!("M={m} {fam:?}: drafter FP8 head + argmax {drafter:.1} us");
+            if m == 1 {
+                let nvfp4 = time(&|| {
+                    ops::w4a16_gemv_sw(rig.g, k_sw, rig.x, &nv, rig.logits, n as u32, K as u32, s)?;
+                    ops::argmax_bf16_batch(
+                        rig.g, k_amb, rig.logits, rig.out, n as u32, 1, n as u32, s,
+                    )
+                })?;
+                let nb4 = (n * K / 2 + n * K / 16) as f64;
+                println!(
+                    "M=1 {fam:?}: drafter NVFP4 head + argmax {nvfp4:.1} us ({:.0} GB/s weight+scales), {:.3} ms saved vs FP8",
+                    nb4 / nvfp4 / 1e3,
+                    (drafter - nvfp4) / 1e3
+                );
+            }
             println!(
                 "M={m} {fam:?}: old {old:.1} us ({:.0} GB/s), screen {new:.1} us ({:.0} GB/s), candidates {cand:?}, {:.3} ms saved",
                 ob / old / 1e3,

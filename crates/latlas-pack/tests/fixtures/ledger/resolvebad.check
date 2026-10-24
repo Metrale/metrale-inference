@@ -1,0 +1,6 @@
+line 6: resolves names unknown id zz
+line 7: f references itself
+line 3: resolves d, which is a later row (line 5)
+line 4: c resolves rows but is itself BLOCKED
+line 6: resolves a, already resolved by c
+line 6: resolves b, whose verdict is not BLOCKED

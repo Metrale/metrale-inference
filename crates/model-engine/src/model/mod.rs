@@ -70,6 +70,10 @@ pub mod nllb;
 #[path = "nllb/host_tests.rs"]
 mod nllb_host_tests;
 
+// 2026-10-24: Served embedding model (mean-pooled bidirectional text tower); the GPU engine is
+// cuda-only, the packing and validation are pure.
+pub mod embed;
+
 pub use types::TransformerModel;
 
 #[cfg(test)]

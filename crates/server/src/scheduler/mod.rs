@@ -17,7 +17,9 @@ mod decode_logits_content;
 mod decode_logits_seq;
 mod decode_logits_step;
 mod decode_step;
+pub mod embed_jobs;
 mod emit_step;
+pub use embed_jobs::EmbedJob;
 mod eos_hold;
 mod fast_greedy;
 #[cfg(test)]

@@ -151,6 +151,10 @@ pub struct Glm5NextMtpHead {
     /// Measured 2026-08-29 (nsys): 2.66 ms -> ~1.33 ms per draft sweep.
     head_fp8: Option<metrale_model_layers::weight_map::Fp8DenseWeight>,
     gemv_fp8w_k: KernelHandle,
+    /// 2026-10-24: NVFP4 copy of the same shard under `--glm-draft-head nvfp4` (R1), which the
+    /// one-row sweep takes over `head_fp8` (`head_sweep::pick_one_row_head`); `None` otherwise.
+    head_nvfp4: Option<metrale_model_layers::weight_map::QuantizedWeight>,
+    gemv_sw_k: KernelHandle,
     /// 2026-10-21: The screened draft head (`head_sweep`), `METRALE_GLM_MTP_SCREEN_HEAD=1`.
     screen: Option<head_sweep::DraftScreen>,
     /// 2026-10-11: The batched propose (`METRALE_GLM_MTP_PROPOSE_BATCH`); `None` proposes per
@@ -173,7 +177,10 @@ pub struct Glm5NextMtpHead {
 /// 2026-09-25: Rows the GLM drafter can ever be asked for: the served context, clamped to
 /// the rows its DSA indexer cache reserves. `max_dsa_context` is `max_context` (the serve's
 /// `--max-seq-len`) rounded down to whole `index_kpool` pools, so the cap follows the config.
-pub(crate) fn drafter_context_rows(max_seq_len: usize, cfg: &crate::glm5next_dsa::Glm5NextDsaConfig) -> usize {
+pub(crate) fn drafter_context_rows(
+    max_seq_len: usize,
+    cfg: &crate::glm5next_dsa::Glm5NextDsaConfig,
+) -> usize {
     max_seq_len.min(crate::glm5next_dsa::state::max_dsa_context(cfg))
 }
 

@@ -114,6 +114,10 @@ pub(crate) fn load_model(
     let (request_tx, request_rx) = mpsc::channel::<InferenceRequest>(args.max_num_seqs);
     // 2026-09-26: Control channel for `POST /v1/lora/active`.
     let (rotation_tx, rotation_rx) = mpsc::channel::<scheduler::LoraRotation>(8);
+    // 2026-10-24: An embedding model gets the `/v1/embeddings` job channel; a generative one
+    // none (its route refuses).
+    let (embed_endpoint, embed_rx) =
+        serve_phases::embed_endpoint(&config, model.embedding_dim(), args.max_num_seqs)?;
 
     let model_name = serve_phases::resolve_model_name(&args, &config_json, &model_dir);
 
@@ -245,6 +249,7 @@ pub(crate) fn load_model(
             request_rx,
             rotation_rx,
             scheduler::config::SchedulerConfig {
+                embed_rx,
                 eos_tokens: scheduler_eos,
                 max_batch_size,
                 use_speculative,
@@ -321,6 +326,7 @@ pub(crate) fn load_model(
         )),
         max_seq_len: args.max_seq_len,
         request_tx,
+        embedding: embed_endpoint,
         rotation_tx: if lora_states.is_empty() {
             None
         } else {
