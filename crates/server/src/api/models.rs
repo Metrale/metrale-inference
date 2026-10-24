@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-09-26: `/v1/models` list and retrieve, which also advertise LoRA
-//! adapters as model ids, and the `/v1/embeddings` 501 stub.
+//! adapters as model ids.
 //!
 //! Owner: server API.
 //! Invariants: none beyond the types.
@@ -101,12 +101,4 @@ pub async fn get_model(
             format!("The model '{model_id}' does not exist"),
         )
     }
-}
-
-/// 2026-09-26: POST /v1/embeddings: always 501.
-pub async fn embeddings_stub() -> Response {
-    openai_error_response(
-        StatusCode::NOT_IMPLEMENTED,
-        "Embeddings are not supported by this model. Metrale Engine serves generative (chat/completion) models only.".into(),
-    )
 }

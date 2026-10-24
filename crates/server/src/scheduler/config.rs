@@ -17,6 +17,9 @@ use crate::scheduling_policy::SchedulingPolicy;
 use crate::session_manager::SessionSsmManager;
 
 pub struct SchedulerConfig {
+    /// 2026-10-24: The `/v1/embeddings` job channel; `Some` only for a model whose
+    /// capabilities say it does not generate.
+    pub embed_rx: Option<tokio::sync::mpsc::Receiver<crate::scheduler::EmbedJob>>,
     pub eos_tokens: Vec<u32>,
     pub max_batch_size: usize,
     pub use_speculative: bool,

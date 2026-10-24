@@ -9,6 +9,7 @@
 mod build;
 pub(crate) mod config;
 mod dflash_gamma;
+mod embedding;
 pub(crate) mod expert_tables;
 mod forward;
 pub(crate) mod fp8_kv_scale_source;
@@ -33,6 +34,7 @@ pub(super) use config::{
     publish_draft_confidence_stop, publish_mtp_k_ladder, publish_mtp_max_seqs, resolve_model_dir,
 };
 pub(crate) use dflash_gamma::{apply_dflash_gamma, model_default_drafter};
+pub(crate) use embedding::{embed_endpoint, load_embedding_prompts};
 pub(crate) use forward::{circuit_target, forward_select};
 pub(super) use kernel_gate::audit_and_gate;
 pub(super) use kv_cache::{

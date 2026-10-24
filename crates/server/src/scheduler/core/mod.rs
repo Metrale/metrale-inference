@@ -86,6 +86,7 @@ impl SchedulerCore {
         cfg: config::SchedulerConfig,
     ) -> Self {
         let config::SchedulerConfig {
+            embed_rx,
             eos_tokens,
             max_batch_size,
             use_speculative,
@@ -154,7 +155,12 @@ impl SchedulerCore {
             io::SchedIo::serving(
                 dev,
                 tel,
-                io::TokioRequestIo::new(request_rx, rotation_rx, run_io.stream_send_deadline),
+                io::TokioRequestIo::new(
+                    request_rx,
+                    rotation_rx,
+                    embed_rx,
+                    run_io.stream_send_deadline,
+                ),
                 spill,
             ),
             limits,
