@@ -57,6 +57,18 @@ enum Cmd {
         #[arg(long)]
         ledger_file: Option<PathBuf>,
     },
+    /// The integrity score vector and ratchet (latlas-check): the head is --config, the base (when
+    /// given) a second config naming the base's sources; prints the report JSON, exits 3 on a
+    /// regression and 4 on a fatal finding.
+    Score {
+        #[arg(long)]
+        check: PathBuf,
+        #[arg(long)]
+        base_config: Option<PathBuf>,
+        /// Also write the PR comment (markdown) here.
+        #[arg(long)]
+        comment: Option<PathBuf>,
+    },
     /// Move the read-only LKB checkout to `[sources.lkb]` remote/branch (fetch + detached
     /// checkout); the only command that changes a source. Prints the old and new commit.
     Refresh,
@@ -79,6 +91,11 @@ async fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
     match run(cli).await {
         Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) if e.downcast_ref::<latlas_cli::score::CheckExit>().is_some() => {
+            eprintln!("metrale-kg: {e}");
+            let n = e.downcast_ref::<latlas_cli::score::CheckExit>().map_or(1, |x| x.0);
+            std::process::ExitCode::from(n)
+        }
         Err(e) if e.downcast_ref::<latlas_cli::gates::GateFailed>().is_some() => {
             eprintln!("metrale-kg: {e}");
             std::process::ExitCode::FAILURE
@@ -115,6 +132,16 @@ async fn run(cli: Cli) -> Result<()> {
         } => gates::parity_cmd(&cli.config, &campaign, ledger_file.as_deref()),
         Cmd::Tainted { campaign } => gates::tainted_cmd(&cli.config, &campaign),
         Cmd::Deps { id } => gates::deps_cmd(&cli.config, &id),
+        Cmd::Score {
+            check,
+            base_config,
+            comment,
+        } => latlas_cli::score::score_cmd::<Metrale, MetraleHost>(
+            &cli.config,
+            base_config.as_deref(),
+            &check,
+            comment.as_deref(),
+        ),
         Cmd::Refresh => refresh(&cli.config),
     }
 }

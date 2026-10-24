@@ -43,6 +43,17 @@ fn s<'a>(b: &'a Bundle, id: &NodeId, k: &str) -> &'a str {
 
 /// 2026-10-23: Q3: the facets of every kernel of `instance` that owes at least one.
 pub fn owed_lkb_rows(b: &Bundle, instance: &str) -> Result<Vec<Owed>> {
+    let mut out: Vec<Owed> = lkb_facets(b, instance)?
+        .into_iter()
+        .filter(Owed::owes)
+        .collect();
+    out.sort_by(|a, b| (!a.landed, &a.kernel).cmp(&(!b.landed, &b.kernel)));
+    Ok(out)
+}
+
+/// 2026-10-23: The facets of every kernel `instance` lands or compiles, owed or not (the subjects
+/// of the `lkb` obligation rule), in kernel order.
+pub fn lkb_facets(b: &Bundle, instance: &str) -> Result<Vec<Owed>> {
     let inst = NodeId::new(labels::Instance, instance)?;
     if b.node(&inst).is_none() {
         return Err(error!(ErrorCode::LatlasUnknownId, inst.to_string()));
@@ -95,11 +106,8 @@ pub fn owed_lkb_rows(b: &Bundle, instance: &str) -> Result<Vec<Owed>> {
             measured,
             evidenced,
         };
-        if row.owes() {
-            out.push(row);
-        }
+        out.push(row);
     }
-    out.sort_by(|a, b| (!a.landed, &a.kernel).cmp(&(!b.landed, &b.kernel)));
     Ok(out)
 }
 

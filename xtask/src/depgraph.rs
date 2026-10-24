@@ -101,6 +101,7 @@ pub const PURE_ALLOWLIST: &[&str] = &[
     // 2026-10-23: The Latlas core the metrale pack is built on (Avarok-Cybersecurity/latlas, K1):
     // no_std + alloc, forbid(unsafe_code), no I/O, built for both wasm32 targets by its own CI.
     "latlas-adapters",
+    "latlas-check",
     "latlas-core",
     "latlas-error",
     "latlas-ports",

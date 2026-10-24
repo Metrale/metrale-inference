@@ -1690,11 +1690,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "latlas-check"
+version = "0.1.0"
+dependencies = [
+ "latlas-core",
+ "latlas-error",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "latlas-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "latlas-check",
  "latlas-core",
  "latlas-error",
  "latlas-host-native",
@@ -2383,6 +2395,7 @@ name = "metrale-latlas-pack"
 version = "1.0.0-beta-preview"
 dependencies = [
  "latlas-adapters",
+ "latlas-check",
  "latlas-core",
  "latlas-error",
  "latlas-ports",

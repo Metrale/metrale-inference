@@ -14,6 +14,8 @@ description = "Metrale Engine: the metrale pack for Latlas: campaign records and
 # 2026-10-23: The Latlas core, the claude-code adapters and the registry error the core's API
 # returns (CLER: the binary maps it into Metrale's 0x0800 block at its edge).
 latlas-adapters = { workspace = true }
+# 2026-10-23: The score's pack contract (`Checks`), implemented in src/check.rs (K2).
+latlas-check = { workspace = true }
 latlas-core = { workspace = true }
 latlas-error = { workspace = true }
 # 2026-10-23: The LKB readers (families, rules, measurements, instances, plans, critical pairs):

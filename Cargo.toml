@@ -241,6 +241,7 @@ metrale-latlas-pack = { path = "crates/latlas-pack", version = "1.0.0-beta-previ
 # 2026-10-23: Latlas (Avarok-Cybersecurity/latlas): the generic graph+vector core metrale-kg runs on
 # (DESIGN-latlas.md §5.3, K1). Path deps while the cut is in flight; pinned to a rev once pushed.
 latlas-adapters = { path = "../../latlas/crates/latlas-adapters", default-features = false }
+latlas-check = { path = "../../latlas/crates/latlas-check", default-features = false }
 latlas-cli = { path = "../../latlas/crates/latlas-cli", default-features = false }
 latlas-core = { path = "../../latlas/crates/latlas-core", default-features = false }
 latlas-error = { path = "../../latlas/crates/latlas-error", default-features = false }
