@@ -37,18 +37,6 @@ pub enum EmbedRole {
     Document,
 }
 
-impl EmbedRole {
-    /// 2026-10-24: The `input_type` names `/v1/embeddings` accepts for each role. The names are
-    /// the ones the checkpoint's own processor and OpenAI-compatible hosts use.
-    pub fn from_input_type(s: &str) -> Option<Self> {
-        match s {
-            "query" => Some(Self::Query),
-            "passage" | "document" => Some(Self::Document),
-            _ => None,
-        }
-    }
-}
-
 /// 2026-10-24: The prompt prepended to each role's text, from
 /// `config_sentence_transformers.json` `prompts`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,16 +60,45 @@ pub struct EmbeddingSpec {
 }
 
 impl EmbeddingSpec {
+    fn prompts(&self) -> Result<&EmbeddingPrompts> {
+        self.prompts
+            .as_ref()
+            .context("embedding prompts were never loaded (config_sentence_transformers.json)")
+    }
+
     /// 2026-10-24: The prompt and token limit for `role`; an error until the prompts are set.
     pub fn role(&self, role: EmbedRole) -> Result<(&str, usize)> {
-        let p = self
-            .prompts
-            .as_ref()
-            .context("embedding prompts were never loaded (config_sentence_transformers.json)")?;
+        let p = self.prompts()?;
         Ok(match role {
             EmbedRole::Query => (p.query.as_str(), self.query_max_tokens),
             EmbedRole::Document => (p.document.as_str(), self.document_max_tokens),
         })
+    }
+
+    /// 2026-10-24: The role whose prompt is `"<input_type>: "`, so the prefix a response
+    /// echoes is always `"<input_type>: "` and is the one applied. The accepted names come
+    /// from the checkpoint's prompts (`passage`, `query` for nemotron-embed), never from a
+    /// list here; `None` for any other name. An error until the prompts are set.
+    pub fn role_for_input_type(&self, input_type: &str) -> Result<Option<EmbedRole>> {
+        let p = self.prompts()?;
+        let want = format!("{input_type}: ");
+        Ok([
+            (EmbedRole::Query, &p.query),
+            (EmbedRole::Document, &p.document),
+        ]
+        .into_iter()
+        .find(|(_, prompt)| **prompt == want)
+        .map(|(role, _)| role))
+    }
+
+    /// 2026-10-24: The `input_type` names [`Self::role_for_input_type`] accepts: each prompt
+    /// of the form `"<name>: "`.
+    pub fn input_types(&self) -> Result<Vec<&str>> {
+        let p = self.prompts()?;
+        Ok([p.query.as_str(), p.document.as_str()]
+            .into_iter()
+            .filter_map(|x| x.strip_suffix(": "))
+            .collect())
     }
 }
 

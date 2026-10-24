@@ -164,7 +164,7 @@ pub async fn serve_for(
         plan.recipe_id
     );
     let server = tokio::spawn(async move {
-        crate::main_modules::serve::serve(serve_args, settings, None, levers).await
+        crate::main_modules::serve::serve(serve_args, settings, None, levers, None).await
     });
 
     // 2026-09-26: The handle goes into `SelfServed` before the wait, so an error

@@ -20,6 +20,7 @@ mod decode_step;
 pub mod embed_jobs;
 mod emit_step;
 pub use embed_jobs::EmbedJob;
+pub use lifecycle::coded;
 mod eos_hold;
 mod fast_greedy;
 #[cfg(test)]

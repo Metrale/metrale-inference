@@ -4,11 +4,14 @@
 //! does not generate, each input string is tokenized as the checkpoint's processor does it
 //! (BOS, the role prompt, the text, truncated to the role's token limit) and the request goes
 //! to the scheduler as one `EmbedJob`; the scheduler packs every job of a tick into one
-//! forward. On a generative model the route refuses with `EmbedNotSupported` (HTTP 501).
+//! forward. On a generative model the route refuses with `EmbedNotSupported` (HTTP 501), and
+//! on an embedding model the generation routes refuse with `GenerateNotSupported` (HTTP 501,
+//! [`refuse_generation_on_embedder`]). Both refusals carry the code's name in `error.code`.
 //!
-//! `input_type` (`query` or `passage`/`document`) is required: an asymmetric embedder has no
-//! neutral role, so a missing one is refused, never guessed. The response carries, besides the
-//! OpenAI fields, the `prompt` it applied. `encoding_format: "base64"` returns each vector's
+//! `input_type` is required and must name one of the checkpoint's role prompts (`query`,
+//! `passage` for nemotron-embed): an asymmetric embedder has no neutral role, so a missing or
+//! other one is refused, never guessed. The response carries, besides the OpenAI fields, the
+//! `prefix` it applied, which is always `"<input_type>: "`. `encoding_format: "base64"` returns each vector's
 //! little-endian FP32 bytes, bit-exact.
 //!
 //! Owner: server API.
@@ -23,8 +26,8 @@ use metrale_config::embedding::{EmbedRole, EmbeddingSpec};
 use metrale_error::{ErrorCode, error};
 use serde::Deserialize;
 
-use super::compact::openai_error_response;
-use crate::main_modules::model_host::CurrentModel;
+use super::compact::{openai_error_response, openai_error_response_with_param};
+use crate::main_modules::model_host::{CurrentModel, ModelHost};
 
 /// 2026-10-24: The request body. `input` is one string or an array of strings.
 #[derive(Debug, Deserialize)]
@@ -57,19 +60,24 @@ fn bad(msg: String) -> Refusal {
     (StatusCode::BAD_REQUEST, msg)
 }
 
-/// 2026-10-24: The checked request: the role, the encoding and the texts.
-pub fn check_request(
-    req: &EmbeddingRequest,
+/// 2026-10-24: The checked request: the role, the encoding and the texts. The `input_type`
+/// names are the checkpoint's own (`spec`), so the prefix echoed is `"<input_type>: "`.
+pub fn check_request<'r>(
+    req: &'r EmbeddingRequest,
+    spec: &EmbeddingSpec,
     dim: usize,
-) -> Result<(EmbedRole, Encoding, Vec<&str>), Refusal> {
+) -> Result<(EmbedRole, Encoding, Vec<&'r str>), Refusal> {
+    let internal = |e: anyhow::Error| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}"));
+    let names = spec.input_types().map_err(internal)?.join("`, `");
     let ty = req.input_type.as_deref().ok_or_else(|| {
-        bad("`input_type` is required: `query` or `passage` (this model embeds the two roles differently)".into())
-    })?;
-    let role = EmbedRole::from_input_type(ty).ok_or_else(|| {
         bad(format!(
-            "`input_type` {ty:?} is not `query`, `passage` or `document`"
+            "`input_type` is required: one of `{names}` (this model embeds its roles differently)"
         ))
     })?;
+    let role = spec
+        .role_for_input_type(ty)
+        .map_err(internal)?
+        .ok_or_else(|| bad(format!("`input_type` {ty:?} is not one of `{names}`")))?;
     let encoding = match req.encoding_format.as_deref() {
         None | Some("float") => Encoding::Float,
         Some("base64") => Encoding::Base64,
@@ -115,7 +123,7 @@ pub fn tokenize_one(
 /// 2026-10-24: The OpenAI response body for `vectors` (`[n * dim]`).
 pub fn response_body(
     model: &str,
-    prompt: &str,
+    prefix: &str,
     vectors: &[f32],
     dim: usize,
     encoding: Encoding,
@@ -141,7 +149,7 @@ pub fn response_body(
         "object": "list",
         "data": data,
         "model": model,
-        "prompt": prompt,
+        "prefix": prefix,
         "usage": {"prompt_tokens": prompt_tokens, "total_tokens": prompt_tokens},
     })
 }
@@ -153,18 +161,43 @@ fn role_of(spec: &EmbeddingSpec, role: EmbedRole) -> Result<(String, usize), Ref
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))
 }
 
+/// 2026-10-24: A route the loaded model's capabilities do not serve: HTTP 501, the coded text
+/// and the code's name in `error.code`, so a client branches on the code, not the text.
+pub fn capability_refusal(e: &metrale_error::Error) -> Response {
+    openai_error_response_with_param(
+        StatusCode::NOT_IMPLEMENTED,
+        crate::scheduler::coded(e),
+        None,
+        Some(e.code().name()),
+    )
+}
+
+/// 2026-10-24: Route layer on the generation routes: a request reaching an embedding model is
+/// refused before the handler parses it, so no sequence is ever allocated for it.
+pub async fn refuse_generation_on_embedder(
+    axum::extract::State(host): axum::extract::State<std::sync::Arc<ModelHost>>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    match host.current() {
+        Some(state) if state.embedding.is_some() => capability_refusal(&error!(
+            ErrorCode::GenerateNotSupported,
+            state.model_name.clone()
+        )),
+        _ => next.run(req).await,
+    }
+}
+
 /// 2026-10-24: POST /v1/embeddings
 pub async fn embeddings(
     CurrentModel(state): CurrentModel,
     req: Result<Json<EmbeddingRequest>, JsonRejection>,
 ) -> Response {
     let Some(ep) = state.embedding.as_ref() else {
-        let e = error!(ErrorCode::EmbedNotSupported, state.model_name.clone());
-        let c = e.code();
-        return openai_error_response(
-            StatusCode::NOT_IMPLEMENTED,
-            format!("[{:#06x} {}] {e}", c.as_u16(), c.name()),
-        );
+        return capability_refusal(&error!(
+            ErrorCode::EmbedNotSupported,
+            state.model_name.clone()
+        ));
     };
     let Json(req) = match req {
         Ok(r) => r,
@@ -175,7 +208,7 @@ pub async fn embeddings(
             );
         }
     };
-    let (role, encoding, texts) = match check_request(&req, ep.dim) {
+    let (role, encoding, texts) = match check_request(&req, &ep.spec, ep.dim) {
         Ok(v) => v,
         Err((s, m)) => return openai_error_response(s, m),
     };

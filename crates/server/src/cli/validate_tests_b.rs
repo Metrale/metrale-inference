@@ -22,7 +22,8 @@ fn parse(extra: &[&str]) -> ServeArgs {
         | super::super::Command::SyncRecipes
         | super::super::Command::Doctor
         | super::super::Command::Circuit(_)
-        | super::super::Command::Blueprint(_) => {
+        | super::super::Command::Blueprint(_)
+        | super::super::Command::Embed(_) => {
             unreachable!("this test parses a serve command")
         }
     }

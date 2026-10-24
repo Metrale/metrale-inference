@@ -9,6 +9,7 @@
 pub(crate) mod app_state;
 pub(crate) mod auto_swap;
 pub(crate) mod byte_count;
+pub(crate) mod embed_stdio;
 pub(crate) mod kernel_flag_plan;
 pub(crate) mod kv_dtypes;
 pub(crate) mod listener_rcvbuf;

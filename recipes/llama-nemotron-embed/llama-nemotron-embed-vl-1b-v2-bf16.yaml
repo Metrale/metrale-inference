@@ -1,0 +1,31 @@
+recipe_version: "2"
+model: nvidia/llama-nemotron-embed-vl-1b-v2
+runtime: metrale
+container: metrale/metrale-inference-gb10:latest
+max_nodes: 1
+
+metadata:
+  description: |
+    nvidia/llama-nemotron-embed-vl-1b-v2, text tower only (bidirectional Llama-3.2-1B,
+    mean-pooled, 2048-d), BF16, served on /v1/embeddings. Image inputs are not served.
+    The pinned serve of `met embed --blueprint` (Latlas met-local). Gate G1: cosine >= 0.999
+    per text against the checkpoint's FP32 reference (claude-state/glm/megakernel/LEDGER.tsv
+    m1-embed-parity).
+  maintainer: metrale
+  category: embedding
+  model_params: 1.2B
+  model_dtype: bf16
+  quantization: none
+  kv_dtype: bf16
+
+defaults:
+  # 2026-10-24: Longest document is p_max_length 4096 tokens; a pack holds up to 8192 rows.
+  max_model_len: 4096
+  max_prefill_tokens: 8192
+  # 2026-10-24: Sequence slots; 128 is the serve's decode-metadata ceiling. Embedding requests
+  # are not slots: each request's texts are packed by tokens (max_prefill_tokens).
+  max_batch_size: 128
+  # 2026-10-24: Weights 2.3 GB plus an 8192-row scratch; no KV pool is allocated.
+  gpu_memory_utilization: 0.05
+  port: 18471
+  host: 127.0.0.1

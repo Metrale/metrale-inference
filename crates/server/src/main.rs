@@ -88,6 +88,9 @@ async fn serve_main() -> Result<()> {
     // 2026-09-26: Parsed before the subscriber is installed, because the TUI
     // gate (`tui::plain_mode`) needs `--no-tui`.
     let cli = Cli::parse();
+    // 2026-10-24: `met embed` becomes the serve of its blueprint here, with the stdio transport
+    // beside it, so every later step is the serve path unchanged.
+    let (cli, embed) = cli::embed_args::rewrite(cli)?;
 
     // 2026-09-26: Every `METRALE_*` variable in the environment must be a
     // declared lever (`metrale_config::levers::check`). An undeclared one is a
@@ -171,7 +174,8 @@ async fn serve_main() -> Result<()> {
         | Command::SyncRecipes
         | Command::Doctor
         | Command::Circuit(_)
-        | Command::Blueprint(_) => true,
+        | Command::Blueprint(_)
+        | Command::Embed(_) => true,
     };
 
     // 2026-09-26: `benchmark certify --json` writes JSON lines on stdout, so
@@ -185,9 +189,13 @@ async fn serve_main() -> Result<()> {
     #[cfg(not(feature = "bench"))]
     let logs_to_stderr = false;
     let tui_channels = if tui::plain_mode(no_tui) {
-        let fmt = tracing_subscriber::fmt().with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
-        );
+        // 2026-10-24: `met embed` logs plain text: its stderr is a host's log file.
+        let fmt = tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "info".into()),
+            )
+            .with_ansi(embed.is_none());
         if logs_to_stderr {
             fmt.with_writer(std::io::stderr).init();
         } else {
@@ -215,7 +223,8 @@ async fn serve_main() -> Result<()> {
         | Command::SyncRecipes
         | Command::Doctor
         | Command::Circuit(_)
-        | Command::Blueprint(_) => {
+        | Command::Blueprint(_)
+        | Command::Embed(_) => {
             unreachable!("handled before initialisation")
         }
         #[cfg(feature = "bench")]
@@ -234,7 +243,7 @@ async fn serve_main() -> Result<()> {
             let Some((settings, _, bench_levers)) = serve_levers else {
                 unreachable!("resolved above for every serve")
             };
-            let serving = serve(args, settings, tui_channels, bench_levers);
+            let serving = serve(args, settings, tui_channels, bench_levers, embed);
             tokio::pin!(serving);
             // 2026-09-26: Only a send means shutdown. The sender stays parked in
             // `tui::shutdown` for the life of the process, and a closed channel

@@ -34,6 +34,9 @@
 0x0201 EmbedNotSupported
 0x0202 GenerateNotSupported
 0x0203 EmbedInputInvalid
+0x0204 EmbedFrameInvalid
+0x0205 EmbedSpaceMismatch
+0x0206 EmbedRequestRefused
 0x0280 DeviceDriver
 0x0300 ServeEnvNotALever
 0x0301 ServeEnvHarness

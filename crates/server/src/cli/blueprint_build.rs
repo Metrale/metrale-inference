@@ -122,7 +122,7 @@ pub(crate) fn ptx_entries(bytes: &[u8]) -> Vec<String> {
     out
 }
 
-fn sha_file(path: &Path) -> Result<Sha256> {
+pub(crate) fn sha_file(path: &Path) -> Result<Sha256> {
     let mut f = std::fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
     let mut h = Sha256Stream::default();
     let mut buf = vec![0u8; 8 << 20];

@@ -35,7 +35,8 @@ pub(crate) fn bench_only(command: &Command) -> Option<&'static str> {
         | Command::DumpServeOptions
         | Command::SyncRecipes
         | Command::Circuit(_)
-        | Command::Blueprint(_) => None,
+        | Command::Blueprint(_)
+        | Command::Embed(_) => None,
     }
 }
 
