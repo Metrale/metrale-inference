@@ -69,6 +69,7 @@ pub(crate) mod manifest;
 mod serve_args;
 mod serve_args_chat_surface;
 pub(crate) mod serve_args_dflash;
+mod serve_args_glm_decode;
 mod serve_args_mtp;
 mod serve_args_mtp_draft;
 mod serve_args_prompt_lookup;
