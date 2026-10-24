@@ -13,12 +13,25 @@
 
 use crate::prelude::*;
 
-/// 2026-10-23: The column count ledger.py checks (14 before the `gate` column).
-pub const NCOLS: usize = 14;
+/// 2026-10-23: The column count ledger.py checks (16: `gate` and `resolves` added 2026-10-23).
+pub const NCOLS: usize = 16;
 /// 2026-10-23: The index of `depends_on`.
 pub const DEPENDS_ON: usize = 12;
 /// 2026-10-23: The index of `retracts`.
 pub const RETRACTS: usize = 13;
+/// 2026-10-23: The index of `gate` (the row's claims, `crate::claims` grammar).
+pub const GATE: usize = 14;
+/// 2026-10-23: The index of `resolves` (earlier BLOCKED rows this row unblocks).
+pub const RESOLVES: usize = 15;
+/// 2026-10-23: The index of `verdict`.
+pub const VERDICT: usize = 7;
+/// 2026-10-23: The trailing header columns ledger.py requires.
+pub const TAIL: [&str; 4] = ["depends_on", "retracts", "gate", "resolves"];
+
+/// 2026-10-23: ledger.py `blocked_verdict`.
+pub fn blocked_verdict(r: &[String]) -> bool {
+    r.get(VERDICT).is_some_and(|v| v.starts_with("BLOCKED"))
+}
 
 /// 2026-10-23: The ledger as split text: header fields and row fields.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -81,12 +94,12 @@ impl Table {
     pub fn check(&self) -> Vec<String> {
         let mut errs = Vec::new();
         let h = &self.header;
-        let tail_ok =
-            h.len() >= 2 && h[h.len() - 2] == "depends_on" && h[h.len() - 1] == "retracts";
+        let tail_ok = h.len() >= TAIL.len() && h[h.len() - TAIL.len()..] == TAIL;
         if h.len() != NCOLS || !tail_ok {
             errs.push(format!(
-                "header has {} columns, expected {NCOLS} ending depends_on,retracts",
-                h.len()
+                "header has {} columns, expected {NCOLS} ending {}",
+                h.len(),
+                TAIL.join(",")
             ));
         }
         let mut ids: BTreeMap<&str, usize> = BTreeMap::new();
@@ -106,13 +119,16 @@ impl Table {
                 ));
             }
             ids.insert(r[2].as_str(), n);
+            if let Err(e) = crate::claims::parse(&r[GATE]) {
+                errs.push(format!("line {n}: gate `{}`: {e}", r[GATE]));
+            }
         }
         for (i, r) in self.rows.iter().enumerate() {
             let n = i + 2;
             if r.len() != NCOLS {
                 continue;
             }
-            for col in [DEPENDS_ON, RETRACTS] {
+            for col in [DEPENDS_ON, RETRACTS, RESOLVES] {
                 let name = h.get(col).map_or("?", String::as_str);
                 for x in refs(&r[col]) {
                     if !ids.contains_key(x.as_str()) {
@@ -121,6 +137,40 @@ impl Table {
                         errs.push(format!("line {n}: {} references itself", r[2]));
                     }
                 }
+            }
+        }
+        let mut resolver: BTreeMap<String, String> = BTreeMap::new();
+        for (i, r) in self.rows.iter().enumerate() {
+            let n = i + 2;
+            if r.len() != NCOLS || refs(&r[RESOLVES]).is_empty() {
+                continue;
+            }
+            if blocked_verdict(r) {
+                errs.push(format!(
+                    "line {n}: {} resolves rows but is itself BLOCKED",
+                    r[2]
+                ));
+            }
+            for x in refs(&r[RESOLVES]) {
+                let Some(&at) = ids.get(x.as_str()) else {
+                    continue;
+                };
+                if x == r[2] {
+                    continue;
+                }
+                if at > n {
+                    errs.push(format!(
+                        "line {n}: resolves {x}, which is a later row (line {at})"
+                    ));
+                } else if !blocked_verdict(&self.rows[at - 2]) {
+                    errs.push(format!(
+                        "line {n}: resolves {x}, whose verdict is not BLOCKED"
+                    ));
+                }
+                if let Some(by) = resolver.get(&x) {
+                    errs.push(format!("line {n}: resolves {x}, already resolved by {by}"));
+                }
+                resolver.entry(x).or_insert_with(|| r[2].clone());
             }
         }
         let graph = self.graph(|r| r.len() == NCOLS);
@@ -235,6 +285,27 @@ fn visit(
     }
     path.pop();
     state.insert(v.to_string(), 2);
+}
+
+/// 2026-10-23: ledger.py `blocked`: `(id, verdict)` of every BLOCKED row no row resolves, in
+/// file order.
+pub fn blocked(t: &Table) -> Vec<(String, String)> {
+    let resolved: BTreeSet<String> = t
+        .rows
+        .iter()
+        .filter(|r| r.len() == NCOLS)
+        .flat_map(|r| refs(&r[RESOLVES]))
+        .collect();
+    t.rows
+        .iter()
+        .filter(|r| r.len() == NCOLS && blocked_verdict(r) && !resolved.contains(&r[2]))
+        .map(|r| (r[2].clone(), r[VERDICT].clone()))
+        .collect()
+}
+
+/// 2026-10-23: The stdout of `ledger.py blocked`.
+pub fn render_blocked(rows: &[(String, String)]) -> String {
+    rows.iter().map(|(id, v)| format!("{id}\t{v}\n")).collect()
 }
 
 /// 2026-10-23: The stdout of `ledger.py check` (it prints, then exits 1 when non-empty).

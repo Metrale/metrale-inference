@@ -14,7 +14,7 @@
 use crate::bundle::Builder;
 use crate::claims;
 use crate::id::{KgId, Label, Rel};
-use crate::ledger::{NCOLS, Table, refs};
+use crate::ledger::{RETRACTS, Table, refs};
 use crate::prelude::*;
 use crate::text::{commit_shas, design_refs, env_levers, first_number, principle_ids};
 use metrale_error::{ErrorCode, error};
@@ -133,9 +133,14 @@ pub fn derive(
     };
     let lines: Vec<&str> = text.trim_end_matches('\n').split('\n').skip(1).collect();
     let known: BTreeSet<String> = table.links().into_iter().map(|l| l.id).collect();
+    let resolved: BTreeSet<String> = table
+        .rows
+        .iter()
+        .flat_map(|r| refs(&col(r, "resolves")))
+        .collect();
     let mut ids = BTreeSet::new();
     for (i, r) in table.rows.iter().enumerate() {
-        if r.len() != h.len() || r.len() < NCOLS {
+        if r.len() != h.len() || r.len() <= RETRACTS {
             continue;
         }
         let line = i + 2;
@@ -226,12 +231,17 @@ pub fn derive(
         for d in design_refs(&prose) {
             link(Rel::Cites, Label::Design, &d);
         }
+        for x in refs(&col(r, "resolves")) {
+            if let Ok(from) = KgId::new(Label::LedgerEntry, x) {
+                b.edge(&from, Rel::ResolvedBy, &id, 1.0, &at);
+            }
+        }
         b.text(&id, "hypothesis", &hyp);
         b.text(&id, "why_differed", &why);
-        if verdict == "BLOCKED" {
+        if verdict == "BLOCKED" && !resolved.contains(&r[2]) {
             blocked(b, &id, &at, &format!("{} {why}", col(r, "verdict")), &known);
         }
-        if h.len() > NCOLS {
+        if h.iter().any(|x| x == "gate") {
             claims::derive_row(b, &id, &at, &col(r, "gate"), &verdict);
         }
     }

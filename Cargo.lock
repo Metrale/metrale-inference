@@ -2215,6 +2215,8 @@ dependencies = [
  "metrale-error",
  "metrale-kg-derive",
  "serde_json",
+ "tokio",
+ "ureq",
 ]
 
 [[package]]

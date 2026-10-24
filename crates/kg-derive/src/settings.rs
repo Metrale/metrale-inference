@@ -16,6 +16,7 @@
 //!   a value: a layer whose fields match the secrets denylist is refused.
 
 use crate::bundle::Builder;
+use crate::embed::Role;
 use crate::id::{KgId, Label};
 use crate::prelude::*;
 use crate::secrets::secret_pattern;
@@ -52,6 +53,30 @@ pub struct EmbedLayer {
     pub backoff_ms: Option<u64>,
     /// 2026-10-23: The rate limit: the least time between two requests.
     pub min_interval_ms: Option<u64>,
+    /// 2026-10-23: The longest input (chars) the pipeline sends; a longer one is refused before
+    /// sending, never truncated.
+    pub max_input_chars: Option<u32>,
+    /// 2026-10-23: The `input_type` an asymmetric model takes for each role.
+    pub input_type: Option<InputTypes>,
+}
+
+/// 2026-10-23: The request's `input_type` per [`Role`] (`{ query = "query", document = "passage" }`
+/// for nvidia/llama-nemotron-embed). One table, so a layer sets both or neither.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct InputTypes {
+    pub query: String,
+    pub document: String,
+}
+
+impl InputTypes {
+    /// 2026-10-23: The value sent for `role`.
+    pub fn of(&self, role: Role) -> &str {
+        match role {
+            Role::Query => &self.query,
+            Role::Document => &self.document,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -137,7 +162,9 @@ pub fn merge(global: &EmbedLayer, project: &EmbedLayer) -> (EmbedLayer, Provenan
         batch,
         max_attempts,
         backoff_ms,
-        min_interval_ms
+        min_interval_ms,
+        max_input_chars,
+        input_type
     );
     (m, prov)
 }
@@ -162,6 +189,19 @@ pub struct EmbedSettings {
     pub max_attempts: u32,
     pub backoff_ms: u64,
     pub min_interval_ms: u64,
+    pub max_input_chars: u32,
+    pub input_type: InputTypes,
+}
+
+impl EmbedSettings {
+    /// 2026-10-23: The vector space a cached vector belongs to: a change of model, dimension or
+    /// document `input_type` makes every cached vector incomparable with a new query.
+    pub fn space(&self) -> String {
+        format!(
+            "{}/{}/{}",
+            self.model, self.dimensions, self.input_type.document
+        )
+    }
 }
 
 /// 2026-10-23: The embedder the merged layers declare.
@@ -265,7 +305,16 @@ pub fn resolve(m: &EmbedLayer) -> Result<Embedder> {
                 max_attempts: need(&m.max_attempts, "max_attempts")?,
                 backoff_ms: need(&m.backoff_ms, "backoff_ms")?,
                 min_interval_ms: need(&m.min_interval_ms, "min_interval_ms")?,
+                max_input_chars: need(&m.max_input_chars, "max_input_chars")?,
+                input_type: need(&m.input_type, "input_type")?,
             };
+            if s.input_type.query.is_empty() || s.input_type.document.is_empty() {
+                return Err(error!(
+                    ErrorCode::KgConfig,
+                    "embedder.input_type", "names a non-empty query and document"
+                ));
+            }
+            positive(u64::from(s.max_input_chars), "max_input_chars")?;
             positive(u64::from(s.dimensions), "dimensions")?;
             positive(u64::from(s.batch), "batch")?;
             positive(u64::from(s.max_attempts), "max_attempts")?;
@@ -330,6 +379,8 @@ batch = 64
 max_attempts = 5
 backoff_ms = 2000
 min_interval_ms = 0
+max_input_chars = 8000
+input_type = { query = "query", document = "passage" }
 "#;
 
     fn layer(t: &str) -> EmbedLayer {

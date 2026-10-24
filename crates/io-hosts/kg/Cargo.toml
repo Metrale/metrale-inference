@@ -16,6 +16,9 @@ role = "host-std"
 metrale-error = { workspace = true }
 metrale-kg-derive = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
+# 2026-10-23: the OpenRouter embedder host (P2): blocking HTTPS on tokio's blocking pool.
+tokio = { workspace = true, features = ["rt"] }
+ureq = { workspace = true, features = ["rustls"] }
 
 [lints]
 workspace = true

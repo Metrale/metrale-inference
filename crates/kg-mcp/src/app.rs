@@ -9,12 +9,16 @@
 //! - Every tool result carries `bundle_digest`, `derived_at_ms`, `stale` and `mode`.
 //! - The store only ever holds the current bundle (`Store::load` replaces).
 
+use crate::search::Embed;
 use crate::store::{Store, data_dir};
+use crate::textstore::TextStore;
 use anyhow::Result;
 use metrale_abstract_io::Clock;
 use metrale_io_host_kg::fs::{FsSources, Stamp, read_config};
+use metrale_io_host_kg::openrouter::OpenRouter;
 use metrale_io_host_kg::settings::{Resolved, resolve_settings};
 use metrale_io_host_std::SystemClock;
+use metrale_kg_derive::embed::{Embedder as _, Mode, Plan};
 use metrale_kg_derive::jsonl::digest;
 use metrale_kg_derive::lkb_derive::LkbSources;
 use metrale_kg_derive::settings::Embedder;
@@ -36,7 +40,52 @@ pub struct App {
     pub store: Arc<Mutex<Store>>,
     /// 2026-10-23: The embedder settings, resolved once at open (ROTI).
     pub settings: Resolved,
+    /// 2026-10-23: The embedder host the settings chose, with its cache (or the declared
+    /// unavailable mode and why). The mode every result reports comes from here.
+    pub embed: Embed,
     clock: SystemClock,
+}
+
+/// 2026-10-23: The most recently modified source file in a stamp and its mtime (unix ms); the
+/// LKB checkout's entry (`<repo>@git`, a hash, not a time) is not a file.
+fn newest(stamp: &Stamp) -> Option<(String, i64)> {
+    stamp
+        .iter()
+        .filter(|(p, _, _)| !p.ends_with("@git"))
+        .max_by_key(|(_, _, ns)| *ns)
+        .map(|(p, _, ns)| {
+            (
+                p.clone(),
+                i64::try_from(*ns / 1_000_000).unwrap_or(i64::MAX),
+            )
+        })
+}
+
+/// 2026-10-23: The embedder host for the resolved settings: off with the reason when the settings
+/// declare it unavailable or the host cannot run (no key), else the host and its cache under
+/// `dir`.
+async fn open_embed(e: &Embedder, dir: &Path) -> Result<Embed> {
+    let s = match e {
+        Embedder::Unavailable { reason } => return Ok(Embed::Off(reason.clone())),
+        Embedder::Available(s) => s,
+    };
+    let host = OpenRouter::new(s, dir.join("embed-calls.jsonl"));
+    if let Mode::Unavailable { reason } = host.mode() {
+        return Ok(Embed::Off(reason));
+    }
+    let cache = TextStore::open(dir, &s.space(), s.dimensions).await?;
+    let plan = Plan {
+        batch: usize::try_from(s.batch)?,
+        max_attempts: s.max_attempts,
+        backoff_ms: s.backoff_ms,
+        max_input_chars: usize::try_from(s.max_input_chars)?,
+    };
+    Ok(Embed::On {
+        host,
+        cache,
+        plan,
+        refused: Default::default(),
+    })
 }
 
 /// 2026-10-23: Read and derive once (no store); also the LKB checkout's commit, if any.
@@ -69,11 +118,13 @@ impl App {
         };
         let mut store = Store::open(&dir).await?;
         store.load(&bundle).await?;
+        let embed = open_embed(&settings.embedder, &dir).await?;
         let clock = SystemClock;
         let fresh = Freshness {
             stale_reason: None,
             derived_at_ms: clock.now_unix_ms().0,
             source_commit,
+            newest_change: newest(&stamp),
         };
         Ok(App {
             digest: digest(&bundle).hex(),
@@ -84,6 +135,7 @@ impl App {
             fresh,
             store: Arc::new(Mutex::new(store)),
             settings,
+            embed,
             clock,
         })
     }
@@ -109,12 +161,13 @@ impl App {
                 }
                 self.digest = digest(&b).hex();
                 self.bundle = b;
-                self.stamp = stamp;
                 self.fresh = Freshness {
                     stale_reason: None,
                     derived_at_ms: self.clock.now_unix_ms().0,
                     source_commit,
+                    newest_change: newest(&stamp),
                 };
+                self.stamp = stamp;
                 changed
             }
             Err(e) => {
@@ -124,11 +177,18 @@ impl App {
         }
     }
 
-    /// 2026-10-23: The embedder's declared mode, as every result reports it.
+    /// 2026-10-23: Declare the embedder off for this process (`--graph-only`): the same declared
+    /// mode as an unavailable embedder, with `why` as the reason.
+    pub fn declare_graph_only(&mut self, why: &str) {
+        self.embed = Embed::Off(why.to_string());
+    }
+
+    /// 2026-10-23: The embedder's mode as the host reports it (a key reference that yields no
+    /// key is `graph_only` even though the settings ask for http), as every result reports it.
     pub fn mode(&self) -> (String, Option<String>) {
-        match &self.settings.embedder {
-            Embedder::Unavailable { reason } => ("graph_only".into(), Some(reason.clone())),
-            Embedder::Available(_) => ("hybrid".into(), None),
+        match &self.embed {
+            Embed::Off(reason) => ("graph_only".into(), Some(reason.clone())),
+            Embed::On { .. } => ("hybrid".into(), None),
         }
     }
 

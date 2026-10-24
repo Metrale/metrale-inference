@@ -13,7 +13,7 @@ fn derive_twice_and_in_any_read_order_gives_one_digest() {
     let cfg = common::config();
     let a = derive(&cfg, &common::sources(), None).unwrap();
     let b = derive(&cfg, &common::sources(), None).unwrap();
-    let rev: Vec<usize> = (0..12).rev().collect();
+    let rev: Vec<usize> = (0..common::FILE_COUNT).rev().collect();
     let c = derive(&cfg, &common::sources_in(&rev), None).unwrap();
     assert_eq!(render(&a), render(&b));
     assert_eq!(digest(&a), digest(&c));

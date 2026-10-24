@@ -14,4 +14,7 @@
 pub mod fs;
 pub mod ledger_py;
 pub mod lkb;
+pub mod openrouter;
+pub mod record;
 pub mod settings;
+pub mod write;

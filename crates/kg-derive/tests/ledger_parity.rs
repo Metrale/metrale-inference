@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! 2026-10-23: Golden parity with `tools/ledger.py`: each fixture's `.check`, `.tainted` and
-//! `.deps` file is ledger.py's own stdout on that fixture (captured 2026-10-23 with the 14-column
-//! ledger.py). The closures run over the *bundle* (`queries::ledger_links`), not the table, so
+//! `.deps` file is ledger.py's own stdout on that fixture (captured 2026-10-23 with the 16-column
+//! ledger.py: `gate`, `resolves`). The closures run over the *bundle* (`queries::ledger_links`), not the table, so
 //! this is the parity of `kg_impact` itself. The live-file half of the P0 gate is
 //! metrale-kg-mcp's `ledger_py_parity_on_the_real_ledger` (runs ledger.py through the host).
 
@@ -36,6 +36,9 @@ fn check_output_is_byte_identical_to_ledger_py_on_every_fixture() {
         fixture!("fields"),
         fixture!("dupes"),
         fixture!("header"),
+        fixture!("gatebad"),
+        fixture!("resolvebad"),
+        fixture!("resolves"),
     ] {
         assert_eq!(render_check(&Table::parse(text)), check, "fixture:\n{text}");
     }
@@ -88,7 +91,7 @@ fn an_invalid_ledger_refuses_the_closures_like_ledger_py() {
 #[test]
 fn a_flipped_depends_on_changes_the_closures_and_they_still_match_the_table() {
     let (text, _, _) = fixture!("valid");
-    let flipped = text.replace("\tc,a\t-\n", "\ta,c\t-\n");
+    let flipped = text.replace("\tc,a\t-\t-\t-\n", "\ta,c\t-\t-\t-\n");
     assert_ne!(flipped, text, "the sabotage edit must apply");
     let (b0, b1) = (bundle_of(text), bundle_of(&flipped));
     let (l0, l1) = (
@@ -98,4 +101,42 @@ fn a_flipped_depends_on_changes_the_closures_and_they_still_match_the_table() {
     assert_ne!(ledger::deps(&l0, "d"), ledger::deps(&l1, "d"));
     assert_eq!(ledger::deps(&l1, "d"), ["d", "c", "b", "a"]);
     assert_eq!(l1, Table::parse(&flipped).links());
+}
+
+#[test]
+fn blocked_is_byte_identical_to_ledger_py_and_a_resolved_row_leaves_q1() {
+    for (name, text, want) in [
+        (
+            "resolves",
+            include_str!("fixtures/ledger/resolves.tsv"),
+            include_str!("fixtures/ledger/resolves.blocked"),
+        ),
+        (
+            "valid",
+            include_str!("fixtures/ledger/valid.tsv"),
+            include_str!("fixtures/ledger/valid.blocked"),
+        ),
+    ] {
+        assert_eq!(
+            ledger::render_blocked(&ledger::blocked(&Table::parse(text))),
+            want,
+            "{name}"
+        );
+    }
+    let b = bundle_of(include_str!("fixtures/ledger/resolves.tsv"));
+    let q1: Vec<String> = queries::blocked_by_gate(&b)
+        .into_iter()
+        .map(|r| r.0.to_string())
+        .collect();
+    assert_eq!(q1, ["ledger:b"]);
+    let a = metrale_kg_derive::id::KgId::parse("ledger:a").unwrap();
+    let by: Vec<String> = b
+        .out(&a, metrale_kg_derive::id::Rel::ResolvedBy)
+        .map(|e| e.to.to_string())
+        .collect();
+    assert_eq!(by, ["ledger:c"]);
+    assert!(
+        !b.errors.iter().any(|f| f.msg.contains("blocker-of-a")),
+        "a resolved row gets no synthetic blocker"
+    );
 }

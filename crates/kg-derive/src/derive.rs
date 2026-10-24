@@ -15,7 +15,7 @@ use crate::config::Config;
 use crate::lkb_derive::{self, LkbFacts, LkbSources};
 use crate::prelude::*;
 use crate::sources::SourceSet;
-use crate::{decisions, ledger_adapter, memory, owed, principles, research, tooling};
+use crate::{decisions, ledger_adapter, memory, owed, principles, research, runs, tooling};
 use metrale_error::{ErrorCode, Result, error};
 
 fn need<'a>(src: &'a SourceSet, path: &str) -> Result<&'a str> {
@@ -46,6 +46,7 @@ pub fn derive(cfg: &Config, src: &SourceSet, lkb: Option<&LkbFacts>) -> Result<B
     for c in &s.campaigns {
         decisions::charter(&mut b, &c.charter, need(src, &c.charter)?, &ledger_ids);
         tooling::derive(&mut b, &c.id, &c.tooling, need(src, &c.tooling)?, &known);
+        runs::derive(&mut b, &c.runs, need(src, &c.runs)?);
     }
     for d in &s.designs {
         decisions::design(&mut b, d, need(src, d)?, &ledger_ids);

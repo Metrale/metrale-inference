@@ -14,7 +14,10 @@ mod cypher;
 mod gates;
 mod handlers;
 mod mcp;
+mod record;
+mod search;
 mod store;
+mod textstore;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -89,6 +92,27 @@ enum Cmd {
         #[arg(long)]
         limit: Option<u32>,
     },
+    /// kg_search as JSON; --graph-only declares the embedder off for this run.
+    Search {
+        text: String,
+        #[arg(long = "kind")]
+        kinds: Vec<String>,
+        #[arg(long)]
+        k: Option<u32>,
+        #[arg(long)]
+        hops: Option<u32>,
+        #[arg(long)]
+        graph_only: bool,
+    },
+    /// The P2 recall gate: each `probe<TAB>id` line must hit the id in the top 3.
+    Probes {
+        file: PathBuf,
+        #[arg(long)]
+        graph_only: bool,
+        /// The least hits out of the probe count for the gate to pass.
+        #[arg(long)]
+        need: u32,
+    },
     /// The tools/list body the server sends (for the token gate).
     ToolsList,
     /// Serve the 5 tools over MCP stdio.
@@ -140,6 +164,27 @@ async fn run(cli: Cli) -> Result<()> {
         }
         Cmd::Serve => serve(&cli.config, data).await,
         Cmd::Refresh => refresh(&cli.config),
+        Cmd::Search {
+            text,
+            kinds,
+            k,
+            hops,
+            graph_only,
+        } => {
+            let args = serde_json::json!({"text": text, "kinds": kinds, "k": k, "hops": hops});
+            let mut app = app::App::open(&cli.config, data).await?;
+            if graph_only {
+                app.declare_graph_only("--graph-only");
+            }
+            let v = handlers::call(&mut app, "kg_search", &args).await?;
+            println!("{}", serde_json::to_string_pretty(&v)?);
+            Ok(())
+        }
+        Cmd::Probes {
+            file,
+            graph_only,
+            need,
+        } => gates::probes_cmd(&cli.config, data, &file, graph_only, need).await,
         Cmd::Status {
             campaign,
             sections,

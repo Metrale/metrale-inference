@@ -103,11 +103,37 @@ pub async fn check_cmd(cfg_path: &Path, roundtrip: bool) -> Result<()> {
             "cold_start_ms": cold_ms, "vector_size": 1,
         });
     }
+    let budget = status_budget(cfg_path).await?;
+    ok &= budget.iter().all(|b| b["within"] == true);
+    v["status_budget"] = Value::from(budget);
     println!("{}", serde_json::to_string_pretty(&v)?);
     if !ok {
         return Err(GateFailed("metrale-kg check").into());
     }
     Ok(())
+}
+
+/// 2026-10-23: A token estimate that errs high for JSON of ids and short strings (~3 bytes a
+/// token; English prose runs nearer 4).
+pub fn tokens_estimate(bytes: usize) -> usize {
+    bytes.div_ceil(3)
+}
+
+/// 2026-10-23: The default `kg_status` of every campaign, exactly as the tool answers it
+/// (envelope included, compact JSON as MCP sends it), against `limits.status_tokens`.
+async fn status_budget(cfg_path: &Path) -> Result<Vec<Value>> {
+    let cfg = read_config(cfg_path)?;
+    let dir = fresh_dir(&cfg.store.scratch_dir, "kg-check-status")?;
+    let mut app = crate::app::App::open(cfg_path, Some(&dir)).await?;
+    let mut out = Vec::new();
+    for c in &cfg.sources.campaigns {
+        let r = crate::handlers::call(&mut app, "kg_status", &json!({"campaign": c.id})).await?;
+        let bytes = serde_json::to_string(&r)?.len();
+        let tokens = tokens_estimate(bytes);
+        out.push(json!({"campaign": c.id, "bytes": bytes, "tokens_est": tokens,
+            "budget": cfg.limits.status_tokens, "within": tokens <= cfg.limits.status_tokens as usize}));
+    }
+    Ok(out)
 }
 
 /// 2026-10-23: `parity`.
@@ -206,5 +232,57 @@ pub fn deps_cmd(cfg_path: &Path, id: &str) -> Result<()> {
         "{}",
         render_deps(&ledger::deps(&queries::ledger_links(&b, &campaign), id))
     );
+    Ok(())
+}
+
+/// 2026-10-23: The P2 recall gate (design §6 P2): every non-comment `probe<TAB>id` line of `file`
+/// is a kg_search; a hit is the id in the top 3. Prints each probe's rank and mode, then the
+/// count; fails under `need` hits or when any result's mode is not the one asked for.
+pub async fn probes_cmd(
+    cfg_path: &Path,
+    data: Option<&Path>,
+    file: &Path,
+    graph_only: bool,
+    need: u32,
+) -> Result<()> {
+    let text = std::fs::read_to_string(file)?;
+    let mut app = crate::app::App::open(cfg_path, data).await?;
+    if graph_only {
+        app.declare_graph_only("--graph-only (the P2 graph_only leg)");
+    }
+    let want_mode = if graph_only { "graph_only" } else { "hybrid" };
+    let (mut hits, mut total, mut modes_ok) = (0u32, 0u32, true);
+    let mut rows = Vec::new();
+    for line in text
+        .lines()
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+    {
+        let Some((probe, id)) = line.split_once('\t') else {
+            anyhow::bail!("probe line without a tab: {line}");
+        };
+        total += 1;
+        let v =
+            crate::handlers::call(&mut app, "kg_search", &json!({"text": probe, "k": 10})).await?;
+        let ids: Vec<&str> = v["hits"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|h| h["id"].as_str()).collect())
+            .unwrap_or_default();
+        let rank = ids.iter().position(|x| *x == id).map(|r| r + 1);
+        let hit = rank.is_some_and(|r| r <= 3);
+        hits += u32::from(hit);
+        let mode = v["mode"].as_str().unwrap_or("");
+        modes_ok &= mode == want_mode;
+        rows.push(
+            json!({"probe": probe, "want": id, "rank": rank, "hit": hit, "mode": mode,
+            "mode_reason": v.get("mode_reason"), "top3": ids.iter().take(3).collect::<Vec<_>>()}),
+        );
+    }
+    let ok = hits >= need && modes_ok;
+    let v = json!({"mode": want_mode, "hits": hits, "probes": total, "need": need,
+        "modes_ok": modes_ok, "pass": ok, "rows": rows});
+    println!("{}", serde_json::to_string_pretty(&v)?);
+    if !ok {
+        return Err(GateFailed("P2 recall probes").into());
+    }
     Ok(())
 }

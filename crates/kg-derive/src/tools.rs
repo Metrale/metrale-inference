@@ -23,7 +23,24 @@ pub const SECTIONS: &[&str] = &[
     "calibration",
     "freshness",
     "schema",
+    "files",
 ];
+
+/// 2026-10-23: The sections of a default `kg_status` (none named): compact, every list capped at
+/// [`LIST_CAP`] with its total beside it. `schema` and `files` come only when named.
+pub const DEFAULT_SECTIONS: &[&str] = &[
+    "progress",
+    "blocked",
+    "tainted",
+    "claims",
+    "owed_lkb",
+    "dangling",
+    "calibration",
+    "freshness",
+];
+
+/// 2026-10-23: The most items of any list in a default `kg_status`.
+pub const LIST_CAP: usize = 3;
 
 /// 2026-10-23: The `kg_record` kinds.
 pub const RECORD_KINDS: &[&str] = &["ledger", "friction", "decision", "run"];
@@ -73,15 +90,15 @@ pub fn tools() -> Vec<Value> {
         ),
         tool(
             "kg_record",
-            "Append a record to its SSOT file through its validator; fails closed.",
+            "Append a record to its SSOT file through its validator; fails closed. dry_run previews would_taint.",
             &format!(
-                r#"{{"type":"object","required":["kind","campaign","fields"],"properties":{{"kind":{{"enum":[{}]}},"campaign":{{"type":"string"}},"fields":{{"type":"object"}},"dry_run":{{"type":"boolean"}}}}}}"#,
+                r#"{{"type":"object","required":["kind","campaign","fields"],"properties":{{"kind":{{"enum":[{}]}},"campaign":{{"type":"string"}},"fields":{{"type":"object"}},"dry_run":{{"type":"boolean"}},"acknowledge_taint":{{"type":"integer"}}}}}}"#,
                 kinds.join(",")
             ),
         ),
         tool(
             "kg_status",
-            "Campaign progress, blockers, taint, claims without gates, owed LKB rows.",
+            "Campaign progress, blockers, taint, claims, owed LKB rows. Default: compact (lists capped); name a section for all of it.",
             &format!(
                 r#"{{"type":"object","required":["campaign"],"properties":{{"campaign":{{"type":"string"}},"sections":{{"type":"array","items":{{"enum":[{}]}}}},"instance":{{"type":"string"}}}}}}"#,
                 sections.join(",")

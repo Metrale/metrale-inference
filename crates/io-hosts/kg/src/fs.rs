@@ -126,8 +126,8 @@ pub fn read_config(path: &Path) -> Result<Config> {
     let path = std::fs::canonicalize(path).map_err(|e| source_err(&shown, &e))?;
     let text = std::fs::read_to_string(&path).map_err(|e| source_err(&shown, &e))?;
     let mut cfg = Config::parse(&text)?;
-    let root = std::fs::canonicalize(&cfg.sources.root)
-        .map_err(|e| source_err(&cfg.sources.root, &e))?;
+    let root =
+        std::fs::canonicalize(&cfg.sources.root).map_err(|e| source_err(&cfg.sources.root, &e))?;
     let rel = path.strip_prefix(&root).map_err(|_| {
         error!(
             ErrorCode::KgConfig,

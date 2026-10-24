@@ -77,8 +77,14 @@ pub struct Campaign {
     pub ledger: String,
     pub tooling: String,
     pub charter: String,
+    /// 2026-10-23: The campaign's run fingerprints (`RUNS.tsv`, P3).
+    pub runs: String,
     /// 2026-10-23: The ledger's own validator (`tools/ledger.py`), the validator of record.
     pub ledger_check: String,
+    /// 2026-10-23: The instance `kg_status owed_lkb` reports when the call names none (declared
+    /// here, never guessed; absent = the call must name one).
+    #[serde(default)]
+    pub default_instance: Option<String>,
 }
 
 /// 2026-10-23: Tool result limits.
@@ -88,6 +94,9 @@ pub struct Limits {
     pub max_rows: u32,
     pub cypher_timeout_ms: u64,
     pub token_budget: u32,
+    /// 2026-10-23: The token budget of a default `kg_status` (no sections named); `check` holds
+    /// the live answer to it.
+    pub status_tokens: u32,
 }
 
 /// 2026-10-23: Where the derived database lives (rebuildable, not committed).
@@ -171,7 +180,12 @@ impl Config {
             out.push(self.origin.clone());
         }
         for c in &s.campaigns {
-            out.extend([c.ledger.clone(), c.tooling.clone(), c.charter.clone()]);
+            out.extend([
+                c.ledger.clone(),
+                c.tooling.clone(),
+                c.charter.clone(),
+                c.runs.clone(),
+            ]);
         }
         out.sort();
         out.dedup();

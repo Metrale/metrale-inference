@@ -72,7 +72,7 @@ pub fn lexical(b: &Bundle, query: &str) -> BTreeMap<KgId, f64> {
         }
     }
     let idf = |w: &str| libm::log(ratio(n, df.get(w).copied().unwrap_or(0) + 1));
-    let vec_of = |ws: &[String]| {
+    fn vec_of<'w>(ws: &'w [String], idf: &impl Fn(&str) -> f64) -> BTreeMap<&'w str, f64> {
         let mut v: BTreeMap<&str, f64> = BTreeMap::new();
         for w in ws {
             *v.entry(w.as_str()).or_insert(0.0) += 1.0;
@@ -81,16 +81,16 @@ pub fn lexical(b: &Bundle, query: &str) -> BTreeMap<KgId, f64> {
             *x *= idf(w);
         }
         v
-    };
+    }
     let qw = words(query);
-    let q = vec_of(&qw);
+    let q = vec_of(&qw, &idf);
     let qn: f64 = libm::sqrt(q.values().map(|x| x * x).sum());
     let mut out: BTreeMap<KgId, f64> = BTreeMap::new();
     if qn == 0.0 {
         return out;
     }
     for (id, ws) in &docs {
-        let d = vec_of(ws);
+        let d = vec_of(ws, &idf);
         let dot: f64 = q.iter().filter_map(|(w, x)| d.get(w).map(|y| x * y)).sum();
         if dot <= 0.0 {
             continue;

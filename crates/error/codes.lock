@@ -105,6 +105,7 @@
 0x0821 KgEmbedRateLimited
 0x0822 KgEmbedProtocol
 0x0823 KgEmbedDim
+0x0824 KgEmbedderFault
 0x0830 KgCypherRejected
 0x0831 KgStore
 0x0832 KgToolArgument

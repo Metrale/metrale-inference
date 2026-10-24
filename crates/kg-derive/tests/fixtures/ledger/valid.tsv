@@ -1,10 +1,10 @@
-ts	phase	id	hypothesis	predicted_us_saved	measured_delta	bitwise	verdict	profile	cost	commit	why_differed	depends_on	retracts
-2026-10-23T00:00Z	P1	a	hyp a	<=5 us	1k +1.0% [-0.5,+2.5]	IDENTICAL	WIN	-	1 h	abc1234	why a	-	-
-2026-10-23T00:00Z	P1	b	hyp b	<=5 us	1k +1.0% [-0.5,+2.5]	IDENTICAL	WIN	-	1 h	abc1234	why b	a	-
-2026-10-23T00:00Z	P1	c	hyp c	<=5 us	1k +1.0% [-0.5,+2.5]	IDENTICAL	WIN	-	1 h	abc1234	why c	a,b	-
-2026-10-23T00:00Z	P1	d	hyp d	<=5 us	1k +1.0% [-0.5,+2.5]	IDENTICAL	WIN	-	1 h	abc1234	why d	c,a	-
-2026-10-23T00:00Z	P1	e	hyp e	<=5 us	1k +1.0% [-0.5,+2.5]	IDENTICAL	WIN	-	1 h	abc1234	why e	b	-
-2026-10-23T00:00Z	P1	f	hyp f	<=5 us	1k +1.0% [-0.5,+2.5]	IDENTICAL	WIN	-	1 h	abc1234	why f	-	b
-2026-10-23T00:00Z	P1	g	hyp g	<=5 us	1k +1.0% [-0.5,+2.5]	IDENTICAL	WIN	-	1 h	abc1234	why g	d,e	-
-2026-10-23T00:00Z	P1	h	hyp h	<=5 us	1k +1.0% [-0.5,+2.5]	IDENTICAL	WIN	-	1 h	abc1234	why h	g	e
-2026-10-23T00:00Z	P1	z	hyp z	<=5 us	1k +1.0% [-0.5,+2.5]	IDENTICAL	WIN	-	1 h	abc1234	why z	-	a
+ts	phase	id	hypothesis	predicted_us_saved	measured_delta	bitwise	verdict	profile	cost	commit	why_differed	depends_on	retracts	gate	resolves
+2026-10-23T00:00Z	P1	a	hyp a	<=5 us	1k +1.0% [-0.5,+2.5]	IDENTICAL	WIN	-	1 h	abc1234	why a	-	-	-	-
+2026-10-23T00:00Z	P1	b	hyp b	<=5 us	1k +1.0% [-0.5,+2.5]	IDENTICAL	WIN	-	1 h	abc1234	why b	a	-	-	-
+2026-10-23T00:00Z	P1	c	hyp c	<=5 us	1k +1.0% [-0.5,+2.5]	IDENTICAL	WIN	-	1 h	abc1234	why c	a,b	-	-	-
+2026-10-23T00:00Z	P1	d	hyp d	<=5 us	1k +1.0% [-0.5,+2.5]	IDENTICAL	WIN	-	1 h	abc1234	why d	c,a	-	-	-
+2026-10-23T00:00Z	P1	e	hyp e	<=5 us	1k +1.0% [-0.5,+2.5]	IDENTICAL	WIN	-	1 h	abc1234	why e	b	-	-	-
+2026-10-23T00:00Z	P1	f	hyp f	<=5 us	1k +1.0% [-0.5,+2.5]	IDENTICAL	WIN	-	1 h	abc1234	why f	-	b	-	-
+2026-10-23T00:00Z	P1	g	hyp g	<=5 us	1k +1.0% [-0.5,+2.5]	IDENTICAL	WIN	-	1 h	abc1234	why g	d,e	-	-	-
+2026-10-23T00:00Z	P1	h	hyp h	<=5 us	1k +1.0% [-0.5,+2.5]	IDENTICAL	WIN	-	1 h	abc1234	why h	g	e	-	-
+2026-10-23T00:00Z	P1	z	hyp z	<=5 us	1k +1.0% [-0.5,+2.5]	IDENTICAL	WIN	-	1 h	abc1234	why z	-	a	-	-

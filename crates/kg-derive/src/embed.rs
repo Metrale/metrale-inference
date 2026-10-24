@@ -40,18 +40,33 @@ pub enum Reply {
     },
 }
 
+/// 2026-10-23: What an input is to an asymmetric embedder: a search query or a stored document.
+/// The provider embeds the two differently (probed 2026-10-23: the same text as `query` and as
+/// `passage` has cosine 0.66, and an untyped request is embedded as a query), so every request
+/// names its role and the host maps it to the configured `input_type`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    Query,
+    Document,
+}
+
 /// 2026-10-23: The embedder port; hosts implement it (metrale-io-host-kg's OpenRouter host).
+#[expect(
+    async_fn_in_trait,
+    reason = "2026-10-23: as metrale-abstract-io's ports: the host's executor drives the future"
+)]
 pub trait Embedder {
     /// 2026-10-23: The declared mode.
     fn mode(&self) -> Mode;
-    /// 2026-10-23: Embed `inputs` (one request).
-    async fn embed(&self, inputs: &[String]) -> Result<Reply>;
+    /// 2026-10-23: Embed `inputs`, all of one `role` (one request).
+    async fn embed(&self, role: Role, inputs: &[String]) -> Result<Reply>;
 }
 
-/// 2026-10-23: The OpenAI-shaped request body.
-pub fn request_body(model: &str, inputs: &[String]) -> String {
+/// 2026-10-23: The OpenAI-shaped request body, with the asymmetric model's `input_type`.
+pub fn request_body(model: &str, input_type: &str, inputs: &[String]) -> String {
     let mut o = serde_json::Map::new();
     o.insert("model".into(), Value::String(model.to_string()));
+    o.insert("input_type".into(), Value::String(input_type.to_string()));
     o.insert("input".into(), Value::from(inputs.to_vec()));
     let mut s = String::new();
     crate::jsonl::canon(&Value::Object(o), &mut s);
@@ -109,6 +124,8 @@ pub struct Plan {
     pub batch: usize,
     pub max_attempts: u32,
     pub backoff_ms: u64,
+    /// 2026-10-23: The longest input sent (chars); a longer one is refused unsent.
+    pub max_input_chars: usize,
 }
 
 /// 2026-10-23: The wait before retry `attempt` (1-based): the server's `retry_after` when it sent
@@ -134,34 +151,60 @@ pub fn missing<'a>(
     m.into_iter().collect()
 }
 
-/// 2026-10-23: Embed `todo` in batches, retrying rate-limited batches with backoff. Returns the
-/// vectors embedded so far and the error that stopped the run, if any (the cache keeps progress).
+/// 2026-10-23: What [`embed_all`] got: the vectors, the inputs the provider refused one by one
+/// (a batch it refuses as a request is split until the refusal names single inputs; they are
+/// skipped, never guessed at), and the error that stopped the run, if any.
+#[derive(Debug, Default)]
+pub struct Embedded {
+    pub done: Vec<(Sha256, Vec<f32>)>,
+    pub refused: Vec<(Sha256, String)>,
+    pub stopped: Option<metrale_error::Error>,
+}
+
+/// 2026-10-23: Embed `todo` in batches, retrying rate-limited batches with backoff. A batch the
+/// provider refuses (`KgEmbedProtocol`, e.g. HTTP 400) is halved and retried, so one bad input
+/// costs O(log batch) requests and no other input; the cache keeps all progress.
 pub async fn embed_all<E: Embedder, C: Clock, T: Timer>(
     e: &E,
     clock: &C,
     timer: &T,
     plan: &Plan,
+    role: Role,
     todo: &[(Sha256, String)],
-) -> (Vec<(Sha256, Vec<f32>)>, Option<metrale_error::Error>) {
-    let mut done = Vec::new();
-    for chunk in todo.chunks(plan.batch.max(1)) {
+) -> Embedded {
+    let mut out = Embedded::default();
+    let mut fit: Vec<(Sha256, String)> = Vec::with_capacity(todo.len());
+    for (sha, t) in todo {
+        let n = t.chars().count();
+        if n > plan.max_input_chars {
+            out.refused.push((
+                *sha,
+                format!(
+                    "{n} chars exceeds max_input_chars {} (not sent)",
+                    plan.max_input_chars
+                ),
+            ));
+        } else {
+            fit.push((*sha, t.clone()));
+        }
+    }
+    let mut work: Vec<&[(Sha256, String)]> = fit.chunks(plan.batch.max(1)).rev().collect();
+    while let Some(chunk) = work.pop() {
         let inputs: Vec<String> = chunk.iter().map(|(_, t)| t.clone()).collect();
         let mut attempt = 0;
         loop {
             attempt += 1;
-            match e.embed(&inputs).await {
+            match e.embed(role, &inputs).await {
                 Ok(Reply::Vectors(v)) if v.len() == chunk.len() => {
-                    done.extend(chunk.iter().map(|(s, _)| *s).zip(v));
+                    out.done.extend(chunk.iter().map(|(s, _)| *s).zip(v));
                     break;
                 }
                 Ok(Reply::Vectors(_)) => {
-                    return (
-                        done,
-                        Some(error!(
-                            ErrorCode::KgEmbedProtocol,
-                            "the reply count differs from the batch"
-                        )),
-                    );
+                    out.stopped = Some(error!(
+                        ErrorCode::KgEmbedProtocol,
+                        "the reply count differs from the batch"
+                    ));
+                    return out;
                 }
                 Ok(Reply::Retryable { retry_after_ms, .. }) if attempt < plan.max_attempts => {
                     let wait = backoff(plan, attempt, retry_after_ms).saturating_mul(1_000_000);
@@ -170,13 +213,27 @@ pub async fn embed_all<E: Embedder, C: Clock, T: Timer>(
                         .await;
                 }
                 Ok(Reply::Retryable { .. }) => {
-                    return (done, Some(error!(ErrorCode::KgEmbedRateLimited, attempt)));
+                    out.stopped = Some(error!(ErrorCode::KgEmbedRateLimited, attempt));
+                    return out;
                 }
-                Err(err) => return (done, Some(err)),
+                Err(err) if err.code() == ErrorCode::KgEmbedProtocol && chunk.len() > 1 => {
+                    let (a, b) = chunk.split_at(chunk.len() / 2);
+                    work.push(b);
+                    work.push(a);
+                    break;
+                }
+                Err(err) if err.code() == ErrorCode::KgEmbedProtocol => {
+                    out.refused.push((chunk[0].0, err.to_string()));
+                    break;
+                }
+                Err(err) => {
+                    out.stopped = Some(err);
+                    return out;
+                }
             }
         }
     }
-    (done, None)
+    out
 }
 
 /// 2026-10-23: Cosine similarity (0 for a zero vector).

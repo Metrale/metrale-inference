@@ -146,11 +146,12 @@ pub fn impact(
     Ok((out, truncated))
 }
 
-/// 2026-10-23: Q1: every BLOCKED row with its blockers and the levers it toggles.
+/// 2026-10-23: Q1: every BLOCKED row no later row resolves (`RESOLVED_BY`, from the ledger's
+/// `resolves` column), with its blockers and the levers it toggles.
 pub fn blocked_by_gate(b: &Bundle) -> Vec<(KgId, String, Vec<KgId>, Vec<KgId>)> {
     let mut out = Vec::new();
     for n in b.of(Label::LedgerEntry) {
-        if s(n, "verdict_kind") != "BLOCKED" {
+        if s(n, "verdict_kind") != "BLOCKED" || b.out(&n.id, Rel::ResolvedBy).next().is_some() {
             continue;
         }
         let blockers = b.out(&n.id, Rel::BlockedBy).map(|e| e.to.clone()).collect();

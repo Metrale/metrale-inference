@@ -15,6 +15,7 @@ fn fresh() -> Freshness {
         stale_reason: None,
         derived_at_ms: 0,
         source_commit: Some("381f9cb6ec3b".into()),
+        newest_change: Some(("c/LEDGER.tsv".into(), 1_792_000_000_000)),
     }
 }
 
@@ -28,7 +29,10 @@ fn one_unavailable_section_does_not_take_down_the_others() {
         v["calibration"]
     );
     assert_eq!(v["calibration"]["code"], "NotImplemented");
-    assert!(v["progress"].is_object() && v["blocked"].is_array(), "{v}");
+    assert!(
+        v["progress"].is_object() && v["blocked"]["first"].is_array(),
+        "{v}"
+    );
     assert!(v["progress"]["P0"].is_object(), "{}", v["progress"]);
 }
 
@@ -97,4 +101,41 @@ fn freshness_names_the_source_commit_and_null_without_an_lkb() {
     };
     let v = status(&b, &common::config(), "glm/mk", &s, &none, None).unwrap();
     assert!(v["freshness"]["source_commit"].is_null(), "{v}");
+}
+
+#[test]
+fn a_default_status_caps_every_list_and_says_how_many_there_were() {
+    use metrale_kg_derive::status::compact;
+    use metrale_kg_derive::tools::LIST_CAP;
+    let v = compact(
+        serde_json::json!({"rows": [1, 2, 3, 4, 5], "n": {"refs": ["a", "b", "c", "d"]}, "few": [1]}),
+    );
+    assert_eq!(v["rows"].as_array().unwrap().len(), LIST_CAP);
+    assert_eq!(v["rows_total"], 5);
+    assert_eq!(v["n"]["refs_total"], 4);
+    assert_eq!(v["few"], serde_json::json!([1]));
+    let top = compact(serde_json::json!([1, 2, 3, 4]));
+    assert_eq!(top["total"], 4);
+    fn longest(v: &serde_json::Value) -> usize {
+        match v {
+            serde_json::Value::Array(a) => a.len().max(a.iter().map(longest).max().unwrap_or(0)),
+            serde_json::Value::Object(o) => o.values().map(longest).max().unwrap_or(0),
+            _ => 0,
+        }
+    }
+    let b = derive(&common::config(), &common::sources(), None).unwrap();
+    let d = status(&b, &common::config(), "glm/mk", &[], &fresh(), None).unwrap();
+    assert!(longest(&d) <= LIST_CAP + 1, "{d}");
+    assert!(d.get("schema").is_none() && d.get("files").is_none());
+    let named = status(
+        &b,
+        &common::config(),
+        "glm/mk",
+        &["freshness".to_string()],
+        &fresh(),
+        None,
+    )
+    .unwrap();
+    assert!(named["freshness"].get("files").is_some_and(|f| f.is_u64()));
+    assert_eq!(named["freshness"]["newest_change"]["path"], "c/LEDGER.tsv");
 }

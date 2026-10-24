@@ -109,11 +109,16 @@ pub fn friction_line(fields: &BTreeMap<String, String>) -> Result<String> {
     Ok(format!("| {} |", cells.join(" | ")))
 }
 
-/// 2026-10-23: A RUNS.tsv row; `run_id` is the first 8 hex of sha256 over the other columns.
+/// 2026-10-23: A run's id: the first 8 hex of sha256 over its other columns, tab-joined.
+pub fn run_id(columns: &str) -> String {
+    sha256(columns.as_bytes()).hex().chars().take(8).collect()
+}
+
+/// 2026-10-23: A RUNS.tsv row; `run_id` is [`run_id`] of the other columns.
 pub fn run_line(fields: &BTreeMap<String, String>) -> Result<(String, String)> {
     let cells = exactly(fields, &RUNS_COLUMNS[1..])?;
     let joined = cells.join("\t");
-    let id: String = sha256(joined.as_bytes()).hex().chars().take(8).collect();
+    let id = run_id(&joined);
     Ok((id.clone(), format!("{id}\t{joined}")))
 }
 

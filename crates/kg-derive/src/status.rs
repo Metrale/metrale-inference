@@ -12,7 +12,7 @@ use crate::id::{KgId, Label, Rel};
 use crate::ledger;
 use crate::prelude::*;
 use crate::queries;
-use crate::tools::SECTIONS;
+use crate::tools::{DEFAULT_SECTIONS, LIST_CAP, SECTIONS};
 use metrale_error::{ErrorCode, Result, error};
 use serde_json::{Map, Value};
 
@@ -25,6 +25,78 @@ pub struct Freshness {
     pub derived_at_ms: i64,
     /// 2026-10-23: The LKB checkout's commit the bundle was derived from (`None`: no LKB source).
     pub source_commit: Option<String>,
+    /// 2026-10-23: The most recently modified source file and when (unix ms), from the host's
+    /// stat results.
+    pub newest_change: Option<(String, i64)>,
+}
+
+/// 2026-10-23: Every source file but the memory directory's, as `[path, sha prefix]`.
+fn files(b: &Bundle, cfg: &Config) -> Vec<Value> {
+    let mem = format!("{}/", cfg.sources.memory_dir);
+    b.sources
+        .iter()
+        .filter(|s| !s.path.starts_with(&mem))
+        .map(|s| {
+            Value::from(vec![
+                Value::String(s.path.clone()),
+                Value::String(s.sha.hex()[..12].to_string()),
+            ])
+        })
+        .collect()
+}
+
+/// 2026-10-23: The default answer's form: every list longer than [`LIST_CAP`] keeps its first
+/// items, and its total goes beside it (`<key>_total`; a section that is a list becomes
+/// `{total, first}`), so nothing is dropped without saying how much.
+pub fn compact(v: Value) -> Value {
+    match v {
+        Value::Array(a) => {
+            let total = a.len();
+            let first: Vec<Value> = a.into_iter().take(LIST_CAP).map(compact).collect();
+            let mut o = Map::new();
+            o.insert("total".into(), Value::from(total));
+            o.insert("first".into(), Value::from(first));
+            Value::Object(o)
+        }
+        Value::Object(o) => {
+            let mut out = Map::new();
+            for (k, v) in o {
+                match v {
+                    Value::Array(a) if a.len() > LIST_CAP => {
+                        out.insert(format!("{k}_total"), Value::from(a.len()));
+                        let first: Vec<Value> =
+                            a.into_iter().take(LIST_CAP).map(compact_item).collect();
+                        out.insert(k, Value::from(first));
+                    }
+                    Value::Array(a) => {
+                        out.insert(
+                            k,
+                            Value::from(a.into_iter().map(compact_item).collect::<Vec<_>>()),
+                        );
+                    }
+                    other => {
+                        out.insert(k, compact_item(other));
+                    }
+                }
+            }
+            Value::Object(out)
+        }
+        other => other,
+    }
+}
+
+/// 2026-10-23: [`compact`] below the top level: an inner list keeps the same cap.
+fn compact_item(v: Value) -> Value {
+    match v {
+        Value::Object(_) => compact(v),
+        Value::Array(a) if a.len() > LIST_CAP => {
+            let mut keep: Vec<Value> = a.into_iter().take(LIST_CAP).map(compact_item).collect();
+            keep.push(Value::String("…".into()));
+            Value::from(keep)
+        }
+        Value::Array(a) => Value::from(a.into_iter().map(compact_item).collect::<Vec<_>>()),
+        other => other,
+    }
 }
 
 fn ids(v: &[crate::id::KgId]) -> Value {
@@ -164,7 +236,10 @@ pub fn section(
             o.insert("derived_at_ms".into(), Value::from(fresh.derived_at_ms));
             o.insert(
                 "source_commit".into(),
-                fresh.source_commit.clone().map_or(Value::Null, Value::String),
+                fresh
+                    .source_commit
+                    .clone()
+                    .map_or(Value::Null, Value::String),
             );
             o.insert(
                 "stale_reason".into(),
@@ -173,23 +248,30 @@ pub fn section(
                     .clone()
                     .map_or(Value::Null, Value::String),
             );
+            o.insert(
+                "digest".into(),
+                Value::String(crate::jsonl::digest(b).hex()),
+            );
             o.insert("sources".into(), Value::from(b.sources.len()));
-            let files: Vec<Value> = b
-                .sources
-                .iter()
-                .filter(|s| !s.path.starts_with(&format!("{}/", cfg.sources.memory_dir)))
-                .map(|s| {
-                    Value::from(vec![
-                        Value::String(s.path.clone()),
-                        Value::String(s.sha.hex()[..12].to_string()),
-                    ])
-                })
-                .collect();
-            o.insert("files".into(), Value::from(files));
+            o.insert("files".into(), Value::from(files(b, cfg).len()));
+            o.insert(
+                "newest_change".into(),
+                fresh.newest_change.as_ref().map_or(Value::Null, |(p, ms)| {
+                    let mut n = Map::new();
+                    n.insert("path".into(), Value::String(p.clone()));
+                    n.insert("ts_ms".into(), Value::from(*ms));
+                    Value::Object(n)
+                }),
+            );
+            Value::Object(o)
+        }
+        "files" => {
+            let mut o = Map::new();
             o.insert(
                 "memory_dir".into(),
                 Value::String(cfg.sources.memory_dir.clone()),
             );
+            o.insert("files".into(), Value::from(files(b, cfg)));
             Value::Object(o)
         }
         "schema" => {
@@ -311,12 +393,13 @@ pub fn status(
     fresh: &Freshness,
     instance: Option<&str>,
 ) -> Result<Value> {
-    let all: Vec<String> = if names.is_empty() {
-        SECTIONS.iter().map(|s| (*s).to_string()).collect()
+    let short = names.is_empty();
+    let all: Vec<String> = if short {
+        DEFAULT_SECTIONS.iter().map(|s| (*s).to_string()).collect()
     } else {
         names.to_vec()
     };
-    cfg.campaign(campaign)?;
+    let instance = instance.or(cfg.campaign(campaign)?.default_instance.as_deref());
     if let Some(bad) = all.iter().find(|n| !SECTIONS.contains(&n.as_str())) {
         return Err(error!(
             ErrorCode::KgToolArgument,
@@ -327,7 +410,7 @@ pub fn status(
     let mut o = Map::new();
     for n in &all {
         let v = section(b, cfg, campaign, n, fresh, instance).unwrap_or_else(|e| unavailable(&e));
-        o.insert(n.clone(), v);
+        o.insert(n.clone(), if short { compact(v) } else { v });
     }
     Ok(Value::Object(o))
 }

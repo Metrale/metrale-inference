@@ -316,6 +316,10 @@ error_registry! {
         KgEmbedProtocol = 0x0822 => "embedder response: {}",
         /// 2026-10-23: An embedding of another width than the config declares: (got, declared).
         KgEmbedDim = 0x0823 => "embedder returned dimension {}; the config declares {}",
+        /// 2026-10-23: The provider refused a request it should accept by what we sent (e.g. an
+        /// input-length refusal when every input is within `max_input_chars`): (what it said and
+        /// the request shape).
+        KgEmbedderFault = 0x0824 => "embedder fault: {}",
         /// 2026-10-23: A Cypher text `kg_query` refuses: (reason).
         KgCypherRejected = 0x0830 => "cypher refused: {}",
         /// 2026-10-23: A graph store operation failed: (operation, reason).

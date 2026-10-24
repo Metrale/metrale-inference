@@ -102,13 +102,8 @@ pub async fn call(app: &mut App, tool: &str, args: &Value) -> Result<Value> {
             }
             v
         }
-        "kg_search" | "kg_record" => {
-            return Err(error!(
-                ErrorCode::NotImplemented,
-                tool.to_string(),
-                "this build (it lands in a later phase)"
-            ));
-        }
+        "kg_search" => crate::search::kg_search(app, args).await?,
+        "kg_record" => crate::record::kg_record(app, args).await?,
         other => {
             return Err(error!(
                 ErrorCode::KgToolArgument,

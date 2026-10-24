@@ -21,6 +21,7 @@ id = "glm/mk"
 ledger = "c/LEDGER.tsv"
 tooling = "c/TOOLING.md"
 charter = "c/CHARTER.md"
+runs = "c/RUNS.tsv"
 ledger_check = "c/tools/ledger.py"
 [embedder]
 mode = "unavailable"
@@ -29,6 +30,7 @@ reason = "test"
 max_rows = 100
 cypher_timeout_ms = 1000
 token_budget = 1200
+status_tokens = 1500
 [store]
 data_dir = "/tmp/none"
 scratch_dir = "/tmp/none-scratch"
@@ -40,10 +42,10 @@ w_hops = 0.25
 w_kind = 0.15
 "#;
 
-pub const LEDGER: &str = "ts\tphase\tid\thypothesis\tpredicted_us_saved\tmeasured_delta\tbitwise\tverdict\tprofile\tcost\tcommit\twhy_differed\tdepends_on\tretracts
-2026-10-23T01:00Z\tP0\tp0-x\tplan it (ROTI)\t0 us/step\tnot measured\tn/a\tBLOCKED\t-\t1 h\t-\tblocked on decision:2026-10-22/p0-split, see DESIGN-x.md §6\t-\t-
-2026-10-23T02:00Z\tP1\tl2-pf\tMETRALE_GLM_AR_L2_PREFETCH=6 warms the next layer's weights during the all-reduce\t<=315 us/step\t1k -0.53% [-2.72,+1.65]; 16k -0.22% [-2.32,+1.88]\tIDENTICAL\tNULL (no win)\tglm53-tp3-512k-promo1 + env\t2 h\tabc1234\tthe read is at 89% of floor\tp0-x\t-
-2026-10-23T03:00Z\tP3\tseg\tdense segment\t<=100 us\t1k -1.7% [-2.0,-1.4]\tIDENTICAL\tLOSS\tmkp3\t3 h\tec5326efb\tpersistent grid starves the side stream\tl2-pf\t-
+pub const LEDGER: &str = "ts\tphase\tid\thypothesis\tpredicted_us_saved\tmeasured_delta\tbitwise\tverdict\tprofile\tcost\tcommit\twhy_differed\tdepends_on\tretracts\tgate\tresolves
+2026-10-23T01:00Z\tP0\tp0-x\tplan it (ROTI)\t0 us/step\tnot measured\tn/a\tBLOCKED\t-\t1 h\t-\tblocked on decision:2026-10-22/p0-split, see DESIGN-x.md §6\t-\t-\t-\t-
+2026-10-23T02:00Z\tP1\tl2-pf\tMETRALE_GLM_AR_L2_PREFETCH=6 warms the next layer's weights during the all-reduce\t<=315 us/step\t1k -0.53% [-2.72,+1.65]; 16k -0.22% [-2.32,+1.88]\tIDENTICAL\tNULL (no win)\tglm53-tp3-512k-promo1 + env\t2 h\tabc1234\tthe read is at 89% of floor\tp0-x\t-\t-\t-
+2026-10-23T03:00Z\tP3\tseg\tdense segment\t<=100 us\t1k -1.7% [-2.0,-1.4]\tIDENTICAL\tLOSS\tmkp3\t3 h\tec5326efb\tpersistent grid starves the side stream\tl2-pf\t-\t-\t-
 ";
 
 pub const TOOLING: &str =
@@ -54,6 +56,11 @@ pub const TOOLING: &str =
 | P0 | BENCH_ACTIVE blocks cargo (SBIO) | 30 | `tools/cargo-guard.sh` | yes (a708b140a) |
 | P1 | pkill -f matched my shell | 5 | kill by PID: `ps -eo pid,args | grep [p]attern` | no |
 2026-10-23\ta tab-separated line that is not a table row
+";
+
+/// 2026-10-23: One run of l2-pf (its id is the hash of the other columns).
+pub const RUNS: &str = "run_id\tbinary_sha\trecipe_env_sha\trecipe_flags_sha\tprompt_sha\tbox\tsm_mhz\tnsys\tdate\tledger_ids
+2be4b972\tb1\te1\tf1\tp1\tdgx1\t2405\tno\t2026-10-23\tl2-pf
 ";
 
 pub const CHARTER: &str = "# Charter
@@ -155,11 +162,15 @@ pub fn config() -> Config {
 
 /// 2026-10-23: The files, added in `order` (a permutation of the indices) to prove the derive
 /// does not depend on read order.
+/// 2026-10-23: How many files [`sources_in`] has.
+pub const FILE_COUNT: usize = 13;
+
 pub fn sources_in(order: &[usize]) -> SourceSet {
-    let files: [(&str, &str); 12] = [
+    let files: [(&str, &str); FILE_COUNT] = [
         ("c/LEDGER.tsv", LEDGER),
         ("c/TOOLING.md", TOOLING),
         ("c/CHARTER.md", CHARTER),
+        ("c/RUNS.tsv", RUNS),
         ("bp/DESIGN-x.md", DESIGN),
         ("CLAUDE.md", CLAUDE),
         ("decoupling.md", DECOUPLING),
@@ -185,5 +196,5 @@ pub fn sources_in(order: &[usize]) -> SourceSet {
 }
 
 pub fn sources() -> SourceSet {
-    sources_in(&(0..12).collect::<Vec<_>>())
+    sources_in(&(0..FILE_COUNT).collect::<Vec<_>>())
 }
