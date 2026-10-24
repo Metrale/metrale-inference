@@ -327,6 +327,25 @@ values = {}
 how = "instantiation"
 files = ["kernels/gb10/common/moe_silu_mul.cu"]
 
+# 2026-10-24: An embedding model's pooling (nvidia/llama-nemotron-embed-vl-1b-v2, `pooling = "avg"`).
+[[family]]
+id = "mean_pool"
+description = "Per-sequence mean of packed BF16 rows into one FP32 vector"
+explain.about = '''The pooling of an embedding model: the hidden states of several sequences are packed row after row, and sequence $s$ owns rows $[c_s, c_{s+1})$ of the packed buffer. For each sequence the kernel writes the mean of its rows, one FP32 vector of width $d$; a block covers one sequence and 256 columns, one thread per column, and each thread walks its sequence's rows in order. A sequence with no rows writes zeros.'''
+explain.numerics = '''BF16 inputs widened exactly to FP32 and summed in row order in FP32 (a fixed order, so the result does not depend on the launch), then divided once by the row count in FP32. The output stays FP32: no rounding to BF16.'''
+explain.math = [
+  '''y_{s,j} = \frac{1}{n_s} \sum_{t=c_s}^{c_{s+1}-1} x_{t,j}, \qquad n_s = c_{s+1} - c_s''',
+]
+compute = "memory"
+kernels = ["mean_pool::mean_pool_masked_f32"]
+rows = [1, 65536]
+pipeline.mean_pool = { in = ["bf16"], compute = "f32", out = ["f32"] }
+op = [{ op = "mean_pool" }]
+[[family.point]]
+values = {}
+how = "instantiation"
+files = ["kernels/gb10/llama-nemotron-embed-vl-1b-v2/bf16/mean_pool.cu"]
+
 [[family]]
 id = "relu_squared"
 description = "relu(x)^2, flat elementwise (Nemotron-H experts' activation)"
